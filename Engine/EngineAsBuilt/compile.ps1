@@ -134,4 +134,4 @@ else {
     Write-Host "No Fonts directory found -- skipping."
 }
 
-Write-Host "### Build complete. Run with: .\$dllDest\EngineAsBuilt.exe ###"
+Write-Host "### Build complete. Run with: .\$dllDest\Zephyr.exe ###"

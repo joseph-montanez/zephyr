@@ -638,7 +638,7 @@ jobs:
           $config  = "${{ inputs.configuration || 'debug' }}"
           $triple  = "${{ matrix.swift-triple }}"
           $buildDir = "${{ github.workspace }}\Engine\EngineAsBuilt\.build\$triple\$config"
-          $zipName  = "EngineAsBuilt-Windows-${{ matrix.arch }}.zip"
+          $zipName  = "Zephyr-Windows-${{ matrix.arch }}.zip"
           $zipPath  = "$env:RUNNER_TEMP\$zipName"
 
           # Stage only runtime-required files (skip .build dirs, index/, Modules/, ModuleCache/) 
@@ -673,7 +673,7 @@ jobs:
             Automated nightly builds from `main` branch.
 
             See [downloads page](https://joseph-montanez.github.io/as-built/#download) for all platforms.
-          files: ${{ runner.temp }}\EngineAsBuilt-Windows-${{ matrix.arch }}.zip
+          files: ${{ runner.temp }}\Zephyr-Windows-${{ matrix.arch }}.zip
           prerelease: true
           make_latest: true
         env:

@@ -26,7 +26,6 @@ imgui.ini
 Engine/EngineAsBuilt/.build_new/
 .thumbnail
 AGENTS.md
-Engine/EngineAsBuilt/*.swift
 Engine/SwiftSDL/Samples
 Engine/SwiftSDL_image/Samples
 Engine/EngineAsBuilt/libpdfium.dylib

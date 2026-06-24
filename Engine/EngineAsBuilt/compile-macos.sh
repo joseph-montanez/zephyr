@@ -45,4 +45,4 @@ if [ -f "libpdfium.dylib" ]; then
 fi
 echo "Fonts and shaders copied to $BUILD_DIR"
 echo ""
-echo "### Build complete! Run with: $BUILD_DIR/EngineAsBuilt ###"
+echo "### Build complete! Run with: $BUILD_DIR/Zephyr ###"

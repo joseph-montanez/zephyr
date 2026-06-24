@@ -4,21 +4,21 @@
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:EngineAsBuilt}",
-            "name": "Debug EngineAsBuilt",
-            "target": "EngineAsBuilt",
+            "cwd": "${workspaceFolder:Zephyr}",
+            "name": "Debug Zephyr",
+            "target": "Zephyr",
             "configuration": "debug",
-            "preLaunchTask": "swift: Build Debug EngineAsBuilt"
+            "preLaunchTask": "swift: Build Debug Zephyr"
         },
         {
             "type": "swift",
             "request": "launch",
             "args": [],
-            "cwd": "${workspaceFolder:EngineAsBuilt}",
-            "name": "Release EngineAsBuilt",
-            "target": "EngineAsBuilt",
+            "cwd": "${workspaceFolder:Zephyr}",
+            "name": "Release Zephyr",
+            "target": "Zephyr",
             "configuration": "release",
-            "preLaunchTask": "swift: Build Release EngineAsBuilt"
+            "preLaunchTask": "swift: Build Release Zephyr"
         }
     ]
 }

@@ -142,10 +142,10 @@ jobs:
         run: |
           CONFIG="${{ inputs.configuration || 'debug' }}"
           BUILD_DIR="Engine/EngineAsBuilt/.build/$CONFIG"
-          EXEC="$BUILD_DIR/EngineAsBuilt"
+          EXEC="$BUILD_DIR/Zephyr"
           BREW_PREFIX="$(brew --prefix)"
 
-          APP_NAME="EngineAsBuilt"
+          APP_NAME="Zephyr"
           APP_ROOT="$BUILD_DIR/$APP_NAME.app"
           APP_MACOS="$APP_ROOT/Contents/MacOS"
           APP_RESOURCES="$APP_ROOT/Contents/Resources"
@@ -299,11 +299,11 @@ jobs:
             <key>CFBundleDevelopmentRegion</key>
             <string>English</string>
             <key>CFBundleExecutable</key>
-            <string>EngineAsBuilt</string>
+            <string>Zephyr</string>
             <key>CFBundleName</key>
-            <string>EngineAsBuilt</string>
+            <string>Zephyr</string>
             <key>CFBundleIdentifier</key>
-            <string>com.asbuilt.engine</string>
+            <string>com.zephyr.cad</string>
             <key>CFBundleInfoDictionaryVersion</key>
             <string>6.0</string>
             <key>CFBundlePackageType</key>
@@ -336,10 +336,10 @@ jobs:
         run: |
           CONFIG="${{ inputs.configuration || 'debug' }}"
           BUILD_DIR="Engine/EngineAsBuilt/.build/$CONFIG"
-          ZIP_NAME="EngineAsBuilt-macOS-${{ matrix.arch }}.zip"
+          ZIP_NAME="Zephyr-macOS-${{ matrix.arch }}.zip"
 
           cd "$BUILD_DIR"
-          zip -r "$RUNNER_TEMP/$ZIP_NAME" EngineAsBuilt.app
+          zip -r "$RUNNER_TEMP/$ZIP_NAME" Zephyr.app
           echo "Created: $ZIP_NAME"
           ls -lh "$RUNNER_TEMP/$ZIP_NAME"
 
@@ -355,7 +355,7 @@ jobs:
             Automated nightly builds from `main` branch.
 
             See [downloads page](https://joseph-montanez.github.io/as-built/#download) for all platforms.
-          files: ${{ runner.temp }}/EngineAsBuilt-macOS-${{ matrix.arch }}.zip
+          files: ${{ runner.temp }}/Zephyr-macOS-${{ matrix.arch }}.zip
           prerelease: true
           make_latest: true
         env:
