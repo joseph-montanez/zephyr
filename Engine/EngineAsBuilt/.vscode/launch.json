@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:EngineAsBuilt}",
+            "name": "Debug EngineAsBuilt",
+            "target": "EngineAsBuilt",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug EngineAsBuilt"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:EngineAsBuilt}",
+            "name": "Release EngineAsBuilt",
+            "target": "EngineAsBuilt",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release EngineAsBuilt"
+        }
+    ]
+}

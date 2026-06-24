@@ -1,0 +1,362 @@
+name: Build macOS
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Build configuration'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - debug
+          - release
+
+env:
+  SWIFT_VERSION: "6.3.2"
+  PDFIUM_TAG: "chromium%2F7891"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ARM64
+            runner: macos-26
+            arch: arm64
+            pdfium-platform: mac-arm64
+          - name: x64
+            runner: macos-26-intel
+            arch: x64
+            pdfium-platform: mac-x64
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      # ------------------------------------------------------------------
+      # 1. Checkout
+      # ------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # ------------------------------------------------------------------
+      # 2. Install Swift
+      # ------------------------------------------------------------------
+      - name: Install Swift
+        uses: SwiftyLab/setup-swift@v1
+        with:
+          swift-version: '6.3.2'
+
+      # ------------------------------------------------------------------
+      # 3. Install Homebrew Dependencies
+      # ------------------------------------------------------------------
+      - name: Install Homebrew Dependencies
+        run: |
+          brew install sdl3 sdl3_image sdl3_ttf zlib-ng cmake
+
+      # ------------------------------------------------------------------
+      # 4. Build libdxfrw from source
+      # ------------------------------------------------------------------
+      - name: Build libdxfrw
+        run: |
+          DXFRW_ROOT="$HOME/dev/libdxfrw"
+          git clone --depth 1 https://github.com/joseph-montanez/libdxfrw.git "$DXFRW_ROOT"
+          cd "$DXFRW_ROOT"
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
+          cmake --build build --config Release
+
+      # ------------------------------------------------------------------
+      # 5. Download PDFium (optional, loaded at runtime via dlopen)
+      # ------------------------------------------------------------------
+      - name: Download PDFium
+        run: |
+          PDFIUM_ROOT="$HOME/dev/pdfium"
+          PDFIUM_URL="https://github.com/bblanchon/pdfium-binaries/releases/download/$PDFIUM_TAG/pdfium-${{ matrix.pdfium-platform }}.tgz"
+          TGZ_PATH="$RUNNER_TEMP/pdfium.tgz"
+
+          echo "PDFium URL: $PDFIUM_URL"
+          curl -L -o "$TGZ_PATH" "$PDFIUM_URL"
+
+          mkdir -p "$PDFIUM_ROOT"
+          tar -xzf "$TGZ_PATH" -C "$PDFIUM_ROOT"
+
+          # Find libpdfium.dylib — may be in a subdirectory
+          PDFIUM_DYLIB=$(find "$PDFIUM_ROOT" -name "libpdfium.dylib" -print -quit)
+          if [ -n "$PDFIUM_DYLIB" ]; then
+            echo "PDFium dylib found: $PDFIUM_DYLIB"
+          else
+            echo "WARNING: libpdfium.dylib not found in archive"
+          fi
+
+          # Find fpdfview.h for include path
+          PDFIUM_HEADER=$(find "$PDFIUM_ROOT" -name "fpdfview.h" -print -quit)
+          if [ -n "$PDFIUM_HEADER" ]; then
+            echo "PDFium header found: $PDFIUM_HEADER"
+          fi
+
+      # ------------------------------------------------------------------
+      # 6. Build Engine
+      # ------------------------------------------------------------------
+      - name: Build Engine
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          CONFIG="${{ inputs.configuration || 'debug' }}"
+
+          export SDL3_INCLUDE="$BREW_PREFIX/include"
+          export SDL3_LIB="$BREW_PREFIX/lib"
+          export SDL3_IMAGE_INCLUDE="$BREW_PREFIX/include"
+          export SDL3_IMAGE_LIB="$BREW_PREFIX/lib"
+          export SDL3_TTF_INCLUDE="$BREW_PREFIX/include"
+          export SDL3_TTF_LIB="$BREW_PREFIX/lib"
+          export DXFRW_INCLUDE="$HOME/dev/libdxfrw/src"
+          export DXFRW_LIB="$HOME/dev/libdxfrw/build"
+          export ZLIB_NG_INCLUDE="$BREW_PREFIX/include"
+          export ZLIB_NG_LIB="$BREW_PREFIX/lib"
+          export CPATH="$BREW_PREFIX/include"
+          export MACOSX_DEPLOYMENT_TARGET=12.0
+
+          # PDFium (optional)
+          PDFIUM_HEADER=$(find "$HOME/dev/pdfium" -name "fpdfview.h" -print -quit)
+          if [ -n "$PDFIUM_HEADER" ]; then
+            export PDFIUM_INCLUDE="$(dirname "$PDFIUM_HEADER")"
+          fi
+
+          cd Engine/EngineAsBuilt
+          swift build -c "$CONFIG"
+
+      # ------------------------------------------------------------------
+      # 7. Create .app Bundle
+      # ------------------------------------------------------------------
+      - name: Create .app Bundle
+        run: |
+          CONFIG="${{ inputs.configuration || 'debug' }}"
+          BUILD_DIR="Engine/EngineAsBuilt/.build/$CONFIG"
+          EXEC="$BUILD_DIR/EngineAsBuilt"
+          BREW_PREFIX="$(brew --prefix)"
+
+          APP_NAME="EngineAsBuilt"
+          APP_ROOT="$BUILD_DIR/$APP_NAME.app"
+          APP_MACOS="$APP_ROOT/Contents/MacOS"
+          APP_RESOURCES="$APP_ROOT/Contents/Resources"
+          APP_FRAMEWORKS="$APP_ROOT/Contents/Frameworks"
+
+          echo "=== Creating .app bundle ==="
+          mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_FRAMEWORKS"
+
+          # Copy executable
+          cp "$EXEC" "$APP_MACOS/"
+
+          # Copy resources
+          cp -R Engine/EngineAsBuilt/Fonts "$APP_RESOURCES/"
+          cp Engine/EngineAsBuilt/Shaders/*.msl "$APP_RESOURCES/"
+
+          # Copy PDFium dylib if available
+          PDFIUM_DYLIB=$(find "$HOME/dev/pdfium" -name "libpdfium.dylib" -print -quit)
+          if [ -n "$PDFIUM_DYLIB" ]; then
+            cp "$PDFIUM_DYLIB" "$APP_FRAMEWORKS/"
+            echo "PDFium dylib bundled."
+          fi
+
+          # === Recursively bundle all Homebrew dylibs ===
+          echo "--- Executable dependencies ---"
+          otool -L "$APP_MACOS/$APP_NAME"
+
+          # Use a temp file to track which dylibs have been bundled
+          BUNDLED_LIST="$RUNNER_TEMP/bundled.txt"
+          : > "$BUNDLED_LIST"
+
+          # Seed: collect Homebrew dylibs referenced by the executable
+          PENDING_LIBS=$(otool -L "$APP_MACOS/$APP_NAME" | { grep "$BREW_PREFIX" || true; } | awk '{print $1}')
+
+          # Mark PDFium as already bundled (pre-copied above)
+          if [ -n "$PDFIUM_DYLIB" ] && [ -f "$APP_FRAMEWORKS/$(basename "$PDFIUM_DYLIB")" ]; then
+            echo "$(basename "$PDFIUM_DYLIB")" >> "$BUNDLED_LIST"
+          fi
+
+          # Recursively discover and bundle all transitive dependencies
+          while [ -n "$PENDING_LIBS" ]; do
+            NEW_LIBS=""
+            for lib in $PENDING_LIBS; do
+              [ -z "$lib" ] && continue
+              basename=$(basename "$lib")
+
+              # Skip if already bundled
+              if grep -qxF "$basename" "$BUNDLED_LIST" 2>/dev/null; then
+                continue
+              fi
+
+              # Skip if source is already inside Frameworks (prevents cp identical warning)
+              case "$lib" in
+                "$APP_FRAMEWORKS"/*) continue ;;
+              esac
+
+              # Copy dylib into Frameworks
+              if [ -f "$lib" ]; then
+                cp "$lib" "$APP_FRAMEWORKS/"
+                echo "$basename" >> "$BUNDLED_LIST"
+                echo "Bundled: $basename"
+              else
+                echo "WARNING: $lib not found"
+                continue
+              fi
+
+              # Scan this dylib for MORE Homebrew dependencies (transitive)
+              for dep in $(otool -L "$lib" | { grep "$BREW_PREFIX" || true; } | awk '{print $1}'); do
+                depname=$(basename "$dep")
+                if ! grep -qxF "$depname" "$BUNDLED_LIST" 2>/dev/null; then
+                  NEW_LIBS="$NEW_LIBS $dep"
+                fi
+              done
+            done
+            PENDING_LIBS="$NEW_LIBS"
+          done
+
+          echo "--- All bundled dylibs (first pass) ---"
+          cat "$BUNDLED_LIST"
+
+          # Second pass: resolve @rpath dependencies that don't match BREW_PREFIX
+          echo "--- Resolving @rpath dependencies ---"
+          CHANGED=1
+          while [ "$CHANGED" = "1" ]; do
+            CHANGED=0
+            for lib in $(cat "$BUNDLED_LIST"); do
+              dylib="$APP_FRAMEWORKS/$lib"
+              for rpath_ref in $(otool -L "$dylib" | grep '@rpath/' | awk '{print $1}'); do
+                depname=$(basename "$rpath_ref")
+                if grep -qxF "$depname" "$BUNDLED_LIST" 2>/dev/null; then continue; fi
+                # Search for this dylib under Homebrew
+                found=$(find "$BREW_PREFIX" -name "$depname" -print -quit 2>/dev/null)
+                if [ -n "$found" ] && [ -f "$found" ]; then
+                  cp "$found" "$APP_FRAMEWORKS/"
+                  echo "$depname" >> "$BUNDLED_LIST"
+                  echo "Bundled (@rpath): $depname"
+                  CHANGED=1
+                fi
+              done
+            done
+          done
+
+          echo "--- All bundled dylibs (final) ---"
+          cat "$BUNDLED_LIST"
+
+          # Fix all install names: executable + every bundled dylib
+          echo "--- Fixing install names ---"
+
+          # Fix executable references to bundled dylibs
+          for lib in $(cat "$BUNDLED_LIST"); do
+            for ref in $(otool -L "$APP_MACOS/$APP_NAME" | { grep "$BREW_PREFIX" || true; } | awk '{print $1}'); do
+              refname=$(basename "$ref")
+              if [ "$refname" = "$lib" ]; then
+                install_name_tool -change "$ref" "@executable_path/../Frameworks/$lib" "$APP_MACOS/$APP_NAME"
+              fi
+            done
+          done
+
+          # Fix each bundled dylib: own ID + cross-references (Homebrew paths)
+          for lib in $(cat "$BUNDLED_LIST"); do
+            dylib="$APP_FRAMEWORKS/$lib"
+            # Set own install name
+            install_name_tool -id "@executable_path/../Frameworks/$lib" "$dylib"
+            # Fix references to other bundled dylibs (absolute Homebrew paths)
+            for other in $(cat "$BUNDLED_LIST"); do
+              if [ "$other" = "$lib" ]; then continue; fi
+              for ref in $(otool -L "$dylib" | { grep "$BREW_PREFIX" || true; } | awk '{print $1}'); do
+                refname=$(basename "$ref")
+                if [ "$refname" = "$other" ]; then
+                  install_name_tool -change "$ref" "@executable_path/../Frameworks/$other" "$dylib" 2>/dev/null || true
+                fi
+              done
+            done
+            # Fix @rpath references to bundled dylibs
+            for rpath_ref in $(otool -L "$dylib" | grep '@rpath/' | awk '{print $1}'); do
+              refname=$(basename "$rpath_ref")
+              if grep -qxF "$refname" "$BUNDLED_LIST" 2>/dev/null; then
+                install_name_tool -change "$rpath_ref" "@executable_path/../Frameworks/$refname" "$dylib" 2>/dev/null || true
+              fi
+            done
+          done
+
+          # Add rpath so bundled dylibs can find each other
+          install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP_MACOS/$APP_NAME" 2>/dev/null || true
+
+          # === Create Info.plist ===
+          cat > "$APP_ROOT/Contents/Info.plist" << 'PLISTEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>English</string>
+            <key>CFBundleExecutable</key>
+            <string>EngineAsBuilt</string>
+            <key>CFBundleName</key>
+            <string>EngineAsBuilt</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.asbuilt.engine</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>12.0</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          PLISTEOF
+
+          echo "=== .app bundle created ==="
+          echo "Contents:"
+          find "$APP_ROOT" -type f | sort
+
+          # Ad-hoc code sign so Gatekeeper doesn't flag as "damaged"
+          echo "--- Ad-hoc signing .app ---"
+          codesign --force --deep --sign - "$APP_ROOT"
+          echo "Signing complete."
+
+      # ------------------------------------------------------------------
+      # 8. Package .app for distribution
+      # ------------------------------------------------------------------
+      - name: Package .app
+        run: |
+          CONFIG="${{ inputs.configuration || 'debug' }}"
+          BUILD_DIR="Engine/EngineAsBuilt/.build/$CONFIG"
+          ZIP_NAME="EngineAsBuilt-macOS-${{ matrix.arch }}.zip"
+
+          cd "$BUILD_DIR"
+          zip -r "$RUNNER_TEMP/$ZIP_NAME" EngineAsBuilt.app
+          echo "Created: $ZIP_NAME"
+          ls -lh "$RUNNER_TEMP/$ZIP_NAME"
+
+      # ------------------------------------------------------------------
+      # 9. Upload to Nightly Release
+      # ------------------------------------------------------------------
+      - name: Upload to Nightly Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly Build
+          body: |
+            Automated nightly builds from `main` branch.
+
+            See [downloads page](https://joseph-montanez.github.io/as-built/#download) for all platforms.
+          files: ${{ runner.temp }}/EngineAsBuilt-macOS-${{ matrix.arch }}.zip
+          prerelease: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,100 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}/Engine/EngineAsBuilt",
+            "name": "Debug EngineAsBuilt (compile.ps1)",
+            "program": "${workspaceFolder}/Engine/EngineAsBuilt/.build/aarch64-unknown-windows-msvc/debug/EngineAsBuilt.exe",
+            "preLaunchTask": "Build EngineAsBuilt Debug (MSVC ARM64)",
+            "stopOnEntry": false
+        },
+        {
+            "type": "swift",
+            "request": "attach",
+            "name": "Attach to EngineAsBuilt (select PID)",
+            "pid": "${command:pickProcess}"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:as-built}/Engine\\EngineAsBuilt",
+            "name": "Release EngineAsBuilt (Engine\\EngineAsBuilt)",
+            "target": "EngineAsBuilt",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release EngineAsBuilt (Engine\\EngineAsBuilt)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}/Engine/SwiftImGui",
+            "name": "Debug DemoMinimal (Engine\\SwiftImGui)",
+            "target": "DemoMinimal",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug DemoMinimal (Engine\\SwiftImGui)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}/Engine/SwiftImGui",
+            "name": "Release DemoMinimal (Engine\\SwiftImGui)",
+            "target": "DemoMinimal",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release DemoMinimal (Engine\\SwiftImGui)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}/Engine/SwiftImGui",
+            "name": "Debug AutoWrapper (Engine\\SwiftImGui)",
+            "target": "AutoWrapper",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug AutoWrapper (Engine\\SwiftImGui)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder}/Engine/SwiftImGui",
+            "name": "Release AutoWrapper (Engine\\SwiftImGui)",
+            "target": "AutoWrapper",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release AutoWrapper (Engine\\SwiftImGui)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:as-built}/Engine\\EngineAsBuilt",
+            "name": "Debug EngineAsBuilt (Engine\\EngineAsBuilt)",
+            "target": "EngineAsBuilt",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug EngineAsBuilt (Engine\\EngineAsBuilt)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:as-built}/Engine/EngineAsBuilt",
+            "name": "Debug EngineAsBuilt (Engine/EngineAsBuilt)",
+            "target": "EngineAsBuilt",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug EngineAsBuilt (Engine/EngineAsBuilt)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:as-built}/Engine/EngineAsBuilt",
+            "name": "Release EngineAsBuilt (Engine/EngineAsBuilt)",
+            "target": "EngineAsBuilt",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release EngineAsBuilt (Engine/EngineAsBuilt)"
+        }
+    ]
+}

@@ -1,0 +1,14 @@
+// =========================================================================
+// MARK: - CPdfium Module Map
+//
+// Exposes our thin C bridge around PDFium to Swift via the Clang module
+// system. The bridge wraps PDFium's C API (FPDF_*) into three simple
+// functions: page_count, page_size, and render_to_png.
+//
+// Functions are available as CPdfium.pdfium_page_count(), etc.
+// =========================================================================
+
+module CPdfium [system][extern_c] {
+    header "pdfium_bridge.h"
+    export *
+}

@@ -1,0 +1,14 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct main0_in
+{
+    uint in_var_ENTITYINDEX [[user(locn2), flat]];
+};
+
+fragment uint main0(main0_in in [[stage_in]])
+{
+    return in.in_var_ENTITYINDEX;
+}

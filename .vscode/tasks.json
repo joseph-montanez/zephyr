@@ -1,0 +1,18 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build EngineAsBuilt Debug (MSVC ARM64)",
+            "type": "shell",
+            "command": "./compile.ps1",
+            "options": {
+                "cwd": "${workspaceFolder}/Engine/EngineAsBuilt"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        }
+    ]
+}

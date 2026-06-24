@@ -1,0 +1,4 @@
+module CPdfiumBridge [system][extern_c] {
+    header "pdfium_bridge.h"
+    export *
+}

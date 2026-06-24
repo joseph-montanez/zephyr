@@ -1,0 +1,14 @@
+// =========================================================================
+// MARK: - CZLibNG Module Map
+//
+// Exposes zlib-ng (a high-performance fork of zlib) to Swift via
+// the Clang module system. The module wraps zlib-ng.h which declares
+// the standard zlib API: deflate, inflate, CRC32, gzip, etc.
+//
+// Functions are available as CZLibNG.deflateInit(), CZLibNG.inflate(), etc.
+// =========================================================================
+
+module CZLibNG [system][extern_c] {
+    header "zlib-ng.h"
+    export *
+}

@@ -1,0 +1,1108 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+:root, [data-theme="dark"] {
+  --bg: #0a1a28;
+  --bg-elev: #102b41;
+  --bg-panel: #14334d;
+  --bg-card: #14334d;
+  --text: #f0f4f7;
+  --text-2: #a8bccc;
+  --text-3: #6f8499;
+  --border: rgba(45,107,152,0.5);
+  --border-strong: #2d6b98;
+  --border-soft: rgba(45,107,152,0.22);
+  --accent: #e0ab36;
+  --accent-2: #f0ba45;
+  --accent-press: #c79426;
+  --blue: #2d6b98;
+  --blue-pale: #d6e9f5;
+  --blue-soft: #bdd6e8;
+  --navy: #102b41;
+  --canvas: #0d2335;
+  --canvas-line: #4a8ab8;
+  --canvas-dim: #6f9bbf;
+  --canvas-red: #e85c54;
+  --canvas-grip: #4a8ab8;
+  --shadow-lg: 0 4px 12px rgba(0,0,0,0.5), 0 24px 64px rgba(0,0,0,0.6);
+  --code-bg: rgba(45,107,152,0.18);
+}
+[data-theme="light"] {
+  --bg: #f7f9fa;
+  --bg-elev: #ffffff;
+  --bg-panel: #eef3f7;
+  --bg-card: #ffffff;
+  --text: #102b41;
+  --text-2: #4a627a;
+  --text-3: #7a8da0;
+  --border: #c8d6e0;
+  --border-strong: #9eb2c2;
+  --border-soft: #e1e9ef;
+  --accent: #c79426;
+  --accent-2: #e0ab36;
+  --accent-press: #a07719;
+  --blue: #2d6b98;
+  --blue-pale: #d6e9f5;
+  --blue-soft: #bdd6e8;
+  --navy: #102b41;
+  --canvas: #f2f5f7;
+  --canvas-line: #2d6b98;
+  --canvas-dim: #4a8ab8;
+  --canvas-red: #d63a30;
+  --canvas-grip: #2d6b98;
+  --shadow-lg: 0 4px 12px rgba(16,43,65,0.06), 0 24px 64px rgba(16,43,65,0.10);
+  --code-bg: rgba(45,107,152,0.10);
+}
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; font-family: 'Geist', system-ui, -apple-system, sans-serif; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; background: var(--bg); color: var(--text); }
+a { color: inherit; text-decoration: none; }
+button { font-family: inherit; cursor: pointer; border: none; background: none; padding: 0; color: inherit; }
+html { scroll-behavior: smooth; }
+
+@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+@keyframes pulseDot { 0%, 100% { opacity: 0.4; transform: scale(1); } 50% { opacity: 1; transform: scale(1.2); } }
+@keyframes scan { 0% { transform: translateY(0); opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { transform: translateY(220px); opacity: 0; } }
+</style>
+</helmet>
+
+<div data-theme="{{ theme }}" style="background:var(--bg); color:var(--text); min-height:100vh; transition: background 200ms ease, color 200ms ease;">
+
+<!-- ============ NAV ============ -->
+<nav style="position:sticky; top:0; z-index:50; background:color-mix(in srgb, var(--bg) 80%, transparent); border-bottom:1px solid var(--border-soft); backdrop-filter:saturate(1.4) blur(12px); -webkit-backdrop-filter:saturate(1.4) blur(12px);">
+  <div style="max-width:1280px; margin:0 auto; padding:14px 32px; display:flex; align-items:center; justify-content:space-between; gap:24px;">
+    <a href="#top" style="display:flex; align-items:center; gap:10px; font-weight:600; color:var(--text);">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style="color:var(--accent);">
+        <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.4"/>
+        <path d="M12 3 L14.4 11.6 L12 14 L9.6 11.6 Z" fill="currentColor"/>
+        <path d="M3 12 L11.6 9.6 L14 12 L11.6 14.4 Z" fill="currentColor" opacity="0.4"/>
+      </svg>
+      <span style="font-size:17px; letter-spacing:-0.01em;">Zephyr</span>
+      <span style="font-family:'Geist Mono'; font-size:10px; padding:2px 6px; border:1px solid var(--border); border-radius:4px; color:var(--text-3); margin-left:4px;">v0.1</span>
+    </a>
+    <div style="display:flex; gap:28px; font-size:14px; color:var(--text-2);">
+      <a href="#features" style-hover="color:var(--text);">Features</a>
+      <a href="#compatibility" style-hover="color:var(--text);">Compatibility</a>
+      <a href="#proof" style-hover="color:var(--text);">Proof</a>
+      <a href="#compare" style-hover="color:var(--text);">vs AutoCAD</a>
+      <a href="#opensource" style-hover="color:var(--text);">Open source</a>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center;">
+      <button onClick="{{ toggleTheme }}" aria-label="Toggle theme" style="width:34px; height:34px; border-radius:8px; border:1px solid var(--border); display:flex; align-items:center; justify-content:center; color:var(--text-2); background:transparent;" style-hover="color:var(--text); border-color:var(--border-strong);">
+        <sc-if value="{{ isDark }}" hint-placeholder-val="{{ true }}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        </sc-if>
+        <sc-if value="{{ isLight }}" hint-placeholder-val="{{ false }}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </sc-if>
+      </button>
+      <a href="https://github.com" style="display:flex; align-items:center; gap:6px; padding:7px 12px; border:1px solid var(--border); border-radius:8px; font-size:13px; color:var(--text-2); font-family:'Geist Mono';" style-hover="color:var(--text); border-color:var(--border-strong);">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span>1.2k</span>
+      </a>
+      <a href="#download" style="padding:8px 14px; background:var(--text); color:var(--bg); border-radius:8px; font-size:13px; font-weight:500;" style-hover="background:var(--accent); color:var(--navy);">Download</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ============ HERO ============ -->
+<section id="top" style="position:relative; padding:80px 32px 40px; overflow:hidden;">
+  <!-- dotted CAD grid backdrop -->
+  <div aria-hidden="true" style="position:absolute; inset:0; background-image: radial-gradient(circle, var(--border-strong) 1px, transparent 1px); background-size: 28px 28px; opacity:0.18; mask-image: radial-gradient(ellipse 70% 50% at center 30%, black, transparent 90%); -webkit-mask-image: radial-gradient(ellipse 70% 50% at center 30%, black, transparent 90%); pointer-events:none;"></div>
+  <!-- crosshair accent -->
+  <div aria-hidden="true" style="position:absolute; top:160px; left:8%; width:180px; height:180px; opacity:0.15; pointer-events:none;">
+    <svg viewBox="0 0 100 100" style="width:100%; height:100%;">
+      <line x1="50" y1="0" x2="50" y2="42" stroke="currentColor" stroke-width="0.5"/>
+      <line x1="50" y1="58" x2="50" y2="100" stroke="currentColor" stroke-width="0.5"/>
+      <line x1="0" y1="50" x2="42" y2="50" stroke="currentColor" stroke-width="0.5"/>
+      <line x1="58" y1="50" x2="100" y2="50" stroke="currentColor" stroke-width="0.5"/>
+      <circle cx="50" cy="50" r="14" stroke="currentColor" stroke-width="0.5" fill="none"/>
+    </svg>
+  </div>
+
+  <div style="max-width:1100px; margin:0 auto; text-align:center; position:relative;">
+    <div style="display:inline-flex; align-items:center; gap:10px; padding:6px 12px; border:1px solid var(--border); border-radius:100px; font-family:'Geist Mono'; font-size:11px; color:var(--text-2); margin-bottom:32px;">
+      <span style="width:6px; height:6px; border-radius:50%; background:var(--accent); animation: pulseDot 2s ease-in-out infinite;"></span>
+      <span>OPEN SOURCE · GPL v2 · 0.1 BETA</span>
+    </div>
+    <h1 style="font-size:104px; line-height:0.94; letter-spacing:-0.045em; margin:0 0 28px; font-weight:600; text-wrap:balance;">
+      Native 2D CAD.<br>
+      <span style="color:var(--text-2);">Mac. Windows.</span>
+      <span style="font-family:'Instrument Serif', Georgia, serif; font-style:italic; font-weight:400; color:var(--accent); letter-spacing:-0.02em;">Free.</span>
+    </h1>
+    <p style="font-size:21px; line-height:1.45; max-width:660px; margin:0 auto; color:var(--text-2); text-wrap:balance;">
+      Zephyr is a GPU‑accelerated drafting app written from scratch in Swift. Metal on macOS, Direct3D&nbsp;12 on Windows. Reads DWG. Costs nothing.
+    </p>
+    <div style="display:flex; gap:10px; justify-content:center; margin-top:40px; flex-wrap:wrap;">
+      <a href="#download" style="display:inline-flex; align-items:center; gap:10px; padding:14px 22px; background:var(--text); color:var(--bg); border-radius:10px; font-size:15px; font-weight:500;" style-hover="background:var(--accent); color:var(--navy);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+        Download for Mac
+      </a>
+      <a href="#download" style="display:inline-flex; align-items:center; gap:10px; padding:14px 22px; background:transparent; color:var(--text); border:1px solid var(--border-strong); border-radius:10px; font-size:15px; font-weight:500;" style-hover="background:var(--bg-elev); border-color:var(--text);">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5L10.5 4.5v7H3v-6zM11.5 4.4L21 3v8.5h-9.5v-7.1zM3 12.5h7.5v7L3 18.5v-6zM11.5 12.5H21V21l-9.5-1.4v-7.1z"/></svg>
+        Download for Windows
+      </a>
+      <a href="https://github.com" style="display:inline-flex; align-items:center; gap:8px; padding:14px 18px; color:var(--text-2); font-size:14px;" style-hover="color:var(--text);">
+        View source on GitHub
+        <span style="display:inline-block;">→</span>
+      </a>
+    </div>
+    <div style="display:flex; gap:20px; justify-content:center; margin-top:36px; font-family:'Geist Mono'; font-size:11px; color:var(--text-3); flex-wrap:wrap;">
+      <span>macOS 13+ · Apple silicon &amp; Intel</span>
+      <span style="opacity:0.4;">·</span>
+      <span>Windows 10+ · x64 &amp; ARM64</span>
+      <span style="opacity:0.4;">·</span>
+      <span>~14 MB download</span>
+    </div>
+  </div>
+
+  <!-- ============ PRODUCT MOCK ============ -->
+  <div style="max-width:1240px; margin:80px auto 0; position:relative;">
+    <div style="background:var(--bg-elev); border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow: var(--shadow-lg);">
+      <!-- title bar -->
+      <div style="height:38px; background:var(--bg-panel); border-bottom:1px solid var(--border-soft); display:flex; align-items:center; padding:0 14px; gap:8px;">
+        <div style="display:flex; gap:8px;">
+          <span style="width:12px; height:12px; border-radius:50%; background:#ff5f57;"></span>
+          <span style="width:12px; height:12px; border-radius:50%; background:#febc2e;"></span>
+          <span style="width:12px; height:12px; border-radius:50%; background:#28c840;"></span>
+        </div>
+        <div style="flex:1; text-align:center; font-size:12px; color:var(--text-2); font-family:'Geist Mono';">Zephyr — sterling_house.dxf</div>
+        <div style="width:54px;"></div>
+      </div>
+      <!-- tab bar -->
+      <div style="height:34px; background:var(--bg); border-bottom:1px solid var(--border-soft); display:flex; align-items:center; padding:0 12px; gap:2px;">
+        <div style="padding:6px 14px; background:var(--bg-elev); border-radius:6px 6px 0 0; font-size:12px; color:var(--text); border-bottom:2px solid var(--accent); margin-bottom:-1px; font-family:'Geist Mono';">sterling_house.dxf</div>
+        <div style="padding:6px 14px; font-size:12px; color:var(--text-3); font-family:'Geist Mono';">site_plan.dwg</div>
+        <div style="padding:6px 14px; font-size:12px; color:var(--text-3); font-family:'Geist Mono';">elevations.dxf</div>
+        <div style="padding:6px 10px; font-size:14px; color:var(--text-3);">+</div>
+      </div>
+      <!-- body -->
+      <div style="display:grid; grid-template-columns: 232px 1fr; min-height:560px;">
+        <!-- layers panel -->
+        <aside style="border-right:1px solid var(--border-soft); padding:14px 12px; background:var(--bg-panel); display:flex; flex-direction:column; gap:2px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:0 4px 12px;">
+            <span style="font-size:11px; font-family:'Geist Mono'; color:var(--text-3); letter-spacing:0.06em;">▾ LAYERS</span>
+            <span style="font-size:11px; color:var(--text-3);">+</span>
+          </div>
+          <sc-for list="{{ layers }}" as="layer" hint-placeholder-count="10">
+            <div style="display:flex; align-items:center; gap:8px; padding:5px 6px; border-radius:4px; font-size:11px; font-family:'Geist Mono'; color:var(--text-2);" style-hover="background:var(--bg-elev);">
+              <span style="font-size:9px;">👁</span>
+              <span style="width:11px; height:11px; border-radius:2px; background:{{ layer.color }}; flex-shrink:0;"></span>
+              <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ layer.name }}</span>
+              <span style="color:var(--text-3); font-size:10px;">{{ layer.count }}</span>
+            </div>
+          </sc-for>
+        </aside>
+        <!-- canvas -->
+        <div style="position:relative; background:var(--canvas); overflow:hidden;">
+          <!-- faint grid -->
+          <div aria-hidden="true" style="position:absolute; inset:0; background-image: linear-gradient(var(--border-soft) 1px, transparent 1px), linear-gradient(90deg, var(--border-soft) 1px, transparent 1px); background-size: 40px 40px; opacity:0.6;"></div>
+          <!-- floorplan svg -->
+          <svg viewBox="0 0 820 540" preserveAspectRatio="xMidYMid meet" style="position:absolute; inset:0; width:100%; height:100%;">
+            <!-- top dimension chain -->
+            <g stroke="var(--canvas-dim)" stroke-width="0.6" fill="none">
+              <line x1="80" y1="50" x2="740" y2="50"/>
+              <line x1="80" y1="46" x2="80" y2="54"/>
+              <line x1="290" y1="46" x2="290" y2="54"/>
+              <line x1="500" y1="46" x2="500" y2="54"/>
+              <line x1="740" y1="46" x2="740" y2="54"/>
+              <line x1="80" y1="50" x2="80" y2="92"/>
+              <line x1="290" y1="50" x2="290" y2="92"/>
+              <line x1="500" y1="50" x2="500" y2="92"/>
+              <line x1="740" y1="50" x2="740" y2="92"/>
+            </g>
+            <g fill="var(--canvas-dim)" font-family="Geist Mono" font-size="9" text-anchor="middle">
+              <text x="185" y="42">22'-0"</text>
+              <text x="395" y="42">20'-0"</text>
+              <text x="620" y="42">24'-0"</text>
+            </g>
+            <!-- left dim chain -->
+            <g stroke="var(--canvas-dim)" stroke-width="0.6" fill="none">
+              <line x1="50" y1="90" x2="50" y2="450"/>
+              <line x1="46" y1="90" x2="54" y2="90"/>
+              <line x1="46" y1="270" x2="54" y2="270"/>
+              <line x1="46" y1="450" x2="54" y2="450"/>
+              <line x1="50" y1="90" x2="80" y2="90"/>
+              <line x1="50" y1="270" x2="80" y2="270"/>
+              <line x1="50" y1="450" x2="80" y2="450"/>
+            </g>
+            <g fill="var(--canvas-dim)" font-family="Geist Mono" font-size="9" text-anchor="middle" transform="rotate(-90)">
+              <text x="-180" y="42">14'-0"</text>
+              <text x="-360" y="42">15'-0"</text>
+            </g>
+            <!-- outer walls (double) -->
+            <g stroke="var(--canvas-line)" stroke-width="1.3" fill="none">
+              <rect x="80" y="90" width="660" height="360"/>
+              <rect x="88" y="98" width="644" height="344"/>
+            </g>
+            <!-- internal walls -->
+            <g stroke="var(--canvas-line)" stroke-width="1.1" fill="none">
+              <line x1="290" y1="98" x2="290" y2="270"/>
+              <line x1="290" y1="270" x2="732" y2="270"/>
+              <line x1="500" y1="270" x2="500" y2="442"/>
+              <line x1="290" y1="270" x2="290" y2="442"/>
+              <!-- bath partition -->
+              <line x1="200" y1="170" x2="282" y2="170"/>
+              <line x1="200" y1="170" x2="200" y2="270"/>
+            </g>
+            <!-- door swings -->
+            <g stroke="var(--canvas-dim)" stroke-width="0.7" fill="none">
+              <path d="M 250 270 A 32 32 0 0 1 282 238"/>
+              <line x1="250" y1="270" x2="282" y2="270" stroke-dasharray="2,2"/>
+              <path d="M 390 270 A 32 32 0 0 0 358 238"/>
+              <line x1="358" y1="270" x2="390" y2="270" stroke-dasharray="2,2"/>
+              <path d="M 290 380 A 28 28 0 0 1 318 408"/>
+              <path d="M 500 380 A 28 28 0 0 0 472 408"/>
+            </g>
+            <!-- fixtures (simplified) -->
+            <g stroke="var(--canvas-dim)" stroke-width="0.6" fill="none">
+              <rect x="108" y="110" width="60" height="24" rx="2"/>
+              <circle cx="225" cy="195" r="10"/>
+              <rect x="210" y="220" width="40" height="20" rx="3"/>
+              <rect x="608" y="290" width="48" height="22" rx="2"/>
+              <circle cx="688" cy="306" r="10"/>
+              <rect x="540" y="404" width="60" height="22" rx="2"/>
+            </g>
+            <!-- room labels -->
+            <g fill="var(--canvas-line)" font-family="Geist Mono" font-size="10" text-anchor="middle">
+              <text x="180" y="178">MASTER BDRM</text>
+              <text x="180" y="192" fill="var(--canvas-dim)" font-size="8">13'-8" × 14'-0"</text>
+              <text x="510" y="178">GREAT ROOM</text>
+              <text x="510" y="192" fill="var(--canvas-dim)" font-size="8">17'-0" × 17'-8"</text>
+              <text x="180" y="360">BEDROOM 2</text>
+              <text x="180" y="374" fill="var(--canvas-dim)" font-size="8">13'-6" × 11'-0"</text>
+              <text x="395" y="360">KITCHEN</text>
+              <text x="395" y="374" fill="var(--canvas-dim)" font-size="8">10'-11" × 12'-0"</text>
+              <text x="616" y="360">DINING</text>
+              <text x="616" y="374" fill="var(--canvas-dim)" font-size="8">13'-4" × 12'-8"</text>
+              <text x="240" y="220" font-size="8">BATH</text>
+            </g>
+            <!-- red highlight (selected walls) -->
+            <g stroke="var(--canvas-red)" stroke-width="2.6" fill="none" stroke-linecap="square">
+              <line x1="88" y1="98" x2="200" y2="98"/>
+              <line x1="540" y1="442" x2="700" y2="442"/>
+              <line x1="80" y1="270" x2="200" y2="270"/>
+            </g>
+            <!-- selection grips -->
+            <g fill="var(--canvas-grip)">
+              <rect x="78" y="88" width="4" height="4"/>
+              <rect x="288" y="88" width="4" height="4"/>
+              <rect x="498" y="88" width="4" height="4"/>
+              <rect x="738" y="88" width="4" height="4"/>
+              <rect x="78" y="268" width="4" height="4"/>
+              <rect x="288" y="268" width="4" height="4"/>
+              <rect x="498" y="268" width="4" height="4"/>
+              <rect x="738" y="268" width="4" height="4"/>
+              <rect x="78" y="448" width="4" height="4"/>
+              <rect x="288" y="448" width="4" height="4"/>
+              <rect x="498" y="448" width="4" height="4"/>
+              <rect x="738" y="448" width="4" height="4"/>
+            </g>
+            <!-- crosshair cursor -->
+            <g stroke="var(--accent)" stroke-width="0.8" fill="none">
+              <line x1="395" y1="260" x2="395" y2="284"/>
+              <line x1="395" y1="296" x2="395" y2="320"/>
+              <line x1="368" y1="290" x2="389" y2="290"/>
+              <line x1="401" y1="290" x2="422" y2="290"/>
+              <rect x="389" y="284" width="12" height="12" fill="none"/>
+            </g>
+            <!-- snap tooltip -->
+            <g>
+              <rect x="410" y="296" width="92" height="22" rx="3" fill="var(--bg-elev)" stroke="var(--accent)" stroke-width="0.6"/>
+              <text x="416" y="311" fill="var(--text)" font-family="Geist Mono" font-size="9">ENDPOINT · 290,270</text>
+            </g>
+          </svg>
+          <!-- title watermark -->
+          <div style="position:absolute; bottom:64px; left:0; right:0; text-align:center; font-family:'Geist Mono'; font-size:36px; letter-spacing:0.4em; color:var(--canvas-line); opacity:0.35; pointer-events:none; font-weight:300;">FLOOR PLAN</div>
+          <!-- radial navigation -->
+          <div style="position:absolute; right:28px; top:50%; transform:translateY(-50%); width:124px; height:124px; pointer-events:none;">
+            <svg viewBox="0 0 124 124" style="width:100%; height:100%;">
+              <circle cx="62" cy="62" r="58" stroke="var(--accent)" stroke-width="1.2" fill="var(--bg-elev)" opacity="0.92"/>
+              <circle cx="62" cy="62" r="20" stroke="var(--accent)" stroke-width="0.8" fill="none"/>
+              <line x1="62" y1="4" x2="62" y2="42" stroke="var(--accent)" stroke-width="0.6"/>
+              <line x1="62" y1="82" x2="62" y2="120" stroke="var(--accent)" stroke-width="0.6"/>
+              <line x1="4" y1="62" x2="42" y2="62" stroke="var(--accent)" stroke-width="0.6"/>
+              <line x1="82" y1="62" x2="120" y2="62" stroke="var(--accent)" stroke-width="0.6"/>
+              <text x="62" y="22" fill="var(--text-2)" font-family="Geist Mono" font-size="7" text-anchor="middle">0°</text>
+              <text x="62" y="36" fill="var(--text)" font-family="Geist Mono" font-size="9" text-anchor="middle">Fit</text>
+              <text x="62" y="68" fill="var(--text)" font-family="Geist Mono" font-size="9" text-anchor="middle">X</text>
+              <text x="22" y="65" fill="var(--text-2)" font-family="Geist Mono" font-size="7" text-anchor="middle">Z−</text>
+              <text x="102" y="65" fill="var(--text-2)" font-family="Geist Mono" font-size="7" text-anchor="middle">Z+</text>
+              <text x="62" y="94" fill="var(--text)" font-family="Geist Mono" font-size="9" text-anchor="middle">Pan</text>
+              <text x="62" y="112" fill="var(--text-2)" font-family="Geist Mono" font-size="7" text-anchor="middle">180°</text>
+            </svg>
+          </div>
+          <!-- command palette hint -->
+          <div style="position:absolute; left:24px; bottom:42px; background:var(--bg-elev); border:1px solid var(--border); border-radius:6px; padding:6px 10px; font-family:'Geist Mono'; font-size:11px; color:var(--text); display:flex; align-items:center; gap:6px; box-shadow: 0 2px 12px rgba(0,0,0,0.2);">
+            <span style="color:var(--accent);">›</span>
+            <span>MEASUREGEOM</span>
+            <span style="display:inline-block; width:6px; height:12px; background:var(--accent); animation:blink 1s steps(1) infinite;"></span>
+          </div>
+          <!-- status bar -->
+          <div style="position:absolute; bottom:0; left:0; right:0; height:24px; background:var(--bg-elev); border-top:1px solid var(--border-soft); padding:0 14px; font-family:'Geist Mono'; font-size:10px; color:var(--text-2); display:flex; align-items:center; gap:14px;">
+            <span style="color:var(--text);">sterling_house.dxf</span>
+            <span style="opacity:0.4;">·</span>
+            <span>Layer 0</span>
+            <span style="opacity:0.4;">·</span>
+            <span>Entities: 967</span>
+            <span style="opacity:0.4;">·</span>
+            <span>POLAR(45°)</span>
+            <span style="opacity:0.4;">·</span>
+            <span>OTRACK</span>
+            <span style="opacity:0.4;">·</span>
+            <span>EXT</span>
+            <span style="margin-left:auto;">12.450, 8.328</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- floating fps badge -->
+    <div style="position:absolute; top:-14px; right:32px; background:var(--accent); color:var(--navy); padding:6px 12px; border-radius:6px; font-family:'Geist Mono'; font-size:11px; font-weight:500; box-shadow: 0 4px 12px rgba(224,171,54,0.4);">
+      120 FPS · GPU
+    </div>
+  </div>
+</section>
+
+<!-- ============ TRUST STRIP ============ -->
+<section style="padding:60px 32px; border-top:1px solid var(--border-soft); border-bottom:1px solid var(--border-soft); background:var(--bg-elev);">
+  <div style="max-width:1100px; margin:0 auto;">
+    <div style="text-align:center; font-family:'Geist Mono'; font-size:11px; color:var(--text-3); letter-spacing:0.16em; margin-bottom:36px;">BUILT NATIVE FOR EVERY PLATFORM YOU SHIP ON</div>
+    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:32px;">
+      <div style="text-align:center;">
+        <div style="font-size:42px; font-weight:600; letter-spacing:-0.03em; color:var(--accent);">$0</div>
+        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">vs $70/mo AutoCAD LT</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:42px; font-weight:600; letter-spacing:-0.03em; color:var(--text);">967</div>
+        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">entities, instant render</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:42px; font-weight:600; letter-spacing:-0.03em; color:var(--text);">9×9</div>
+        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">pixel‑perfect GPU picking</div>
+      </div>
+      <div style="text-align:center;">
+        <div style="font-size:42px; font-weight:600; letter-spacing:-0.03em; color:var(--text);">256</div>
+        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">undo depth</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ NATIVE SECTION ============ -->
+<section id="features" style="padding:120px 32px;">
+  <div style="max-width:1100px; margin:0 auto;">
+    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">01 · BUILT FOR THE METAL</div>
+    <h2 style="font-size:56px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:880px; text-wrap:balance;">
+      Stop waiting on QCAD. Stop paying AutoCAD.
+    </h2>
+    <p style="font-size:18px; line-height:1.5; max-width:680px; color:var(--text-2); margin:0 0 64px;">
+      Most cross‑platform CAD is Qt running on top of OpenGL pretending to be modern. Zephyr uses Direct3D 12 on Windows and Metal on macOS through a single Swift GPU pipeline — so it actually feels native on both.
+    </p>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1px; background:var(--border-soft); border:1px solid var(--border-soft); border-radius:14px; overflow:hidden;">
+      <!-- mac card -->
+      <div style="background:var(--bg-elev); padding:36px;">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="var(--text)"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+          <div style="font-size:20px; font-weight:600;">macOS</div>
+        </div>
+        <div style="font-family:'Geist Mono'; font-size:13px; color:var(--text-2); margin-bottom:24px;">Metal · MetalKit · SwiftUI menu bar</div>
+        <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; font-size:14px; color:var(--text-2);">
+          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Universal binary, Apple silicon native</li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Real Cmd shortcuts, real trackpad gestures</li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> High DPI on every external display</li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Files app, Quick Look, drag‑and‑drop</li>
+        </ul>
+      </div>
+      <!-- win card -->
+      <div style="background:var(--bg-elev); padding:36px;">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="var(--text)"><path d="M3 5.5L10.5 4.5v7H3v-6zM11.5 4.4L21 3v8.5h-9.5v-7.1zM3 12.5h7.5v7L3 18.5v-6zM11.5 12.5H21V21l-9.5-1.4v-7.1z"/></svg>
+          <div style="font-size:20px; font-weight:600;">Windows</div>
+        </div>
+        <div style="font-family:'Geist Mono'; font-size:13px; color:var(--text-2); margin-bottom:24px;">Direct3D 12 · SDL3 GPU · x64 + ARM64</div>
+        <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; font-size:14px; color:var(--text-2);">
+          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Native ARM64 — runs natively on Snapdragon &amp; Surface</li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> No .NET install, no Visual C++ runtime</li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Single signed .exe, ~14 MB</li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Per‑monitor DPI, multi‑display ready</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CLEAN SPECKLES ============ -->
+<section style="padding:120px 32px; background:var(--bg-elev); border-top:1px solid var(--border-soft); border-bottom:1px solid var(--border-soft);">
+  <div style="max-width:1180px; margin:0 auto;">
+    <div style="display:grid; grid-template-columns: 1fr 1.1fr; gap:80px; align-items:center;">
+      <div>
+        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">02 · CLEAN SPECKLES</div>
+        <h2 style="font-size:48px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; text-wrap:balance;">
+          The dirty‑DXF janitor you've always wanted.
+        </h2>
+        <p style="font-size:17px; line-height:1.55; color:var(--text-2); margin:0 0 24px;">
+          Scanned a paper drawing? Imported a forty‑year‑old DXF? You know the speckles — tiny stray dots and dashes scattered through the geometry.
+        </p>
+        <p style="font-size:17px; line-height:1.55; color:var(--text-2); margin:0 0 32px;">
+          Point Zephyr at one. It learns the color and size signature, finds every match across the drawing, and lets you erase them in one motion. <span style="color:var(--text); font-weight:500;">No regex. No script. No half‑day cleanup.</span>
+        </p>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <button onClick="{{ toggleSpeckles }}" style="padding:10px 18px; background:var(--accent); color:var(--navy); border-radius:8px; font-size:14px; font-weight:500;" style-hover="background:var(--accent-2);">
+            <sc-if value="{{ specklesActive }}" hint-placeholder-val="{{ false }}">Restore speckles</sc-if>
+            <sc-if value="{{ specklesInactive }}" hint-placeholder-val="{{ true }}">Try it — CS</sc-if>
+          </button>
+          <span style="font-family:'Geist Mono'; font-size:12px; color:var(--text-3);">command: <span style="color:var(--text-2);">CS</span> or <span style="color:var(--text-2);">SPECKLES</span></span>
+        </div>
+      </div>
+      <!-- demo card -->
+      <div style="background:var(--canvas); border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow: var(--shadow-lg); position:relative;">
+        <div style="height:34px; background:var(--bg-panel); border-bottom:1px solid var(--border-soft); display:flex; align-items:center; gap:8px; padding:0 12px;">
+          <span style="width:10px; height:10px; border-radius:50%; background:#ff5f57;"></span>
+          <span style="width:10px; height:10px; border-radius:50%; background:#febc2e;"></span>
+          <span style="width:10px; height:10px; border-radius:50%; background:#28c840;"></span>
+          <div style="flex:1; text-align:center; font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">survey_2018.dxf · selecting matches</div>
+        </div>
+        <div style="position:relative; height:380px;">
+          <svg viewBox="0 0 560 380" style="position:absolute; inset:0; width:100%; height:100%;">
+            <!-- main lines (real geometry) -->
+            <g stroke="var(--canvas-line)" stroke-width="1.2" fill="none">
+              <path d="M 60 80 L 500 80 L 500 320 L 60 320 Z"/>
+              <path d="M 60 200 L 500 200"/>
+              <path d="M 280 80 L 280 320"/>
+              <path d="M 120 80 L 120 200"/>
+              <path d="M 400 200 L 400 320"/>
+            </g>
+            <g stroke="var(--canvas-dim)" stroke-width="0.6" fill="none">
+              <line x1="60" y1="50" x2="500" y2="50"/>
+              <line x1="60" y1="46" x2="60" y2="54"/>
+              <line x1="280" y1="46" x2="280" y2="54"/>
+              <line x1="500" y1="46" x2="500" y2="54"/>
+            </g>
+            <text x="170" y="42" fill="var(--canvas-dim)" font-family="Geist Mono" font-size="9" text-anchor="middle">18'-4"</text>
+            <text x="390" y="42" fill="var(--canvas-dim)" font-family="Geist Mono" font-size="9" text-anchor="middle">18'-4"</text>
+            <text x="170" y="150" fill="var(--canvas-line)" font-family="Geist Mono" font-size="11" text-anchor="middle">ROOM A</text>
+            <text x="390" y="150" fill="var(--canvas-line)" font-family="Geist Mono" font-size="11" text-anchor="middle">ROOM B</text>
+            <text x="170" y="270" fill="var(--canvas-line)" font-family="Geist Mono" font-size="11" text-anchor="middle">ROOM C</text>
+            <text x="450" y="270" fill="var(--canvas-line)" font-family="Geist Mono" font-size="11" text-anchor="middle">ROOM D</text>
+
+            <!-- speckles -->
+            <g fill="var(--canvas-red)" style="transition: opacity 600ms ease; opacity: {{ speckleOpacity }};">
+              <circle cx="92" cy="124" r="1.4"/>
+              <circle cx="156" cy="98" r="1.2"/>
+              <circle cx="218" cy="156" r="1.6"/>
+              <circle cx="84" cy="186" r="1.1"/>
+              <circle cx="244" cy="184" r="1.3"/>
+              <circle cx="332" cy="112" r="1.5"/>
+              <circle cx="404" cy="142" r="1.2"/>
+              <circle cx="466" cy="108" r="1.4"/>
+              <circle cx="356" cy="172" r="1.3"/>
+              <circle cx="438" cy="186" r="1.5"/>
+              <circle cx="102" cy="232" r="1.3"/>
+              <circle cx="174" cy="284" r="1.4"/>
+              <circle cx="232" cy="248" r="1.2"/>
+              <circle cx="86" cy="304" r="1.5"/>
+              <circle cx="244" cy="306" r="1.3"/>
+              <circle cx="332" cy="252" r="1.4"/>
+              <circle cx="392" cy="294" r="1.2"/>
+              <circle cx="448" cy="246" r="1.5"/>
+              <circle cx="476" cy="292" r="1.3"/>
+              <circle cx="142" cy="246" r="1.4"/>
+              <line x1="198" y1="116" x2="206" y2="118" stroke="var(--canvas-red)" stroke-width="0.8"/>
+              <line x1="364" y1="232" x2="372" y2="234" stroke="var(--canvas-red)" stroke-width="0.8"/>
+              <line x1="118" y1="266" x2="124" y2="262" stroke="var(--canvas-red)" stroke-width="0.8"/>
+              <line x1="420" y1="116" x2="426" y2="120" stroke="var(--canvas-red)" stroke-width="0.8"/>
+            </g>
+            <!-- selection halos when active -->
+            <g fill="none" stroke="var(--accent)" stroke-width="0.8" style="transition: opacity 400ms ease; opacity: {{ haloOpacity }};">
+              <circle cx="92" cy="124" r="5"/>
+              <circle cx="156" cy="98" r="5"/>
+              <circle cx="218" cy="156" r="5"/>
+              <circle cx="84" cy="186" r="5"/>
+              <circle cx="244" cy="184" r="5"/>
+              <circle cx="332" cy="112" r="5"/>
+              <circle cx="404" cy="142" r="5"/>
+              <circle cx="466" cy="108" r="5"/>
+              <circle cx="356" cy="172" r="5"/>
+              <circle cx="438" cy="186" r="5"/>
+              <circle cx="102" cy="232" r="5"/>
+              <circle cx="174" cy="284" r="5"/>
+              <circle cx="232" cy="248" r="5"/>
+              <circle cx="86" cy="304" r="5"/>
+              <circle cx="244" cy="306" r="5"/>
+              <circle cx="332" cy="252" r="5"/>
+              <circle cx="392" cy="294" r="5"/>
+              <circle cx="448" cy="246" r="5"/>
+              <circle cx="476" cy="292" r="5"/>
+              <circle cx="142" cy="246" r="5"/>
+            </g>
+          </svg>
+          <!-- toolbar overlay -->
+          <div style="position:absolute; top:14px; left:14px; display:flex; gap:6px; font-family:'Geist Mono'; font-size:10px;">
+            <div style="background:var(--bg-elev); border:1px solid var(--border); padding:4px 8px; border-radius:4px; color:var(--text-2);">SAMPLE: <span style="color:var(--canvas-red);">●</span> red · 1.5pt</div>
+            <div style="background:var(--bg-elev); border:1px solid var(--border); padding:4px 8px; border-radius:4px; color:var(--text-2);">MATCHES: <span style="color:var(--accent);">{{ matchCount }}</span></div>
+          </div>
+          <div style="position:absolute; bottom:14px; right:14px; background:var(--bg-elev); border:1px solid var(--border); padding:8px 12px; border-radius:6px; font-family:'Geist Mono'; font-size:11px; color:var(--text); display:flex; gap:10px; align-items:center;">
+            <span style="color:var(--text-3);">›</span><span>{{ specklesPrompt }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ COMPATIBILITY ============ -->
+<section id="compatibility" style="padding:120px 32px;">
+  <div style="max-width:1100px; margin:0 auto;">
+    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">03 · COMPATIBILITY</div>
+    <h2 style="font-size:56px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:880px; text-wrap:balance;">
+      Opens the files everyone else hands you.
+    </h2>
+    <p style="font-size:18px; line-height:1.5; max-width:680px; color:var(--text-2); margin:0 0 64px;">
+      DWG and DXF — round‑trip ready, including blocks, layers, hatches, splines/NURBS, and polylines with bulge. PDF export ships a Bluebeam‑compatible Measurement dictionary so dimensions survive the handoff.
+    </p>
+    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:16px;">
+      <div style="border:1px solid var(--border-soft); border-radius:12px; padding:24px; background:var(--bg-elev);">
+        <div style="font-family:'Geist Mono'; font-size:32px; font-weight:500; letter-spacing:-0.02em;">DWG</div>
+        <div style="display:flex; gap:6px; margin-top:8px; margin-bottom:18px;">
+          <span style="font-family:'Geist Mono'; font-size:10px; padding:2px 7px; background:var(--accent); color:var(--navy); border-radius:3px;">IMPORT</span>
+        </div>
+        <div style="font-size:13px; color:var(--text-2); line-height:1.5;">Full read via libdxfrw bridge. All entity types, blocks, layers, text styles, hatches.</div>
+      </div>
+      <div style="border:1px solid var(--border-soft); border-radius:12px; padding:24px; background:var(--bg-elev);">
+        <div style="font-family:'Geist Mono'; font-size:32px; font-weight:500; letter-spacing:-0.02em;">DXF</div>
+        <div style="display:flex; gap:6px; margin-top:8px; margin-bottom:18px;">
+          <span style="font-family:'Geist Mono'; font-size:10px; padding:2px 7px; background:var(--accent); color:var(--navy); border-radius:3px;">IMPORT</span>
+          <span style="font-family:'Geist Mono'; font-size:10px; padding:2px 7px; background:var(--accent); color:var(--navy); border-radius:3px;">EXPORT</span>
+        </div>
+        <div style="font-size:13px; color:var(--text-2); line-height:1.5;">R2007 round‑trip. Dimensions, splines, hatches, leaders — all preserved.</div>
+      </div>
+      <div style="border:1px solid var(--border-soft); border-radius:12px; padding:24px; background:var(--bg-elev);">
+        <div style="font-family:'Geist Mono'; font-size:32px; font-weight:500; letter-spacing:-0.02em;">PDF</div>
+        <div style="display:flex; gap:6px; margin-top:8px; margin-bottom:18px;">
+          <span style="font-family:'Geist Mono'; font-size:10px; padding:2px 7px; background:var(--accent); color:var(--navy); border-radius:3px;">EXPORT</span>
+        </div>
+        <div style="font-size:13px; color:var(--text-2); line-height:1.5;">Vector PDF 1.7 with Bluebeam Revu‑compatible Measurement dictionary.</div>
+      </div>
+      <div style="border:1px solid var(--border-soft); border-radius:12px; padding:24px; background:var(--bg-elev);">
+        <div style="font-family:'Geist Mono'; font-size:32px; font-weight:500; letter-spacing:-0.02em;">EAB</div>
+        <div style="display:flex; gap:6px; margin-top:8px; margin-bottom:18px;">
+          <span style="font-family:'Geist Mono'; font-size:10px; padding:2px 7px; background:var(--accent); color:var(--navy); border-radius:3px;">IMPORT</span>
+          <span style="font-family:'Geist Mono'; font-size:10px; padding:2px 7px; background:var(--accent); color:var(--navy); border-radius:3px;">EXPORT</span>
+        </div>
+        <div style="font-size:13px; color:var(--text-2); line-height:1.5;">Fast native binary. BVH spatial index, zstd compression, viewport‑culled partial loads.</div>
+      </div>
+    </div>
+    <div style="margin-top:32px; padding:20px 24px; background:var(--bg-elev); border:1px solid var(--border-soft); border-radius:10px; display:flex; align-items:center; gap:16px; font-size:14px; color:var(--text-2);">
+      <span style="width:6px; height:6px; border-radius:50%; background:var(--accent); flex-shrink:0;"></span>
+      <span><span style="color:var(--text); font-weight:500;">SHX vector text included.</span> Full shape‑font byte‑code interpreter — AutoCAD .shx files render as pure vectors at any zoom. Bitmap text degradation is a problem from 2009.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PROOF / DXF DUEL ============ -->
+<section id="proof" style="padding:120px 32px; border-top:1px solid var(--border-soft);">
+  <div style="max-width:1380px; margin:0 auto;">
+    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">04 · PROOF</div>
+    <h2 style="font-size:56px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:980px; text-wrap:balance;">
+      Same file. Two apps.<br>
+      <span style="color:var(--text-2);">One actually opens it.</span>
+    </h2>
+    <p style="font-size:18px; line-height:1.5; max-width:720px; color:var(--text-2); margin:0 0 24px;">
+      Same DXF — <span style="font-family:'Geist Mono'; font-size:15px; color:var(--text);">186‑841 — Pirate Ship.dxf</span>, a 3,734‑entity drawing from KOMPAN's public library. Same machine. Same operation: File → Open → Fit to view.
+    </p>
+    <div style="display:flex; gap:14px; flex-wrap:wrap; font-family:'Geist Mono'; font-size:11px; color:var(--text-3); margin:0 0 48px;">
+      <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:var(--accent);"></span> Zephyr 0.1</span>
+      <span style="opacity:0.4;">·</span>
+      <span>LibreCAD 2.2.1.5</span>
+      <span style="opacity:0.4;">·</span>
+      <span>June 2026 builds</span>
+    </div>
+
+    <!-- example switcher -->
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <sc-for list="{{ proofExamples }}" as="ex" hint-placeholder-count="2">
+          <button onClick="{{ ex.select }}" style="display:flex; align-items:center; gap:10px; padding:10px 16px; border-radius:8px; border:1px solid {{ ex.borderColor }}; background:{{ ex.bgColor }}; color:{{ ex.textColor }}; font-size:13px; font-family:'Geist Mono'; cursor:pointer; transition: border-color 200ms, background 200ms, color 200ms;">
+            <span style="font-size:11px; color:{{ ex.tagColor }};">{{ ex.tag }}</span>
+            <span style="font-family:'Geist', system-ui, sans-serif; font-size:14px; font-weight:500;">{{ ex.title }}</span>
+          </button>
+        </sc-for>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">{{ proofPositionLabel }}</div>
+        <button onClick="{{ proofPrev }}" aria-label="Previous example" style="width:36px; height:36px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text-2); display:flex; align-items:center; justify-content:center;" style-hover="border-color:var(--text); color:var(--text);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <button onClick="{{ proofNext }}" aria-label="Next example" style="width:36px; height:36px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text-2); display:flex; align-items:center; justify-content:center;" style-hover="border-color:var(--text); color:var(--text);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- slider viewport -->
+    <div style="overflow:hidden; border-radius:14px;">
+      <div style="display:flex; transform: translateX({{ proofTrackTranslate }}); transition: transform 480ms cubic-bezier(0.22, 0.61, 0.36, 1); width:100%;">
+        <sc-for list="{{ proofExamples }}" as="ex" hint-placeholder-count="0">
+          <div style="flex:0 0 100%; min-width:0;">
+            <!-- caption -->
+            <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
+              <div style="font-size:24px; font-weight:600; letter-spacing:-0.02em;">{{ ex.subhead }}</div>
+              <div style="font-size:14px; color:var(--text-2); line-height:1.5; max-width:720px;">{{ ex.caption }}</div>
+            </div>
+
+            <!-- two cards -->
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px; align-items:stretch;">
+
+              <!-- ZEPHYR -->
+              <div style="display:flex; flex-direction:column; gap:14px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="color:var(--accent);">
+                      <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.4"/>
+                      <path d="M12 3 L14.4 11.6 L12 14 L9.6 11.6 Z" fill="currentColor"/>
+                      <path d="M3 12 L11.6 9.6 L14 12 L11.6 14.4 Z" fill="currentColor" opacity="0.4"/>
+                    </svg>
+                    <div style="font-size:18px; font-weight:600; letter-spacing:-0.01em;">Zephyr 0.1</div>
+                    <div style="font-family:'Geist Mono'; font-size:11px; padding:2px 7px; background:rgba(67,198,106,0.15); color:#43c66a; border:1px solid rgba(67,198,106,0.35); border-radius:3px;">{{ ex.zephyrBadge }}</div>
+                  </div>
+                  <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">{{ ex.zephyrMetric }}</div>
+                </div>
+                <div style="border:1px solid var(--accent); border-radius:10px; overflow:hidden; box-shadow: 0 0 0 6px rgba(224,171,54,0.08), var(--shadow-lg); background:{{ ex.zephyrCanvasBg }}; position:relative; aspect-ratio: 16 / 9;">
+                  <img src="{{ ex.zephyrImg }}" alt="{{ ex.zephyrAlt }}" style="display:block; width:100%; height:100%; object-fit:cover; object-position:center;">
+                </div>
+                <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; font-size:13px; color:var(--text-2);">
+                  <sc-for list="{{ ex.zephyrPoints }}" as="pt" hint-placeholder-count="3">
+                    <li style="display:flex; gap:10px;"><span style="color:#43c66a; flex-shrink:0;">✓</span> <span>{{ pt }}</span></li>
+                  </sc-for>
+                </ul>
+              </div>
+
+              <!-- LIBRECAD -->
+              <div style="display:flex; flex-direction:column; gap:14px;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="9.5" stroke="var(--text-3)" stroke-width="1.4"/>
+                      <path d="M8 12 L11 15 L16 9" stroke="var(--text-3)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.5"/>
+                    </svg>
+                    <div style="font-size:18px; font-weight:600; letter-spacing:-0.01em; color:var(--text-2);">LibreCAD 2.2.1.5</div>
+                    <div style="font-family:'Geist Mono'; font-size:11px; padding:2px 7px; background:rgba(232,92,84,0.15); color:var(--canvas-red); border:1px solid rgba(232,92,84,0.35); border-radius:3px;">{{ ex.libreBadge }}</div>
+                  </div>
+                  <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">{{ ex.libreMetric }}</div>
+                </div>
+                <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden; box-shadow: var(--shadow-lg); background:{{ ex.libreCanvasBg }}; position:relative; aspect-ratio: 16 / 9;">
+                  <img src="{{ ex.libreImg }}" alt="{{ ex.libreAlt }}" style="display:block; width:100%; height:100%; object-fit:cover; object-position:center;">
+                  <sc-for list="{{ ex.callouts }}" as="co" hint-placeholder-count="3">
+                    <div style="position:absolute; left:{{ co.x }}; top:{{ co.y }}; font-family:'Geist Mono'; font-size:10px; color:#ffffff; background:var(--canvas-red); padding:3px 7px; border-radius:3px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); white-space:nowrap;">{{ co.text }}</div>
+                  </sc-for>
+                </div>
+                <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; font-size:13px; color:var(--text-2);">
+                  <sc-for list="{{ ex.librePoints }}" as="pt" hint-placeholder-count="3">
+                    <li style="display:flex; gap:10px;"><span style="color:var(--canvas-red); flex-shrink:0;">✕</span> <span>{{ pt }}</span></li>
+                  </sc-for>
+                </ul>
+              </div>
+
+            </div>
+
+            <!-- per-example why note -->
+            <div style="margin-top:32px; padding:20px 24px; background:var(--bg-elev); border:1px solid var(--border-soft); border-radius:10px; display:flex; align-items:flex-start; gap:16px; font-size:14px; color:var(--text-2); line-height:1.55;">
+              <span style="font-family:'Geist Mono'; font-size:11px; padding:3px 8px; background:var(--accent); color:var(--navy); border-radius:3px; flex-shrink:0; margin-top:2px;">WHY</span>
+              <span>{{ ex.why }}</span>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ WORKFLOW GRID ============ -->
+<section style="padding:120px 32px; background:var(--bg-elev); border-top:1px solid var(--border-soft); border-bottom:1px solid var(--border-soft);">
+  <div style="max-width:1180px; margin:0 auto;">
+    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">05 · WORKFLOW</div>
+    <h2 style="font-size:56px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:880px; text-wrap:balance;">
+      Classic shortcuts. Modern interface.
+    </h2>
+    <p style="font-size:18px; line-height:1.5; max-width:680px; color:var(--text-2); margin:0 0 64px;">
+      Every command you muscle‑memorized in AutoCAD still works — L, PL, C, REC, M, TR, J. New tools you'll wish you'd had.
+    </p>
+    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:1px; background:var(--border-soft); border:1px solid var(--border-soft); border-radius:14px; overflow:hidden;">
+      <sc-for list="{{ workflowCells }}" as="cell" hint-placeholder-count="9">
+        <div style="background:var(--bg); padding:32px; display:flex; flex-direction:column; gap:14px; min-height:200px;">
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">{{ cell.tag }}</div>
+          <div style="font-size:20px; font-weight:600; letter-spacing:-0.015em;">{{ cell.title }}</div>
+          <div style="font-size:14px; color:var(--text-2); line-height:1.5; flex:1;">{{ cell.body }}</div>
+          <div style="display:flex; gap:6px; font-family:'Geist Mono'; font-size:11px; color:var(--accent);">{{ cell.cmd }}</div>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</section>
+
+<!-- ============ COMPARISON ============ -->
+<section id="compare" style="padding:120px 32px;">
+  <div style="max-width:1100px; margin:0 auto;">
+    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">06 · HOW WE COMPARE</div>
+    <h2 style="font-size:56px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:880px; text-wrap:balance;">
+      You don't need a subscription. You don't need to compromise.
+    </h2>
+    <p style="font-size:18px; line-height:1.5; max-width:680px; color:var(--text-2); margin:0 0 56px;">
+      Honest table. We're not the right tool for every job — but for 2D drafting, here's the actual delta.
+    </p>
+    <div style="border:1px solid var(--border-soft); border-radius:14px; overflow:hidden; background:var(--bg-elev);">
+      <div style="display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; background:var(--bg-panel); border-bottom:1px solid var(--border-soft);">
+        <div style="padding:20px 24px; font-family:'Geist Mono'; font-size:11px; color:var(--text-3); letter-spacing:0.08em;">CAPABILITY</div>
+        <div style="padding:20px 24px; font-size:15px; font-weight:600; color:var(--accent); display:flex; align-items:center; gap:8px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="color:var(--accent);">
+            <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.4"/>
+            <path d="M12 3 L14.4 11.6 L12 14 L9.6 11.6 Z" fill="currentColor"/>
+          </svg>
+          Zephyr
+        </div>
+        <div style="padding:20px 24px; font-size:15px; font-weight:500; color:var(--text-2);">AutoCAD LT</div>
+        <div style="padding:20px 24px; font-size:15px; font-weight:500; color:var(--text-2);">QCAD / LibreCAD</div>
+      </div>
+      <sc-for list="{{ compareRows }}" as="row" hint-placeholder-count="10">
+        <div style="display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; border-top:1px solid var(--border-soft);">
+          <div style="padding:18px 24px; font-size:14px; color:var(--text);">{{ row.label }}</div>
+          <div style="padding:18px 24px; font-size:14px; color:var(--text); font-family:'Geist Mono';">{{ row.zephyr }}</div>
+          <div style="padding:18px 24px; font-size:14px; color:var(--text-2); font-family:'Geist Mono';">{{ row.autocad }}</div>
+          <div style="padding:18px 24px; font-size:14px; color:var(--text-2); font-family:'Geist Mono';">{{ row.qcad }}</div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="margin-top:16px; font-family:'Geist Mono'; font-size:11px; color:var(--text-3); text-align:center;">Pricing as of June 2026 · Autodesk &amp; QCAD are trademarks of their respective owners</div>
+  </div>
+</section>
+
+<!-- ============ OPEN SOURCE ============ -->
+<section id="opensource" style="padding:120px 32px; background:var(--navy); color:#f0f4f7; position:relative; overflow:hidden;">
+  <div aria-hidden="true" style="position:absolute; inset:0; background-image: radial-gradient(circle, rgba(74,138,184,0.4) 1px, transparent 1px); background-size: 32px 32px; opacity:0.4; mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%); -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);"></div>
+  <div style="max-width:1000px; margin:0 auto; position:relative; text-align:center;">
+    <div style="font-family:'Geist Mono'; font-size:11px; color:#e0ab36; letter-spacing:0.16em; margin-bottom:20px;">07 · FREE FOREVER</div>
+    <h2 style="font-size:72px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 28px; font-weight:600; text-wrap:balance; color:#f0f4f7;">
+      Open source. <span style="font-family:'Instrument Serif', Georgia, serif; font-style:italic; font-weight:400; color:#e0ab36;">Always.</span>
+    </h2>
+    <p style="font-size:19px; line-height:1.55; max-width:680px; margin:0 auto 48px; color:#a8bccc;">
+      Zephyr is GPL v2. Free to use, free to fork, free to ship inside your shop. Paid support (priority bug fixes, technical help) comes later — the app itself never costs money.
+    </p>
+    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:24px; max-width:780px; margin:0 auto;">
+      <div style="padding:24px; border:1px solid rgba(74,138,184,0.3); border-radius:12px; background:rgba(20,51,77,0.4);">
+        <div style="font-size:13px; font-family:'Geist Mono'; color:#e0ab36; margin-bottom:8px;">LICENSE</div>
+        <div style="font-size:18px; font-weight:500;">GPL v2</div>
+      </div>
+      <div style="padding:24px; border:1px solid rgba(74,138,184,0.3); border-radius:12px; background:rgba(20,51,77,0.4);">
+        <div style="font-size:13px; font-family:'Geist Mono'; color:#e0ab36; margin-bottom:8px;">SOURCE</div>
+        <div style="font-size:18px; font-weight:500;">github.com/zephyr-cad</div>
+      </div>
+      <div style="padding:24px; border:1px solid rgba(74,138,184,0.3); border-radius:12px; background:rgba(20,51,77,0.4);">
+        <div style="font-size:13px; font-family:'Geist Mono'; color:#e0ab36; margin-bottom:8px;">LANGUAGE</div>
+        <div style="font-size:18px; font-weight:500;">Swift · ~38k LOC</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ FINAL CTA ============ -->
+<section id="download" style="padding:140px 32px;">
+  <div style="max-width:880px; margin:0 auto; text-align:center;">
+    <h2 style="font-size:88px; line-height:0.95; letter-spacing:-0.045em; margin:0 0 28px; font-weight:600; text-wrap:balance;">
+      Stop renting your CAD.
+    </h2>
+    <p style="font-size:20px; line-height:1.5; color:var(--text-2); margin:0 0 44px; max-width:560px; margin-left:auto; margin-right:auto;">
+      Free download. No account, no telemetry, no email gate. The .dxf you opened in QCAD this morning will open here too.
+    </p>
+    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+      <a href="https://github.com/joseph-montanez/as-built/releases/download/nightly/EngineAsBuilt-macOS-arm64.zip" style="display:inline-flex; align-items:center; gap:10px; padding:16px 24px; background:var(--text); color:var(--bg); border-radius:10px; font-size:16px; font-weight:500;" style-hover="background:var(--accent); color:var(--navy);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+        Zephyr for macOS
+      </a>
+      <a href="https://github.com/joseph-montanez/as-built/releases/download/nightly/EngineAsBuilt-Windows-x64.zip" style="display:inline-flex; align-items:center; gap:10px; padding:16px 24px; background:transparent; color:var(--text); border:1px solid var(--border-strong); border-radius:10px; font-size:16px; font-weight:500;" style-hover="background:var(--bg-elev);">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5L10.5 4.5v7H3v-6zM11.5 4.4L21 3v8.5h-9.5v-7.1zM3 12.5h7.5v7L3 18.5v-6zM11.5 12.5H21V21l-9.5-1.4v-7.1z"/></svg>
+        Zephyr for Windows
+      </a>
+    </div>
+    <div style="margin-top:24px; font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">v0.1.0 · macOS 13+ (Apple silicon + Intel) · Windows 10+ (x64 + ARM64) · SHA‑256 verified · ~14 MB</div>
+  </div>
+</section>
+
+<!-- ============ FOOTER ============ -->
+<footer style="padding:60px 32px 48px; border-top:1px solid var(--border-soft); background:var(--bg-elev);">
+  <div style="max-width:1280px; margin:0 auto;">
+    <div style="display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap:48px; margin-bottom:48px;">
+      <div>
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style="color:var(--accent);">
+            <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.4"/>
+            <path d="M12 3 L14.4 11.6 L12 14 L9.6 11.6 Z" fill="currentColor"/>
+            <path d="M3 12 L11.6 9.6 L14 12 L11.6 14.4 Z" fill="currentColor" opacity="0.4"/>
+          </svg>
+          <span style="font-size:17px; font-weight:600;">Zephyr</span>
+        </div>
+        <div style="font-size:13px; color:var(--text-2); line-height:1.55; max-width:300px;">A native 2D CAD app for people who'd rather not pay $840 a year to draw rectangles.</div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); letter-spacing:0.08em; margin-bottom:4px;">PRODUCT</div>
+        <a style="font-size:13px; color:var(--text-2);" href="#features">Features</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#compatibility">Compatibility</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#download">Download</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Changelog</a>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); letter-spacing:0.08em; margin-bottom:4px;">PROJECT</div>
+        <a style="font-size:13px; color:var(--text-2);" href="#">GitHub</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Issues</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Roadmap</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Contribute</a>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); letter-spacing:0.08em; margin-bottom:4px;">DOCS</div>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Quick start</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Commands</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">File formats</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Migrating from AutoCAD</a>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:10px;">
+        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); letter-spacing:0.08em; margin-bottom:4px;">COMMUNITY</div>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Discord</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Mailing list</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Mastodon</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#">Paid support</a>
+      </div>
+    </div>
+    <div style="display:flex; justify-content:space-between; padding-top:24px; border-top:1px solid var(--border-soft); font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">
+      <span>© 2026 Zephyr CAD contributors · GPL v2</span>
+      <span>Built natively for Mac and Windows</span>
+    </div>
+  </div>
+</footer>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;: {&quot;width&quot;: 1280, &quot;height&quot;: 1000}}">
+class Component extends DCLogic {
+  state = { theme: 'dark', specklesActive: false, proofIndex: 0 };
+
+  toggleTheme = () => {
+    this.setState(s => ({ theme: s.theme === 'dark' ? 'light' : 'dark' }));
+  };
+
+  toggleSpeckles = () => {
+    this.setState(s => ({ specklesActive: !s.specklesActive }));
+  };
+
+  selectProof = (i) => () => {
+    this.setState({ proofIndex: i });
+  };
+
+  proofPrev = () => {
+    this.setState(s => ({ proofIndex: (s.proofIndex - 1 + this.proofData().length) % this.proofData().length }));
+  };
+
+  proofNext = () => {
+    this.setState(s => ({ proofIndex: (s.proofIndex + 1) % this.proofData().length }));
+  };
+
+  proofData = () => ([
+    {
+      tag: '01',
+      title: 'Title block & dimensions',
+      subhead: 'Whole drawing — fit to view',
+      caption: "KOMPAN's 186‑841 — Pirate Ship.dxf. 3,734 entities, 13 layers, dimension chains, hatches, leader callouts, a title block, a logo. The kind of file your suppliers actually send you.",
+      zephyrImg: 'assets/zephyr-dxf.png',
+      zephyrAlt: 'Zephyr opening the KOMPAN Pirate Ship DXF with full geometry, dimensions, title block, layers and logo all rendered correctly.',
+      zephyrBadge: 'CLEAN IMPORT',
+      zephyrMetric: '~0.4 s · 3,734 / 3,734 entities',
+      zephyrCanvasBg: '#ffffff',
+      zephyrPoints: [
+        'Title block, KOMPAN logo, dimension chains — all in place',
+        'Layers panel populated with the 13 source layers + colors',
+        'Text scaled and oriented correctly, leaders attached',
+      ],
+      libreImg: 'assets/librecad-dxf.png',
+      libreAlt: 'LibreCAD opening the same DXF with scrambled text, broken dimension placement and overlapping revision labels covering the drawing.',
+      libreBadge: 'MANGLED',
+      libreMetric: '~3.8 s · text + dims scrambled',
+      libreCanvasBg: '#ffffff',
+      callouts: [
+        { x: '32%', y: '74%', text: 'text scale broken' },
+        { x: '8%',  y: '48%', text: 'no title block' },
+        { x: '62%', y: '30%', text: 'geometry clipped' },
+      ],
+      librePoints: [
+        'Title block and logo missing entirely',
+        'Revision text rendered at world scale — covers the drawing',
+        'Dimension styles dropped, leaders detached',
+      ],
+      why: 'LibreCAD\'s parser falls back to a default text style when it can\'t resolve SHX fonts, then computes height in drawing units instead of paper space. Zephyr resolves DIMSTYLE and STYLE tables before laying anything out — and ships AutoCAD‑compatible SHX rendering in the binary.',
+    },
+    {
+      tag: '02',
+      title: 'Splines & ellipses',
+      subhead: 'Zoomed in — same coordinates',
+      caption: 'Same file, zoomed to the title‑block corner. NURBS splines define the play‑equipment outline and the KOMPAN logo glyphs; an ellipse defines the title‑block circle.',
+      zephyrImg: 'assets/zephyr-dxf-2.png',
+      zephyrAlt: 'Zephyr zoomed in showing smooth spline curves, a properly bounded ellipse and the KOMPAN logo glyphs rendering crisply.',
+      zephyrBadge: 'CURVES CORRECT',
+      zephyrMetric: 'NURBS tessellated at view DPI',
+      zephyrCanvasBg: 'var(--canvas)',
+      zephyrPoints: [
+        'Ellipse honors its bounding box — no overshoot',
+        'KOMPAN logo glyphs render as smooth filled curves',
+        'Spline endpoints, knots and weights all preserved',
+      ],
+      libreImg: 'assets/librecad-dxf-2.png',
+      libreAlt: 'LibreCAD at the same zoom showing an oversized red dashed ellipse overshooting the drawing, hatching that fills the box, and the KOMPAN logo as a scrambled tangle of curves.',
+      libreBadge: 'CURVES WRONG',
+      libreMetric: 'NURBS sampled at wrong density',
+      libreCanvasBg: '#ffffff',
+      callouts: [
+        { x: '42%', y: '20%', text: 'ellipse overshoots by ~10×' },
+        { x: '54%', y: '60%', text: 'logo glyphs scrambled' },
+        { x: '14%', y: '76%', text: 'spline endpoints adrift' },
+      ],
+      librePoints: [
+        'Ellipse parameters misread — arc extends far past its endpoints',
+        'Logo glyph splines fold into themselves — text is unreadable',
+        'Hatch boundary computed against wrong curve — pattern overflows',
+      ],
+      why: 'LibreCAD samples NURBS at a fixed step count regardless of curvature, and treats DXF ellipse start/end angles as full‑turn parameters. Zephyr uses adaptive subdivision keyed to screen pixels and honors the OCS‑relative angle convention in the DXF spec — so curves stay smooth at any zoom and bounded arcs stay bounded.',
+    },
+    {
+      tag: '03',
+      title: 'Text & placement',
+      subhead: 'Same plan — labels, notes and callouts',
+      caption: 'A real residential floor plan with MText labels, multi‑line notes, and a "FLOOR PLAN" title block. Room names use DXF formatting codes (%%u for underline). Notes are anchored to walls via attachment points.',
+      zephyrImg: 'assets/zephyr-dxf-3.png',
+      zephyrAlt: 'Zephyr rendering the floor plan with clean readable room labels, properly sized multi-line notes wrapped in place, and the FLOOR PLAN title fitted under the drawing.',
+      zephyrBadge: 'TEXT RESOLVED',
+      zephyrMetric: '967 entities · 22 text styles',
+      zephyrCanvasBg: 'var(--canvas)',
+      zephyrPoints: [
+        'MText control codes parsed — "MASTER BEDROOM", not "%%uMASTER %%uBEDROOM"',
+        'Multi‑line notes wrap at the original column width',
+        'Title block "FLOOR PLAN" centered under the drawing extents',
+      ],
+      libreImg: 'assets/librecad-dxf-3.png',
+      libreAlt: 'LibreCAD showing the same floor plan with text rendered too small to read, room labels showing raw %%u escape codes, and notes overlapping each other across the drawing.',
+      libreBadge: 'CODES RAW',
+      libreMetric: 'MText codes unparsed · text scale wrong',
+      libreCanvasBg: '#ffffff',
+      callouts: [
+        { x: '20%', y: '30%', text: 'raw %%u codes shown' },
+        { x: '46%', y: '57%', text: 'text scale microscopic' },
+        { x: '54%', y: '76%', text: 'notes overlap geometry' },
+      ],
+      librePoints: [
+        'DXF formatting codes (%%u, %%o, %%d, %%c) leak through as literal characters',
+        'Text height falls back to a default — labels become unreadable at fit‑to‑view',
+        'Multi‑line note wrapping is dropped; runs collide with walls and each other',
+      ],
+      why: 'AutoCAD MText stores formatting as in‑band control codes — \\P for paragraph breaks, %%u/%%o for underline/overline, %%dNNN for special glyphs, plus a stack of font, color and width changes. Zephyr ships a full MText interpreter that honors attachment point, column width and line spacing factor. LibreCAD\'s TEXT path treats the string as opaque.',
+    },
+  ]);
+
+  renderVals() {
+    const isDark = this.state.theme === 'dark';
+    const active = this.state.specklesActive;
+    const examples = this.proofData();
+    const idx = this.state.proofIndex;
+    return {
+      theme: this.state.theme,
+      isDark,
+      isLight: !isDark,
+      toggleTheme: this.toggleTheme,
+      specklesActive: active,
+      specklesInactive: !active,
+      toggleSpeckles: this.toggleSpeckles,
+      speckleOpacity: active ? 0 : 1,
+      haloOpacity: active ? 1 : 0,
+      matchCount: active ? '0 / 24' : '24',
+      specklesPrompt: active
+        ? 'CS: erased 24 speckles · undo with Cmd+Z'
+        : 'CS: click a speckle to sample, ENTER to erase all',
+
+      proofExamples: examples.map((ex, i) => ({
+        ...ex,
+        select: this.selectProof(i),
+        borderColor: i === idx ? 'var(--accent)' : 'var(--border)',
+        bgColor:     i === idx ? 'rgba(224,171,54,0.10)' : 'transparent',
+        textColor:   i === idx ? 'var(--text)' : 'var(--text-2)',
+        tagColor:    i === idx ? 'var(--accent)' : 'var(--text-3)',
+      })),
+      proofTrackTranslate: `-${idx * 100}%`,
+      proofPositionLabel: `EXAMPLE ${String(idx + 1).padStart(2, '0')} / ${String(examples.length).padStart(2, '0')}`,
+      proofPrev: this.proofPrev,
+      proofNext: this.proofNext,
+
+      layers: [
+        { name: '0 — Default',       color: '#9eb2c2', count: 12 },
+        { name: 'WALLS',             color: '#4ad6e0', count: 184 },
+        { name: 'DIMS',              color: '#3578f0', count: 96 },
+        { name: 'TEXT',              color: '#b8c2cc', count: 72 },
+        { name: 'FIXTURES',          color: '#43c66a', count: 41 },
+        { name: 'DOORS',             color: '#e85c54', count: 18 },
+        { name: 'WINDOWS',           color: '#3a87c4', count: 22 },
+        { name: 'ELECTRICAL',        color: '#e85c54', count: 67 },
+        { name: 'PLUMBING',          color: '#43c66a', count: 33 },
+        { name: 'HVAC',              color: '#e8a040', count: 24 },
+        { name: 'XREF-Bishop_Site',  color: '#e85c54', count: 1 },
+        { name: 'NOTES',             color: '#9b6cd9', count: 14 },
+        { name: 'GRID',              color: '#9eb2c2', count: 8 },
+        { name: 'SECTIONS',          color: '#b3a040', count: 4 },
+      ],
+
+      workflowCells: [
+        { tag: 'MEASURE',  title: 'Quick Measure',  cmd: 'MEA · MEASUREGEOM',
+          body: 'Hover anywhere. Orthogonal raycasts ±X, ±Y find the nearest geometry in real time; side lengths and interior angles overlay live.' },
+        { tag: 'TABS',     title: 'Multi‑drawing tabs',  cmd: '⌘T new · ⌘W close',
+          body: 'Open every file at once. Dirty‑state tracking, unsaved‑changes confirmation, instant tab switching with no regeneration stall.' },
+        { tag: 'PALETTE',  title: 'Command line',  cmd: 'SPACE',
+          body: 'Press space. Type. 46 registered commands across 7 categories, fuzzy‑matched autocomplete with Tab cycling. AutoCAD muscle memory works.' },
+        { tag: 'SNAP',     title: 'Snap engine',  cmd: '9 anchor types',
+          body: 'Two‑tier: AABB proximity filter then exact distance to center, vertex, midpoint, insertion, quadrant, perpendicular, tangent, nearest, intersection.' },
+        { tag: 'TRACK',    title: 'Polar + OTRACK',  cmd: 'OTRACK · EXT',
+          body: 'Polar tracking at 15°/30°/45°/90°. Object snap tracking from acquired points. Extension snapping along existing geometry.' },
+        { tag: 'GRIPS',    title: 'Direct manipulation',  cmd: 'click + drag',
+          body: 'Per‑vertex grips on polylines and polygons. Corner, center, midpoint, and rotation grips on every selection bounding box.' },
+        { tag: 'BLOCKS',   title: 'Block edit in place',  cmd: 'BEDIT / BE',
+          body: 'Edit a block reference in isolation, BCLOSE to save. SIMPLIFY swaps heavy blocks for bounding‑box stand‑ins to keep pan/zoom responsive.' },
+        { tag: 'LAYERS',   title: 'Layer move',  cmd: 'LM / LAYMOVE',
+          body: 'Pick entities, type LM, autocomplete the destination layer. Full layer table with ACI color indexing and per‑layer line type / weight.' },
+        { tag: 'CONSTR.',  title: '17 constraints',  cmd: 'parametric',
+          body: 'Coincident, parallel, perpendicular, tangent, concentric, distance, angle, fix, midpoint, collinear, symmetric, offset — and six more.' },
+      ],
+
+      compareRows: [
+        { label: 'Price',                          zephyr: 'Free',         autocad: '$70 / mo',     qcad: 'Free' },
+        { label: 'License',                        zephyr: 'GPL v2',       autocad: 'Subscription', qcad: 'GPL v3 / paid Pro' },
+        { label: 'Native Mac (Metal)',             zephyr: '✓',            autocad: 'Limited',      qcad: '— (Qt/OpenGL)' },
+        { label: 'Native Windows (D3D12)',         zephyr: '✓',            autocad: '✓',            qcad: '— (Qt/OpenGL)' },
+        { label: 'Native Windows ARM64',           zephyr: '✓',            autocad: 'Emulation',    qcad: '—' },
+        { label: 'GPU‑accelerated rendering',      zephyr: '✓',            autocad: 'Partial',      qcad: '—' },
+        { label: 'DWG read',                       zephyr: '✓',            autocad: '✓',            qcad: 'Buggy' },
+        { label: 'DXF R2007 round‑trip',           zephyr: '✓',            autocad: '✓',            qcad: 'Partial' },
+        { label: 'PDF export w/ measurements',     zephyr: '✓ Bluebeam',   autocad: '✓',            qcad: 'Flat' },
+        { label: 'Quick Measure (hover)',          zephyr: '✓',            autocad: '—',            qcad: '—' },
+        { label: 'Clean Speckles (by example)',    zephyr: '✓',            autocad: '—',            qcad: '—' },
+        { label: 'Open source',                    zephyr: '✓',            autocad: '—',            qcad: '✓' },
+        { label: 'No subscription, no telemetry',  zephyr: '✓',            autocad: '—',            qcad: '✓' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

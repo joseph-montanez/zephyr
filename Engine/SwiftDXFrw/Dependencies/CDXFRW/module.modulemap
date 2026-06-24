@@ -1,0 +1,4 @@
+module CDXFRW [system][extern_c] {
+    header "dxfrw_bridge.h"
+    export *
+}

@@ -1,0 +1,680 @@
+name: Build Windows
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: 'Build configuration'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - debug
+          - release
+
+env:
+  SDL3_VERSION: "3.4.10"
+  SDL3_TTF_VERSION: "3.2.2"
+  SDL3_IMAGE_VERSION: "3.4.4"
+  ZLIB_NG_VERSION: "2.3.3"
+  PDFIUM_TAG: "chromium%2F7891"
+  SWIFT_VERSION: "6.3.2"
+  DEV_ROOT: "C:/dev"
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ARM64
+            runner: windows-11-arm
+            arch: arm64
+            vcpkg-triplet: arm64-windows
+            swift-triple: aarch64-unknown-windows-msvc
+            vcvars-arch: arm64
+            sdl-url-arch: arm64
+            pdfium-platform: win-arm64
+            cmake-arch: ARM64
+            dxc-subdir: arm64
+            zlib-arch: arm64
+          - name: x64
+            runner: windows-2022
+            arch: x64
+            vcpkg-triplet: x64-windows
+            swift-triple: x86_64-unknown-windows-msvc
+            vcvars-arch: x64
+            sdl-url-arch: x64
+            pdfium-platform: win-x64
+            cmake-arch: x64
+            zlib-arch: x86-64
+            dxc-subdir: x64
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      # ------------------------------------------------------------------
+# 1. Checkout
+      # ------------------------------------------------------------------
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # ------------------------------------------------------------------
+# 2. Download & extract SDL3, SDL3_ttf, SDL3_image
+      # ------------------------------------------------------------------
+      - name: Download SDL3
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $sdlRoot    = "$env:DEV_ROOT\SDL3"
+          $sdlInclude = "$sdlRoot\include"
+          $sdlLib     = "$sdlRoot\lib"
+
+          New-Item -ItemType Directory -Force -Path $sdlInclude | Out-Null
+          New-Item -ItemType Directory -Force -Path $sdlLib    | Out-Null
+
+          # --- SDL3 source (headers) ---
+          $sdl3SrcUrl = "https://github.com/libsdl-org/SDL/releases/download/release-$env:SDL3_VERSION/SDL3-$env:SDL3_VERSION.zip"
+          Write-Host "SDL3 source URL: $sdl3SrcUrl"
+          $sdl3SrcZip = "$env:TEMP\SDL3-src.zip"
+          Invoke-WebRequest -Uri $sdl3SrcUrl -OutFile $sdl3SrcZip
+          Expand-Archive -Path $sdl3SrcZip -DestinationPath "$env:TEMP\SDL3_src" -Force
+
+          # Copy headers from source archive
+          $srcInclude = Get-ChildItem -Path "$env:TEMP\SDL3_src" -Recurse -Directory -Filter "SDL3" |
+                        Where-Object { $_.Parent.Name -eq "include" } |
+                        Select-Object -First 1
+          Write-Host "SDL3 srcInclude: $($srcInclude.FullName)"
+          if ($srcInclude) {
+            Copy-Item -Path "$($srcInclude.FullName)" -Destination $sdlInclude -Recurse -Force
+          }
+          # Also copy SDL_begin_code.h / SDL_close_code.h from include root
+          $srcIncludeRoot = Get-ChildItem -Path "$env:TEMP\SDL3_src" -Recurse -Directory -Filter "include" | Select-Object -First 1
+          if ($srcIncludeRoot) {
+            Copy-Item -Path "$($srcIncludeRoot.FullName)\SDL_begin_code.h" -Destination $sdlInclude -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path "$($srcIncludeRoot.FullName)\SDL_close_code.h" -Destination $sdlInclude -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path "$($srcIncludeRoot.FullName)\SDL_platform_defines.h" -Destination $sdlInclude -Force -ErrorAction SilentlyContinue
+          }
+          Write-Host "SDL3 include files: $((Get-ChildItem $sdlInclude -Recurse | Measure-Object).Count)"
+
+          # --- SDL3 binary (DLL) ---
+          $sdl3BinUrl = "https://github.com/libsdl-org/SDL/releases/download/release-$env:SDL3_VERSION/SDL3-$env:SDL3_VERSION-win32-${{ matrix.sdl-url-arch }}.zip"
+          Write-Host "SDL3 binary URL: $sdl3BinUrl"
+          $sdl3BinZip = "$env:TEMP\SDL3-bin.zip"
+          Invoke-WebRequest -Uri $sdl3BinUrl -OutFile $sdl3BinZip
+          Expand-Archive -Path $sdl3BinZip -DestinationPath "$env:TEMP\SDL3_bin" -Force
+
+          # Copy DLL
+          $sdl3Dll = Get-ChildItem -Path "$env:TEMP\SDL3_bin" -Recurse -Filter "SDL3.dll" | Select-Object -First 1
+          Write-Host "SDL3 DLL: $($sdl3Dll.FullName)"
+          if ($sdl3Dll) { Copy-Item -Path $sdl3Dll.FullName -Destination $sdlLib -Force }
+
+          # --- Locate VS tools and vcvars for import library generation ---
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $vcvarsPath = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
+          $msvcDir = Get-ChildItem "$vsPath\VC\Tools\MSVC" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          $toolsBin = "$($msvcDir.FullName)\bin\Hostx64\${{ matrix.arch }}"
+          $dumpbin = "$toolsBin\dumpbin.exe"
+          $libExe  = "$toolsBin\lib.exe"
+          Write-Host "VS tools: $toolsBin"
+          Write-Host "vcvarsall: $vcvarsPath"
+
+          # Shared helper: generate .lib from .dll via vcvars-wrapped batch
+          function Generate-ImportLib {
+            param($DllPath, $LibOut, $Machine)
+            $name = [IO.Path]::GetFileNameWithoutExtension($DllPath)
+            $defPath = "$env:TEMP\$name.def"
+            $exportsPath = "$env:TEMP\$name-exports.txt"
+            $tmpBatch = "$env:TEMP\genlib-$name.cmd"
+
+            # Batch 1: dumpbin /exports (needs vcvars for CRT DLLs)
+            Set-Content -Path $tmpBatch -Encoding ASCII -Value @(
+              "@echo off",
+              "call `"$vcvarsPath`" ${{ matrix.vcvars-arch }} >nul 2>&1",
+              "`"$dumpbin`" /exports `"$DllPath`" > `"$exportsPath`" 2>&1",
+              "if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%"
+            )
+            cmd /c $tmpBatch
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed for $name with exit code $LASTEXITCODE" }
+
+            # Parse exports
+            $raw = Get-Content $exportsPath -Raw
+            $funcs = @()
+            foreach ($line in ($raw -split "`r?`n")) {
+              if ($line -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') { $funcs += $Matches[1] }
+            }
+            Write-Host "Found $($funcs.Count) exports in $name"
+            if ($funcs.Count -eq 0) { throw "No exports found in $name" }
+
+            # Write .def file (use .NET to guarantee CRLF per line)
+            $deflines = @('EXPORTS') + ($funcs | ForEach-Object { "  $_" })
+            [System.IO.File]::WriteAllLines($defPath, $deflines, [System.Text.Encoding]::ASCII)
+            Write-Host "--- $name.def first 5 lines ---"
+            Get-Content $defPath -First 5 | ForEach-Object { Write-Host $_ }
+
+            # Batch 2: lib.exe (needs vcvars)
+            Set-Content -Path $tmpBatch -Encoding ASCII -Value @(
+              "@echo off",
+              "call `"$vcvarsPath`" ${{ matrix.vcvars-arch }} >nul 2>&1",
+              "`"$libExe`" /def:`"$defPath`" /machine:$Machine /out:`"$LibOut`"",
+              "if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%"
+            )
+            cmd /c $tmpBatch
+            if ($LASTEXITCODE -ne 0) { throw "lib.exe failed for $name with exit code $LASTEXITCODE" }
+            if (-not (Test-Path $LibOut)) { throw "$LibOut not created" }
+            Write-Host "Generated: $LibOut"
+          }
+
+          # Generate SDL3.lib
+          Generate-ImportLib -DllPath "$sdlLib\SDL3.dll" -LibOut "$sdlLib\SDL3.lib" -Machine ${{ matrix.cmake-arch }}
+
+          # --- SDL3_ttf source (headers) ---
+          $ttfSrcUrl = "https://github.com/libsdl-org/SDL_ttf/releases/download/release-$env:SDL3_TTF_VERSION/SDL3_ttf-$env:SDL3_TTF_VERSION.zip"
+          Write-Host "SDL3_ttf source URL: $ttfSrcUrl"
+          $ttfSrcZip = "$env:TEMP\SDL3_ttf-src.zip"
+          Invoke-WebRequest -Uri $ttfSrcUrl -OutFile $ttfSrcZip
+          Expand-Archive -Path $ttfSrcZip -DestinationPath "$env:TEMP\SDL3_ttf_src" -Force
+
+          $ttfInclude = Get-ChildItem -Path "$env:TEMP\SDL3_ttf_src" -Recurse -Directory -Filter "SDL3_ttf" |
+                        Where-Object { $_.Parent.Name -eq "include" } |
+                        Select-Object -First 1
+          Write-Host "SDL3_ttf include: $($ttfInclude.FullName)"
+          if ($ttfInclude) { Copy-Item -Path "$($ttfInclude.FullName)" -Destination $sdlInclude -Recurse -Force }
+
+          # --- SDL3_ttf binary (DLL) ---
+          $ttfBinUrl = "https://github.com/libsdl-org/SDL_ttf/releases/download/release-$env:SDL3_TTF_VERSION/SDL3_ttf-$env:SDL3_TTF_VERSION-win32-${{ matrix.sdl-url-arch }}.zip"
+          Write-Host "SDL3_ttf binary URL: $ttfBinUrl"
+          $ttfBinZip = "$env:TEMP\SDL3_ttf-bin.zip"
+          Invoke-WebRequest -Uri $ttfBinUrl -OutFile $ttfBinZip
+          Expand-Archive -Path $ttfBinZip -DestinationPath "$env:TEMP\SDL3_ttf_bin" -Force
+
+          $ttfDll = Get-ChildItem -Path "$env:TEMP\SDL3_ttf_bin" -Recurse -Filter "SDL3_ttf.dll" | Select-Object -First 1
+          Write-Host "SDL3_ttf DLL: $($ttfDll.FullName)"
+          if ($ttfDll) {
+            Copy-Item -Path $ttfDll.FullName -Destination $sdlLib -Force
+            Generate-ImportLib -DllPath "$sdlLib\SDL3_ttf.dll" -LibOut "$sdlLib\SDL3_ttf.lib" -Machine ${{ matrix.cmake-arch }}
+          }
+
+          # --- SDL3_image source (headers) ---
+          $imgSrcUrl = "https://github.com/libsdl-org/SDL_image/releases/download/release-$env:SDL3_IMAGE_VERSION/SDL3_image-$env:SDL3_IMAGE_VERSION.zip"
+          Write-Host "SDL3_image source URL: $imgSrcUrl"
+          $imgSrcZip = "$env:TEMP\SDL3_image-src.zip"
+          Invoke-WebRequest -Uri $imgSrcUrl -OutFile $imgSrcZip
+          Expand-Archive -Path $imgSrcZip -DestinationPath "$env:TEMP\SDL3_image_src" -Force
+
+          $imgInclude = Get-ChildItem -Path "$env:TEMP\SDL3_image_src" -Recurse -Directory -Filter "SDL3_image" |
+                        Where-Object { $_.Parent.Name -eq "include" } |
+                        Select-Object -First 1
+          Write-Host "SDL3_image include: $($imgInclude.FullName)"
+          if ($imgInclude) { Copy-Item -Path "$($imgInclude.FullName)" -Destination $sdlInclude -Recurse -Force }
+
+          # --- SDL3_image binary (DLL) ---
+          $imgBinUrl = "https://github.com/libsdl-org/SDL_image/releases/download/release-$env:SDL3_IMAGE_VERSION/SDL3_image-$env:SDL3_IMAGE_VERSION-win32-${{ matrix.sdl-url-arch }}.zip"
+          Write-Host "SDL3_image binary URL: $imgBinUrl"
+          $imgBinZip = "$env:TEMP\SDL3_image-bin.zip"
+          Invoke-WebRequest -Uri $imgBinUrl -OutFile $imgBinZip
+          Expand-Archive -Path $imgBinZip -DestinationPath "$env:TEMP\SDL3_image_bin" -Force
+
+          $imgDll = Get-ChildItem -Path "$env:TEMP\SDL3_image_bin" -Recurse -Filter "SDL3_image.dll" | Select-Object -First 1
+          Write-Host "SDL3_image DLL: $($imgDll.FullName)"
+          if ($imgDll) {
+            Copy-Item -Path $imgDll.FullName -Destination $sdlLib -Force
+            # Also copy optional DLLs
+            $optDir = Get-ChildItem -Path "$env:TEMP\SDL3_image_bin" -Recurse -Directory -Filter "optional" | Select-Object -First 1
+            if ($optDir) { Copy-Item -Path "$($optDir.FullName)\*" -Destination $sdlLib -Force -ErrorAction SilentlyContinue }
+            Generate-ImportLib -DllPath "$sdlLib\SDL3_image.dll" -LibOut "$sdlLib\SDL3_image.lib" -Machine ${{ matrix.cmake-arch }}
+          }
+
+          # --- Verify ---
+          Write-Host "--- SDL3 include contents ---"
+          Get-ChildItem $sdlInclude | ForEach-Object { Write-Host "  $($_.Name)" }
+          Write-Host "--- SDL3 lib contents ---"
+          Get-ChildItem $sdlLib -Filter "*.lib" | ForEach-Object { Write-Host "  $($_.Name)" }
+          Get-ChildItem $sdlLib -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
+
+          # Cleanup
+          Remove-Item -Recurse -Force "$env:TEMP\SDL3_src", "$env:TEMP\SDL3_bin", "$env:TEMP\SDL3_ttf_src", "$env:TEMP\SDL3_ttf_bin", "$env:TEMP\SDL3_image_src", "$env:TEMP\SDL3_image_bin" -ErrorAction SilentlyContinue
+          Remove-Item -Force $sdl3SrcZip, $sdl3BinZip, $ttfSrcZip, $ttfBinZip, $imgSrcZip, $imgBinZip -ErrorAction SilentlyContinue
+
+      # ------------------------------------------------------------------
+# 3. Install vcpkg packages (libiconv)
+      # ------------------------------------------------------------------
+      - name: Install vcpkg packages
+        run: |
+          $triplet = "${{ matrix.vcpkg-triplet }}"
+          Write-Host "Installing vcpkg packages for triplet: $triplet"
+
+          # Update vcpkg ports tree
+          Push-Location $env:VCPKG_INSTALLATION_ROOT
+          git pull --ff-only --quiet
+          Pop-Location
+
+          # Install libiconv (zlib-ng comes pre-built, see next step)
+          vcpkg install libiconv:$triplet --clean-after-build
+
+          Write-Host "vcpkg packages installed."
+          Write-Host "---"
+          Get-ChildItem "$env:VCPKG_INSTALLATION_ROOT\installed\$triplet\lib" -Filter "*.lib" | ForEach-Object { Write-Host "  $($_.Name)" }
+
+      # ------------------------------------------------------------------
+# 4. Download zlib-ng (pre-built binaries)
+      # ------------------------------------------------------------------
+      - name: Download zlib-ng
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $zlibRoot    = "$env:DEV_ROOT\zlib-ng"
+          $zlibInclude = "$zlibRoot\include"
+          $zlibLib     = "$zlibRoot\lib"
+
+          New-Item -ItemType Directory -Force -Path $zlibInclude | Out-Null
+          New-Item -ItemType Directory -Force -Path $zlibLib    | Out-Null
+
+          $zlibVersion = "$env:ZLIB_NG_VERSION"
+          $zlibUrl = "https://github.com/zlib-ng/zlib-ng/releases/download/$zlibVersion/zlib-ng-win-${{ matrix.zlib-arch }}.zip"
+          Write-Host "zlib-ng URL: $zlibUrl"
+          $zlibZip = "$env:TEMP\zlib-ng.zip"
+          Invoke-WebRequest -Uri $zlibUrl -OutFile $zlibZip -MaximumRetryCount 3 -RetryIntervalSec 5
+
+          Expand-Archive -Path $zlibZip -DestinationPath "$env:TEMP\zlib-ng_extract" -Force
+
+          # Copy headers
+          $srcInclude = Get-ChildItem -Path "$env:TEMP\zlib-ng_extract" -Recurse -Directory -Filter "include" | Select-Object -First 1
+          if ($srcInclude) {
+            Copy-Item -Path "$($srcInclude.FullName)\*" -Destination $zlibInclude -Recurse -Force
+          }
+          # Copy libs
+          $srcLib = Get-ChildItem -Path "$env:TEMP\zlib-ng_extract" -Recurse -Directory -Filter "lib" | Select-Object -First 1
+          if ($srcLib) {
+            Copy-Item -Path "$($srcLib.FullName)\*" -Destination $zlibLib -Recurse -Force
+          }
+
+          Write-Host "zlib-ng installed to: $zlibRoot"
+          Write-Host "Headers:"
+          Get-ChildItem $zlibInclude | ForEach-Object { Write-Host "  $($_.Name)" }
+          Write-Host "Libs:"
+          Get-ChildItem $zlibLib -Filter "*.lib" | ForEach-Object { Write-Host "  $($_.Name)" }
+
+      # ------------------------------------------------------------------
+# 5. Build libdxfrw from source
+      # ------------------------------------------------------------------
+      - name: Build libdxfrw
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $dxfrwRoot = "$env:DEV_ROOT\libdxfrw"
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $triplet   = "${{ matrix.vcpkg-triplet }}"
+          $iconvRoot = "$vcpkgRoot\installed\$triplet"
+
+          Write-Host "Cloning libdxfrw..."
+          git clone --depth 1 https://github.com/joseph-montanez/libdxfrw.git $dxfrwRoot
+
+          Write-Host "Configuring libdxfrw (cmake) for ${{ matrix.cmake-arch }}..."
+          Push-Location $dxfrwRoot
+          cmake -S . -B build `
+            -A ${{ matrix.cmake-arch }} `
+            -DICONV_ROOT="$iconvRoot" `
+            -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+
+          Write-Host "Building libdxfrw..."
+          cmake --build build --config Release
+          if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+          Pop-Location
+
+          Write-Host "--- libdxfrw build output ---"
+          Get-ChildItem "$dxfrwRoot\build\Release" -Filter "*.lib" | ForEach-Object { Write-Host "  $($_.Name)" }
+          Get-ChildItem "$dxfrwRoot\build\Release" -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
+
+      # ------------------------------------------------------------------
+# 6. Download PDFium
+      # ------------------------------------------------------------------
+      - name: Download PDFium
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $pdfiumRoot = "$env:DEV_ROOT\pdfium"
+          $pdfiumUrl  = "https://github.com/bblanchon/pdfium-binaries/releases/download/$env:PDFIUM_TAG/pdfium-v8-${{ matrix.pdfium-platform }}.tgz"
+          $tgzPath    = "$env:TEMP\pdfium.tgz"
+
+          Write-Host "PDFium URL: $pdfiumUrl"
+          Invoke-WebRequest -Uri $pdfiumUrl -OutFile $tgzPath
+
+          Write-Host "Extracting PDFium..."
+          New-Item -ItemType Directory -Force -Path $pdfiumRoot | Out-Null
+          tar -xzf $tgzPath -C $pdfiumRoot
+
+          Write-Host "--- PDFium contents ---"
+          # PDFium archive structure varies; find key files
+          $libFile  = Get-ChildItem -Recurse $pdfiumRoot -Filter "pdfium.dll.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $hdrFile  = Get-ChildItem -Recurse $pdfiumRoot -Filter "fpdfview.h"   -ErrorAction SilentlyContinue | Select-Object -First 1
+          $dllFile  = Get-ChildItem -Recurse $pdfiumRoot -Filter "pdfium.dll"    -ErrorAction SilentlyContinue | Select-Object -First 1
+
+          if (-not $libFile) { Write-Warning "pdfium.dll.lib not found!" }
+          if (-not $hdrFile) { Write-Warning "fpdfview.h not found!" }
+
+          # Build env var paths
+          if ($libFile) {
+            Write-Host "  LIB:  $($libFile.DirectoryName)"
+            Write-Host "  HDR:  $($hdrFile.DirectoryName)"
+            if ($dllFile) { Write-Host "  DLL:  $($dllFile.FullName)" }
+          }
+
+          Remove-Item $tgzPath -Force -ErrorAction SilentlyContinue
+
+      # ------------------------------------------------------------------
+# 7. Install Swift for Windows
+      # ------------------------------------------------------------------
+      - name: Install Swift
+        uses: SwiftyLab/setup-swift@v1
+        with:
+          swift-version: '6.3.2'
+
+      # ------------------------------------------------------------------
+# 8. Locate Visual Studio and DXC
+      # ------------------------------------------------------------------
+      - name: Locate Build Tools
+        id: tools
+        run: |
+          # Find Visual Studio
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Write-Host "Visual Studio: $vsPath"
+          "vsPath=$vsPath" >> $env:GITHUB_OUTPUT
+
+          $vcvarsPath = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
+          Write-Host "vcvarsall.bat: $vcvarsPath"
+          "vcvarsPath=$vcvarsPath" >> $env:GITHUB_OUTPUT
+
+          # Find DXC (DirectX Shader Compiler) in Windows SDK
+          $dxcCandidates = @(
+            "C:\Program Files (x86)\Windows Kits\10\bin\${{ matrix.dxc-subdir }}\dxc.exe",
+            "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\${{ matrix.dxc-subdir }}\dxc.exe"
+          )
+          $dxcPath = ""
+          # Also search all SDK versions
+          $found = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "dxc.exe" -ErrorAction SilentlyContinue |
+                   Where-Object { $_.DirectoryName -match "\\${{ matrix.dxc-subdir }}$" } |
+                   Select-Object -First 1
+          if ($found) { $dxcPath = $found.FullName }
+          Write-Host "DXC: $dxcPath"
+          "dxcPath=$dxcPath" >> $env:GITHUB_OUTPUT
+
+      # ------------------------------------------------------------------
+# 9. Swift Build
+      # ------------------------------------------------------------------
+      - name: Swift Build (${{ inputs.configuration || 'debug' }})
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $config = "${{ inputs.configuration || 'debug' }}"
+          $isRelease = $config -eq "release"
+          Write-Host "### Building $config configuration for ${{ matrix.name }} ###"
+
+          $triplet    = "${{ matrix.vcpkg-triplet }}"
+          $vcpkgRoot  = $env:VCPKG_INSTALLATION_ROOT
+          $vcvarsPath = "${{ steps.tools.outputs.vcvarspath }}"
+
+          # --- Environment variables for Swift packages ---
+          # SDL3 (shared by SDL3, SDL3_image, SDL3_ttf)
+          $env:SDL3_INCLUDE       = "C:/dev/SDL3/include"
+          $env:SDL3_LIB           = "C:/dev/SDL3/lib"
+          $env:SDL3_IMAGE_INCLUDE = "C:/dev/SDL3/include"
+          $env:SDL3_IMAGE_LIB     = "C:/dev/SDL3/lib"
+          $env:SDL3_TTF_INCLUDE   = "C:/dev/SDL3/include"
+          $env:SDL3_TTF_LIB       = "C:/dev/SDL3/lib"
+
+          # libdxfrw
+          $env:DXFRW_INCLUDE = "C:/dev/libdxfrw/src"
+          $env:DXFRW_LIB     = "C:/dev/libdxfrw/build/Release"
+
+          # zlib-ng (pre-built, see Download zlib-ng step)
+          $env:ZLIB_NG_INCLUDE = "C:/dev/zlib-ng/include"
+          $env:ZLIB_NG_LIB     = "C:/dev/zlib-ng/lib"
+
+          # iconv (from vcpkg)
+          $env:ICONV_LIB = "$vcpkgRoot\installed\$triplet\lib"
+
+          # PDFium (optional)
+          $pdfiumHeaderFile = "C:\dev\pdfium\include\fpdfview.h"
+          $pdfiumLibFile    = "C:\dev\pdfium\lib\pdfium.dll.lib"
+          $pdfiumDllFile    = "C:\dev\pdfium\bin\pdfium.dll"
+          # PDFium may have flat layout; try to locate actual files
+          if (-not (Test-Path $pdfiumHeaderFile)) {
+            $found = Get-ChildItem -Recurse "C:\dev\pdfium" -Filter "fpdfview.h" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) {
+              $env:PDFIUM_INCLUDE = $found.DirectoryName
+              Write-Host "PDFium include: $($env:PDFIUM_INCLUDE)"
+            }
+          } else {
+            $env:PDFIUM_INCLUDE = "C:/dev/pdfium/include"
+          }
+          if (-not (Test-Path $pdfiumLibFile)) {
+            $found = Get-ChildItem -Recurse "C:\dev\pdfium" -Filter "pdfium.dll.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) {
+              $pdfiumLibDir = $found.DirectoryName
+              $env:PDFIUM_LIB = $pdfiumLibDir -replace '\\', '/'
+              Write-Host "PDFium lib: $($env:PDFIUM_LIB)"
+            }
+          } else {
+            $env:PDFIUM_LIB = "C:/dev/pdfium/lib"
+          }
+
+          # Log all env vars
+          Write-Host "--- Environment ---"
+          Write-Host "SDL3_INCLUDE       = $env:SDL3_INCLUDE"
+          Write-Host "SDL3_LIB           = $env:SDL3_LIB"
+          Write-Host "SDL3_IMAGE_INCLUDE = $env:SDL3_IMAGE_INCLUDE"
+          Write-Host "SDL3_IMAGE_LIB     = $env:SDL3_IMAGE_LIB"
+          Write-Host "SDL3_TTF_INCLUDE   = $env:SDL3_TTF_INCLUDE"
+          Write-Host "SDL3_TTF_LIB       = $env:SDL3_TTF_LIB"
+          Write-Host "DXFRW_INCLUDE      = $env:DXFRW_INCLUDE"
+          Write-Host "DXFRW_LIB          = $env:DXFRW_LIB"
+          Write-Host "ZLIB_NG_INCLUDE    = $env:ZLIB_NG_INCLUDE"
+          Write-Host "ZLIB_NG_LIB        = $env:ZLIB_NG_LIB"
+          Write-Host "ICONV_LIB          = $env:ICONV_LIB"
+          if ($env:PDFIUM_INCLUDE) { Write-Host "PDFIUM_INCLUDE     = $env:PDFIUM_INCLUDE" }
+          if ($env:PDFIUM_LIB)     { Write-Host "PDFIUM_LIB         = $env:PDFIUM_LIB" }
+          Write-Host "------------------"
+
+          # Build inside MSVC environment (vcvarsall.bat sets INCLUDE/LIB/PATH for Clang)
+          $swiftBuildDir = "${{ github.workspace }}\Engine\EngineAsBuilt"
+          $buildCommand = "swift build -c $config -Xcc -I$($env:SDL3_INCLUDE -replace '\\','/')"
+
+          Write-Host "Launching build via vcvarsall.bat ${{ matrix.vcvars-arch }}..."
+          $cmdScriptPath = "$env:TEMP\swift-build-${{ matrix.arch }}.cmd"
+          Set-Content -Path $cmdScriptPath -Encoding ASCII -Value @(
+            "@echo off"
+            "cd /d `"$swiftBuildDir`""
+            "call `"$vcvarsPath`" ${{ matrix.vcvars-arch }} >nul 2>&1"
+            $buildCommand
+          )
+          cmd.exe /c $cmdScriptPath
+          if ($LASTEXITCODE -ne 0) { throw "Swift build failed with exit code $LASTEXITCODE" }
+
+          Write-Host "Swift build succeeded."
+
+      # ------------------------------------------------------------------
+# 10. Compile HLSL Shaders with DXC
+      # ------------------------------------------------------------------
+      - name: Compile Shaders
+        run: |
+          $dxcPath = "${{ steps.tools.outputs.dxcPath }}"
+          $vcvarsPath = "${{ steps.tools.outputs.vcvarspath }}"
+
+          if (-not $dxcPath -or -not (Test-Path $dxcPath)) {
+            Write-Warning "dxc.exe not found. Skipping shader compilation."
+          } else {
+            $config     = "${{ inputs.configuration || 'debug' }}"
+            $swiftDir   = "${{ github.workspace }}\Engine\EngineAsBuilt"
+            $shaderDir  = "$swiftDir\Shaders"
+            $outputDir  = "$swiftDir\.build\${{ matrix.swift-triple }}\$config"
+
+            Write-Host "Compiling shaders with DXC: $dxcPath"
+            Write-Host "Shader source: $shaderDir"
+            Write-Host "Output dir:    $outputDir"
+
+            New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+
+            # Wrap DXC in vcvarsall.bat context so ARM64 VC++ runtime DLLs are on PATH
+            # (Error 0x8007007e == ERROR_MOD_NOT_FOUND when run outside vcvars on ARM64)
+            $dxcLines = @(
+              "`"$dxcPath`" -T vs_6_0 -E main -Fo `"$outputDir\cad.vert.dxil`"   `"$shaderDir\cad.vert.hlsl`"",
+              "`"$dxcPath`" -T ps_6_0 -E main -Fo `"$outputDir\cad.frag.dxil`"   `"$shaderDir\cad.frag.hlsl`"",
+              "`"$dxcPath`" -T ps_6_0 -E main -Fo `"$outputDir\cad_aa.frag.dxil`" `"$shaderDir\cad_aa.frag.hlsl`"",
+              "`"$dxcPath`" -T vs_6_0 -E main -Fo `"$outputDir\imgui.vert.dxil`"  `"$shaderDir\imgui.vert.hlsl`"",
+              "`"$dxcPath`" -T ps_6_0 -E main -Fo `"$outputDir\imgui.frag.dxil`"  `"$shaderDir\imgui.frag.hlsl`"",
+              "`"$dxcPath`" -T vs_6_0 -E main -Fo `"$outputDir\cad_id.vert.dxil`" `"$shaderDir\cad_id.vert.hlsl`"",
+              "`"$dxcPath`" -T ps_6_0 -E main -Fo `"$outputDir\cad_id.frag.dxil`" `"$shaderDir\cad_id.frag.hlsl`""
+            )
+
+            $cmdScriptPath = "$env:TEMP\compile-shaders-${{ matrix.arch }}.cmd"
+            Set-Content -Path $cmdScriptPath -Encoding ASCII -Value (@(
+              "@echo off",
+              "call `"$vcvarsPath`" ${{ matrix.vcvars-arch }} >nul 2>&1",
+              "if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%"
+            ) + $dxcLines)
+
+            cmd.exe /c $cmdScriptPath
+            if ($LASTEXITCODE -ne 0) { throw "Shader compilation failed with exit code $LASTEXITCODE" }
+
+            Write-Host "Shaders compiled."
+          }
+
+      # ------------------------------------------------------------------
+# 11. Copy runtime DLLs to build output
+      # ------------------------------------------------------------------
+      - name: Copy Runtime DLLs
+        run: |
+          $ErrorActionPreference = "Continue"
+
+          $config    = "${{ inputs.configuration || 'debug' }}"
+          $triplet   = "${{ matrix.vcpkg-triplet }}"
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $swiftDir  = "${{ github.workspace }}\Engine\EngineAsBuilt"
+          $dllDest   = "$swiftDir\.build\${{ matrix.swift-triple }}\$config"
+          $sdlLib    = "C:\dev\SDL3\lib"
+
+          New-Item -ItemType Directory -Force -Path $dllDest | Out-Null
+          Write-Host "Copying DLLs to: $dllDest"
+
+          # SDL3
+          Copy-Item -Path "$sdlLib\SDL3.dll"       -Destination $dllDest -Force
+          Copy-Item -Path "$sdlLib\SDL3_image.dll"  -Destination $dllDest -Force
+          Copy-Item -Path "$sdlLib\SDL3_ttf.dll"    -Destination $dllDest -Force
+
+          # PDFium
+          $pdfiumDll = Get-ChildItem -Recurse "C:\dev\pdfium" -Filter "pdfium.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($pdfiumDll) {
+            Copy-Item -Path $pdfiumDll.FullName -Destination $dllDest -Force
+            Write-Host "  pdfium.dll"
+          } else {
+            Write-Warning "pdfium.dll not found."
+          }
+
+          # libdxfrw
+          $dxfrwDll = "C:\dev\libdxfrw\build\Release\dxfrw.dll"
+          if (Test-Path $dxfrwDll) {
+            Copy-Item -Path $dxfrwDll -Destination $dllDest -Force
+            Write-Host "  dxfrw.dll"
+          } else {
+            Write-Warning "dxfrw.dll not found."
+          }
+
+          # iconv
+          $isRelease = "${{ inputs.configuration || 'debug' }}" -eq "release"
+          $iconvDll = if ($isRelease) {
+            "$vcpkgRoot\installed\$triplet\bin\iconv-2.dll"
+          } else {
+            "$vcpkgRoot\installed\$triplet\debug\bin\iconv-2.dll"
+          }
+          if (Test-Path $iconvDll) {
+            Copy-Item -Path $iconvDll -Destination $dllDest -Force
+            Write-Host "  iconv-2.dll" $(if ($isRelease) { "(release)" } else { "(debug)" })
+          } else {
+            # try the other variant
+            $altIconv = if ($isRelease) {
+              "$vcpkgRoot\installed\$triplet\debug\bin\iconv-2.dll"
+            } else {
+              "$vcpkgRoot\installed\$triplet\bin\iconv-2.dll"
+            }
+            if (Test-Path $altIconv) {
+              Copy-Item -Path $altIconv -Destination $dllDest -Force
+              Write-Host "  iconv-2.dll (alternate)"
+            } else {
+              Write-Warning "iconv-2.dll not found."
+            }
+          }
+
+          # Copy fonts (SHX/TTF/OTF)
+          $fontSource = "$swiftDir\Fonts"
+          if (Test-Path $fontSource) {
+            $fontDest = "$dllDest\Fonts"
+            New-Item -ItemType Directory -Force -Path $fontDest | Out-Null
+            Copy-Item -Path "$fontSource\*.shx" -Destination $fontDest -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path "$fontSource\*.ttf" -Destination $fontDest -Force -ErrorAction SilentlyContinue
+            Copy-Item -Path "$fontSource\*.otf" -Destination $fontDest -Force -ErrorAction SilentlyContinue
+            Write-Host "Fonts copied."
+          }
+
+          Write-Host "--- DLLs in output ---"
+          Get-ChildItem $dllDest -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
+
+      # ------------------------------------------------------------------
+# 12. Package for distribution
+      # ------------------------------------------------------------------
+      - name: Package Build
+        run: |
+          $config  = "${{ inputs.configuration || 'debug' }}"
+          $triple  = "${{ matrix.swift-triple }}"
+          $buildDir = "${{ github.workspace }}\Engine\EngineAsBuilt\.build\$triple\$config"
+          $zipName  = "EngineAsBuilt-Windows-${{ matrix.arch }}.zip"
+          $zipPath  = "$env:RUNNER_TEMP\$zipName"
+
+          # Stage only runtime-required files (skip .build dirs, index/, Modules/, ModuleCache/) 
+          $stageDir = "$env:RUNNER_TEMP\pkg-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+
+          Write-Host "Staging from: $buildDir"
+          Get-ChildItem "$buildDir\*.exe"  | Copy-Item -Destination $stageDir -Force
+          Get-ChildItem "$buildDir\*.dll"  | Copy-Item -Destination $stageDir -Force
+          Get-ChildItem "$buildDir\*.dxil" | Copy-Item -Destination $stageDir -Force
+          if (Test-Path "$buildDir\Fonts") {
+            Copy-Item -Path "$buildDir\Fonts" -Destination "$stageDir\Fonts" -Recurse -Force
+          }
+
+          Write-Host "--- Staged files ---"
+          Get-ChildItem $stageDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName.Substring($stageDir.Length + 1))" }
+
+          Write-Host "Packaging: $stageDir -> $zipPath"
+          Compress-Archive -Path "$stageDir\*" -DestinationPath $zipPath -Force
+          Write-Host "Created: $zipName"
+          Get-Item $zipPath | ForEach-Object { Write-Host "  Size: $($_.Length) bytes" }
+
+      # ------------------------------------------------------------------
+# 13. Upload to Nightly Release
+      # ------------------------------------------------------------------
+      - name: Upload to Nightly Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Nightly Build
+          body: |
+            Automated nightly builds from `main` branch.
+
+            See [downloads page](https://joseph-montanez.github.io/as-built/#download) for all platforms.
+          files: ${{ runner.temp }}\EngineAsBuilt-Windows-${{ matrix.arch }}.zip
+          prerelease: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
