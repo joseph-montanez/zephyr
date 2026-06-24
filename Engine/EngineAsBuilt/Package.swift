@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Zephyr",
-    platforms: [.macOS(.v12), .iOS(.v13)],
+    platforms: [.macOS(.v11), .iOS(.v13)],
     products: [
         .library(name: "ZephyrCore", targets: ["ZephyrCore"]),
         .executable(name: "Zephyr", targets: ["Zephyr"]),
