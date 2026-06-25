@@ -787,13 +787,26 @@ public final class CADRendererBridge {
                     var b = end
                     let wp = pts[localIdx]
                     let moved = Vector3(x: wp.x + Double(dx), y: wp.y + Double(dy), z: wp.z)
-                    if localIdx == 0 { a = invTransform.transformPoint(moved) }
-                    else { b = invTransform.transformPoint(moved) }
+
+                    if localIdx == 0 {
+                        a = invTransform.transformPoint(moved)
+                    } else {
+                        b = invTransform.transformPoint(moved)
+                    }
+
+                    let needsStyledRebuild = shouldRebuildLiveStroke(for: entity, document: document)
                     writeLiveGeometry(.line(start: a, end: b, color: c))
-                    // Dashed lines produce multiple RPs (one per dash).
-                    // Vertex 0 → first point of first RP; vertex 1 → last point of last RP.
-                    if localIdx == 0 { updateFirstPointOfFirstRP() }
-                    else { updateLastPointOfLastRP() }
+
+                    if needsStyledRebuild, rebuildSinglePrimitiveEntityLive(handle: handle, in: gm, document: document) {
+                        return
+                    }
+
+                    if localIdx == 0 {
+                        updateFirstPointOfFirstRP()
+                    } else {
+                        updateLastPointOfLastRP()
+                    }
+
                     return
 
                 case .polygon(let points, let c):
@@ -1227,6 +1240,148 @@ public final class CADRendererBridge {
         }
 
         return result
+    }
+
+        private struct LivePrimitiveStyle {
+        let color: ColorRGBA
+        let lineType: String
+        let lineWeight: Double
+        let lineTypeScale: Double
+        let geomWidth: Double
+        let layerOpacity: Double
+    }
+
+    private func livePrimitiveStyle(for entity: CADEntity, document: CADDocument) -> LivePrimitiveStyle? {
+        guard let layer = document.layer(for: entity.layerID) else { return nil }
+
+        let entityColor: ColorRGBA
+        if let cv = entity.xdata["dxf.color"], case .string(let hex) = cv, let c = ColorRGBA(hex: hex) {
+            entityColor = c
+        } else {
+            entityColor = layer.color
+        }
+
+        let effectiveColor: ColorRGBA
+        if layer.opacity < 1.0 {
+            effectiveColor = ColorRGBA(
+                r: entityColor.r,
+                g: entityColor.g,
+                b: entityColor.b,
+                a: UInt8(min(255, Double(entityColor.a) * layer.opacity))
+            )
+        } else {
+            effectiveColor = entityColor
+        }
+
+        let lineType: String
+        if let ltv = entity.xdata["dxf.lineType"], case .string(let s) = ltv, s != "BYLAYER" {
+            lineType = s
+        } else {
+            lineType = layer.lineType
+        }
+
+        let lineWeight: Double
+        if let lwv = entity.xdata["dxf.lineWeight"], case .double(let d) = lwv, d >= 0 {
+            lineWeight = d
+        } else {
+            lineWeight = layer.lineWeight
+        }
+
+        let lineTypeScale: Double
+        if let ltsv = entity.xdata["dxf.lineTypeScale"], case .double(let d) = ltsv {
+            lineTypeScale = d
+        } else {
+            lineTypeScale = 1.0
+        }
+
+        let geomWidth: Double
+        if let gwv = entity.xdata["dxf.polylineWidth"], case .double(let d) = gwv {
+            geomWidth = d
+        } else {
+            geomWidth = 0.0
+        }
+
+        return LivePrimitiveStyle(
+            color: effectiveColor,
+            lineType: lineType,
+            lineWeight: lineWeight,
+            lineTypeScale: lineTypeScale,
+            geomWidth: geomWidth,
+            layerOpacity: layer.opacity
+        )
+    }
+
+    private func shouldRebuildLiveStroke(for entity: CADEntity, document: CADDocument) -> Bool {
+        guard let style = livePrimitiveStyle(for: entity, document: document) else { return false }
+        return CADPrimitiveGenerator.dashPattern(
+            for: style.lineType,
+            linetypePatterns: document.linetypePatterns
+        ) != nil
+    }
+
+    @discardableResult
+    private func rebuildSinglePrimitiveEntityLive(
+        handle: UUID,
+        in gm: GeometryManager,
+        document: CADDocument
+    ) -> Bool {
+        guard let entity = document.entity(for: handle),
+              let geometry = document.resolvedGeometry(for: entity),
+              geometry.count == 1,
+              let style = livePrimitiveStyle(for: entity, document: document),
+              let oldIDs = entityPrimitiveMap[handle],
+              !oldIDs.isEmpty
+        else {
+            return false
+        }
+
+        let oldPrimitives = oldIDs.compactMap { gm.getPrimitive(id: $0) }
+        let mappedEntityIndex: UInt32?
+        if let stored = gm.handleToEntityIndex[handle] {
+            mappedEntityIndex = stored
+        } else {
+            mappedEntityIndex = nil
+        }
+
+        let primitiveEntityIndex: UInt32? = oldPrimitives
+            .first(where: { $0.entityIndex != 0 })?
+            .entityIndex
+
+        let entityIndex: UInt32 = mappedEntityIndex ?? primitiveEntityIndex ?? 0
+
+        let oldZ = oldPrimitives.first?.z ?? 0.0
+
+        for id in oldIDs {
+            gm.removePrimitive(id: id)
+        }
+
+        let primitive = geometry[0]
+        let specs = CADPrimitiveGenerator.computePrimitiveSpecs(
+            from: primitive,
+            transform: entity.transform,
+            color: (style.color.r, style.color.g, style.color.b, style.color.a),
+            z: oldZ,
+            lineType: style.lineType,
+            lineWeight: style.lineWeight,
+            lineTypeScale: style.lineTypeScale,
+            geomWidth: style.geomWidth,
+            linetypePatterns: document.linetypePatterns,
+            opacityMultiplier: style.layerOpacity
+        )
+
+        var newIDs: [SpriteID] = []
+        newIDs.reserveCapacity(specs.count)
+
+        for spec in specs {
+            let id = spec.addTo(gm)
+            if let rp = gm.getPrimitive(id: id) {
+                rp.entityIndex = entityIndex
+            }
+            newIDs.append(id)
+        }
+
+        entityPrimitiveMap[handle] = newIDs
+        return true
     }
 
     private func markPrimitiveDirty(_ rp: RenderPrimitive) {
