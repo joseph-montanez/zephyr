@@ -155,15 +155,64 @@ struct TopChromeUI {
 
             // --- Window Title Text (Centered) ---
             let activeTabName = engine.tabManager.activeTab?.displayName ?? "Untitled"
-            let title = "Zephyr — \(activeTabName)"
-            let textSize = ImGuiCalcTextSize(title, nil, false, -1)
+            var title = "Zephyr — \(activeTabName)"
+            var blockName: String = ""
+            let inBlockEditor: Bool
+            if let blockID = engine.tabManager.activeTab?.editingBlockID {
+                inBlockEditor = true
+                if let block = engine.tabManager.activeTab?.document.block(for: blockID) {
+                    blockName = block.name
+                } else if let block = engine.tabManager.activeTab?.parentDocument?.block(for: blockID) {
+                    blockName = block.name
+                } else {
+                    blockName = "Unknown Block"
+                }
+                title += " — Block Editor: \(blockName)"
+            } else {
+                inBlockEditor = false
+            }
+
+            let titleSize = ImGuiCalcTextSize(title, nil, false, -1)
             
-            let textX = (dw - textSize.x) * 0.5
-            let textY = (topChromeH - textSize.y) * 0.5
+            // When editing a block, we also render a "Save & Close" button after the title.
+            let btnLabel = "Save & Close"
+            let btnSize = ImGuiCalcTextSize(btnLabel, nil, false, -1)
+            let btnPad: Float = 8
+            let btnFullW = btnSize.x + btnPad * 2
+            let totalWidth = inBlockEditor ? (titleSize.x + 10 + btnFullW) : titleSize.x
             
-            ImGuiSetCursorScreenPos(ImVec2(x: textX, y: textY))
+            let startX = (dw - totalWidth) * 0.5
+            let textY = (topChromeH - titleSize.y) * 0.5
+            
+            ImGuiSetCursorScreenPos(ImVec2(x: startX, y: textY))
             ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textDim)
             ImGuiTextV(title)
+            ImGuiPopStyleColor(1)
+
+            if inBlockEditor {
+                // Place the "Save & Close" button right after the title text.
+                let btnX = startX + titleSize.x + 10
+                let btnY = (topChromeH - btnSize.y) * 0.5 - 3
+                ImGuiPushStyleVar(Int32(ImGuiStyleVar_FramePadding.rawValue), ImVec2(x: btnPad, y: 2))
+                ImGuiSetCursorScreenPos(ImVec2(x: btnX, y: btnY))
+                if igSmallButton(btnLabel) {
+                    engine.ui.blockClosePending = true
+                }
+                
+                let min = ImGuiGetItemRectMin()
+                let max = ImGuiGetItemRectMax()
+                engine.ui.topChromeExcludeRect = SDL_Rect(
+                    x: Int32(min.x),
+                    y: Int32(min.y),
+                    w: Int32(max.x - min.x),
+                    h: Int32(max.y - min.y)
+                )
+                
+                ImGuiPopStyleVar(1)
+            } else {
+                engine.ui.topChromeExcludeRect = nil
+            }
+
             // --- FPS Display ---
             if engine.ui.showFPS {
                 let io = ImGuiGetIO()
@@ -185,8 +234,6 @@ struct TopChromeUI {
                 ImGuiSetCursorScreenPos(ImVec2(x: fpsX, y: fpsY))
                 ImGuiTextV(engine._cachedFpsText)
             }
-
-            ImGuiPopStyleColor(1)
         }
         igEnd()
 

@@ -122,9 +122,64 @@ struct AppUI {
         // 10. Status bar at the very bottom — shows entity count, FPS, etc.
         StatusBarUI.render(engine: engine, io: io, dw: dw, dh: dh)
 
-        // 11. Block editor banner — shown when editing a block in-place.
-        if engine.tabManager.activeTab?.editingBlockID != nil {
-            BlockEditorBannerUI.render(engine: engine, dw: dw)
+        // 11. (Removed: Block editor banner now fully integrated into titlebar)
+
+        // 11b. Block editor close-confirmation popup (Save / Discard / Cancel).
+        //      Triggered by the titlebar "Save & Close" button or BCLOSE command.
+        if engine.ui.blockClosePending {
+            let blockName: String
+            if let blockID = engine.tabManager.activeTab?.editingBlockID {
+                if let block = engine.tabManager.activeTab?.document.block(for: blockID) {
+                    blockName = block.name
+                } else if let block = engine.tabManager.activeTab?.parentDocument?.block(for: blockID) {
+                    blockName = block.name
+                } else {
+                    blockName = "Unknown Block"
+                }
+            } else {
+                blockName = "Unknown Block"
+            }
+
+            ImGuiOpenPopup("Close Block Editor##BlockClose", Int32(ImGuiPopupFlags_None.rawValue))
+
+            let popupW: Float = 360
+            let popupH: Float = 100
+            ImGuiSetNextWindowPos(
+                ImVec2(x: (dw - popupW) * 0.5, y: 150),
+                Int32(ImGuiCond_Appearing.rawValue),
+                ImVec2(x: 0, y: 0))
+            ImGuiSetNextWindowSize(ImVec2(x: popupW, y: popupH), Int32(ImGuiCond_Appearing.rawValue))
+
+            var popupOpen = true
+            if ImGuiBeginPopupModal("Close Block Editor##BlockClose", &popupOpen,
+                                    Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)) {
+                defer { ImGuiEndPopup() }
+
+                if !popupOpen {
+                    engine.ui.blockClosePending = false
+                } else {
+                    ImGuiTextV("Save changes to block \"\(blockName)\" before closing?")
+
+                    igSeparator()
+
+                    if igSmallButton("Save") {
+                        engine.tabManager.exitBlockEditor(saveChanges: true)
+                        engine.ui.blockClosePending = false
+                        ImGuiCloseCurrentPopup()
+                    }
+                    ImGuiSameLine(0, 8)
+                    if igSmallButton("Discard") {
+                        engine.tabManager.exitBlockEditor(saveChanges: false)
+                        engine.ui.blockClosePending = false
+                        ImGuiCloseCurrentPopup()
+                    }
+                    ImGuiSameLine(0, 8)
+                    if igSmallButton("Cancel") {
+                        engine.ui.blockClosePending = false
+                        ImGuiCloseCurrentPopup()
+                    }
+                }
+            }
         }
 
         // 12. Radial Navigation Tool (Artrage style)

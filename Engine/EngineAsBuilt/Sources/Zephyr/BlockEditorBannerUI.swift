@@ -6,8 +6,9 @@ import ImGui
 //
 // Renders an inline banner at the top of the canvas when the user is
 // editing a block in-place (entered via "Edit Block" button or BEDIT command).
-// The banner displays the block name and provides a "Save & Close Block"
-// button that executes the BCLOSE command to finalize editing.
+// The banner displays the block name as a visual cue. The "Save & Close"
+// button lives in the titlebar (TopChromeUI); the confirmation popup is
+// rendered by AppUI when engine.ui.blockClosePending is true.
 //
 // The banner is styled with a green-tinted background to visually
 // distinguish block-editing mode from normal document editing.
@@ -57,10 +58,6 @@ struct BlockEditorBannerUI {
             ImGuiTextV("Block Editor:")
             ImGuiSameLine(0, 8)
             ImGuiTextV(blockName)
-            ImGuiSameLine(0, 16)
-            if igButton("Save & Close Block", ImVec2(x: 0, y: 0)) {
-                engine.commandProcessor.executeCommand("BCLOSE")
-            }
             ImGuiEnd()
         }
 

@@ -637,7 +637,7 @@ public final class CADCommandProcessor {
         case "BCLOSE":
             if let engine = engine {
                 if engine.tabManager.activeTab?.editingBlockID != nil {
-                    engine.tabManager.exitBlockEditor(saveChanges: true)
+                    engine.ui.blockClosePending = true
                 }
             }
             clearCommand()

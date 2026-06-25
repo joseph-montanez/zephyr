@@ -233,70 +233,6 @@ public final class PhrostEngine {
         }
         #endif
 
-        #if os(Windows) || os(macOS)
-        // Configure custom window hit test for dragging and resizing
-        let hitTestCallback: SDL_HitTest = { win, area, data in
-            guard let area = area else { return SDL_HITTEST_NORMAL }
-            
-            var w: Int32 = 0
-            var h: Int32 = 0
-            SDL_GetWindowSize(win, &w, &h)
-            
-            let x = area.pointee.x
-            let y = area.pointee.y
-            let border: Int32 = 8
-            
-            // Corner resizing
-            if x < border && y < border { return SDL_HITTEST_RESIZE_TOPLEFT }
-            if x > w - border && y < border { return SDL_HITTEST_RESIZE_TOPRIGHT }
-            if x < border && y > h - border { return SDL_HITTEST_RESIZE_BOTTOMLEFT }
-            if x > w - border && y > h - border { return SDL_HITTEST_RESIZE_BOTTOMRIGHT }
-            
-            // Border resizing
-            if y < border { return SDL_HITTEST_RESIZE_TOP }
-            if y > h - border { return SDL_HITTEST_RESIZE_BOTTOM }
-            if x < border { return SDL_HITTEST_RESIZE_LEFT }
-            if x > w - border { return SDL_HITTEST_RESIZE_RIGHT }
-            
-            // Draggable custom title bar (excluding window controls)
-            #if os(macOS)
-            let titleBarHeight: Int32 = 36
-            #else
-            let titleBarHeight: Int32 = 50
-            #endif
-            if y < titleBarHeight {
-                #if os(Windows)
-                if x > w - 138 {
-                    return SDL_HITTEST_NORMAL
-                }
-                #else
-                if x < 80 {
-                    return SDL_HITTEST_NORMAL
-                }
-                #endif
-                return SDL_HITTEST_DRAGGABLE
-            }
-            
-            return SDL_HITTEST_NORMAL
-        }
-        _ = SDL_SetWindowHitTest(window, hitTestCallback, nil)
-
-        #if os(Windows)
-        // Set DWM rounded corners preference
-        let hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(window), "SDL.window.win32.hwnd", nil)
-        if let rawHwnd = hwnd {
-            let winHwnd = unsafeBitCast(rawHwnd, to: HWND.self)
-            var cornerPreference: DWORD = 2 // DWMWCP_ROUND
-            _ = DwmSetWindowAttribute(
-                winHwnd,
-                33, // DWMWA_WINDOW_CORNER_PREFERENCE
-                &cornerPreference,
-                DWORD(MemoryLayout<DWORD>.size)
-            )
-        }
-        #endif
-        #endif
-
         // Initialize GPU Device
         #if os(macOS) || os(iOS)
             let formats = SDL_GPU_SHADERFORMAT_MSL
@@ -348,6 +284,80 @@ public final class PhrostEngine {
         self.loopController = EngineLoopController(engine: self)
 
         // Initialize GPU shaders & pipelines
+        
+        // Window hit test setup moved to after initialization
+        #if os(Windows) || os(macOS)
+        let hitTestCallback: SDL_HitTest = { win, area, data in
+            guard let area = area else { return SDL_HITTEST_NORMAL }
+            
+            var w: Int32 = 0
+            var h: Int32 = 0
+            SDL_GetWindowSize(win, &w, &h)
+            
+            let x = area.pointee.x
+            let y = area.pointee.y
+            let border: Int32 = 8
+            
+            // Corner resizing
+            if x < border && y < border { return SDL_HITTEST_RESIZE_TOPLEFT }
+            if x > w - border && y < border { return SDL_HITTEST_RESIZE_TOPRIGHT }
+            if x < border && y > h - border { return SDL_HITTEST_RESIZE_BOTTOMLEFT }
+            if x > w - border && y > h - border { return SDL_HITTEST_RESIZE_BOTTOMRIGHT }
+            
+            // Border resizing
+            if y < border { return SDL_HITTEST_RESIZE_TOP }
+            if y > h - border { return SDL_HITTEST_RESIZE_BOTTOM }
+            if x < border { return SDL_HITTEST_RESIZE_LEFT }
+            if x > w - border { return SDL_HITTEST_RESIZE_RIGHT }
+            
+            // Draggable custom title bar (excluding window controls)
+            #if os(macOS)
+            let titleBarHeight: Int32 = 36
+            #else
+            let titleBarHeight: Int32 = 50
+            #endif
+            if y < titleBarHeight {
+                #if os(Windows)
+                if x > w - 138 {
+                    return SDL_HITTEST_NORMAL
+                }
+                #else
+                if x < 80 {
+                    return SDL_HITTEST_NORMAL
+                }
+                #endif
+                
+                if let data = data {
+                    let engine = Unmanaged<PhrostEngine>.fromOpaque(data).takeUnretainedValue()
+                    if let exclude = engine.ui.topChromeExcludeRect {
+                        if x >= exclude.x && x <= exclude.x + exclude.w && y >= exclude.y && y <= exclude.y + exclude.h {
+                            return SDL_HITTEST_NORMAL
+                        }
+                    }
+                }
+                
+                return SDL_HITTEST_DRAGGABLE
+            }
+            
+            return SDL_HITTEST_NORMAL
+        }
+        _ = SDL_SetWindowHitTest(window, hitTestCallback, Unmanaged.passUnretained(self).toOpaque())
+
+        #if os(Windows)
+        // Set DWM rounded corners preference
+        let hwnd = SDL_GetPointerProperty(SDL_GetWindowProperties(window), "SDL.window.win32.hwnd", nil)
+        if let rawHwnd = hwnd {
+            let winHwnd = unsafeBitCast(rawHwnd, to: HWND.self)
+            var cornerPreference: DWORD = 2 // DWMWCP_ROUND
+            _ = DwmSetWindowAttribute(
+                winHwnd,
+                33, // DWMWA_WINDOW_CORNER_PREFERENCE
+                &cornerPreference,
+                DWORD(MemoryLayout<DWORD>.size)
+            )
+        }
+        #endif
+        #endif
         // Set properties temporarily so self can be referenced in initGPUPipelines
         self.ctx = ImGuiCreateContext(nil)
         self.io = ImGuiGetIO()!

@@ -36,10 +36,18 @@ public final class EngineUIManager {
     public var layersPanelVisible: Bool = true
     public var fpsCacheFrame: Int = 15
 
+    /// When true, the block editor close-confirmation popup is shown.
+    /// Set by the "Save & Close Block" button or BCLOSE command;
+    /// cleared by the popup's Save/Discard/Cancel actions.
+    public var blockClosePending: Bool = false
+
     public var layerMoveActive: Bool = false
     public var layerMoveSelectionIndex: Int = 0
     public var layerMoveBuffer: String = ""
     public var layerMoveMatches: [Layer] = []
+    
+    public var topChromeExcludeRect: SDL_Rect? = nil
+
     
     public var boldFont: UnsafeMutablePointer<ImFont>? = nil
     public var smallFont: UnsafeMutablePointer<ImFont>? = nil
