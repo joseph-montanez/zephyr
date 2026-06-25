@@ -53,51 +53,18 @@ public enum EABReader {
         let magic = r.readUInt32()
         
         if magic == EABArchiveMagic {
-            // It's a V7 multi-view archive
-            let version = r.readUInt32()
-            guard version <= EABVersion else { throw EABError.unsupportedVersion(version) }
-            
-            let viewCount = Int(r.readUInt32())
-            let directoryOffset = Int(r.readUInt64())
-            
-            var views: [DrawingView] = []
-            let dirReader = BinaryReader(data: data, startOffset: directoryOffset)
-            
-            for _ in 0..<viewCount {
-                let name = dirReader.readString()
-                let kindRaw = dirReader.readUInt8()
-                let kind: DXFDrawingViewKind = (kindRaw == 0) ? .model : .sheet
-                
-                let camX = dirReader.readFloat64()
-                let camY = dirReader.readFloat64()
-                let camZoom = dirReader.readFloat64()
-                let camRot = dirReader.readFloat64()
-                let cameraState = CameraState(offsetX: camX, offsetY: camY, zoom: camZoom, rotation: camRot)
-                
-                let dataOffset = Int(dirReader.readUInt64())
-                let dataSize = Int(dirReader.readUInt64())
-                
-                let viewData = data.subdata(in: dataOffset..<dataOffset + dataSize)
-                let components = try readDocument(from: viewData)
-                
-                let doc = CADDocument()
-                doc.importEAB(
-                    layers: components.layers,
-                    blocks: components.blocks,
-                    entities: components.entities,
-                    constraints: components.constraints,
-                    solvedTransforms: components.solvedTransforms,
-                    unit: components.unit,
-                    textStyleFonts: components.textStyleFonts,
-                    linetypePatterns: components.linetypePatterns,
-                    activeLayerID: components.activeLayerID,
-                    imageStore: components.imageStore
-                )
-                
-                views.append(DrawingView(name: name, kind: kind, document: doc, cameraState: cameraState))
+            // It's a V7 multi-view archive.
+            // Try to parse its directory; if that yields garbage offsets (e.g. from the old
+            // 16-byte header reservation bug), fall back to scanning for embedded V6 documents.
+            if let views = try? parseV7Archive(data: data, r: r) {
+                return views
             }
-            
-            return views
+            // V7 directory corrupted — scan for V6 payloads inside the raw data.
+            print("[EABReader] V7 directory appears corrupted; recovering by scanning for V6 data.")
+            if let recovered = try? recoverV6Documents(data: data) {
+                return recovered
+            }
+            throw EABError.readError("Unable to parse V7 archive — directory corrupted and no V6 payloads found.")
         } else {
             // Fallback: Legacy single-document EAB
             let components = try readDocument(from: data)
@@ -134,6 +101,102 @@ public enum EABReader {
     ) {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         return try readDocument(from: data)
+    }
+
+    // MARK: - V7 Recovery Helpers
+
+    /// Parse a V7 archive directory. Returns nil if any directory entry has out-of-bounds offsets.
+    private static func parseV7Archive(data: Data, r: BinaryReader) throws -> [DrawingView]? {
+        let version = r.readUInt32()
+        guard version <= EABVersion else { throw EABError.unsupportedVersion(version) }
+
+        let viewCount = Int(r.readUInt32())
+        let directoryOffset = Int(r.readUInt64())
+        guard directoryOffset >= 16, directoryOffset < data.count else { return nil }
+
+        var views: [DrawingView] = []
+        let dirReader = BinaryReader(data: data, startOffset: directoryOffset)
+
+        for _ in 0..<viewCount {
+            let name = dirReader.readString()
+            let kindRaw = dirReader.readUInt8()
+            let kind: DXFDrawingViewKind = (kindRaw == 0) ? .model : .sheet
+
+            let camX = dirReader.readFloat64()
+            let camY = dirReader.readFloat64()
+            let camZoom = dirReader.readFloat64()
+            let camRot = dirReader.readFloat64()
+            let cameraState = CameraState(offsetX: camX, offsetY: camY, zoom: camZoom, rotation: camRot)
+
+            let dataOffset = Int(dirReader.readUInt64())
+            let dataSize = Int(dirReader.readUInt64())
+
+            // Validate: offset must be after the directory region, size must be reasonable,
+            // and the sub-range must fit within the file.
+            guard dataOffset >= directoryOffset + 1,
+                  dataSize > 0,
+                  dataOffset + dataSize <= data.count else { return nil }
+
+            let viewData = data.subdata(in: dataOffset..<dataOffset + dataSize)
+            let components = try readDocument(from: viewData)
+
+            let doc = CADDocument()
+            doc.importEAB(
+                layers: components.layers,
+                blocks: components.blocks,
+                entities: components.entities,
+                constraints: components.constraints,
+                solvedTransforms: components.solvedTransforms,
+                unit: components.unit,
+                textStyleFonts: components.textStyleFonts,
+                linetypePatterns: components.linetypePatterns,
+                activeLayerID: components.activeLayerID,
+                imageStore: components.imageStore
+            )
+
+            views.append(DrawingView(name: name, kind: kind, document: doc, cameraState: cameraState))
+        }
+
+        return views
+    }
+
+    /// Scan raw data for V6 documents (magic = EABMagic) and recover them as DrawingViews.
+    private static func recoverV6Documents(data: Data) throws -> [DrawingView]? {
+        let magicBytes = withUnsafeBytes(of: EABMagic.littleEndian) { Data($0) }
+        var views: [DrawingView] = []
+        var searchStart = 20  // Skip V7 header region
+
+        while searchStart < data.count - 4 {
+            guard let range = data.range(of: magicBytes, in: searchStart..<data.count) else { break }
+            let offset = range.lowerBound
+            // Extract from this offset to end of data (or next magic, whichever comes first).
+            // For simplicity, take everything from offset to end — readDocument will
+            // only consume what it needs (section table is at end).
+            let viewData = data.subdata(in: offset..<data.count)
+            do {
+                let components = try readDocument(from: viewData)
+                let doc = CADDocument()
+                doc.importEAB(
+                    layers: components.layers,
+                    blocks: components.blocks,
+                    entities: components.entities,
+                    constraints: components.constraints,
+                    solvedTransforms: components.solvedTransforms,
+                    unit: components.unit,
+                    textStyleFonts: components.textStyleFonts,
+                    linetypePatterns: components.linetypePatterns,
+                    activeLayerID: components.activeLayerID,
+                    imageStore: components.imageStore
+                )
+                views.append(DrawingView(name: "Recovered", kind: .model, document: doc,
+                                         cameraState: CameraState(offsetX: 0, offsetY: 0, zoom: 1, rotation: 0)))
+            } catch {
+                // This magic might be a false positive inside image data etc. Continue scanning.
+            }
+            searchStart = offset + 4
+        }
+
+        return views.isEmpty ? nil : views
     }
 
     /// Read from in-memory Data.
@@ -430,7 +493,8 @@ public enum EABReader {
             // drawOrder (v6+, flag 0x04)
             var drawOrder: Int = Int.max
             if hasDrawOrder {
-                drawOrder = Int(r.readInt32())
+                let raw = r.readInt32()
+                drawOrder = raw == Int32.max ? Int.max : Int(raw)
             } else if version <= 5 {
                 // Backward compat: migrate from legacy xdata key
                 if case .int(let v) = xdata["dxf.drawOrder"] {

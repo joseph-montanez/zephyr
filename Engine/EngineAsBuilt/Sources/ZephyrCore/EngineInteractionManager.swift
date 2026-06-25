@@ -64,6 +64,8 @@ public final class EngineInteractionManager {
     public internal(set) var gripHandle: UUID? = nil
     /// Document state before the current grip drag, used for one-step undo.
     public internal(set) var gripUndoSnapshot: CADDocumentSnapshot? = nil
+    /// Document state before the current selection drag, used for one-step undo.
+    public var dragUndoSnapshot: CADDocumentSnapshot? = nil
     
     /// Grip that the cursor is hovering over (for highlight).
     public internal(set) var hoveredGrip: CADSelectionManager.GripType? = nil

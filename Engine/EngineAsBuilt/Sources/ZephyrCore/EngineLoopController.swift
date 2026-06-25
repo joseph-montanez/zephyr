@@ -289,13 +289,20 @@ public final class EngineLoopController {
             let moved = interaction.dragTotalWorldX != 0 || interaction.dragTotalWorldY != 0
             interaction.dragActive = false
             if engine.cadSelection.hasSelection && moved {
-                // The actual transform mutations were done live, so we just
-                // flag it dirty here to trigger the GPU rebuild.
-                engine.document.pushUndo()
+                // Push the pre-drag snapshot captured when dragActive first became true.
+                // The live transform mutations are already applied; this records the
+                // original state so a single undo restores the entities to where they
+                // were before the drag started.
+                if let snapshot = interaction.dragUndoSnapshot {
+                    engine.document.pushUndo(snapshot)
+                } else {
+                    engine.document.pushUndo()
+                }
                 interaction.pendingPreviewHandles = engine.cadSelection.selectedHandles
                 interaction.pendingPreviewIsBulkDrag = true
                 engine.document.isDirty = true
             }
+            interaction.dragUndoSnapshot = nil
             
             engine.snap.currentSnapResult = nil
             engine.snap.snapTrackingEngine.clear()
@@ -409,6 +416,7 @@ public final class EngineLoopController {
                         simplifyComplexBlocks: engine.simplifyComplexBlocks)
                     if let h = hoverHandle, engine.cadSelection.selectedHandles.contains(h) {
                         interaction.dragActive = true
+                        interaction.dragUndoSnapshot = engine.document.snapshot()
                         interaction.dragLastWorldX = wx
                         interaction.dragLastWorldY = wy
                         interaction.dragTotalWorldX = 0

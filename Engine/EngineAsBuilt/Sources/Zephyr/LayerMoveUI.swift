@@ -124,43 +124,38 @@ struct LayerMoveUI {
                     ImGuiTextV("(no matching layers)")
                     ImGuiPopStyleColor(1)
                 } else {
-                    let rowH = ImGuiGetTextLineHeightWithSpacing()
-                    var clipper = ImGuiListClipper()
-                    ImGuiListClipperBegin(&clipper, Int32(engine.ui.layerMoveMatches.count), rowH)
-                    while ImGuiListClipperStep(&clipper) {
-                        let start = Int(clipper.DisplayStart)
-                        let end = Int(clipper.DisplayEnd)
-                        for i in start..<end {
-                            let layer = engine.ui.layerMoveMatches[i]
-                            let isSelected = (i == engine.ui.layerMoveSelectionIndex)
+                    // Direct iteration — avoid ImGuiListClipper due to arm64e C struct ABI mismatch.
+                    for i in 0..<engine.ui.layerMoveMatches.count {
+                        let layer = engine.ui.layerMoveMatches[i]
+                        let isSelected = (i == engine.ui.layerMoveSelectionIndex)
 
-                            ImGuiPushStyleColor(
-                                Int32(ImGuiCol_Button.rawValue),
-                                ImVec4(
-                                    x: Float(layer.color.r) / 255, y: Float(layer.color.g) / 255,
-                                    z: Float(layer.color.b) / 255, w: 1))
-                            ImGuiPushStyleColor(
-                                Int32(ImGuiCol_ButtonHovered.rawValue),
-                                ImVec4(
-                                    x: Float(layer.color.r) / 255, y: Float(layer.color.g) / 255,
-                                    z: Float(layer.color.b) / 255, w: 0.8))
-                            igSmallButton(" ")
-                            ImGuiPopStyleColor(2)
-                            ImGuiSameLine(0, 6)
+                        ImGuiPushStyleColor(
+                            Int32(ImGuiCol_Button.rawValue),
+                            ImVec4(
+                                x: Float(layer.color.r) / 255, y: Float(layer.color.g) / 255,
+                                z: Float(layer.color.b) / 255, w: 1))
+                        ImGuiPushStyleColor(
+                            Int32(ImGuiCol_ButtonHovered.rawValue),
+                            ImVec4(
+                                x: Float(layer.color.r) / 255, y: Float(layer.color.g) / 255,
+                                z: Float(layer.color.b) / 255, w: 0.8))
+                        igSmallButton(" ")
+                        ImGuiPopStyleColor(2)
+                        ImGuiSameLine(0, 6)
 
-                            if ImGuiSelectable(
-                                layer.name, isSelected,
-                                Int32(ImGuiSelectableFlags_AllowDoubleClick.rawValue),
-                                ImVec2(x: 0, y: 0))
-                            {
-                                doc.reassignEntities(handles: engine.cadSelection.selectedHandles, to: layer.handle)
-                                engine.ui.layerMoveActive = false
-                                engine.ui.layerMoveBuffer = ""
-                                engine.ui.layerMoveMatches = []
-                            }
-                            if ImGuiIsItemHovered(0) {
-                                engine.ui.layerMoveSelectionIndex = i
-                            }
+                        if ImGuiSelectable(
+                            layer.name, isSelected,
+                            Int32(ImGuiSelectableFlags_AllowDoubleClick.rawValue),
+                            ImVec2(x: 0, y: 0))
+                        {
+                            doc.reassignEntities(handles: engine.cadSelection.selectedHandles, to: layer.handle)
+                            engine.ui.layerMoveActive = false
+                            engine.ui.layerMoveBuffer = ""
+                            engine.ui.layerMoveMatches = []
+                            break
+                        }
+                        if ImGuiIsItemHovered(0) {
+                            engine.ui.layerMoveSelectionIndex = i
                         }
                     }
                 }

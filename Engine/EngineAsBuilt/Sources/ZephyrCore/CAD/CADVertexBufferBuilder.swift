@@ -197,14 +197,16 @@ public final class CADVertexBufferBuilder {
                     let dy = p2.y - p1.y
                     let len = sqrt(dx*dx + dy*dy)
                     if len > 1e-5 {
+                        // World-space line width (no zoom compensation — zoom scales naturally via camera matrix).
+                        // geomWidth and lineWeight are both in world units (mm).
+                        // The ×8 factor gives reasonable visibility: 0.25 mm → 2.0 world units.
                         let w: Float
                         if input.geomWidth > 0.0 {
                             w = Float(input.geomWidth)
                         } else if input.lineWeight > 0.25 {
-                            let thicknessPixels = Float(input.lineWeight * 8.0)
-                            w = thicknessPixels / Float(cameraZoom)
+                            w = Float(input.lineWeight * 8.0)
                         } else {
-                            w = 2.0 / Float(cameraZoom)
+                            w = 2.0
                         }
 
                         let halfW: Float = w * 0.5
@@ -264,14 +266,14 @@ public final class CADVertexBufferBuilder {
                         let dy = p2.y - p1.y
                         let len = sqrt(dx*dx + dy*dy)
                         if len > 1e-5 {
+                            // World-space line width (no zoom compensation — zoom scales naturally via camera matrix).
                             let w: Float
                             if input.geomWidth > 0.0 {
                                 w = Float(input.geomWidth)
                             } else if input.lineWeight > 0.25 {
-                                let thicknessPixels = Float(input.lineWeight * 8.0)
-                                w = thicknessPixels / Float(cameraZoom)
+                                w = Float(input.lineWeight * 8.0)
                             } else {
-                                w = 2.0 / Float(cameraZoom)
+                                w = 2.0
                             }
 
                             let halfW: Float = w * 0.5

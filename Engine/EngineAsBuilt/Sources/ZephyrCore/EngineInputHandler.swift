@@ -2,6 +2,7 @@ import Foundation
 import CSDL3
 import SwiftSDL
 import SwiftSDL_image
+import ImGui
 
 // =========================================================================
 // MARK: - EngineInputHandler
@@ -51,6 +52,45 @@ internal final class EngineInputHandler {
                 return eventCount
 
             case UInt32(SDL_EVENT_WINDOW_RESIZED.rawValue):
+                break
+
+            case UInt32(SDL_EVENT_WINDOW_FOCUS_LOST.rawValue):
+                // Reset ImGui held buttons/keys so they don't stay "pressed"
+                // when the window regains focus.
+                if let io = engine.io {
+                    ImGuiIO_AddFocusEvent(io, false)
+                }
+                // Finalize any in-progress drag or grip so the document doesn't
+                // stay in a half-edited state.
+                if engine.interaction.dragActive || engine.interaction.gripActive {
+                    engine.loopController.handleToolMouseUp(x: 0, y: 0)
+                }
+                // Release panning state that may be stuck from a missed mouse-up.
+                engine.interaction.panActive = false
+                engine.interaction.touchPanActive = false
+                engine.interaction.touchFingersDown = 0
+                engine.interaction.forceHideOSCursor = false
+                // Release relative mouse mode and show the system cursor.
+                _ = SDL_SetWindowRelativeMouseMode(engine.window, false)
+                _ = SDL_ShowCursor()
+                break
+
+            case UInt32(SDL_EVENT_WINDOW_FOCUS_GAINED.rawValue):
+                // Inform ImGui that the window is now focused so it can
+                // correctly track mouse/key state going forward.
+                if let io = engine.io {
+                    ImGuiIO_AddFocusEvent(io, true)
+                    // Sync modifier keys that may have changed while unfocused.
+                    let mod = UInt32(SDL_GetModState())
+                    let ctrlDown  = (mod & SDL_KMOD_CTRL)  != 0
+                    let shiftDown = (mod & SDL_KMOD_SHIFT) != 0
+                    let altDown   = (mod & SDL_KMOD_ALT)   != 0
+                    let guiDown   = (mod & SDL_KMOD_GUI)   != 0
+                    ImGuiIO_AddKeyEvent(io, ImGuiMod_Ctrl, ctrlDown)
+                    ImGuiIO_AddKeyEvent(io, ImGuiMod_Shift, shiftDown)
+                    ImGuiIO_AddKeyEvent(io, ImGuiMod_Alt, altDown)
+                    ImGuiIO_AddKeyEvent(io, ImGuiMod_Super, guiDown)
+                }
                 break
 
             case UInt32(SDL_EVENT_KEY_DOWN.rawValue):

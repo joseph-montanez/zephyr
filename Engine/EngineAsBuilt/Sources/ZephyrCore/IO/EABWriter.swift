@@ -40,8 +40,8 @@ public enum EABWriter {
     public static func serialize(views: [DrawingView]) throws -> Data {
         let w = BinaryWriter()
 
-        // 1. Reserve V7 Archive Header (16 bytes)
-        w.writeZeros(16)
+        // 1. Reserve V7 Archive Header (20 bytes: magic(4) + version(4) + viewCount(4) + directoryOffset(8))
+        w.writeZeros(20)
 
         // 2. Reserve Directory table space
         // Each entry is: nameLength (2), name (N), kind (1), camera (32), dataOffset (8), dataSize (8)
@@ -56,7 +56,7 @@ public enum EABWriter {
             directoryPositions.append((nameOffset: 0, cameraOffset: cameraOffset, offsetPos: offsetPos, sizePos: sizePos))
         }
 
-        let directoryOffset = UInt64(16) // immediately follows header
+        let directoryOffset = UInt64(20) // immediately follows 20-byte header
 
         // 3. Serialize each view's V6 document
         for (i, view) in views.enumerated() {
@@ -387,7 +387,7 @@ public enum EABWriter {
                 serializeXDataDict(entity.xdata, to: w)
             }
             // drawOrder (v6+, flag 0x04)
-            w.writeInt32(Int32(entity.drawOrder))
+            w.writeInt32(Int32(clamping: entity.drawOrder))
         }
         return w.build()
     }

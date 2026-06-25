@@ -65,22 +65,16 @@ struct LayerPanelUI {
                     ImGuiSetCursorPosX(10)
                     ImGuiTextV("(no layers)")
                 } else {
-                    var clipper = ImGuiListClipper()
-                    ImGuiListClipperBegin(&clipper, Int32(layers.count), layerRowH)
-                    while ImGuiListClipperStep(&clipper) {
-                        let start = Int(clipper.DisplayStart)
-                        let end = Int(clipper.DisplayEnd)
-                        for index in start..<end {
-                            renderLayerRow(
-                                engine: engine,
-                                document: doc,
-                                layer: layers[index],
-                                index: index,
-                                rowHeight: layerRowH,
-                                fontSize: fontSize)
-                        }
+                    // Direct iteration — avoid ImGuiListClipper due to arm64e C struct ABI mismatch.
+                    for index in 0..<layers.count {
+                        renderLayerRow(
+                            engine: engine,
+                            document: doc,
+                            layer: layers[index],
+                            index: index,
+                            rowHeight: layerRowH,
+                            fontSize: fontSize)
                     }
-                    ImGuiListClipperEnd(&clipper)
                 }
             }
         }
