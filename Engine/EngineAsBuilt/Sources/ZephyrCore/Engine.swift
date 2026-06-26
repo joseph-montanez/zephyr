@@ -95,6 +95,13 @@ public final class PhrostEngine {
         print("[Engine] simplifyComplexBlocks: \(simplifyComplexBlocks)")
     }
 
+    /// When more than this many entities are selected, suppress all grips and
+    /// show only selection outlines (mirrors AutoCAD GRIPOBJLIMIT).
+    public var gripObjectMax: Int = 100
+    /// Maximum number of grip squares drawn on screen (prevents ImGui 16-bit
+    /// index buffer overflow). Default 1000 grips across all entities.
+    public var gripMax: Int = 1000
+
     /// Toggle simplifying dense polylines.
     public func toggleSimplifyPolylines() {
         DXFEntityConverter.simplifyPolylines.toggle()

@@ -369,7 +369,18 @@ public final class EngineRenderer {
             || engine.interaction.gripActive
             || engine.interaction.dragActive
         {
-            engine._cachedCadGrips = engine.cadSelection.getAllGrips(document: engine.document, cam: transform)
+            // Respect gripObjectMax: if too many entities are selected, suppress
+            // all grips and show only selection outlines.
+            let gripHandles: Set<UUID>
+            if engine.cadSelection.selectedHandles.count > engine.gripObjectMax {
+                gripHandles = []
+            } else {
+                gripHandles = engine.cadSelection.selectedHandles
+            }
+            engine._cachedCadGrips = CADGripSystem.getAllGrips(
+                document: engine.document, cam: transform,
+                simplifyComplexBlocks: true,
+                selectedHandles: gripHandles)
             engine.interaction.cachedGripGeneration = engine.camera.renderGeneration
             engine._cachedSelectionGen = engine.cadSelection._selectionGeneration
             engine._cachedApplyGen = engine._appliedGeneration
@@ -946,8 +957,9 @@ public final class EngineRenderer {
 
         // 1. Cap grips to prevent ImGui 16-bit index crash.
         // 65535 limit / ~12 vertices per grip = max ~5400 grips.
-        // We cap at 2000 to leave plenty of room for crosshairs/rect-select previews.
-        let maxGripsToDraw = 100
+        // Cap at the configured limit (default 1000) to leave room for other
+        // ImGui draw-list primitives (crosshairs, rect-select previews, etc.).
+        let maxGripsToDraw = engine.gripMax
         var drawnGrips = 0
 
         for grip in engine._cachedCadGrips {

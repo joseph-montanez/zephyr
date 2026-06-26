@@ -830,6 +830,45 @@ public final class CADCommandProcessor {
                 print("[CAD] Usage: SIMPLIFYPOLY ON|OFF")
             }
             clearCommand()
+        // --- Grip Settings ---
+        case "SETTINGSGRIPOBJECTMAX", "GRIPOBJECTMAX", "GRIPOBJLIMIT":
+            guard let engine = engine else { clearCommand(); return }
+            print("[CAD] Grip object max: \(engine.gripObjectMax) (entities)")
+            clearCommand()
+        case _ where upper.hasPrefix("SETTINGSGRIPOBJECTMAX ") || upper.hasPrefix("GRIPOBJECTMAX ") || upper.hasPrefix("GRIPOBJLIMIT "):
+            guard let engine = engine else { clearCommand(); return }
+            let prefixLen: Int
+            if upper.hasPrefix("SETTINGSGRIPOBJECTMAX ") { prefixLen = 22 }
+            else if upper.hasPrefix("GRIPOBJECTMAX ") { prefixLen = 14 }
+            else { prefixLen = 13 } // "GRIPOBJLIMIT "
+            let arg = String(text.dropFirst(prefixLen)).trimmingCharacters(in: .whitespaces)
+            guard let val = Int(arg), val >= 1 else {
+                print("[CAD] SETTINGSGRIPOBJECTMAX requires a positive integer.")
+                clearCommand()
+                return
+            }
+            engine.gripObjectMax = val
+            print("[CAD] Grip object max set to \(val) (grips suppressed when selection exceeds \(val))")
+            // Invalidate cached grips so the new limit takes effect immediately.
+            engine.interaction.cachedGripGeneration = -1
+            clearCommand()
+        case "SETTINGSGRIPMAX", "GRIPMAX":
+            guard let engine = engine else { clearCommand(); return }
+            print("[CAD] Grip max: \(engine.gripMax) (total grip squares drawn)")
+            clearCommand()
+        case _ where upper.hasPrefix("SETTINGSGRIPMAX ") || upper.hasPrefix("GRIPMAX "):
+            guard let engine = engine else { clearCommand(); return }
+            let prefixLen = upper.hasPrefix("SETTINGSGRIPMAX ") ? 16 : 8
+            let arg = String(text.dropFirst(prefixLen)).trimmingCharacters(in: .whitespaces)
+            guard let val = Int(arg), val >= 1 else {
+                print("[CAD] SETTINGSGRIPMAX requires a positive integer.")
+                clearCommand()
+                return
+            }
+            engine.gripMax = val
+            print("[CAD] Grip max set to \(val) (total grip squares drawn)")
+            engine.interaction.cachedGripGeneration = -1
+            clearCommand()
         // --- Grid ---
         case "GRID":
             guard let engine = engine else { clearCommand(); return }
