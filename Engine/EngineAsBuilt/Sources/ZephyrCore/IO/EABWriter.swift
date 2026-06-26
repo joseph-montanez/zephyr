@@ -522,9 +522,14 @@ public enum EABWriter {
                 verts.append(PVAVertex(position: Vector3(x: origin.x + size.x, y: origin.y, z: origin.z), color: c))
                 verts.append(PVAVertex(position: Vector3(x: origin.x + size.x, y: origin.y + size.y, z: origin.z), color: c))
                 verts.append(PVAVertex(position: Vector3(x: origin.x, y: origin.y + size.y, z: origin.z), color: c))
-            case .polygon(let points, let color), .fillPolygon(let points, let color), .polyline(let points, let color):
+            case .polygon(let points, let color), .fillPolygon(let points, let color):
                 let c = color ?? .white
                 for pt in points { verts.append(PVAVertex(position: pt, color: c)) }
+            case .polyline(let path, let color):
+                let c = color ?? .white
+                for point in path.tessellatedPoints() {
+                    verts.append(PVAVertex(position: point, color: c))
+                }
             case .fillComplexPolygon(let outer, let holes, let color):
                 let c = color ?? .white
                 for pt in outer { verts.append(PVAVertex(position: pt, color: c)) }
@@ -809,7 +814,10 @@ public enum EABWriter {
                 }
             }
 
-            // type byte: 0=point,1=line,2=rect,3=fillRect,4=polygon,5=circle,6=arc,7=fillPolygon,8=text,9=fillComplexPolygon,10=gradient,11=spline
+            // type byte: 0=point, 1=line, 2=rect, 3=fillRect, 4=polygon,
+            // 5=circle, 6=arc, 7=fillPolygon, 8=text, 9=fillComplexPolygon,
+            // 10=gradient, 11=spline, 12=ellipse, 13=hatch, 14=ray,
+            // 15=legacy straight polyline, 16=image, 18=bulge-aware polyline
             switch p {
             case .point(let pos, let color):
                 w.writeUInt8(0)
@@ -837,11 +845,17 @@ public enum EABWriter {
                     w.writeFloat64(pt.x); w.writeFloat64(pt.y); w.writeFloat64(pt.z)
                 }
                 writeColor(color)
-            case .polyline(let points, let color):
-                w.writeUInt8(15)
-                w.writeUInt32(UInt32(points.count))
-                for pt in points {
-                    w.writeFloat64(pt.x); w.writeFloat64(pt.y); w.writeFloat64(pt.z)
+            case .polyline(let path, let color):
+                w.writeUInt8(18)
+                w.writeUInt8(path.isClosed ? 1 : 0)
+                w.writeUInt8(path.lineTypeGenerationEnabled ? 1 : 0)
+                w.writeUInt32(UInt32(path.vertices.count))
+                for vertex in path.vertices {
+                    let point = vertex.position
+                    w.writeFloat64(point.x); w.writeFloat64(point.y); w.writeFloat64(point.z)
+                    w.writeFloat64(vertex.bulge)
+                    w.writeFloat64(vertex.startWidth)
+                    w.writeFloat64(vertex.endWidth)
                 }
                 writeColor(color)
             case .fillPolygon(let points, let color):

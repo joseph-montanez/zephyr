@@ -106,8 +106,8 @@ public final class TrimCommand: FeatureCommand {
             guard pts.count >= 2 else { return [] }
             for i in 0..<(pts.count - 1) { segs.append((t.transformPoint(pts[i]), t.transformPoint(pts[i+1]))) }
             segs.append((t.transformPoint(pts.last!), t.transformPoint(pts.first!)))
-        case .polyline(let pts, _):
-            // Open polyline: edge between consecutive points only.
+        case .polyline(let path, _):
+            let pts = path.tessellatedPoints(segmentsPerRadian: 48)
             guard pts.count >= 2 else { return [] }
             for i in 0..<(pts.count - 1) { segs.append((t.transformPoint(pts[i]), t.transformPoint(pts[i+1]))) }
         case .circle(let center, let radius, _):

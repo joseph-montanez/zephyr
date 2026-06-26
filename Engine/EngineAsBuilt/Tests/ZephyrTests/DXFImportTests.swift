@@ -1523,26 +1523,22 @@ final class DXFImportTests: XCTestCase {
         let entities = doc.allEntities
         XCTAssertEqual(entities.count, 1)
 
-        if let entity = entities.first, let geom = doc.resolvedGeometry(for: entity) {
-            XCTAssertGreaterThan(geom.count, 1, "Polyline with bulge should produce multiple segments")
-            
-            // Semicircle with bulge = 1.0 from (0,0) to (0,2) in DXF space.
-            // In screen space (negated Y), start is (0,0), end is (0,-2).
-            // Positive bulge (counterclockwise) goes through positive X. So peak should be at (1.0, -1.0).
-            var peakX: Double = 0.0
-            var finalEnd: Vector3 = .zero
-            
-            for prim in geom {
-                if case .line(let start, let end, _) = prim {
-                    peakX = max(peakX, max(start.x, end.x))
-                    finalEnd = end
-                }
-            }
-            
-            XCTAssertGreaterThan(peakX, 0.9, "Polyline bulge should curve to the correct positive X side in screen space")
-            XCTAssertEqual(finalEnd.x, 0.0, accuracy: 0.001)
-            XCTAssertEqual(finalEnd.y, -2.0, accuracy: 0.001)
+        guard let entity = entities.first,
+              let geom = doc.resolvedGeometry(for: entity),
+              case .polyline(let path, _) = geom.first
+        else {
+            return XCTFail("Expected one bulge-aware polyline primitive")
         }
+
+        XCTAssertEqual(geom.count, 1)
+        XCTAssertEqual(path.vertices.count, 2)
+        XCTAssertFalse(path.isClosed)
+        XCTAssertEqual(path.vertices[0].bulge, -1.0, accuracy: 0.000001)
+
+        let rendered = path.tessellatedPoints()
+        XCTAssertGreaterThan(rendered.map(\.x).max() ?? 0, 0.9)
+        XCTAssertEqual(rendered.last?.x ?? 1, 0.0, accuracy: 0.001)
+        XCTAssertEqual(rendered.last?.y ?? 0, -2.0, accuracy: 0.001)
     }
 
     func testImportDXFWithPolylineBulgeNegative() throws {
@@ -1579,26 +1575,21 @@ final class DXFImportTests: XCTestCase {
         let entities = doc.allEntities
         XCTAssertEqual(entities.count, 1)
 
-        if let entity = entities.first, let geom = doc.resolvedGeometry(for: entity) {
-            XCTAssertGreaterThan(geom.count, 1, "Polyline with bulge should produce multiple segments")
-            
-            // Semicircle with bulge = -1.0 from (0,0) to (0,2) in DXF space.
-            // In screen space (negated Y), start is (0,0), end is (0,-2).
-            // Negative bulge (clockwise) goes through negative X. So peak should be at (-1.0, -1.0).
-            var peakX: Double = 0.0
-            var finalEnd: Vector3 = .zero
-            
-            for prim in geom {
-                if case .line(let start, let end, _) = prim {
-                    peakX = min(peakX, min(start.x, end.x))
-                    finalEnd = end
-                }
-            }
-            
-            XCTAssertLessThan(peakX, -0.9, "Negative polyline bulge should curve to the correct negative X side in screen space")
-            XCTAssertEqual(finalEnd.x, 0.0, accuracy: 0.001)
-            XCTAssertEqual(finalEnd.y, -2.0, accuracy: 0.001)
+        guard let entity = entities.first,
+              let geom = doc.resolvedGeometry(for: entity),
+              case .polyline(let path, _) = geom.first
+        else {
+            return XCTFail("Expected one bulge-aware polyline primitive")
         }
+
+        XCTAssertEqual(geom.count, 1)
+        XCTAssertEqual(path.vertices.count, 2)
+        XCTAssertEqual(path.vertices[0].bulge, 1.0, accuracy: 0.000001)
+
+        let rendered = path.tessellatedPoints()
+        XCTAssertLessThan(rendered.map(\.x).min() ?? 0, -0.9)
+        XCTAssertEqual(rendered.last?.x ?? 1, 0.0, accuracy: 0.001)
+        XCTAssertEqual(rendered.last?.y ?? 0, -2.0, accuracy: 0.001)
     }
 
     func testImportDXFWithHatchFills() throws {

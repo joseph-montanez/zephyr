@@ -840,15 +840,25 @@ public final class CADRendererBridge {
                     else if localIdx == points.count - 1 { updateLastPointOfLastRP() }
                     return
 
-                case .polyline(let points, let c):
-                    guard localIdx < points.count else { return }
-                    var movedPoints = points
+                case .polyline(let path, let c):
+                    guard localIdx < path.vertices.count else { return }
+                    var movedPath = path
                     let wp = pts[localIdx]
                     let moved = Vector3(x: wp.x + Double(dx), y: wp.y + Double(dy), z: wp.z)
-                    movedPoints[localIdx] = invTransform.transformPoint(moved)
-                    writeLiveGeometry(.polyline(points: movedPoints, color: c))
-                    if localIdx == 0 { updateFirstPointOfFirstRP() }
-                    else if localIdx == points.count - 1 { updateLastPointOfLastRP() }
+                    movedPath.vertices[localIdx].position = invTransform.transformPoint(moved)
+                    writeLiveGeometry(.polyline(path: movedPath, color: c))
+                    if rebuildSinglePrimitiveEntityLive(
+                        handle: handle, in: gm, document: document
+                    ) {
+                        return
+                    }
+                    if let rp = rpForCurrentPrimitive() {
+                        rp.points = movedPath.tessellatedPoints().map {
+                            let world = entity.transform.transformPoint($0)
+                            return SDL_FPoint(x: Float(world.x), y: Float(world.y))
+                        }
+                        markPrimitiveDirty(rp)
+                    }
                     return
 
                 case .fillPolygon(let points, let c):

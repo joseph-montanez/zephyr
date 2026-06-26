@@ -127,7 +127,8 @@ public final class JoinCommand: FeatureCommand {
                         color: color,
                         xdata: entity.xdata
                     ))
-                case .polyline(let points, let color):
+                case .polyline(let path, let color):
+                    let points = path.tessellatedPoints()
                     guard points.count >= 2 else { continue }
                     for i in 0..<(points.count - 1) {
                         segments.append(WorldLineSegment(

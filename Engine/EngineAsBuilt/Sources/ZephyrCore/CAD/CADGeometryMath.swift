@@ -500,8 +500,10 @@ public enum CADGeometryMath {
                 transform.transformPoint(Vector3(x: origin.x + size.x, y: origin.y + size.y, z: 0)),
                 transform.transformPoint(Vector3(x: origin.x, y: origin.y + size.y, z: 0)),
             ]
-        case .polygon(let pts, _), .polyline(let pts, _), .fillPolygon(let pts, _), .fillComplexPolygon(let pts, _, _), .gradient(let pts, _, _, _, _, _):
+        case .polygon(let pts, _), .fillPolygon(let pts, _), .fillComplexPolygon(let pts, _, _), .gradient(let pts, _, _, _, _, _):
             return pts.map { transform.transformPoint($0) }
+        case .polyline(let path, _):
+            return path.vertices.map { transform.transformPoint($0.position) }
         case .circle(let center, let radius, _):
             let wc = transform.transformPoint(center)
             let s = transform.scale
@@ -594,8 +596,20 @@ public enum CADGeometryMath {
                 out.append(.fillPolygon(points: corners(origin, size).map(tp), color: color))
             case let .polygon(points, color):
                 out.append(.polygon(points: points.map(tp), color: color))
-            case let .polyline(points, color):
-                out.append(.polyline(points: points.map(tp), color: color))
+            case let .polyline(path, color):
+                let nonUniformScale = abs(abs(t.scale.x) - abs(t.scale.y)) > 1e-9
+                if path.hasBulges && nonUniformScale {
+                    var transformed = path.tessellatedPoints().map(tp)
+                    if path.isClosed, transformed.count > 1 { transformed.removeLast() }
+                    out.append(.polyline(
+                        path: CADPolyline(
+                            points: transformed,
+                            isClosed: path.isClosed,
+                            lineTypeGenerationEnabled: path.lineTypeGenerationEnabled),
+                        color: color))
+                } else {
+                    out.append(.polyline(path: path.transformed(by: t), color: color))
+                }
             case let .fillPolygon(points, color):
                 out.append(.fillPolygon(points: points.map(tp), color: color))
             case let .fillComplexPolygon(outer, holes, color):

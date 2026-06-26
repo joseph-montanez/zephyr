@@ -98,6 +98,37 @@ public enum CADGripSystem {
             var globalIdx = 0
 
             for prim in geometry {
+                if case .polyline(let path, _) = prim {
+                    let worldVertices = path.vertices.map {
+                        entity.transform.transformPoint($0.position)
+                    }
+                    for (index, point) in worldVertices.enumerated() {
+                        let screen = EngineCameraManager.worldToScreen(
+                            worldX: point.x, worldY: point.y, cam: cam)
+                        results.append(CADSelectionManager.CadGripInfo(
+                            handle: handle,
+                            grip: .vertex(entity: handle, index: globalIdx + index),
+                            screenPos: screen,
+                            worldPos: point))
+                    }
+                    for segment in 0..<path.segmentCount {
+                        let midpoint = entity.transform.transformPoint(
+                            path.segmentMidpoint(segment))
+                        let screen = EngineCameraManager.worldToScreen(
+                            worldX: midpoint.x, worldY: midpoint.y, cam: cam)
+                        results.append(CADSelectionManager.CadGripInfo(
+                            handle: handle,
+                            grip: .midpoint(
+                                entity: handle,
+                                betweenA: globalIdx + segment,
+                                andB: globalIdx + path.endVertexIndex(forSegment: segment)),
+                            screenPos: screen,
+                            worldPos: midpoint))
+                    }
+                    globalIdx += path.vertices.count
+                    continue
+                }
+
                 let pts = CADGeometryMath.worldPointsForPrimitive(prim, transform: entity.transform)
                 defer { globalIdx += pts.count }
                 if hasEditableBoundary && !isInvisibleEditBoundary(prim) { continue }
@@ -188,7 +219,15 @@ public enum CADGripSystem {
         var result: [[Vector3]] = []
         for prim in geometry {
             if hasEditableBoundary && !isInvisibleEditBoundary(prim) { continue }
-            let pts = CADGeometryMath.worldPointsForPrimitive(prim, transform: entity.transform)
+            let pts: [Vector3]
+            if case .polyline(let path, _) = prim {
+                pts = path.tessellatedPoints().map {
+                    entity.transform.transformPoint($0)
+                }
+            } else {
+                pts = CADGeometryMath.worldPointsForPrimitive(
+                    prim, transform: entity.transform)
+            }
             if pts.count >= 2 {
                 result.append(pts)
             }

@@ -345,8 +345,10 @@ public enum PDFExporter {
             case .line(let s, let e, _): grow(s); grow(e)
             case .rect(let o, let s, _), .fillRect(let o, let s, _):
                 grow(o); grow(Vector3(x: o.x + s.x, y: o.y + s.y, z: o.z))
-            case .polygon(let pts, _), .polyline(let pts, _), .fillPolygon(let pts, _):
+            case .polygon(let pts, _), .fillPolygon(let pts, _):
                 for pt in pts { grow(pt) }
+            case .polyline(let path, _):
+                for point in path.boundingPoints() { grow(point) }
             case .fillComplexPolygon(let outer, let holes, _):
                 for pt in outer { grow(pt) }
                 for hole in holes { for pt in hole { grow(pt) } }

@@ -781,6 +781,30 @@ public enum EABReader {
                 }
                 let color = readColor()
                 prims.append(.polyline(points: pts, color: color))
+            case 18: // bulge-aware polyline
+                let isClosed = r.readUInt8() != 0
+                let lineTypeGenerationEnabled = r.readUInt8() != 0
+                let vertexCount = Int(r.readUInt32())
+                var vertices: [CADPolylineVertex] = []
+                vertices.reserveCapacity(vertexCount)
+                for _ in 0..<vertexCount {
+                    let position = Vector3(
+                        x: r.readFloat64(),
+                        y: r.readFloat64(),
+                        z: r.readFloat64())
+                    vertices.append(CADPolylineVertex(
+                        position: position,
+                        bulge: r.readFloat64(),
+                        startWidth: r.readFloat64(),
+                        endWidth: r.readFloat64()))
+                }
+                let color = readColor()
+                prims.append(.polyline(
+                    path: CADPolyline(
+                        vertices: vertices,
+                        isClosed: isClosed,
+                        lineTypeGenerationEnabled: lineTypeGenerationEnabled),
+                    color: color))
             case 7: // fillPolygon
                 let ptCount = Int(r.readUInt32())
                 var pts: [Vector3] = []

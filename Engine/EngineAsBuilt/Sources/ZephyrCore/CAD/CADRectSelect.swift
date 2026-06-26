@@ -133,8 +133,8 @@ public enum CADRectSelect {
             }
             return false
 
-        case .polyline(let pts, _): // OPEN OUTLINE
-            let wpts = pts.map { transform.transformPoint($0) }
+        case .polyline(let path, _):
+            let wpts = path.tessellatedPoints().map { transform.transformPoint($0) }
             for i in 0..<(wpts.count - 1) {
                 if segmentIntersectsRect(p1: wpts[i], p2: wpts[i + 1],
                                          rectMin: rectMin, rectMax: rectMax) { return true }

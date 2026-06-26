@@ -30,6 +30,17 @@ final class EABRoundtripTests: XCTestCase {
         let fillPolygonPrim = CADPrimitive.fillPolygon(points: [Vector3(x: 4, y: 4, z: 0), Vector3(x: 5, y: 6, z: 0)], color: primColor6)
         let circlePrim = CADPrimitive.circle(center: Vector3(x: 20, y: 21, z: 22), radius: 4.5, color: primColor7)
         let arcPrim = CADPrimitive.arc(center: Vector3(x: 30, y: 31, z: 32), radius: 10.0, startAngle: 0.1, endAngle: 1.5, color: primColor8)
+        let polylinePrim = CADPrimitive.polyline(
+            path: CADPolyline(vertices: [
+                CADPolylineVertex(
+                    position: Vector3(x: 0, y: 0, z: 0),
+                    bulge: -0.5,
+                    startWidth: 0.25,
+                    endWidth: 0.5),
+                CADPolylineVertex(position: Vector3(x: 5, y: 0, z: 0)),
+                CADPolylineVertex(position: Vector3(x: 5, y: 5, z: 0), bulge: 0.25),
+            ], isClosed: true),
+            color: primColor1)
         let textPrim = CADPrimitive.text(
             position: Vector3(x: 40, y: 41, z: 42),
             text: "Roundtrip Test",
@@ -44,7 +55,7 @@ final class EABRoundtripTests: XCTestCase {
 
         let geom = [
             pointPrim, linePrim, rectPrim, fillRectPrim,
-            polygonPrim, fillPolygonPrim, circlePrim, arcPrim, textPrim
+            polygonPrim, fillPolygonPrim, circlePrim, arcPrim, polylinePrim, textPrim
         ]
 
         // 3. Create a Block Definition
@@ -112,6 +123,9 @@ final class EABRoundtripTests: XCTestCase {
                 XCTAssertEqual(r1, r2)
                 XCTAssertEqual(sa1, sa2)
                 XCTAssertEqual(ea1, ea2)
+                XCTAssertEqual(c1, c2)
+            case let (.polyline(path1, c1), .polyline(path2, c2)):
+                XCTAssertEqual(path1, path2)
                 XCTAssertEqual(c1, c2)
             case let (.text(p1, t1, h1, rot1, s1, ah1, av1, mw1, c1), .text(p2, t2, h2, rot2, s2, ah2, av2, mw2, c2)):
                 XCTAssertEqual(p1, p2)

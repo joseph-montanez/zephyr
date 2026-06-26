@@ -265,8 +265,8 @@ public enum CADBoundaryDetector {
                     edges.append(Edge(a: wpts[i], b: wpts[j], entityHandle: handle))
                 }
 
-            case .polyline(let pts, _):
-                let wpts = pts.map { transform.transformPoint($0) }
+            case .polyline(let path, _):
+                let wpts = path.tessellatedPoints().map { transform.transformPoint($0) }
                 for i in 0..<(wpts.count - 1) {
                     edges.append(Edge(a: wpts[i], b: wpts[i + 1], entityHandle: handle))
                 }
@@ -294,7 +294,8 @@ public enum CADBoundaryDetector {
                             edges.append(Edge(a: pts[i], b: pts[j], entityHandle: handle))
                         }
                     }
-                    if case .polyline(let pts, _) = tp {
+                    if case .polyline(let path, _) = tp {
+                        let pts = path.tessellatedPoints()
                         for i in 0..<(pts.count - 1) {
                             edges.append(Edge(a: pts[i], b: pts[i + 1], entityHandle: handle))
                         }

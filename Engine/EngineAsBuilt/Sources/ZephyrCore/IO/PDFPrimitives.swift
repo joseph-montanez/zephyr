@@ -207,8 +207,8 @@ enum PDFPrimitives {
         case .polygon(let pts, _):
             subpath(pts, close: true, to: cb)
             cb.raw("S\n")
-        case .polyline(let pts, _):
-            subpath(pts, close: false, to: cb)
+        case .polyline(let path, _):
+            subpath(path.tessellatedPoints(), close: false, to: cb)
             cb.raw("S\n")
         case .fillPolygon(let pts, _):
             subpath(pts, close: true, to: cb)

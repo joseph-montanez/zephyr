@@ -22,8 +22,8 @@ public let EABMagic: UInt32 = 0x00424145  // "EAB\0" in little-endian
 public let EABArchiveMagic: UInt32 = 0x41424145  // "EABA" in little-endian
 
 /// Current file format version.
-/// Bumped from 6 -> 7: Supports multi-view document tabs via EABArchive.
-public let EABVersion: UInt32 = 7
+/// Bumped from 7 -> 8: Preserves polyline bulges, closure, and vertex widths.
+public let EABVersion: UInt32 = 8
 
 /// Section type identifiers in the section table.
 public enum EABSectionType: UInt32, Sendable {

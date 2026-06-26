@@ -107,8 +107,15 @@ public final class CADVertexEditor {
                 if let pt = localPts.first { prim = .fillRect(origin: pt, size: size, color: c) }
             case .polygon(_, let c):
                 prim = .polygon(points: localPts, color: c)
-            case .polyline(_, let c):
-                prim = .polyline(points: localPts, color: c)
+            case .polyline(let path, let c):
+                if !path.hasBulges, localPts.count == path.vertices.count {
+                    prim = .polyline(
+                        path: CADPolyline(
+                            points: localPts,
+                            isClosed: path.isClosed,
+                            lineTypeGenerationEnabled: path.lineTypeGenerationEnabled),
+                        color: c)
+                }
             case .fillPolygon(_, let c):
                 prim = .fillPolygon(points: localPts, color: c)
             case .fillComplexPolygon(_, let holes, let c):

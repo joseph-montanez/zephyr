@@ -222,8 +222,8 @@ public enum CADHitTesting {
             let corners = pts.map { transform.transformPoint($0) }
             return minEdgeDistSq(point, corners)
 
-        case .polyline(let pts, _):
-            let corners = pts.map { transform.transformPoint($0) }
+        case .polyline(let path, _):
+            let corners = path.tessellatedPoints().map { transform.transformPoint($0) }
             return minEdgeDistSqOpen(point, corners)
 
         case .fillPolygon(let pts, _):

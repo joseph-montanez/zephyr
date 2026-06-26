@@ -18,6 +18,202 @@ import Foundation
 // MARK: - CADPrimitive
 // =========================================================================
 
+public struct CADPolylineVertex: Hashable, Sendable {
+    public var position: Vector3
+    public var bulge: Double
+    public var startWidth: Double
+    public var endWidth: Double
+
+    public init(
+        position: Vector3,
+        bulge: Double = 0,
+        startWidth: Double = 0,
+        endWidth: Double = 0
+    ) {
+        self.position = position
+        self.bulge = bulge
+        self.startWidth = startWidth
+        self.endWidth = endWidth
+    }
+}
+
+public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCollection {
+    public typealias Index = Int
+    public typealias Element = Vector3
+
+    public var vertices: [CADPolylineVertex]
+    public var isClosed: Bool
+    public var lineTypeGenerationEnabled: Bool
+
+    public init(
+        vertices: [CADPolylineVertex],
+        isClosed: Bool = false,
+        lineTypeGenerationEnabled: Bool = false
+    ) {
+        self.vertices = vertices
+        self.isClosed = isClosed
+        self.lineTypeGenerationEnabled = lineTypeGenerationEnabled
+    }
+
+    public init(
+        points: [Vector3],
+        isClosed: Bool = false,
+        lineTypeGenerationEnabled: Bool = false
+    ) {
+        self.vertices = points.map { CADPolylineVertex(position: $0) }
+        self.isClosed = isClosed
+        self.lineTypeGenerationEnabled = lineTypeGenerationEnabled
+    }
+
+    public var startIndex: Int { vertices.startIndex }
+    public var endIndex: Int { vertices.endIndex }
+
+    public func index(after i: Int) -> Int { vertices.index(after: i) }
+    public func index(before i: Int) -> Int { vertices.index(before: i) }
+
+    public subscript(position: Int) -> Vector3 {
+        get { vertices[position].position }
+        set { vertices[position].position = newValue }
+    }
+
+    public var points: [Vector3] { vertices.map(\.position) }
+    public var hasBulges: Bool { vertices.contains { abs($0.bulge) > 1e-12 } }
+    public var segmentCount: Int {
+        guard vertices.count >= 2 else { return 0 }
+        return isClosed ? vertices.count : vertices.count - 1
+    }
+
+    public func endVertexIndex(forSegment index: Int) -> Int {
+        (index + 1) % vertices.count
+    }
+
+    public func point(onSegment index: Int, t: Double) -> Vector3 {
+        guard index >= 0, index < segmentCount else { return .zero }
+        let start = vertices[index]
+        let end = vertices[endVertexIndex(forSegment: index)]
+        let clampedT = Swift.max(0, Swift.min(1, t))
+        guard abs(start.bulge) > 1e-12,
+              let arc = arcParameters(forSegment: index)
+        else {
+            return Vector3(
+                x: start.position.x + (end.position.x - start.position.x) * clampedT,
+                y: start.position.y + (end.position.y - start.position.y) * clampedT,
+                z: start.position.z + (end.position.z - start.position.z) * clampedT)
+        }
+        let angle = arc.startAngle + arc.sweep * clampedT
+        return Vector3(
+            x: arc.center.x + cos(angle) * arc.radius,
+            y: arc.center.y + sin(angle) * arc.radius,
+            z: start.position.z + (end.position.z - start.position.z) * clampedT)
+    }
+
+    public func segmentMidpoint(_ index: Int) -> Vector3 {
+        point(onSegment: index, t: 0.5)
+    }
+
+    public func arcParameters(
+        forSegment index: Int
+    ) -> (center: Vector3, radius: Double, startAngle: Double, sweep: Double)? {
+        guard index >= 0, index < segmentCount else { return nil }
+        let start = vertices[index]
+        let end = vertices[endVertexIndex(forSegment: index)]
+        let bulge = start.bulge
+        guard abs(bulge) > 1e-12 else { return nil }
+
+        let dx = end.position.x - start.position.x
+        let dy = end.position.y - start.position.y
+        let chord = hypot(dx, dy)
+        guard chord > 1e-12 else { return nil }
+
+        let factor = (1.0 - bulge * bulge) / (4.0 * bulge)
+        let center = Vector3(
+            x: (start.position.x + end.position.x) * 0.5 - dy * factor,
+            y: (start.position.y + end.position.y) * 0.5 + dx * factor,
+            z: (start.position.z + end.position.z) * 0.5)
+        let radius = chord * (1.0 + bulge * bulge) / (4.0 * abs(bulge))
+        let startAngle = atan2(start.position.y - center.y, start.position.x - center.x)
+        return (center, radius, startAngle, 4.0 * atan(bulge))
+    }
+
+    public func tessellatedPoints(segmentsPerRadian: Double = 12.0) -> [Vector3] {
+        guard let first = vertices.first?.position else { return [] }
+        guard segmentCount > 0 else { return [first] }
+
+        var result: [Vector3] = [first]
+        result.reserveCapacity(vertices.count + segmentCount * 4)
+        for segment in 0..<segmentCount {
+            if let arc = arcParameters(forSegment: segment) {
+                let divisions = Swift.max(
+                    4, Int(ceil(abs(arc.sweep) * segmentsPerRadian)))
+                for step in 1...divisions {
+                    result.append(point(
+                        onSegment: segment,
+                        t: Double(step) / Double(divisions)))
+                }
+            } else {
+                result.append(vertices[endVertexIndex(forSegment: segment)].position)
+            }
+        }
+        return result
+    }
+
+    public func boundingPoints() -> [Vector3] {
+        var result = points
+        let twoPi = 2.0 * Double.pi
+
+        func positiveRemainder(_ angle: Double) -> Double {
+            let value = angle.truncatingRemainder(dividingBy: twoPi)
+            return value < 0 ? value + twoPi : value
+        }
+
+        for segment in 0..<segmentCount {
+            guard let arc = arcParameters(forSegment: segment) else { continue }
+            for quadrant in 0..<4 {
+                let angle = Double(quadrant) * Double.pi / 2.0
+                let distance = arc.sweep >= 0
+                    ? positiveRemainder(angle - arc.startAngle)
+                    : positiveRemainder(arc.startAngle - angle)
+                if distance <= abs(arc.sweep) + 1e-12 {
+                    result.append(Vector3(
+                        x: arc.center.x + cos(angle) * arc.radius,
+                        y: arc.center.y + sin(angle) * arc.radius,
+                        z: arc.center.z))
+                }
+            }
+        }
+        return result
+    }
+
+    public var length: Double {
+        var total = 0.0
+        for segment in 0..<segmentCount {
+            if let arc = arcParameters(forSegment: segment) {
+                total += arc.radius * abs(arc.sweep)
+            } else {
+                let a = vertices[segment].position
+                let b = vertices[endVertexIndex(forSegment: segment)].position
+                total += hypot(b.x - a.x, b.y - a.y)
+            }
+        }
+        return total
+    }
+
+    public func transformed(by transform: Transform3D) -> CADPolyline {
+        let reversesOrientation = transform.scale.x * transform.scale.y < 0
+        let widthScale = (abs(transform.scale.x) + abs(transform.scale.y)) * 0.5
+        var result = self
+        for index in result.vertices.indices {
+            result.vertices[index].position = transform.transformPoint(result.vertices[index].position)
+            result.vertices[index].startWidth *= widthScale
+            result.vertices[index].endWidth *= widthScale
+            if reversesOrientation {
+                result.vertices[index].bulge = -result.vertices[index].bulge
+            }
+        }
+        return result
+    }
+}
+
 /// Geometric primitive types that can compose a block definition or local geometry.
 /// Maps directly to what the rendering bridge can produce.
 public enum CADPrimitive: Hashable, Sendable {
@@ -26,7 +222,7 @@ public enum CADPrimitive: Hashable, Sendable {
     case rect(origin: Vector3, size: Vector3, color: ColorRGBA? = nil)     // width = size.x, height = size.y
     case fillRect(origin: Vector3, size: Vector3, color: ColorRGBA? = nil)
     case polygon(points: [Vector3], color: ColorRGBA? = nil)                // closed polygon outline
-    case polyline(points: [Vector3], color: ColorRGBA? = nil)               // open polyline (no closing edge)
+    case polyline(path: CADPolyline, color: ColorRGBA? = nil)
     case fillPolygon(points: [Vector3], color: ColorRGBA? = nil)            // closed filled polygon
     case fillComplexPolygon(outer: [Vector3], holes: [[Vector3]], color: ColorRGBA? = nil)
     case gradient(outer: [Vector3], holes: [[Vector3]], gradientName: String, angle: Double, color1: ColorRGBA, color2: ColorRGBA)
@@ -55,6 +251,12 @@ public enum CADPrimitive: Hashable, Sendable {
         clipBoundary: [Vector3]? = nil,
         tint: ColorRGBA? = nil
     )
+
+    public static func polyline(
+        points: [Vector3], color: ColorRGBA? = nil
+    ) -> CADPrimitive {
+        .polyline(path: CADPolyline(points: points), color: color)
+    }
     /// Convenience initializer that creates an `.image` primitive from center, size, and rotation.
     /// The image is placed as a quad centered at `center`, with `width`×`height` in world units,
     /// rotated by `rotation` radians around its center.
@@ -164,8 +366,10 @@ public struct CADBlock: Hashable, Sendable {
                 points.append(Vector3(x: origin.x + size.x, y: origin.y, z: origin.z))
                 points.append(Vector3(x: origin.x + size.x, y: origin.y + size.y, z: origin.z))
                 points.append(Vector3(x: origin.x, y: origin.y + size.y, z: origin.z))
-            case .polygon(let pts, _), .polyline(let pts, _), .fillPolygon(let pts, _):
+            case .polygon(let pts, _), .fillPolygon(let pts, _):
                 points.append(contentsOf: pts)
+            case .polyline(let path, _):
+                points.append(contentsOf: path.boundingPoints())
             case .fillComplexPolygon(let outer, _, _):
                 points.append(contentsOf: outer)
             case .gradient(let outer, _, _, _, _, _):
@@ -515,8 +719,11 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
                 pts.append(.center(localPosition: Vector3(
                     x: origin.x + size.x / 2, y: origin.y + size.y / 2, z: origin.z)))
 
-            case .polyline(let points, _):
-                addChain(points, closed: false)
+            case .polyline(let path, _):
+                for vertex in path.vertices { addVertex(vertex.position) }
+                for segment in 0..<path.segmentCount {
+                    addMidpoint(path.segmentMidpoint(segment))
+                }
 
             case .polygon(let points, _), .fillPolygon(let points, _):
                 addChain(points, closed: true)

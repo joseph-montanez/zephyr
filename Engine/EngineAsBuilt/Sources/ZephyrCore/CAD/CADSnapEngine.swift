@@ -133,7 +133,8 @@ public final class SnapEngine {
 
             for prim in geometry {
                 switch prim {
-                case .polyline(let points, _):
+                case .polyline(let path, _):
+                    let points = path.tessellatedPoints()
                     for i in 0..<(points.count - 1) {
                         let start = points[i]
                         let end = points[i + 1]
@@ -423,9 +424,9 @@ public final class SnapEngine {
                     localNearest = CADGeometryMath.nearestPointOnPolyline(
                         to: localCursor, points: points, closed: true)
 
-                case .polyline(let points, _):
+                case .polyline(let path, _):
                     localNearest = CADGeometryMath.nearestPointOnPolyline(
-                        to: localCursor, points: points, closed: false)
+                        to: localCursor, points: path.tessellatedPoints(), closed: false)
 
                 case .fillComplexPolygon(let outer, let holes, _):
                     var bestNP: Vector3? = nil

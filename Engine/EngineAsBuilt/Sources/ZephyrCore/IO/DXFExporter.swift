@@ -367,18 +367,40 @@ public enum DXFExporter {
                 output += " 20\r\n\(dxfDouble(-pt.y))\r\n"
             }
 
-        case .polyline(let points, _):
-            let wp = points.map { t.transformPoint($0) }
-            guard wp.count >= 2 else { break }
+        case .polyline(let path, _):
+            let nonUniformScale = abs(abs(t.scale.x) - abs(t.scale.y)) > 1e-9
+            let exportPath: CADPolyline
+            if path.hasBulges && nonUniformScale {
+                var points = path.tessellatedPoints().map { t.transformPoint($0) }
+                if path.isClosed, points.count > 1 { points.removeLast() }
+                exportPath = CADPolyline(
+                    points: points,
+                    isClosed: path.isClosed,
+                    lineTypeGenerationEnabled: path.lineTypeGenerationEnabled)
+            } else {
+                exportPath = path.transformed(by: t)
+            }
+            guard exportPath.vertices.count >= 2 else { break }
 
             output += "  0\r\nLWPOLYLINE\r\n"
             output += "  8\r\n\(layer)\r\n"
             appendColor(&output)
-            output += " 90\r\n\(wp.count)\r\n"
-            output += " 70\r\n0\r\n"
-            for pt in wp {
-                output += " 10\r\n\(dxfDouble(pt.x))\r\n"
-                output += " 20\r\n\(dxfDouble(-pt.y))\r\n"
+            output += " 90\r\n\(exportPath.vertices.count)\r\n"
+            let flags = (exportPath.isClosed ? 1 : 0)
+                | (exportPath.lineTypeGenerationEnabled ? 128 : 0)
+            output += " 70\r\n\(flags)\r\n"
+            for vertex in exportPath.vertices {
+                output += " 10\r\n\(dxfDouble(vertex.position.x))\r\n"
+                output += " 20\r\n\(dxfDouble(-vertex.position.y))\r\n"
+                if vertex.startWidth != 0 {
+                    output += " 40\r\n\(dxfDouble(vertex.startWidth))\r\n"
+                }
+                if vertex.endWidth != 0 {
+                    output += " 41\r\n\(dxfDouble(vertex.endWidth))\r\n"
+                }
+                if vertex.bulge != 0 {
+                    output += " 42\r\n\(dxfDouble(-vertex.bulge))\r\n"
+                }
             }
 
         case .fillPolygon(let points, _):

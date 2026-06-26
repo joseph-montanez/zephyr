@@ -490,82 +490,43 @@ public enum DXFEntityConverter {
             return [.point(position: Vector3(x: vertices[0].x, y: -vertices[0].y, z: 0), color: color)]
         }
 
-        let isClosed = (e.flags & 0x01) != 0  // DXF polyline closed flag
+        let isClosed = (e.flags & 0x01) != 0
+        var path = CADPolyline(
+            vertices: (0..<count).map { index in
+                let vertex = vertices[index]
+                return CADPolylineVertex(
+                    position: Vector3(x: vertex.x, y: -vertex.y, z: 0),
+                    bulge: -vertex.bulge,
+                    startWidth: vertex.startWidth,
+                    endWidth: vertex.endWidth)
+            },
+            isClosed: isClosed,
+            lineTypeGenerationEnabled: (e.flags & 0x80) != 0)
 
-        var points: [Vector3] = []
-        for i in 0..<count {
-            let v1 = vertices[i]
-            let nextIndex = (i + 1) % count
-
-            if i == count - 1 && !isClosed {
-                points.append(Vector3(x: v1.x, y: -v1.y, z: 0))
-                break
-            }
-
-            let v2 = vertices[nextIndex]
-            points.append(Vector3(x: v1.x, y: -v1.y, z: 0))
-
-            if v1.bulge != 0 {
-                let b = v1.bulge
-                let dx = v2.x - v1.x
-                let dy = v2.y - v1.y
-                let L = sqrt(dx*dx + dy*dy)
-
-                if L > 1e-10 {
-                    let R = L * (1.0 + b*b) / (4.0 * abs(b))
-                    let mx = (v1.x + v2.x) * 0.5
-                    let my = (v1.y + v2.y) * 0.5
-
-                    // Chord normal (perpendicular vector pointing left in 2D Cartesian)
-                    let px = v1.y - v2.y
-                    let py = v2.x - v1.x
-
-                    let factor = (1.0 - b*b) / (4.0 * b)
-                    let cx = mx + factor * px
-                    let cy = my + factor * py
-
-                    let startAngle = atan2(v1.y - cy, v1.x - cx)
-                    let sweep = 4.0 * atan(abs(b))
-
-                    let segments = max(4, Int(ceil(sweep * 12.0)))
-                    for j in 1..<segments {
-                        let t = Double(j) / Double(segments)
-                        let angle = startAngle + (b > 0 ? sweep * t : -sweep * t)
-                        let rx = cx + R * cos(angle)
-                        let ry = cy + R * sin(angle)
-                        points.append(Vector3(x: rx, y: -ry, z: 0))
-                    }
-                }
-            }
-        }
-
-        if isClosed {
-            // Simplify excessive vertices: furniture blocks exported from BIM software
-            // can have 20K+ vertex polylines where 50 vertices suffice at any zoom.
-            var finalPoints = points
-            if DXFEntityConverter.simplifyPolylines && finalPoints.count > 200 {
-                let bb = BoundingBox3D(from: finalPoints)
-                let diag = max(bb.size.x, bb.size.y)
-                let tolerance = max(diag * 0.002, 0.01)  // 0.2% of bbox diagonal
-                finalPoints = rdp(finalPoints, tolerance: tolerance)
-                // Ensure minimum for closed shapes
-                if finalPoints.count < 3 {
-                    finalPoints = [bb.min, Vector3(x: bb.max.x, y: bb.min.y, z: bb.min.z), bb.max, Vector3(x: bb.min.x, y: bb.max.y, z: bb.min.z)]
-                }
-            }
-            return [.polygon(points: finalPoints, color: color)]
-        }
-
-        // Open polyline as a single polyline primitive with shared vertices
-        var finalPoints = points
-        if DXFEntityConverter.simplifyPolylines && finalPoints.count > 200 {
-            let bb = BoundingBox3D(from: finalPoints)
+        if DXFEntityConverter.simplifyPolylines,
+           !path.hasBulges,
+           path.vertices.count > 200 {
+            let originalPoints = path.points
+            let bb = BoundingBox3D(from: originalPoints)
             let diag = max(bb.size.x, bb.size.y)
             let tolerance = max(diag * 0.002, 0.01)
-            finalPoints = rdp(finalPoints, tolerance: tolerance)
-            if finalPoints.count < 2 { finalPoints = [points.first!, points.last!] }
+            var simplified = rdp(originalPoints, tolerance: tolerance)
+            let minimum = isClosed ? 3 : 2
+            if simplified.count < minimum {
+                simplified = isClosed
+                    ? [bb.min,
+                       Vector3(x: bb.max.x, y: bb.min.y, z: bb.min.z),
+                       bb.max,
+                       Vector3(x: bb.min.x, y: bb.max.y, z: bb.min.z)]
+                    : [originalPoints.first!, originalPoints.last!]
+            }
+            path = CADPolyline(
+                points: simplified,
+                isClosed: isClosed,
+                lineTypeGenerationEnabled: path.lineTypeGenerationEnabled)
         }
-        return [.polyline(points: finalPoints, color: color)]
+
+        return [.polyline(path: path, color: color)]
     }
 
 

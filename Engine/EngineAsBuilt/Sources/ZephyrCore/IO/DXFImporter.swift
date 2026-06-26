@@ -762,8 +762,20 @@ public enum DXFImporter {
                 out.append(.fillPolygon(points: corners(origin, size).map(tp), color: color))
             case let .polygon(points, color):
                 out.append(.polygon(points: points.map(tp), color: color))
-            case let .polyline(points, color):
-                out.append(.polyline(points: points.map(tp), color: color))
+            case let .polyline(path, color):
+                let nonUniformScale = abs(abs(t.scale.x) - abs(t.scale.y)) > 1e-9
+                if path.hasBulges && nonUniformScale {
+                    var transformed = path.tessellatedPoints().map(tp)
+                    if path.isClosed, transformed.count > 1 { transformed.removeLast() }
+                    out.append(.polyline(
+                        path: CADPolyline(
+                            points: transformed,
+                            isClosed: path.isClosed,
+                            lineTypeGenerationEnabled: path.lineTypeGenerationEnabled),
+                        color: color))
+                } else {
+                    out.append(.polyline(path: path.transformed(by: t), color: color))
+                }
             case let .fillPolygon(points, color):
                 out.append(.fillPolygon(points: points.map(tp), color: color))
             case let .fillComplexPolygon(outer, holes, color):
@@ -909,7 +921,8 @@ public enum DXFImporter {
                 if let first = path.first { path.append(first) }
                 appendDashes(path: path, pattern: pattern, scale: scale, color: color, into: &out)
 
-            case let .polyline(points, color):
+            case let .polyline(path, color):
+                let points = path.tessellatedPoints()
                 guard points.count >= 2 else { out.append(prim); continue }
                 appendDashes(path: points, pattern: pattern, scale: scale, color: color, into: &out)
 

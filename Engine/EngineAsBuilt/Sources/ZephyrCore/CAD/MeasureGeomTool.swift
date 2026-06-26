@@ -393,8 +393,8 @@ public final class MeasureGeomTool: FeatureCommand {
             }
             return nil
 
-        case .polyline(let pts, _):
-            let wpts = pts.map { transform.transformPoint($0) }
+        case .polyline(let path, _):
+            let wpts = path.tessellatedPoints().map { transform.transformPoint($0) }
             for i in 0..<(wpts.count - 1) {
                 if let h = CADGeometryMath.intersectRayLine(
                     rayOrigin: rayOrigin, rayDir: rayDir,
