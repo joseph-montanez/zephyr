@@ -23,13 +23,14 @@ struct main0_in
     float2 in_var_TEXCOORD0 [[attribute(0)]];
     float4 in_var_TEXCOORD1 [[attribute(1)]];
     uint entityIndex [[attribute(2)]];
+    float2 in_var_TEXCOORD3 [[attribute(3)]];
 };
 
-vertex main0_out main0(main0_in in [[stage_in]], constant type_UBO& UBO [[buffer(0)]], device const float2* uvData [[buffer(1)]], uint vid [[vertex_id]])
+vertex main0_out main0(main0_in in [[stage_in]], constant type_UBO& UBO [[buffer(0)]])
 {
     main0_out out = {};
     out.out_var_TEXCOORD0 = in.in_var_TEXCOORD1;
-    out.out_var_TEXCOORD1 = uvData[vid];
+    out.out_var_TEXCOORD1 = in.in_var_TEXCOORD3;
     
     bool isHidden = false;
     for (uint i = 0; i < UBO.hiddenHandleCount; i++) {

@@ -2,6 +2,7 @@ struct VSInput {
     float2 pos : TEXCOORD0;
     float4 color : TEXCOORD1;
     uint entityIndex : TEXCOORD2;
+    float2 uv : TEXCOORD3;
 };
 
 struct VSOutput {
@@ -18,11 +19,7 @@ cbuffer CameraUniform : register(b0, space1) {
     uint4 hiddenHandles[4]; // 16 hidden entities max
 };
 
-// SDL3 D3D12: vertex-stage storage buffers live in space0 (t-registers),
-// after any sampled/storage textures. With none of those, this is t0.
-StructuredBuffer<float2> uvData : register(t0, space0);
-
-VSOutput main(VSInput input, uint vid : SV_VertexID) {
+VSOutput main(VSInput input) {
     VSOutput output;
     
     bool isHidden = false;
@@ -36,11 +33,11 @@ VSOutput main(VSInput input, uint vid : SV_VertexID) {
     if (isHidden) {
         output.pos = float4(2.0, 2.0, 2.0, 1.0); // Outside clip space
         output.color = input.color;
-        output.uv = uvData[vid];
+        output.uv = input.uv;
     } else {
         output.pos = mul(u_matrix, float4(input.pos, 0.0, 1.0));
         output.color = input.color;
-        output.uv = uvData[vid];
+        output.uv = input.uv;
     }
     return output;
 }

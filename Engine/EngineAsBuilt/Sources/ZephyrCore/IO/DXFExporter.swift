@@ -710,7 +710,7 @@ public enum DXFExporter {
                 output += " 41\r\n\(dxfDouble(hatchScale))\r\n"
             }
             if hatchAngle != 0 {
-                output += " 52\r\n\(dxfDouble(hatchAngle))\r\n"
+                output += " 52\r\n\(dxfDouble(hatchAngle * 180.0 / .pi))\r\n"
             }
             // DXF group 63 = hatch background fill color (ACI index).
             // Writes the 24-bit RGB as a negative DXF colour; positive ACI

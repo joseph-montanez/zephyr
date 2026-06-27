@@ -76,6 +76,15 @@ public struct CADVertex: Sendable {
     public var a: Float
     
     // -------------------------------------------------------------------------
+    // Texture/AA Coordinates
+    // -------------------------------------------------------------------------
+    /// U texture coordinate (used for anti-aliasing distance field)
+    public var u: Float
+    
+    /// V texture coordinate (used for anti-aliasing distance field)
+    public var v: Float
+    
+    // -------------------------------------------------------------------------
     // Hit-Testing Metadata
     // -------------------------------------------------------------------------
     /// Entity index (0-based, dense array mapping). Used by the GPU ID-buffer 
@@ -95,13 +104,15 @@ public struct CADVertex: Sendable {
     ///   - b: Blue color value (0.0 to 1.0)
     ///   - a: Alpha opacity value (0.0 to 1.0)
     ///   - entityIndex: Target ID for the GPU picking buffer. Defaults to 0 (non-interactive).
-    public init(x: Float, y: Float, r: Float, g: Float, b: Float, a: Float, entityIndex: UInt32 = 0) {
+    public init(x: Float, y: Float, r: Float, g: Float, b: Float, a: Float, u: Float = 0.0, v: Float = 0.0, entityIndex: UInt32 = 0) {
         self.x = x
         self.y = y
         self.r = r
         self.g = g
         self.b = b
         self.a = a
+        self.u = u
+        self.v = v
         self.entityIndex = entityIndex
     }
 }

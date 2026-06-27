@@ -38,6 +38,7 @@ public final class HatchCommand: FeatureCommand {
     /// 0 = Pattern, 1 = Solid, 2 = Gradient
     private var fillType: Int32 = 1
     private var patternName: String = "ANSI31"
+    private var gradientName: String = "LINEAR"
     private var hatchScale: Float = 1.0
     private var hatchAngle: Float = 0.0
     private var primaryColor: ColorRGBA? = nil       // nil = ByLayer
@@ -167,7 +168,7 @@ public final class HatchCommand: FeatureCommand {
                 b: min(255, c1.b + 60))
             hatchPrim = CADPrimitive.gradient(
                 outer: boundary, holes: [],
-                gradientName: "LINEAR", angle: angle, color1: c1, color2: c2)
+                gradientName: gradientName, angle: angle, color1: c1, color2: c2)
         } else {
             hatchPrim = CADPrimitive.hatch(
                 boundary: boundary,
@@ -210,26 +211,39 @@ public final class HatchCommand: FeatureCommand {
         guard case .waitingForInternalPoint = state else { return }
 
         // Package command state into HatchRibbonUI.Settings
-        var ribSettings = HatchRibbonUI.Settings(
+        var uiSettings = HatchRibbonUI.Settings(
             fillType: fillType,
             patternName: patternName,
+            gradientName: gradientName,
             scale: hatchScale,
             angle: hatchAngle,
             primaryColor: primaryColor,
             backgroundColor: backgroundColor,
             secondaryColor: secondaryColor,
             selectionMode: (selectionMode == .selectBoundary ? 1 : 0),
-            showModeSection: true
+            showModeSection: true,
+            applyClicked: false,
+            closeRequested: false,
+            associative: true
         )
-        HatchRibbonUI.render(&ribSettings, engine: engine)
+        HatchRibbonUI.render(&uiSettings, engine: engine)
+        
         // Pull back changes
-        fillType = ribSettings.fillType
-        patternName = ribSettings.patternName
-        hatchScale = ribSettings.scale
-        hatchAngle = ribSettings.angle
-        primaryColor = ribSettings.primaryColor
-        backgroundColor = ribSettings.backgroundColor
-        secondaryColor = ribSettings.secondaryColor
-        selectionMode = ribSettings.selectionMode == 1 ? .selectBoundary : .pickPoints
+        fillType = uiSettings.fillType
+        patternName = uiSettings.patternName
+        gradientName = uiSettings.gradientName
+        hatchScale = uiSettings.scale
+        hatchAngle = uiSettings.angle
+        primaryColor = uiSettings.primaryColor
+        backgroundColor = uiSettings.backgroundColor
+        secondaryColor = uiSettings.secondaryColor
+        selectionMode = uiSettings.selectionMode == 1 ? .selectBoundary : .pickPoints
+        
+        if uiSettings.closeRequested || uiSettings.applyClicked {
+            // The command design currently applies hatch on click. 
+            // If the user clicks Apply without picking a point, or clicks Close, we terminate.
+            state = .completed
+        }
     }
 }
+

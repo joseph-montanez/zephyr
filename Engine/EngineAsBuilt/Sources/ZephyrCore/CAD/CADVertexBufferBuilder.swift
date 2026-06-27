@@ -28,6 +28,7 @@ public struct TessInput: Sendable {
     public let isHatchLine: Bool
     public let hatchSpacing: Double
     public let isPanProxy: Bool
+    public let gradientData: RenderPrimitive.GradientData?
 
     public init(
         type: PrimitiveType,
@@ -40,7 +41,8 @@ public struct TessInput: Sendable {
         entityIndex: UInt32,
         isHatchLine: Bool = false,
         hatchSpacing: Double = 0.0,
-        isPanProxy: Bool = false
+        isPanProxy: Bool = false,
+        gradientData: RenderPrimitive.GradientData? = nil
     ) {
         self.type = type
         self.points = points
@@ -53,6 +55,7 @@ public struct TessInput: Sendable {
         self.isHatchLine = isHatchLine
         self.hatchSpacing = hatchSpacing
         self.isPanProxy = isPanProxy
+        self.gradientData = gradientData
     }
 }
 
@@ -61,7 +64,6 @@ public struct TessInput: Sendable {
 /// atomically at swap time.
 public struct VertexBuildResult: Sendable {
     public let vertices: [CADVertex]
-    public let uvData: [Float]
     public let batches: [CADDrawBatch]
     public let vertexCount: Int
 
@@ -79,7 +81,6 @@ public struct VertexBuildResult: Sendable {
 
     public init(
         vertices: [CADVertex],
-        uvData: [Float],
         batches: [CADDrawBatch],
         vertexCount: Int,
         regionMinX: Double,
@@ -90,7 +91,6 @@ public struct VertexBuildResult: Sendable {
         mutationGen: Int
     ) {
         self.vertices = vertices
-        self.uvData = uvData
         self.batches = batches
         self.vertexCount = vertexCount
         self.regionMinX = regionMinX
@@ -149,10 +149,8 @@ public final class CADVertexBufferBuilder {
         estimatedVertices = max(estimatedVertices, 1024)
 
         var vertices: [CADVertex] = []
-        var uvData: [Float] = []
         vertices.reserveCapacity(estimatedVertices)
-        uvData.reserveCapacity(estimatedVertices * 2)
-
+        
         var batches: [CADDrawBatch] = []
 
         for (i, input) in inputs.enumerated() {
@@ -179,13 +177,13 @@ public final class CADVertexBufferBuilder {
                     let y0 = p.y - halfW
                     let y1 = p.y + halfW
 
-                    vertices.append(CADVertex(x: x0, y: y0, r: r, g: g, b: b, a: a))
-                    vertices.append(CADVertex(x: x1, y: y0, r: r, g: g, b: b, a: a))
-                    vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a))
+                    vertices.append(CADVertex(x: x0, y: y0, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    vertices.append(CADVertex(x: x1, y: y0, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
 
-                    vertices.append(CADVertex(x: x0, y: y0, r: r, g: g, b: b, a: a))
-                    vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a))
-                    vertices.append(CADVertex(x: x0, y: y1, r: r, g: g, b: b, a: a))
+                    vertices.append(CADVertex(x: x0, y: y0, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    vertices.append(CADVertex(x: x0, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
                 }
 
             case .line:
@@ -217,42 +215,17 @@ public final class CADVertexBufferBuilder {
                         let c3 = SDL_FPoint(x: p2.x - nx, y: p2.y - ny)
                         let c4 = SDL_FPoint(x: p2.x + nx, y: p2.y + ny)
 
-                        vertices.append(CADVertex(x: c1.x, y: c1.y, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: c2.x, y: c2.y, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: c3.x, y: c3.y, r: r, g: g, b: b, a: a))
-                        uvData.append(0); uvData.append(1)
-                        uvData.append(0); uvData.append(-1)
-                        uvData.append(1); uvData.append(-1)
+                        vertices.append(CADVertex(x: c1.x, y: c1.y, r: r, g: g, b: b, a: a, u: 0.0, v: 1.0))
+                        vertices.append(CADVertex(x: c2.x, y: c2.y, r: r, g: g, b: b, a: a, u: 0.0, v: -1.0))
+                        vertices.append(CADVertex(x: c3.x, y: c3.y, r: r, g: g, b: b, a: a, u: 1.0, v: -1.0))
 
-                        vertices.append(CADVertex(x: c1.x, y: c1.y, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: c3.x, y: c3.y, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: c4.x, y: c4.y, r: r, g: g, b: b, a: a))
-                        uvData.append(0); uvData.append(1)
-                        uvData.append(1); uvData.append(-1)
-                        uvData.append(1); uvData.append(1)
+                        vertices.append(CADVertex(x: c1.x, y: c1.y, r: r, g: g, b: b, a: a, u: 0.0, v: 1.0))
+                        vertices.append(CADVertex(x: c3.x, y: c3.y, r: r, g: g, b: b, a: a, u: 1.0, v: -1.0))
+                        vertices.append(CADVertex(x: c4.x, y: c4.y, r: r, g: g, b: b, a: a, u: 1.0, v: 1.0))
                     }
                 } else {
-                    if input.isHatchLine {
-                        if input.hatchSpacing > 0 {
-                            let screenSpacing = input.hatchSpacing * cameraZoom
-                            if screenSpacing < 4.0 {
-                                break
-                            }
-                        }
-                        guard input.points.count >= 2 else { break }
-                        let p1 = input.points[0]
-                        let p2 = input.points[1]
-                        let dx = p2.x - p1.x
-                        let dy = p2.y - p1.y
-                        let worldLenSq = dx*dx + dy*dy
-                        let screenLenSq = Double(worldLenSq) * cameraZoom * cameraZoom
-                        // If the line is less than 3.0 screen pixels long, skip drawing it
-                        if screenLenSq < 9.0 {
-                            break
-                        }
-                    }
                     for p in input.points {
-                        vertices.append(CADVertex(x: p.x, y: p.y, r: r, g: g, b: b, a: a))
+                        vertices.append(CADVertex(x: p.x, y: p.y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
                     }
                 }
 
@@ -284,112 +257,150 @@ public final class CADVertexBufferBuilder {
                             let c3 = SDL_FPoint(x: p2.x - nx, y: p2.y - ny)
                             let c4 = SDL_FPoint(x: p2.x + nx, y: p2.y + ny)
 
-                            vertices.append(CADVertex(x: c1.x, y: c1.y, r: r, g: g, b: b, a: a))
-                            vertices.append(CADVertex(x: c2.x, y: c2.y, r: r, g: g, b: b, a: a))
-                            vertices.append(CADVertex(x: c3.x, y: c3.y, r: r, g: g, b: b, a: a))
-                            uvData.append(0); uvData.append(1)
-                            uvData.append(0); uvData.append(-1)
-                            uvData.append(1); uvData.append(-1)
+                            vertices.append(CADVertex(x: c1.x, y: c1.y, r: r, g: g, b: b, a: a, u: 0.0, v: 1.0))
+                            vertices.append(CADVertex(x: c2.x, y: c2.y, r: r, g: g, b: b, a: a, u: 0.0, v: -1.0))
+                            vertices.append(CADVertex(x: c3.x, y: c3.y, r: r, g: g, b: b, a: a, u: 1.0, v: -1.0))
 
-                            vertices.append(CADVertex(x: c1.x, y: c1.y, r: r, g: g, b: b, a: a))
-                            vertices.append(CADVertex(x: c3.x, y: c3.y, r: r, g: g, b: b, a: a))
-                            vertices.append(CADVertex(x: c4.x, y: c4.y, r: r, g: g, b: b, a: a))
-                            uvData.append(0); uvData.append(1)
-                            uvData.append(1); uvData.append(-1)
-                            uvData.append(1); uvData.append(1)
+                            vertices.append(CADVertex(x: c1.x, y: c1.y, r: r, g: g, b: b, a: a, u: 0.0, v: 1.0))
+                            vertices.append(CADVertex(x: c3.x, y: c3.y, r: r, g: g, b: b, a: a, u: 1.0, v: -1.0))
+                            vertices.append(CADVertex(x: c4.x, y: c4.y, r: r, g: g, b: b, a: a, u: 1.0, v: 1.0))
                         }
                     }
                 } else {
                     for j in 0..<(input.points.count - 1) {
                         let p1 = input.points[j]
                         let p2 = input.points[j+1]
-                        vertices.append(CADVertex(x: p1.x, y: p1.y, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: p2.x, y: p2.y, r: r, g: g, b: b, a: a))
+                        vertices.append(CADVertex(x: p1.x, y: p1.y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: p2.x, y: p2.y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
                     }
                 }
 
             case .rect, .rects:
                 if input.corners.count == 4 {
                     let c = input.corners
-                    vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a))
-                    vertices.append(CADVertex(x: c[1].x, y: c[1].y, r: r, g: g, b: b, a: a))
+                    vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    vertices.append(CADVertex(x: c[1].x, y: c[1].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
 
-                    vertices.append(CADVertex(x: c[1].x, y: c[1].y, r: r, g: g, b: b, a: a))
-                    vertices.append(CADVertex(x: c[2].x, y: c[2].y, r: r, g: g, b: b, a: a))
+                    vertices.append(CADVertex(x: c[1].x, y: c[1].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    vertices.append(CADVertex(x: c[2].x, y: c[2].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
 
-                    vertices.append(CADVertex(x: c[2].x, y: c[2].y, r: r, g: g, b: b, a: a))
-                    vertices.append(CADVertex(x: c[3].x, y: c[3].y, r: r, g: g, b: b, a: a))
+                    vertices.append(CADVertex(x: c[2].x, y: c[2].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    vertices.append(CADVertex(x: c[3].x, y: c[3].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
 
-                    vertices.append(CADVertex(x: c[3].x, y: c[3].y, r: r, g: g, b: b, a: a))
-                    vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a))
+                    vertices.append(CADVertex(x: c[3].x, y: c[3].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
                 } else {
                     for rect in input.rects {
                         let x1 = rect.x
                         let y1 = rect.y
                         let x2 = rect.x + rect.w
                         let y2 = rect.y + rect.h
-                        vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: x2, y: y1, r: r, g: g, b: b, a: a))
+                        vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: x2, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
 
-                        vertices.append(CADVertex(x: x2, y: y1, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: x2, y: y2, r: r, g: g, b: b, a: a))
+                        vertices.append(CADVertex(x: x2, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: x2, y: y2, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
 
-                        vertices.append(CADVertex(x: x2, y: y2, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: x1, y: y2, r: r, g: g, b: b, a: a))
+                        vertices.append(CADVertex(x: x2, y: y2, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: x1, y: y2, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
 
-                        vertices.append(CADVertex(x: x1, y: y2, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a))
+                        vertices.append(CADVertex(x: x1, y: y2, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
                     }
                 }
 
             case .fillRect, .fillRects:
-                if input.corners.count >= 3 {
-                    if input.corners.count % 3 == 0 {
-                        for c in input.corners {
-                            vertices.append(CADVertex(x: c.x, y: c.y, r: r, g: g, b: b, a: a))
-                        }
-                    } else if input.corners.count == 4 {
-                        let c = input.corners
-                        vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: c[1].x, y: c[1].y, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: c[2].x, y: c[2].y, r: r, g: g, b: b, a: a))
+                if let g = input.gradientData {
+                    func appendGradientVertex(x: Float, y: Float) {
+                        let rx = Double(x) - g.minX
+                        let ry = Double(y) - g.minY
+                        let proj = (rx * g.angleCos + ry * g.angleSin) / g.diag
+                        let tc = max(0, min(1, Float(proj)))
+                        let gr = Float(g.color1.0) + (Float(g.color2.0) - Float(g.color1.0)) * tc
+                        let gg = Float(g.color1.1) + (Float(g.color2.1) - Float(g.color1.1)) * tc
+                        let gb = Float(g.color1.2) + (Float(g.color2.2) - Float(g.color1.2)) * tc
+                        let ga = Float(g.color1.3) + (Float(g.color2.3) - Float(g.color1.3)) * tc
+                        vertices.append(CADVertex(x: x, y: y, r: gr / 255.0, g: gg / 255.0, b: gb / 255.0, a: ga / 255.0, u: 0.0, v: 0.0))
+                    }
+                    if input.corners.count >= 3 {
+                        if input.corners.count % 3 == 0 {
+                            for c in input.corners {
+                                appendGradientVertex(x: c.x, y: c.y)
+                            }
+                        } else if input.corners.count == 4 {
+                            let c = input.corners
+                            appendGradientVertex(x: c[0].x, y: c[0].y)
+                            appendGradientVertex(x: c[1].x, y: c[1].y)
+                            appendGradientVertex(x: c[2].x, y: c[2].y)
 
-                        vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: c[2].x, y: c[2].y, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: c[3].x, y: c[3].y, r: r, g: g, b: b, a: a))
+                            appendGradientVertex(x: c[0].x, y: c[0].y)
+                            appendGradientVertex(x: c[2].x, y: c[2].y)
+                            appendGradientVertex(x: c[3].x, y: c[3].y)
+                        } else {
+                            let c = input.corners
+                            for j in 1..<(c.count - 1) {
+                                appendGradientVertex(x: c[0].x, y: c[0].y)
+                                appendGradientVertex(x: c[j].x, y: c[j].y)
+                                appendGradientVertex(x: c[j+1].x, y: c[j+1].y)
+                            }
+                        }
                     } else {
-                        let c = input.corners
-                        for j in 1..<(c.count - 1) {
-                            vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a))
-                            vertices.append(CADVertex(x: c[j].x, y: c[j].y, r: r, g: g, b: b, a: a))
-                            vertices.append(CADVertex(x: c[j+1].x, y: c[j+1].y, r: r, g: g, b: b, a: a))
+                        for rect in input.rects {
+                            let x1 = rect.x
+                            let y1 = rect.y
+                            let x2 = rect.x + rect.w
+                            let y2 = rect.y + rect.h
+                            appendGradientVertex(x: x1, y: y1)
+                            appendGradientVertex(x: x2, y: y1)
+                            appendGradientVertex(x: x2, y: y2)
+
+                            appendGradientVertex(x: x1, y: y1)
+                            appendGradientVertex(x: x2, y: y2)
+                            appendGradientVertex(x: x1, y: y2)
                         }
                     }
                 } else {
-                    for rect in input.rects {
-                        let x1 = rect.x
-                        let y1 = rect.y
-                        let x2 = rect.x + rect.w
-                        let y2 = rect.y + rect.h
-                        vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: x2, y: y1, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: x2, y: y2, r: r, g: g, b: b, a: a))
+                    if input.corners.count >= 3 {
+                        if input.corners.count % 3 == 0 {
+                            for c in input.corners {
+                                vertices.append(CADVertex(x: c.x, y: c.y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            }
+                        } else if input.corners.count == 4 {
+                            let c = input.corners
+                            vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            vertices.append(CADVertex(x: c[1].x, y: c[1].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            vertices.append(CADVertex(x: c[2].x, y: c[2].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+    
+                            vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            vertices.append(CADVertex(x: c[2].x, y: c[2].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            vertices.append(CADVertex(x: c[3].x, y: c[3].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        } else {
+                            let c = input.corners
+                            for j in 1..<(c.count - 1) {
+                                vertices.append(CADVertex(x: c[0].x, y: c[0].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                                vertices.append(CADVertex(x: c[j].x, y: c[j].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                                vertices.append(CADVertex(x: c[j+1].x, y: c[j+1].y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            }
+                        }
+                    } else {
+                        for rect in input.rects {
+                            let x1 = rect.x
+                            let y1 = rect.y
+                            let x2 = rect.x + rect.w
+                            let y2 = rect.y + rect.h
+                            vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            vertices.append(CADVertex(x: x2, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            vertices.append(CADVertex(x: x2, y: y2, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
 
-                        vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: x2, y: y2, r: r, g: g, b: b, a: a))
-                        vertices.append(CADVertex(x: x1, y: y2, r: r, g: g, b: b, a: a))
+                            vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            vertices.append(CADVertex(x: x2, y: y2, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                            vertices.append(CADVertex(x: x1, y: y2, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        }
                     }
                 }
             }
 
-            // Pad uvData with zeros for any vertices that didn't get explicit uv entries.
-            let expectedUVCount = vertices.count * 2
-            let diff = expectedUVCount - uvData.count
-            if diff > 0 {
-                for _ in 0..<diff {
-                    uvData.append(0.0)
-                }
-            }
+            // (Removed uvData padding logic as u/v are now embedded in CADVertex)
 
             // Phase 2: Set entityIndex on all vertices for this primitive.
             let eIdx = input.entityIndex
@@ -442,7 +453,6 @@ public final class CADVertexBufferBuilder {
 
         return VertexBuildResult(
             vertices: vertices,
-            uvData: uvData,
             batches: batches,
             vertexCount: vertices.count,
             regionMinX: region.minX,

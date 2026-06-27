@@ -833,7 +833,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
         }
     }
 
-    internal static func computeLocalBoundingBox(
+    public static func computeLocalBoundingBox(
         blockID: UUID?, localGeometry: [CADPrimitive]?) -> BoundingBox3D? {
         if let geom = localGeometry, !geom.isEmpty {
             return CADBlock.computeBoundingBox(from: geom)

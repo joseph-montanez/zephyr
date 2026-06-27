@@ -51,7 +51,6 @@ public final class EngineRenderer {
 
     // MARK: CAD GPU Buffer
     internal var cadVertexBuffer: OpaquePointer?
-    internal var cadUVBuffer: OpaquePointer?
     internal var cadVertexCount: Int = 0
     internal var cadDrawBatches: [CADDrawBatch] = []
 
@@ -83,10 +82,6 @@ public final class EngineRenderer {
             if let buf = cadVertexBuffer {
                 SDL_ReleaseGPUBuffer(engine.gpuDevice, buf)
                 cadVertexBuffer = nil
-            }
-            if let buf = cadUVBuffer {
-                SDL_ReleaseGPUBuffer(engine.gpuDevice, buf)
-                cadUVBuffer = nil
             }
             cadVertexCount = 0
             cadDrawBatches.removeAll()
@@ -675,12 +670,6 @@ public final class EngineRenderer {
                     var lastBoundPipeline: CADPipelineType? = nil
                     var vertexBinding = SDL_GPUBufferBinding(buffer: vertexBuf, offset: 0)
                     SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
-
-                    // Bind UV data as vertex storage buffer (slot 0 → shader [[buffer(1)]])
-                    if let uvBuf = cadUVBuffer {
-                        var uvBufPtr: OpaquePointer? = uvBuf
-                        SDL_BindGPUVertexStorageBuffers(renderPass, 0, &uvBufPtr, 1)
-                    }
 
                     let cameraMatrix = engine.camera.computeMatrix(windowW: Double(engine.windowWidth), windowH: Double(engine.windowHeight))
                     

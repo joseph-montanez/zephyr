@@ -638,6 +638,29 @@ public final class CADDocument {
         invalidateEntityGrid()
     }
 
+    /// Update entity without pushing undo — for live property editing.
+    public func updateEntityLive(_ entity: CADEntity) {
+        guard entityRegistry[entity.handle] != nil else { return }
+        var updated = entity
+        updated.localBoundingBox = CADEntity.computeLocalBoundingBox(blockID: updated.blockID, localGeometry: updated.localGeometry)
+        updated.updateAnchorCache()
+        entityRegistry[updated.handle] = updated
+        // Don't invalidate grid or push undo.
+        markEdited(regenerate: true)
+    }
+
+    /// Update entity with undo.
+    public func updateEntity(_ entity: CADEntity) {
+        pushUndo()
+        guard entityRegistry[entity.handle] != nil else { return }
+        var updated = entity
+        updated.localBoundingBox = CADEntity.computeLocalBoundingBox(blockID: updated.blockID, localGeometry: updated.localGeometry)
+        updated.updateAnchorCache()
+        entityRegistry[updated.handle] = updated
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+    }
+
     /// Update entity geometry without pushing undo — for live grip editing.
     /// The caller (finalizeVertexDrag) will push a single undo entry on mouse-up.
     public func updateEntityGeometryLive(for handle: UUID, geometry: [CADPrimitive]) {

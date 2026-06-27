@@ -358,16 +358,15 @@ public enum CADTessellator {
         let spanY = maxY - minY
         let diag = max(sqrt(spanX*spanX + spanY*spanY), 1e-6)
 
-        // Color interpolation helper
-        func lerpColor(_ t: Float) -> (UInt8, UInt8, UInt8, UInt8) {
-            let tc = max(0, min(1, t))
-            return (
-                UInt8(Float(color1.0) + (Float(color2.0) - Float(color1.0)) * tc),
-                UInt8(Float(color1.1) + (Float(color2.1) - Float(color1.1)) * tc),
-                UInt8(Float(color1.2) + (Float(color2.2) - Float(color1.2)) * tc),
-                UInt8(Float(color1.3) + (Float(color2.3) - Float(color1.3)) * tc)
-            )
-        }
+        let gradientData = RenderPrimitive.GradientData(
+            color1: color1,
+            color2: color2,
+            angleCos: cosA,
+            angleSin: sinA,
+            minX: Double(minX),
+            minY: Double(minY),
+            diag: Double(diag)
+        )
 
         var allSpecs: [PrimitiveSpec] = []
 
@@ -386,7 +385,7 @@ public enum CADTessellator {
 
             let indices = earcut(data: flatData, holeIndices: holeOffsets, dim: 2)
 
-            // Group indices into triangles, compute per-triangle color
+            // Group indices into triangles, attach gradientData
             for t in stride(from: 0, to: indices.count, by: 3) {
                 guard t + 2 < indices.count else { continue }
                 let i0 = indices[t] * 2, i1 = indices[t+1] * 2, i2 = indices[t+2] * 2
@@ -394,22 +393,12 @@ public enum CADTessellator {
                 let v1 = SDL_FPoint(x: flatData[i1], y: flatData[i1+1])
                 let v2 = SDL_FPoint(x: flatData[i2], y: flatData[i2+1])
 
-                // Centroid for color interpolation
-                let cx = (v0.x + v1.x + v2.x) / 3
-                let cy = (v0.y + v1.y + v2.y) / 3
-
-                // Project centroid onto gradient direction
-                let rx = cx - minX
-                let ry = cy - minY
-                let proj = (rx * Float(cosA) + ry * Float(sinA)) / diag
-                let tc = max(0, min(1, proj))
-                let triColor = lerpColor(tc)
-
                 allSpecs.append(PrimitiveSpec(
                     type: .fillRect,
                     points: [], rects: [],
                     corners: [v0, v1, v2],
-                    z: z, color: triColor))
+                    z: z, color: color1,
+                    gradientData: gradientData))
             }
         }
         return allSpecs

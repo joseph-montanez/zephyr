@@ -43,6 +43,7 @@ import SwiftSDL
         let geomWidth: Double
         let isHatchLine: Bool
         let hatchSpacing: Double
+        let gradientData: RenderPrimitive.GradientData?
 
         init(
             type: PrimitiveType,
@@ -54,7 +55,8 @@ import SwiftSDL
             lineWeight: Double = 0.0,
             geomWidth: Double = 0.0,
             isHatchLine: Bool = false,
-            hatchSpacing: Double = 0.0
+            hatchSpacing: Double = 0.0,
+            gradientData: RenderPrimitive.GradientData? = nil
         ) {
             self.type = type
             self.points = points
@@ -66,6 +68,7 @@ import SwiftSDL
             self.geomWidth = geomWidth
             self.isHatchLine = isHatchLine
             self.hatchSpacing = hatchSpacing
+            self.gradientData = gradientData
         }
 
         /// Create RenderPrimitive from spec and add to GeometryManager. Returns the new ID.
@@ -91,7 +94,7 @@ import SwiftSDL
                 id = gm.addLines(points, z: z, color: color)
             case .fillRect:
                 if !corners.isEmpty {
-                    id = gm.addFillCorners(corners, z: z, color: color)
+                    id = gm.addFillCorners(corners, z: z, color: color, gradientData: gradientData)
                 } else if let r = rects.first {
                     id = gm.addFillRect(
                         x: r.x, y: r.y, w: r.w, h: r.h,
@@ -692,19 +695,18 @@ public enum CADPrimitiveGenerator {
                 let t = transform.transformPoint(p)
                 return SDL_FPoint(x: Float(t.x), y: Float(t.y))
             }
-            // Background fill — emitted first so pattern lines draw on top.
-            // Uses computeMultiLoopFillSpecs (Earcut) to handle hole topologies,
-            // not triangulatePolygon (simple ear-clipper) which would flood-fill islands.
+            let backgroundZ = z - 0.001
+            let foregroundZ = z
+
             if let bg = backgroundColor {
                 let bgColor = applyingOpacity(bg)
-                let bgSpec = CADTessellator.computeMultiLoopFillSpecs(
-                    outer: boundary, holes: [],
-                    transform: transform, color: bgColor, z: z)
+                let tris = CADTessellator.triangulatePolygon(wp)
+                let bgSpec = PrimitiveSpec(type: .fillRect, points: [], rects: [], corners: tris, z: backgroundZ, color: bgColor)
                 specs.append(bgSpec)
             }
             if pattern.uppercased() == "SOLID" || pattern.isEmpty {
                 let tris = CADTessellator.triangulatePolygon(wp)
-                let s = PrimitiveSpec(type: .fillRect, points: [], rects: [], corners: tris, z: z, color: finalColor)
+                let s = PrimitiveSpec(type: .fillRect, points: [], rects: [], corners: tris, z: foregroundZ, color: finalColor)
                 specs.append(s)
             } else {
                 // Patterned hatch: generate line pattern with zoom-aware adaptive spacing.
@@ -734,7 +736,7 @@ public enum CADPrimitiveGenerator {
                     polygon: polyPoints,
                     patternName: pattern,
                     scale: hatchScale,
-                    angleDegrees: hatchAngle,
+                    angleDegrees: hatchAngle * 180.0 / .pi,
                     minimumSpacing: diag / maxSteps
                 )
 
@@ -746,7 +748,7 @@ public enum CADPrimitiveGenerator {
                             points: [SDL_FPoint(x: Float(s.x), y: Float(s.y)),
                                      SDL_FPoint(x: Float(e.x), y: Float(e.y))],
                             rects: [], corners: [],
-                            z: z, color: finalColor,
+                            z: foregroundZ, color: finalColor,
                             lineWeight: 0.0, geomWidth: 0.0,
                             isHatchLine: true,
                             hatchSpacing: spacing))
@@ -755,7 +757,7 @@ public enum CADPrimitiveGenerator {
                             type: .point,
                             points: [SDL_FPoint(x: Float(p.x), y: Float(p.y))],
                             rects: [], corners: [],
-                            z: z, color: finalColor,
+                            z: foregroundZ, color: finalColor,
                             lineWeight: 0.0, geomWidth: 0.0,
                             isHatchLine: true,
                             hatchSpacing: spacing))

@@ -213,6 +213,25 @@ public enum PrimitiveType: UInt32, Sendable {
 
 /// Represents a renderable primitive object
 public final class RenderPrimitive: @unchecked Sendable {
+    public struct GradientData: Sendable {
+        public let color1: (UInt8, UInt8, UInt8, UInt8)
+        public let color2: (UInt8, UInt8, UInt8, UInt8)
+        public let angleCos: Double
+        public let angleSin: Double
+        public let minX: Double
+        public let minY: Double
+        public let diag: Double
+        public init(color1: (UInt8, UInt8, UInt8, UInt8), color2: (UInt8, UInt8, UInt8, UInt8), angleCos: Double, angleSin: Double, minX: Double, minY: Double, diag: Double) {
+            self.color1 = color1
+            self.color2 = color2
+            self.angleCos = angleCos
+            self.angleSin = angleSin
+            self.minX = minX
+            self.minY = minY
+            self.diag = diag
+        }
+    }
+
     public var id: SpriteID
     public var type: PrimitiveType
     public var z: Double
@@ -240,6 +259,7 @@ public final class RenderPrimitive: @unchecked Sendable {
     public var geomWidth: Double = 0.0
     public var isHatchLine: Bool = false
     public var hatchSpacing: Double = 0.0
+    public var gradientData: GradientData?
     /// Render only while the camera is actively panning.
     public var isPanProxy: Bool = false
     /// Entity index (0-based, dense). 0 = no entity (default). Set during applySpecs
@@ -309,7 +329,8 @@ public final class RenderPrimitive: @unchecked Sendable {
     init(
         id: SpriteID, type: PrimitiveType, z: Double,
         color: (r: UInt8, g: UInt8, b: UInt8, a: UInt8),
-        isScreenSpace: Bool
+        isScreenSpace: Bool,
+        gradientData: GradientData? = nil
     ) {
         self.id = id
         self.type = type
@@ -327,6 +348,7 @@ public final class RenderPrimitive: @unchecked Sendable {
         self.adjustedColorLight = (light.r, light.g, light.b, light.a)
         self.adjustedColorDark = (dark.r, dark.g, dark.b, dark.a)
         self.isScreenSpace = isScreenSpace
+        self.gradientData = gradientData
     }
 }
 
@@ -517,6 +539,10 @@ public final class GeometryManager: @unchecked Sendable {
             }
         }
         
+        if result.count > 1 {
+            result.sort()
+        }
+
         // No cleanup loop needed! The epoch counter handles it.
         return result
     }
@@ -624,11 +650,12 @@ public final class GeometryManager: @unchecked Sendable {
     public func addFillCorners(
         _ corners: [SDL_FPoint], z: Double = 0,
         color: (UInt8, UInt8, UInt8, UInt8) = (255, 255, 255, 255),
-        isScreenSpace: Bool = false
+        isScreenSpace: Bool = false,
+        gradientData: RenderPrimitive.GradientData? = nil
     ) -> SpriteID {
         let id = nextID()
         let primitive = RenderPrimitive(
-            id: id, type: .fillRect, z: z, color: color, isScreenSpace: isScreenSpace)
+            id: id, type: .fillRect, z: z, color: color, isScreenSpace: isScreenSpace, gradientData: gradientData)
         primitive.corners = corners
         // Also set points so the renderer can pick up the polygon
         addPrimitive(primitive)

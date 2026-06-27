@@ -48,7 +48,8 @@ extension EngineRenderer {
                     entityIndex: p.entityIndex,
                     isHatchLine: p.isHatchLine,
                     hatchSpacing: p.hatchSpacing,
-                    isPanProxy: p.isPanProxy
+                    isPanProxy: p.isPanProxy,
+                    gradientData: p.gradientData
                 ))
             }
         } else {
@@ -68,7 +69,8 @@ extension EngineRenderer {
                     entityIndex: p.entityIndex,
                     isHatchLine: p.isHatchLine,
                     hatchSpacing: p.hatchSpacing,
-                    isPanProxy: p.isPanProxy
+                    isPanProxy: p.isPanProxy,
+                    gradientData: p.gradientData
                 ))
             }
         }
@@ -88,11 +90,9 @@ extension EngineRenderer {
     /// `applyPendingVertexBuildIfReady()` paths.
     internal func applyVertexBuild(_ result: VertexBuildResult, paletteGen: Int) {
         let vertices = result.vertices
-        let uvData = result.uvData
 
         // --- Build NEW GPU buffers into locals ---
         var newVertexBuffer: OpaquePointer? = nil
-        var newUVBuffer: OpaquePointer? = nil
 
         if !vertices.isEmpty {
             let sizeInBytes = UInt32(vertices.count * MemoryLayout<CADVertex>.stride)
@@ -144,35 +144,6 @@ extension EngineRenderer {
             var destLocation = SDL_GPUBufferRegion(buffer: vb, offset: 0, size: sizeInBytes)
             SDL_UploadToGPUBuffer(cp, &sourceLocation, &destLocation, false)
 
-            // Upload UV buffer in the same copy pass.
-            let uvSizeInBytes = UInt32(uvData.count * MemoryLayout<Float>.stride)
-            if uvSizeInBytes > 0 {
-                var uvBufferCreateInfo = SDL_GPUBufferCreateInfo(
-                    usage: SDL_GPU_BUFFERUSAGE_VERTEX, size: uvSizeInBytes, props: 0)
-                newUVBuffer = SDL_CreateGPUBuffer(engine.gpuDevice, &uvBufferCreateInfo)
-                if let uvb = newUVBuffer {
-                    var uvTransferInfo = SDL_GPUTransferBufferCreateInfo()
-                    uvTransferInfo.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
-                    uvTransferInfo.size = uvSizeInBytes
-                    if let uvTransferBuf = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &uvTransferInfo) {
-                        if let uvMapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, uvTransferBuf, false) {
-                            _ = uvData.withUnsafeBytes { ptr in
-                                memcpy(uvMapped, ptr.baseAddress!, Int(uvSizeInBytes))
-                            }
-                            SDL_UnmapGPUTransferBuffer(engine.gpuDevice, uvTransferBuf)
-                        }
-                        var uvSource = SDL_GPUTransferBufferLocation(
-                            transfer_buffer: uvTransferBuf, offset: 0)
-                        var uvDest = SDL_GPUBufferRegion(
-                            buffer: uvb, offset: 0, size: uvSizeInBytes)
-                        SDL_UploadToGPUBuffer(cp, &uvSource, &uvDest, false)
-                        SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, uvTransferBuf)
-                    }
-                } else {
-                    print("Failed to create CAD UV GPU buffer: \(String(cString: SDL_GetError()))")
-                }
-            }
-
             SDL_EndGPUCopyPass(cp)
 
             if !SDL_SubmitGPUCommandBuffer(cmd) {
@@ -185,12 +156,8 @@ extension EngineRenderer {
         if let oldBuf = cadVertexBuffer {
             SDL_ReleaseGPUBuffer(engine.gpuDevice, oldBuf)
         }
-        if let oldBuf = cadUVBuffer {
-            SDL_ReleaseGPUBuffer(engine.gpuDevice, oldBuf)
-        }
 
         cadVertexBuffer = newVertexBuffer
-        cadUVBuffer = newUVBuffer
 
         if newVertexBuffer != nil {
             cadVertexCount = vertices.count

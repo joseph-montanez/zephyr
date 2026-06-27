@@ -106,7 +106,7 @@ extension EngineRenderer {
     /// - Returns: `true` if all required pipelines were created successfully.
     internal func initGPUPipelines() -> Bool {
         // Load shaders
-        cadVertShader = loadGPUShader(name: "cad.vert", stage: SDL_GPU_SHADERSTAGE_VERTEX, uniformBufferCount: 1, storageBufferCount: 1)
+        cadVertShader = loadGPUShader(name: "cad.vert", stage: SDL_GPU_SHADERSTAGE_VERTEX, uniformBufferCount: 1, storageBufferCount: 0)
         cadFragShader = loadGPUShader(name: "cad.frag", stage: SDL_GPU_SHADERSTAGE_FRAGMENT)
         cadAAFragShader = loadGPUShader(name: "cad_aa.frag", stage: SDL_GPU_SHADERSTAGE_FRAGMENT)
         imguiVertShader = loadGPUShader(name: "imgui.vert", stage: SDL_GPU_SHADERSTAGE_VERTEX, uniformBufferCount: 1)
@@ -180,14 +180,15 @@ extension EngineRenderer {
         )
         var cadColorDescs = [cadColorDesc]
 
-        // Vertex attributes for CADVertex (stride = 28 with entityIndex)
+        // Vertex attributes for CADVertex (stride = 36 with entityIndex, u, v)
         let cadAttributes = [
             SDL_GPUVertexAttribute(location: 0, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offset: 0),
             SDL_GPUVertexAttribute(location: 1, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offset: 8),
-            SDL_GPUVertexAttribute(location: 2, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_UINT, offset: 24)
+            SDL_GPUVertexAttribute(location: 2, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_UINT, offset: 32),
+            SDL_GPUVertexAttribute(location: 3, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offset: 24)
         ]
         let cadBindings = [
-            SDL_GPUVertexBufferDescription(slot: 0, pitch: 28, input_rate: SDL_GPU_VERTEXINPUTRATE_VERTEX, instance_step_rate: 0)
+            SDL_GPUVertexBufferDescription(slot: 0, pitch: 36, input_rate: SDL_GPU_VERTEXINPUTRATE_VERTEX, instance_step_rate: 0)
         ]
 
         let success = cadAttributes.withUnsafeBufferPointer { attrBuf in
@@ -198,7 +199,7 @@ extension EngineRenderer {
                         vertex_buffer_descriptions: bindBuf.baseAddress,
                         num_vertex_buffers: 1,
                         vertex_attributes: attrBuf.baseAddress,
-                        num_vertex_attributes: 3
+                        num_vertex_attributes: 4
                     )
 
                     let targetInfo = SDL_GPUGraphicsPipelineTargetInfo(
@@ -297,14 +298,15 @@ extension EngineRenderer {
         )
         var idColorDescs = [idColorDesc]
 
-        // Same vertex layout as main CAD pipeline (stride=28)
+        // Same vertex layout as main CAD pipeline (stride=36)
         let idAttributes = [
             SDL_GPUVertexAttribute(location: 0, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offset: 0),
             SDL_GPUVertexAttribute(location: 1, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, offset: 8),
-            SDL_GPUVertexAttribute(location: 2, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_UINT, offset: 24)
+            SDL_GPUVertexAttribute(location: 2, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_UINT, offset: 32),
+            SDL_GPUVertexAttribute(location: 3, buffer_slot: 0, format: SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, offset: 24)
         ]
         let idBindings = [
-            SDL_GPUVertexBufferDescription(slot: 0, pitch: 28, input_rate: SDL_GPU_VERTEXINPUTRATE_VERTEX, instance_step_rate: 0)
+            SDL_GPUVertexBufferDescription(slot: 0, pitch: 36, input_rate: SDL_GPU_VERTEXINPUTRATE_VERTEX, instance_step_rate: 0)
         ]
 
         let idSuccess = idAttributes.withUnsafeBufferPointer { attrBuf in
@@ -314,7 +316,7 @@ extension EngineRenderer {
                         vertex_buffer_descriptions: bindBuf.baseAddress,
                         num_vertex_buffers: 1,
                         vertex_attributes: attrBuf.baseAddress,
-                        num_vertex_attributes: 3
+                        num_vertex_attributes: 4
                     )
                     let targetInfo = SDL_GPUGraphicsPipelineTargetInfo(
                         color_target_descriptions: colorBuf.baseAddress,
@@ -636,7 +638,6 @@ extension EngineRenderer {
 
         // Release CAD vertex buffer
         if let buf = cadVertexBuffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) }
-        if let buf = cadUVBuffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) }
         if let buf = imguiVertexBuffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) }
         if let buf = imguiIndexBuffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) }
 
