@@ -193,6 +193,7 @@ typedef struct {
   double gradientAngle;   /* gradient angle (radians) */
   int color1;             /* first gradient color: 24-bit RGB or -1=use entity color */
   int color2;             /* second gradient color: 24-bit RGB or -1 */
+  int hatchBackgroundColor; /* hatch background fill color ACI (DXF group 63, non-gradient context), -1 if not set */
 
   /* DIMENSION */
   DXFRW_DimType dimType;

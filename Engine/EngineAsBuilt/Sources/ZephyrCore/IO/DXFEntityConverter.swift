@@ -239,12 +239,16 @@ public enum DXFEntityConverter {
                 let scale = e.hatchScale > 0 ? e.hatchScale : 1.0
                 let angle = e.hatchAngle
                 var prims: [CADPrimitive] = []
-                // Store as .hatch primitives — line generation deferred to render time
-                // where zoom-aware adaptive spacing can prevent Over-generation.
-                // NOTE: DXF group 63 (hatch background fill color) is not
-                // exposed by the current dxfrw_bridge.h.  When the C++ bridge
-                // is updated to include `hatchBackgroundColor`, read it here
-                // and pass as `backgroundColor:` instead of nil.
+                // Background fill color (DXF group 63)
+                let bgColor: ColorRGBA? = {
+                    if e.hatchBackgroundColor >= 0 {
+                        let r = UInt8((e.hatchBackgroundColor >> 16) & 0xFF)
+                        let g = UInt8((e.hatchBackgroundColor >> 8) & 0xFF)
+                        let b = UInt8(e.hatchBackgroundColor & 0xFF)
+                        return ColorRGBA(r: r, g: g, b: b)
+                    }
+                    return nil
+                }()
                 for poly in loopPolygons {
                     prims.append(.hatch(
                         boundary: poly,
@@ -252,7 +256,7 @@ public enum DXFEntityConverter {
                         scale: scale,
                         angle: angle,
                         color: primColor,
-                        backgroundColor: nil))
+                        backgroundColor: bgColor))
                 }
                 return editableBoundaryPrims + prims
             }

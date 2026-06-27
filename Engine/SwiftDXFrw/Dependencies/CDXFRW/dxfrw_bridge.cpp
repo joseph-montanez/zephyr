@@ -2021,6 +2021,7 @@ public:
     e.gradientAngle = data->gradientAngle;
     e.color1 = -1;
     e.color2 = -1;
+    e.hatchBackgroundColor = (data->bgColor >= 0 && data->bgColor <= 255) ? aciToRgb(data->bgColor) : -1;
 
     auto entityRgb = [&]() -> int {
       if (e.color24 >= 0)
