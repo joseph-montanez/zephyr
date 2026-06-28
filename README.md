@@ -62,6 +62,18 @@ Zephyr is a drafting app that runs natively on macOS (Metal) and Windows (Direct
 | IMAGE | `IMG` | Raster image placement (PNG, JPG, etc.) |
 | PDFIMPORT | `PDFI` | PDF page underlay import with page selector |
 
+### Dimension Commands
+| Command | Alias | Description |
+|---|---|---|
+| DIMLINEAR | `DLI` | Horizontal/vertical dimension between two points |
+| DIMALIGNED | `DAL` | Dimension parallel to the measured distance |
+| DIMANGULAR | `DAN` | Angle dimension between two lines or an arc |
+| DIMARC | `DAR` | Arc length dimension along a curve |
+| DIMRADIUS | `DRA` | Radius dimension for arcs/circles |
+| DIMDIAMETER | `DDI` | Diameter dimension for arcs/circles |
+| DIMORDINATE | `DOR` | X or Y ordinate dimension from a UCS origin |
+| DIMJOGGED | `DJO` | Jogged radius dimension (for large radii) |
+
 ### Edit & Modify
 | Command | Alias | Description |
 |---|---|---|
