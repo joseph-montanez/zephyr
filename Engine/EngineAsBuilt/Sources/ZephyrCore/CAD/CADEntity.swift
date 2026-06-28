@@ -446,6 +446,8 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
     /// Non-nil = raw loose geometry (used when blockID is nil).
     public var localGeometry: [CADPrimitive]?
 
+    public var dimensionMetadata: CADDimensionMetadataBox?
+
     public var transform: Transform3D {
         didSet { refreshWorldBoundingBox() }
     }
@@ -534,6 +536,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
                 layerID: UUID,
                 blockID: UUID? = nil,
                 localGeometry: [CADPrimitive]? = nil,
+                dimensionMetadata: CADDimensionMetadataBox? = nil,
                 transform: Transform3D = .identity,
                 xdata: [String: XDataValue] = [:],
                 drawOrder: Int = Int.max,
@@ -543,6 +546,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
         self.layerID = layerID
         self.blockID = blockID
         self.localGeometry = localGeometry
+        self.dimensionMetadata = dimensionMetadata
         self.transform = transform
         self.xdata = xdata
         self.drawOrder = drawOrder

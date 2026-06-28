@@ -30,6 +30,7 @@ public struct CADDocumentSnapshot: Sendable {
     public let activeLayerID: UUID?
     public let unit: CADUnit
     public let textStyleFonts: [String: String]
+    public let dimensionStyles: [String: CADDimensionStyle]
     public let linetypePatterns: [String: [Double]]
     /// Names of image assets currently referenced by entities (not the raw Data blobs).
     /// The actual `imageStore` lives on `CADDocument` and persists across undo/redo.
@@ -44,6 +45,7 @@ public struct CADDocumentSnapshot: Sendable {
         activeLayerID: UUID?,
         unit: CADUnit,
         textStyleFonts: [String: String],
+        dimensionStyles: [String: CADDimensionStyle] = [:],
         linetypePatterns: [String: [Double]] = [:],
         imageAssetNames: Set<String> = []
     ) {
@@ -55,6 +57,7 @@ public struct CADDocumentSnapshot: Sendable {
         self.activeLayerID = activeLayerID
         self.unit = unit
         self.textStyleFonts = textStyleFonts
+        self.dimensionStyles = dimensionStyles
         self.linetypePatterns = linetypePatterns
         self.imageAssetNames = imageAssetNames
     }
@@ -174,6 +177,9 @@ public final class CADDocument {
 
     /// Maps DXF text style names to their primary font file names (e.g. "Standard" -> "txt.shx").
     public var textStyleFonts: [String: String] = [:]
+    
+    /// Map of dimension style name -> CADDimensionStyle
+    public var dimensionStyles: [String: CADDimensionStyle] = [:]
 
     /// DXF linetype dash pattern definitions (e.g. "DASHED" -> [10.0, 5.0]).
     /// Key is the uppercased linetype name. Saved/loaded in EAB for accurate round-trip.
@@ -1125,12 +1131,14 @@ public final class CADDocument {
         solvedTransforms: [UUID: Transform3D] = [:],
         unit: CADUnit = .millimeter,
         textStyleFonts: [String: String] = [:],
+        dimensionStyles: [String: CADDimensionStyle] = [:],
         linetypePatterns: [String: [Double]] = [:],
         activeLayerID: UUID? = nil,
         imageStore: [String: CADImageAsset] = [:]
     ) {
         self.unit = unit
         self.textStyleFonts = textStyleFonts
+        self.dimensionStyles = dimensionStyles
         self.linetypePatterns = linetypePatterns
         self.imageStore = imageStore
         for layer in layers { layerTable[layer.handle] = layer }
@@ -1182,6 +1190,7 @@ public final class CADDocument {
             solvedTransforms: solvedTransforms,
             activeLayerID: activeLayerID, unit: unit,
             textStyleFonts: textStyleFonts,
+            dimensionStyles: dimensionStyles,
             linetypePatterns: linetypePatterns,
             imageAssetNames: names
         )
@@ -1216,6 +1225,7 @@ public final class CADDocument {
         activeLayerID = snapshot.activeLayerID
         unit = snapshot.unit
         textStyleFonts = snapshot.textStyleFonts
+        dimensionStyles = snapshot.dimensionStyles
         linetypePatterns = snapshot.linetypePatterns
         // Prune image assets no longer referenced by any entity after restore
         pruneUnreferencedImageAssets()

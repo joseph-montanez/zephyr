@@ -94,6 +94,7 @@ public enum EABReader {
                 solvedTransforms: components.solvedTransforms,
                 unit: components.unit,
                 textStyleFonts: components.textStyleFonts,
+                dimensionStyles: components.dimensionStyles,
                 linetypePatterns: components.linetypePatterns,
                 activeLayerID: components.activeLayerID,
                 imageStore: components.imageStore
@@ -112,6 +113,7 @@ public enum EABReader {
         solvedTransforms: [UUID: Transform3D],
         unit: CADUnit,
         textStyleFonts: [String: String],
+        dimensionStyles: [String: CADDimensionStyle],
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset]
@@ -196,6 +198,7 @@ public enum EABReader {
                 solvedTransforms: components.solvedTransforms,
                 unit: components.unit,
                 textStyleFonts: components.textStyleFonts,
+                dimensionStyles: components.dimensionStyles,
                 linetypePatterns: components.linetypePatterns,
                 activeLayerID: components.activeLayerID,
                 imageStore: components.imageStore
@@ -255,6 +258,7 @@ public enum EABReader {
         solvedTransforms: [UUID: Transform3D],
         unit: CADUnit,
         textStyleFonts: [String: String],
+        dimensionStyles: [String: CADDimensionStyle],
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset]
@@ -268,6 +272,7 @@ public enum EABReader {
         var constraints: [CADConstraint] = []
         var solvedTransforms: [UUID: Transform3D] = [:]
         var textStyleFonts: [String: String] = [:]
+        var dimensionStyles: [String: CADDimensionStyle] = [:]
         var linetypePatterns: [String: [Double]] = [:]
         var activeLayerID: UUID? = nil
         var loadedImageStore: [String: CADImageAsset] = [:]
@@ -287,6 +292,8 @@ public enum EABReader {
                 solvedTransforms = try parseSolvedTransforms(reader)
             case .textStyles:
                 textStyleFonts = try parseTextStyleFonts(reader)
+            case .dimensionStyles:
+                dimensionStyles = try parseDimensionStyles(reader)
             case .lineTypes:
                 linetypePatterns = try parseLinetypePatterns(reader)
             case .images:
@@ -299,7 +306,24 @@ public enum EABReader {
         }
 
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
-                textStyleFonts, linetypePatterns, activeLayerID, loadedImageStore)
+                textStyleFonts, dimensionStyles, linetypePatterns, activeLayerID, loadedImageStore)
+    }
+
+    private static func parseDimensionStyles(_ r: BinaryReader) throws -> [String: CADDimensionStyle] {
+        var styles: [String: CADDimensionStyle] = [:]
+        let count = r.readUInt32()
+        let decoder = JSONDecoder()
+        for _ in 0..<count {
+            let styleName = r.readString()
+            let jsonString = r.readString()
+            if let data = jsonString.data(using: .utf8),
+               let style = try? decoder.decode(CADDimensionStyle.self, from: data) {
+                styles[styleName] = style
+            } else {
+                styles[styleName] = CADDimensionStyle.default
+            }
+        }
+        return styles
     }
 
     // MARK: - Public API: Header Only
@@ -326,6 +350,7 @@ public enum EABReader {
         solvedTransforms: [UUID: Transform3D],
         unit: CADUnit,
         textStyleFonts: [String: String],
+        dimensionStyles: [String: CADDimensionStyle],
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset]
@@ -350,6 +375,7 @@ public enum EABReader {
         var constraints: [CADConstraint] = []
         var solvedTransforms: [UUID: Transform3D] = [:]
         var textStyleFonts: [String: String] = [:]
+        var dimensionStyles: [String: CADDimensionStyle] = [:]
         var linetypePatterns: [String: [Double]] = [:]
         var activeLayerID: UUID? = nil
         var loadedImageStore: [String: CADImageAsset] = [:]
@@ -373,6 +399,8 @@ public enum EABReader {
                 solvedTransforms = try parseSolvedTransforms(reader)
             case .textStyles:
                 textStyleFonts = try parseTextStyleFonts(reader)
+            case .dimensionStyles:
+                dimensionStyles = try parseDimensionStyles(reader)
             case .lineTypes:
                 linetypePatterns = try parseLinetypePatterns(reader)
             case .images:
@@ -385,7 +413,7 @@ public enum EABReader {
         }
 
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
-                textStyleFonts, linetypePatterns, activeLayerID, loadedImageStore)
+                textStyleFonts, dimensionStyles, linetypePatterns, activeLayerID, loadedImageStore)
     }
 
     // MARK: - Header Parsing
@@ -510,6 +538,7 @@ public enum EABReader {
             let hasXData = (flags & 0x01) != 0
             let hasLocalGeom = (flags & 0x02) != 0
             let hasDrawOrder = (flags & 0x04) != 0
+            let hasDimensionMetadata = (flags & 0x08) != 0
 
             // bbox
             let bminX = Double(r.readFloat32())
@@ -549,10 +578,16 @@ public enum EABReader {
                     xdata.removeValue(forKey: "dxf.drawOrder")
                 }
             }
+            
+            var dimensionMetadataBox: CADDimensionMetadataBox? = nil
+            if hasDimensionMetadata {
+                dimensionMetadataBox = try parseDimensionMetadata(r)
+            }
 
             var entity = CADEntity(
                 handle: handle, layerID: layerID, blockID: blockID,
-                localGeometry: localGeom, transform: transform, xdata: xdata,
+                localGeometry: localGeom, dimensionMetadata: dimensionMetadataBox,
+                transform: transform, xdata: xdata,
                 drawOrder: drawOrder,
                 localBoundingBox: isEmptyBBox ? nil : bbox
             )
@@ -563,6 +598,50 @@ public enum EABReader {
             entities.append(entity)
         }
         return entities
+    }
+
+
+
+    private static func parseDimensionMetadata(_ r: BinaryReader) throws -> CADDimensionMetadataBox {
+        let styleLen = Int(r.readUInt32())
+        let styleBytes = r.readBytes(count: styleLen)
+        let styleName = String(decoding: styleBytes, as: UTF8.self)
+        
+        let typeRaw = Int(r.readInt32())
+        let type = CADDimensionType(rawValue: typeRaw) ?? .linearOrRotated
+        
+        let measurement = r.readFloat64()
+        let p1 = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+        let p2 = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+        
+        let hasP3 = r.readUInt8() != 0
+        let p3: Vector3? = hasP3 ? Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64()) : nil
+        
+        let tp = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+        
+        let overrideLen = Int(r.readUInt32())
+        var textOverride: String? = nil
+        if overrideLen > 0 {
+            let ovBytes = r.readBytes(count: overrideLen)
+            textOverride = String(decoding: ovBytes, as: UTF8.self)
+        }
+        
+        let rot = r.readFloat64()
+        let flags = Int(r.readInt32())
+        
+        let metadata = CADDimensionMetadata(
+            styleName: styleName,
+            type: type,
+            measurement: measurement,
+            defPoint: p1,
+            defPoint2: p2,
+            defPoint3: p3,
+            textMidpoint: tp,
+            textOverride: textOverride,
+            rotationAngle: rot,
+            flags: flags
+        )
+        return CADDimensionMetadataBox(metadata)
     }
 
     // MARK: - Constraint Parsing

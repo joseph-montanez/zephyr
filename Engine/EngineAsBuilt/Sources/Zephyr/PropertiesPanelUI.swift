@@ -300,6 +300,102 @@ struct PropertiesPanelUI {
             igSeparator()
         }
 
+
+        // Section 5.5: Dimension Properties
+        if let dimBox = entity.dimensionMetadata {
+            if ImGuiCollapsingHeader("Dimension Properties", Int32(ImGuiTreeNodeFlags_DefaultOpen.rawValue)) {
+                let metadata = dimBox.value
+                var style = metadata.styleOverrides ?? engine.document.dimensionStyles[metadata.styleName] ?? CADDimensionStyle.default
+                var changed = false
+                
+                // Text Override
+                var textOverride = metadata.textOverride ?? ""
+                let bufSize = 256
+                var buffer = [CChar](repeating: 0, count: bufSize)
+                let bytes = textOverride.utf8CString
+                for i in 0..<min(bytes.count, bufSize - 1) {
+                    buffer[i] = bytes[i]
+                }
+                
+                var submitted = false
+                ImGuiPushItemWidth(-1)
+                ImGuiTextV("Text Override:")
+                buffer.withUnsafeMutableBufferPointer { b -> Void in
+                    if let base = b.baseAddress {
+                        if igInputText("##DimTextOverride", base, bufSize, Int32(ImGuiInputTextFlags_EnterReturnsTrue.rawValue), nil, nil) {
+                            submitted = true
+                        }
+                    }
+                }
+                ImGuiPopItemWidth()
+                
+                if submitted || ImGuiIsItemDeactivatedAfterEdit() {
+                    let newText = String(cString: buffer)
+                    var newMeta = metadata
+                    // empty string means clear the override
+                    newMeta = CADDimensionMetadata(
+                        styleName: metadata.styleName,
+                        type: metadata.type,
+                        measurement: metadata.measurement,
+                        defPoint: metadata.defPoint,
+                        defPoint2: metadata.defPoint2,
+                        defPoint3: metadata.defPoint3,
+                        defPoint4: metadata.defPoint4,
+                        defPoint5: metadata.defPoint5,
+                        textMidpoint: metadata.textMidpoint,
+                        textOverride: newText.isEmpty ? nil : newText,
+                        rotationAngle: metadata.rotationAngle,
+                        flags: metadata.flags,
+                        styleOverrides: metadata.styleOverrides
+                    )
+                    var newEntity = entity
+                    newEntity.dimensionMetadata = CADDimensionMetadataBox(newMeta)
+                    DimensionPrimitives.updateDimensionBlock(for: &newEntity, in: engine.document)
+                    engine.document.updateEntity(newEntity)
+                }
+                
+                // Text Style
+                ImGuiTextV("Text Style:")
+                ImGuiPushItemWidth(-1)
+                if ImGuiBeginCombo("##DimTextStyle", style.textStyle, 0) {
+                    for ts in engine.document.textStyleFonts.keys.sorted() {
+                        let selected = (ts == style.textStyle)
+                        if ImGuiSelectable(ts, selected, 0, ImVec2(x: 0, y: 0)) {
+                            style.textStyle = ts
+                            changed = true
+                        }
+                        if selected { ImGuiSetItemDefaultFocus() }
+                    }
+                    ImGuiEndCombo()
+                }
+                ImGuiPopItemWidth()
+                
+                // Text Height
+                var textHeight = Float(style.textHeight)
+                if ImGuiInputFloat("Text Height", &textHeight, 0.1, 1.0, "%.3f", 0) {
+                    style.textHeight = Double(max(0.1, textHeight))
+                    changed = true
+                }
+                
+                // Arrow Size
+                var arrowSize = Float(style.arrowSize)
+                if ImGuiInputFloat("Arrow Size", &arrowSize, 0.1, 1.0, "%.3f", 0) {
+                    style.arrowSize = Double(max(0.1, arrowSize))
+                    changed = true
+                }
+                
+                if changed {
+                    var newMeta = metadata
+                    newMeta.styleOverrides = style
+                    var newEntity = entity
+                    newEntity.dimensionMetadata = CADDimensionMetadataBox(newMeta)
+                    DimensionPrimitives.updateDimensionBlock(for: &newEntity, in: engine.document)
+                    engine.document.updateEntity(newEntity)
+                }
+                igSeparator()
+            }
+        }
+
         if ImGuiCollapsingHeader("Bounding Box", Int32(ImGuiTreeNodeFlags_None.rawValue)) {
             if let bb = entity.worldBoundingBox {
                 ImGuiTextV("Min: (\(String(format: "%.2f", bb.min.x)), \(String(format: "%.2f", bb.min.y)), \(String(format: "%.2f", bb.min.z)))")

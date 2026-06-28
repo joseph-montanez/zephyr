@@ -396,6 +396,15 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
+        // Dimension styles
+        if !document.dimensionStyles.isEmpty {
+            let dimensionStylesData = serializeDimensionStyles(document: document)
+            entries.append(EABSectionEntry(type: .dimensionStyles, offset: UInt64(w.count),
+                                            size: UInt64(dimensionStylesData.count), compression: .none))
+            w.writeBytes(dimensionStylesData)
+            w.pad(to: 4)
+        }
+
         // Linetype patterns (added in EAB v4)
         if !document.linetypePatterns.isEmpty {
             let lineTypesData = serializeLinetypePatterns(document: document)
@@ -565,6 +574,7 @@ public enum EABWriter {
             }
             // Always set drawOrder flag (0x04) — every entity has a drawOrder property.
             flags |= 0x04
+            if entity.dimensionMetadata != nil { flags |= 0x08 }
             w.writeUInt8(flags)
             // bbox (local-space)
             if let bb = entity.localBoundingBox {
@@ -590,8 +600,55 @@ public enum EABWriter {
             }
             // drawOrder (v6+, flag 0x04)
             w.writeInt32(Int32(clamping: entity.drawOrder))
+            // dimensionMetadata
+            if flags & 0x08 != 0, let dim = entity.dimensionMetadata?.value {
+                serializeDimensionMetadata(dim, to: w)
+            }
         }
         return w.build()
+    }
+
+
+
+    private static func serializeDimensionMetadata(_ dim: CADDimensionMetadata, to w: BinaryWriter) {
+        let styleBytes = Data(dim.styleName.utf8)
+        w.writeUInt32(UInt32(styleBytes.count))
+        w.writeBytes(styleBytes)
+        
+        w.writeInt32(Int32(dim.type.rawValue))
+        w.writeFloat64(dim.measurement)
+        
+        w.writeFloat64(dim.defPoint.x)
+        w.writeFloat64(dim.defPoint.y)
+        w.writeFloat64(dim.defPoint.z)
+        
+        w.writeFloat64(dim.defPoint2.x)
+        w.writeFloat64(dim.defPoint2.y)
+        w.writeFloat64(dim.defPoint2.z)
+        
+        if let dp3 = dim.defPoint3 {
+            w.writeUInt8(1)
+            w.writeFloat64(dp3.x)
+            w.writeFloat64(dp3.y)
+            w.writeFloat64(dp3.z)
+        } else {
+            w.writeUInt8(0)
+        }
+        
+        w.writeFloat64(dim.textMidpoint.x)
+        w.writeFloat64(dim.textMidpoint.y)
+        w.writeFloat64(dim.textMidpoint.z)
+        
+        if let override = dim.textOverride {
+            let ovBytes = Data(override.utf8)
+            w.writeUInt32(UInt32(ovBytes.count))
+            w.writeBytes(ovBytes)
+        } else {
+            w.writeUInt32(0)
+        }
+        
+        w.writeFloat64(dim.rotationAngle)
+        w.writeInt32(Int32(dim.flags))
     }
 
     private static func writeTransform(_ t: Transform3D, to w: BinaryWriter) {
@@ -925,6 +982,23 @@ public enum EABWriter {
         for (styleName, fontFile) in document.textStyleFonts {
             w.writeString(styleName)
             w.writeString(fontFile)
+        }
+        return w.build()
+    }
+
+    // MARK: - Dimension Styles
+
+    private static func serializeDimensionStyles(document: CADDocument) -> Data {
+        let w = BinaryWriter()
+        w.writeUInt32(UInt32(document.dimensionStyles.count))
+        let encoder = JSONEncoder()
+        for (styleName, style) in document.dimensionStyles {
+            w.writeString(styleName)
+            if let data = try? encoder.encode(style), let str = String(data: data, encoding: .utf8) {
+                w.writeString(str)
+            } else {
+                w.writeString("{}")
+            }
         }
         return w.build()
     }

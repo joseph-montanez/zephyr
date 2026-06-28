@@ -40,6 +40,7 @@ public enum EABSectionType: UInt32, Sendable {
     case textStyles   = 11
     case lineTypes    = 12
     case images       = 13
+    case dimensionStyles = 14
 }
 
 /// Compression mode for a data section.

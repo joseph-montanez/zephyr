@@ -1117,11 +1117,29 @@ public enum DXFImporter {
             print("DIM blockName =", src.blockName.map { String(cString: $0) } ?? "nil")
             let name = String(cString: bn)
             if let bid = blockNameToID[name] {
+                // Extract dimension type from src.dimType or flags
+                let dimTypeInt = Int(src.dimType.rawValue)
+                let dimType = CADDimensionType(rawValue: dimTypeInt) ?? .linearOrRotated
+                
+                let metadata = CADDimensionMetadata(
+                    styleName: src.dimStyle != nil ? String(cString: src.dimStyle) : "STANDARD",
+                    type: dimType,
+                    measurement: 0.0, // Measurement not exposed in DXFRW_EntityData, default to 0
+                    defPoint: toVector(src.dimDefPoint),
+                    defPoint2: toVector(src.secPoint), // Attempt to use secPoint if populated, else 0
+                    defPoint3: nil,
+                    textMidpoint: toVector(src.dimTextPoint),
+                    textOverride: src.dimText != nil ? String(cString: src.dimText) : nil,
+                    rotationAngle: -src.dimAngle * .pi / 180.0,
+                    flags: Int(src.flags)
+                )
+                
                 var entity = CADEntity(
                     handle: UUID(),
                     layerID: layerID,
                     blockID: bid,
                     localGeometry: nil,
+                    dimensionMetadata: CADDimensionMetadataBox(metadata),
                     transform: .identity
                 )
                 entity.drawOrder = drawOrder

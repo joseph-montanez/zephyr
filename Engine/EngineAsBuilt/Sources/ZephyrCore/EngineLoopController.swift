@@ -224,11 +224,20 @@ public final class EngineLoopController {
             if interaction.lastClickedHandle == handle && (now - interaction.lastClickTime) < 400 && dx < 8 && dy < 8 {
                 if let entity = engine.document.entity(for: handle),
                    let blockID = entity.blockID {
-                    interaction.lastClickTime = 0
-                    interaction.lastClickedHandle = nil
-                    engine.tabManager.enterBlockEditor(blockID: blockID)
-                    engine.cadSelection.clearSelection()
-                    return
+                    if entity.dimensionMetadata != nil {
+                        interaction.lastClickTime = 0
+                        interaction.lastClickedHandle = nil
+                        engine.cadSelection.clearSelection()
+                        engine.cadSelection.addToSelection(handle)
+                        engine.commandProcessor.executeCommand("DDEDIT")
+                        return
+                    } else {
+                        interaction.lastClickTime = 0
+                        interaction.lastClickedHandle = nil
+                        engine.tabManager.enterBlockEditor(blockID: blockID)
+                        engine.cadSelection.clearSelection()
+                        return
+                    }
                 }
                 if let entity = engine.document.entity(for: handle),
                    entity.xdata["dxf.text"] != nil {

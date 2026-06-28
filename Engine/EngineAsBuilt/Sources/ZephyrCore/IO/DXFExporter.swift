@@ -197,6 +197,12 @@ public enum DXFExporter {
         // Resolve layer name from document
         let layerName = document.layer(for: entity.layerID)?.name ?? "0"
 
+        // Handle dimension entities
+        if entity.dimensionMetadata != nil {
+            writeDimension(entity: entity, layerName: layerName, into: &output)
+            return
+        }
+
         // Handle block instances (INSERT)
         if let blockID = entity.blockID, let block = document.block(for: blockID) {
             writeInsert(entity: entity, blockName: block.name, layerName: layerName, into: &output)
@@ -241,6 +247,47 @@ public enum DXFExporter {
             writePrimitive(primitive, transform: entity.transform,
                            layerName: layerName,
                            into: &output)
+        }
+    }
+
+    // MARK: - DIMENSION Entity
+
+    private static func writeDimension(entity: CADEntity, layerName: String, into output: inout String) {
+        guard let box = entity.dimensionMetadata else { return }
+        let dim = box.value
+        
+        output += "  0\r\nDIMENSION\r\n"
+        output += "  5\r\n\(entityHash(handle: entity.handle))\r\n"
+        output += "  8\r\n\(dxfEscape(layerName))\r\n"
+        
+        if let bid = entity.blockID {
+            output += "  2\r\n*D\(entityHash(handle: bid))\r\n"
+        }
+        
+        output += "  3\r\n\(dxfEscape(dim.styleName))\r\n"
+        output += " 70\r\n\(dim.type.rawValue + 32 + dim.flags)\r\n"
+        
+        let p1 = dim.defPoint
+        output += " 10\r\n\(dxfDouble(p1.x))\r\n 20\r\n\(dxfDouble(-p1.y))\r\n 30\r\n\(dxfDouble(p1.z))\r\n"
+        
+        let p2 = dim.defPoint2
+        output += " 13\r\n\(dxfDouble(p2.x))\r\n 23\r\n\(dxfDouble(-p2.y))\r\n 33\r\n\(dxfDouble(p2.z))\r\n"
+        
+        if let p3 = dim.defPoint3 {
+            output += " 14\r\n\(dxfDouble(p3.x))\r\n 24\r\n\(dxfDouble(-p3.y))\r\n 34\r\n\(dxfDouble(p3.z))\r\n"
+        }
+        
+        let tp = dim.textMidpoint
+        output += " 11\r\n\(dxfDouble(tp.x))\r\n 21\r\n\(dxfDouble(-tp.y))\r\n 31\r\n\(dxfDouble(tp.z))\r\n"
+        
+        output += " 42\r\n\(dxfDouble(dim.measurement))\r\n"
+        
+        if let override = dim.textOverride {
+            output += "  1\r\n\(dxfEscape(override))\r\n"
+        }
+        
+        if dim.rotationAngle != 0 {
+            output += " 50\r\n\(dxfDouble(-dim.rotationAngle * 180.0 / .pi))\r\n"
         }
     }
 

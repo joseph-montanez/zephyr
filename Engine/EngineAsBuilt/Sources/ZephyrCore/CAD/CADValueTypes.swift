@@ -20,7 +20,7 @@ import CryptoKit
 
 /// A 3D vector with Double precision. Standard struct — `x`/`y`/`z` for CAD ergonomics.
 @frozen
-public struct Vector3: Hashable, Sendable {
+public struct Vector3: Hashable, Sendable, Codable {
     public var x: Double
     public var y: Double
     public var z: Double
