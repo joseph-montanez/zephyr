@@ -61,6 +61,8 @@ public final class HatchCommand: FeatureCommand {
         state = .completed
     }
 
+    public var isSnappingEnabled: Bool { false }
+
     public func getDrawingSnapPoints() -> [Vector3] { [] }
 
     public func handleMouseClick(
@@ -128,13 +130,10 @@ public final class HatchCommand: FeatureCommand {
         }
     }
 
-    // MARK: - Commit
+    // MARK: - Commit / Apply
 
-    private func commitHatch(
-        boundary: [Vector3],
-        holes: [[Vector3]] = [],
-        engine: PhrostEngine, processor: CADCommandProcessor
-    ) -> CommandResult {
+    /// Build hatch primitives from the current ribbon settings.
+    private func buildPrimitives(boundary: [Vector3], holes: [[Vector3]]) -> [CADPrimitive] {
         let effectivePattern: String
         let effectiveColor: ColorRGBA?
         let effectiveBgColor: ColorRGBA?
@@ -148,8 +147,7 @@ public final class HatchCommand: FeatureCommand {
             effectivePattern = "SOLID"
             effectiveColor = primaryColor
             effectiveBgColor = nil
-        case 2:  // Gradient — store as fillComplexPolygon with gradient for now,
-                 // or fall back to solid with primary color.
+        case 2:  // Gradient
             effectivePattern = "SOLID"
             effectiveColor = primaryColor ?? ColorRGBA(r: 128, g: 128, b: 128, a: 180)
             effectiveBgColor = nil
@@ -162,43 +160,80 @@ public final class HatchCommand: FeatureCommand {
         let scale = Double(hatchScale)
         let angle = Double(hatchAngle)
 
-        var hatchPrims: [CADPrimitive] = []
+        var prims: [CADPrimitive] = []
         if fillType == 2, let c1 = primaryColor {
-            // Gradient: build a gradient primitive with a fallback color2.
             let c2 = secondaryColor ?? ColorRGBA(
-                r: min(255, c1.r + 60), g: min(255, c1.g + 60),
-                b: min(255, c1.b + 60))
-            hatchPrims.append(.gradient(
+                r: UInt8(min(255, Int(c1.r) + 60)),
+                g: UInt8(min(255, Int(c1.g) + 60)),
+                b: UInt8(min(255, Int(c1.b) + 60)))
+            prims.append(.gradient(
                 outer: boundary, holes: holes,
                 gradientName: gradientName, angle: angle, color1: c1, color2: c2))
         } else if effectivePattern.uppercased() == "SOLID" || effectivePattern.isEmpty {
-            hatchPrims.append(.fillComplexPolygon(
-                outer: boundary,
-                holes: holes,
-                color: effectiveColor
-            ))
+            prims.append(.fillComplexPolygon(
+                outer: boundary, holes: holes, color: effectiveColor))
         } else {
             if let bg = effectiveBgColor {
-                hatchPrims.append(.fillComplexPolygon(
-                    outer: boundary,
-                    holes: holes,
-                    color: bg
-                ))
+                prims.append(.fillComplexPolygon(
+                    outer: boundary, holes: holes, color: bg))
             }
-
             let patternBoundary = holes.isEmpty
                 ? boundary
                 : DXFHatchGenerator.connectHoles(outer: boundary, holes: holes)
-
-            hatchPrims.append(.hatch(
+            prims.append(.hatch(
                 boundary: patternBoundary,
                 pattern: effectivePattern,
                 scale: scale,
                 angle: angle,
                 color: effectiveColor,
-                backgroundColor: nil
-            ))
+                backgroundColor: nil))
         }
+        return prims
+    }
+
+    /// Extract the outer boundary and holes from an existing hatch entity.
+    private func extractBoundary(from entity: CADEntity) -> (outer: [Vector3], holes: [[Vector3]])? {
+        guard let geometry = entity.localGeometry else { return nil }
+        var outer: [Vector3] = []
+        var allHoles: [[Vector3]] = []
+        for prim in geometry {
+            switch prim {
+            case .fillComplexPolygon(let o, let h, _):
+                if outer.isEmpty { outer = o }
+                allHoles.append(contentsOf: h)
+            case .gradient(let o, let h, _, _, _, _):
+                if outer.isEmpty { outer = o }
+                allHoles.append(contentsOf: h)
+            case .hatch(let b, _, _, _, _, _):
+                if outer.isEmpty { outer = b }
+            default:
+                break
+            }
+        }
+        guard !outer.isEmpty else { return nil }
+        return (outer, allHoles)
+    }
+
+    /// Apply the current ribbon settings to the selected hatch entity in-place.
+    private func applyToSelected(engine: PhrostEngine, processor: CADCommandProcessor) {
+        guard let handle = engine.cadSelection.lastSelectedHandle,
+              let entity = engine.document.entity(for: handle),
+              let (boundary, holes) = extractBoundary(from: entity) else {
+            processor.commandPrompt = "No hatch selected to apply changes to."
+            return
+        }
+        let newPrims = buildPrimitives(boundary: boundary, holes: holes)
+        engine.document.updateEntityGeometry(for: handle, geometry: newPrims)
+        engine.tabManager.markActiveDirty()
+        processor.commandPrompt = "Hatch updated. Click inside another area or press Esc/Enter."
+    }
+
+    private func commitHatch(
+        boundary: [Vector3],
+        holes: [[Vector3]] = [],
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult {
+        let hatchPrims = buildPrimitives(boundary: boundary, holes: holes)
 
         let layerID = engine.document.activeLayerID
             ?? engine.document.allLayers.first?.handle
@@ -208,11 +243,14 @@ public final class HatchCommand: FeatureCommand {
         engine.document.addEntity(entity)
         engine.tabManager.markActiveDirty()
 
+        // Select the newly created hatch so the user can inspect/refine settings.
+        engine.cadSelection.clearSelection()
+        engine.cadSelection.addToSelection(entity.handle)
+
         processor.commandPrompt = holes.isEmpty
-            ? "Hatch created (\(boundary.count) boundary vertices)."
-            : "Hatch created (\(boundary.count) boundary vertices, \(holes.count) hole(s))."
-        state = .completed
-        return .finished
+            ? "Hatch created (\(boundary.count) boundary vertices). Click inside another area or press Esc/Enter."
+            : "Hatch created (\(boundary.count) boundary vertices, \(holes.count) hole(s)). Click inside another area or press Esc/Enter."
+        return .continue
     }
 
     // MARK: - Overlay
@@ -261,9 +299,10 @@ public final class HatchCommand: FeatureCommand {
         secondaryColor = uiSettings.secondaryColor
         selectionMode = uiSettings.selectionMode == 1 ? .selectBoundary : .pickPoints
         
-        if uiSettings.closeRequested || uiSettings.applyClicked {
-            // The command design currently applies hatch on click. 
-            // If the user clicks Apply without picking a point, or clicks Close, we terminate.
+        if uiSettings.applyClicked {
+            applyToSelected(engine: engine, processor: engine.commandProcessor)
+        }
+        if uiSettings.closeRequested {
             state = .completed
         }
     }
