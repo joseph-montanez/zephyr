@@ -253,7 +253,7 @@ public final class ImageCommand: FeatureCommand {
 
     public func renderImGui(engine: PhrostEngine) {
         guard case .selectingFile = state else { return }
-        fileBrowser.render()
+        fileBrowser.render(ui: engine.ui)
 
         // If the user closed the browser without selecting, cancel the command
         if !fileBrowser.isOpen && state.is(.selectingFile) {

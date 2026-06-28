@@ -5,20 +5,49 @@ import ImGui
 // MARK: - ImGuiFileBrowser
 // =========================================================================
 
-/// A lightweight modal file browser rendered entirely via ImGui.
-/// Supports both Open (select existing file) and Save (type new filename) modes.
-/// Uses Foundation's `FileManager` for directory listing — cross-platform
-/// (macOS, Linux, Windows) with no additional dependencies.
+/// A themed modal file browser rendered entirely via ImGui.
+/// Supports Open and Save modes, common places, path history, list/grid views,
+/// file filters, and a CAD-flavored preview for drawing files.
 public struct ImGuiFileBrowser {
-
-    // MARK: - Mode
 
     public enum Mode {
         case open
         case save
     }
 
-    // MARK: - State
+    private enum BrowserView {
+        case list
+        case grid
+    }
+
+    private enum SortColumn: Int {
+        case name
+        case size
+        case type
+        case modified
+    }
+
+    private enum FileTypeFilter: Int {
+        case drawings
+        case dxf
+        case all
+    }
+
+    private struct BrowserItem {
+        let url: URL
+        let name: String
+        let isDirectory: Bool
+        let size: Int64?
+        let modified: Date?
+        let typeName: String
+    }
+
+    private struct Place {
+        let section: String
+        let label: String
+        let icon: String
+        let url: URL
+    }
 
     public var isOpen: Bool = false
     public var mode: Mode = .open
@@ -27,30 +56,25 @@ public struct ImGuiFileBrowser {
     public var selectedFile: URL? = nil
     public var onFileSelected: ((URL) -> Void)? = nil
 
-    /// File name typed by the user in save mode.
     public var saveFileName: String = "untitled"
-
-    /// File extension to filter by, e.g. "dxf" or "dxf;eab". Nil means "show all files".
     public var filterExtension: String? = "dxf"
-    /// Parsed set of allowed extensions (from semicolon-separated filterExtension).
     private var allowedExtensions: Set<String> = []
-    /// When true, show all files regardless of `filterExtension`.
     public var showAllFiles: Bool = false
-    /// Set to true when the directory needs to be re-read.
-    private var needsRefresh: Bool = true
-    /// True after ImGuiOpenPopup has been called (called once per open).
-    private var popupOpened: Bool = false
-    /// Text filter within the current directory (matches file/dir names).
     public var nameFilter: String = ""
-    /// Error message to display (e.g. permission denied).
+
+    private var needsRefresh: Bool = true
+    private var popupOpened: Bool = false
     private var errorMessage: String? = nil
+    private var items: [BrowserItem] = []
+    private var view: BrowserView = .list
+    private var sortColumn: SortColumn = .name
+    private var sortAscending: Bool = true
+    private var filterMode: FileTypeFilter = .drawings
+    private var backStack: [URL] = []
+    private var forwardStack: [URL] = []
 
     // MARK: - Input Helper
 
-    /// Call igInputText with a fixed-size C buffer. The Swift wrapper's String? inout
-    /// is broken — it uses withOptionalCString which provides a buffer only strlen+1
-    /// bytes long, causing buffer overflows when ImGui writes up to bufSize bytes.
-    /// This helper allocates a proper buffer and handles the C↔Swift conversion.
     private static func inputText(
         _ label: String,
         text: inout String,
@@ -58,15 +82,12 @@ public struct ImGuiFileBrowser {
         flags: Int32 = 0
     ) -> Bool {
         var buffer = [CChar](repeating: 0, count: bufSize)
-        // Copy initial value
         let utf8 = text.utf8CString
         let copyLen = min(utf8.count, bufSize - 1)
         for i in 0..<copyLen { buffer[i] = utf8[i] }
         buffer[min(copyLen, bufSize - 1)] = 0
 
         let changed = igInputText(label, &buffer, bufSize, flags, nil, nil)
-
-        // Read back (ImGui modifies buffer in place)
         if let newStr = String(cString: buffer, encoding: .utf8) {
             text = newStr
         }
@@ -75,13 +96,10 @@ public struct ImGuiFileBrowser {
 
     // MARK: - Public API
 
-    /// Open the file browser in **open** mode (select an existing file).
     public mutating func open(directory: URL? = nil, filterExtension: String? = "dxf") {
         openCommon(directory: directory, filterExtension: filterExtension, mode: .open)
     }
 
-    /// Open the file browser in **save** mode (type a filename).
-    /// `defaultName` is pre-filled into the filename field.
     public mutating func openSave(
         directory: URL? = nil,
         filterExtension: String? = "dxf",
@@ -97,13 +115,16 @@ public struct ImGuiFileBrowser {
         } else {
             currentDirectory = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         }
+
         var isDir: ObjCBool = false
         if !FileManager.default.fileExists(atPath: currentDirectory.path, isDirectory: &isDir) || !isDir.boolValue {
             currentDirectory = URL(fileURLWithPath: NSHomeDirectory())
         }
+
         self.filterExtension = filterExtension
         self.allowedExtensions = Self.parseExtensions(filterExtension)
         self.showAllFiles = false
+        self.filterMode = Self.defaultFilterMode(for: filterExtension)
         self.selectedFile = nil
         self.nameFilter = ""
         self.errorMessage = nil
@@ -111,15 +132,22 @@ public struct ImGuiFileBrowser {
         self.isOpen = true
         self.popupOpened = false
         self.needsRefresh = true
+        self.backStack = []
+        self.forwardStack = []
     }
 
-    /// Parse semicolon-separated extensions (e.g. "dxf;eab") into a set.
     private static func parseExtensions(_ filter: String?) -> Set<String> {
         guard let f = filter, !f.isEmpty else { return [] }
         return Set(f.split(separator: ";").map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
     }
 
-    /// Close the file browser.
+    private static func defaultFilterMode(for filter: String?) -> FileTypeFilter {
+        let extensions = parseExtensions(filter)
+        if extensions.contains("dxf") && extensions.contains("dwg") { return .drawings }
+        if extensions == ["dxf"] { return .dxf }
+        return .all
+    }
+
     public mutating func close() {
         isOpen = false
         popupOpened = false
@@ -130,9 +158,8 @@ public struct ImGuiFileBrowser {
 
     // MARK: - Rendering
 
-    /// Call this every frame between `ImGuiNewFrame` and `ImGuiRender`.
-    /// Renders the modal popup when `isOpen` is true.
-    public mutating func render() {
+    @MainActor
+    public mutating func render(ui: EngineUIManager? = nil) {
         guard isOpen else { return }
 
         if needsRefresh {
@@ -140,23 +167,14 @@ public struct ImGuiFileBrowser {
             needsRefresh = false
         }
 
-        let popupID: String
-        switch mode {
-        case .open:
-            popupID = "Open File##FileBrowser"
-        case .save:
-            popupID = "Save As##SaveFileBrowser"
-        }
-
+        let theme = ui?.theme ?? AppTheme.dark
+        let popupID = mode == .open ? "Open Drawing##FileBrowser" : "Save Drawing As##SaveFileBrowser"
         let io = ImGuiGetIO()!
         let displayW = io.pointee.DisplaySize.x
         let displayH = io.pointee.DisplaySize.y
-        // Clamp to 90% of display so the modal always fits even at high DPI
-        // (e.g. 200% DPI on a 1080p screen gives 960×540 logical pixels).
-        let maxW = displayW * 0.9
-        let maxH = displayH * 0.9
-        let modalW: Float = min(ImGuiGetFontSize() * 48, maxW)
-        let modalH: Float = min(ImGuiGetFontSize() * 36, maxH)
+        let modalW = min(max(ImGuiGetFontSize() * 98, 1180), displayW * 0.90)
+        let modalH = min(max(ImGuiGetFontSize() * 56, 720), displayH * 0.90)
+
         ImGuiSetNextWindowPos(
             ImVec2(x: (displayW - modalW) * 0.5, y: (displayH - modalH) * 0.5),
             Int32(ImGuiCond_Appearing.rawValue),
@@ -168,220 +186,562 @@ public struct ImGuiFileBrowser {
             popupOpened = true
         }
 
-        var openFlag: Bool = true
-        let flags: Int32 = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue) |
-                            Int32(ImGuiWindowFlags_NoDocking.rawValue)
+        var openFlag = true
+        let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue) |
+                    Int32(ImGuiWindowFlags_NoDocking.rawValue) |
+                    Int32(ImGuiWindowFlags_NoResize.rawValue)
 
+        pushDialogStyle(theme)
         if ImGuiBeginPopupModal(popupID, &openFlag, flags) {
-            defer { ImGuiEndPopup() }
+            defer {
+                ImGuiEndPopup()
+                ImGuiPopStyleColor(12)
+                ImGuiPopStyleVar(4)
+            }
 
             if !openFlag {
                 close()
                 return
             }
 
-            // ---- Path navigation bar ----
-            renderNavigationBar()
-
+            renderTitleBar(theme: theme, ui: ui)
+            ImGuiDummy(ImVec2(x: 1, y: 18))
+            renderTopBar(theme: theme, ui: ui)
+            ImGuiDummy(ImVec2(x: 1, y: 10))
             igSeparator()
 
-            // ---- Directory listing ----
-            let extraForSave: Float = mode == .save ? 45 : 0
-            let childHeight = modalH - 130 - extraForSave
-            if ImGuiBeginChild(
-                "##FileList",
-                ImVec2(x: 0, y: childHeight),
-                Int32(ImGuiChildFlags_None.rawValue),
-                Int32(ImGuiWindowFlags_NoSavedSettings.rawValue))
-            {
-                defer { ImGuiEndChild() }
-
-                if let error = errorMessage {
-                    ImGuiPushStyleColor(
-                        Int32(ImGuiCol_Text.rawValue),
-                        ImVec4(x: 1, y: 0.3, z: 0.3, w: 1))
-                    ImGuiTextV(error)
-                    ImGuiPopStyleColor(1)
-                } else if directoryContents.isEmpty {
-                    ImGuiTextV("(empty directory)")
-                } else {
-                    renderDirectoryListing()
-                }
-            }
-
+            let footerH: Float = 70
+            let bodyH = max(220, ImGuiGetContentRegionAvail().y - footerH - 12)
+            renderBody(theme: theme, height: bodyH)
+            ImGuiDummy(ImVec2(x: 1, y: 10))
             igSeparator()
-
-            // ---- Filename input (save mode only) ----
-            if mode == .save {
-                ImGuiTextV("File name:")
-                ImGuiSameLine(0, 6)
-                ImGuiPushItemWidth(250)
-                var fname = saveFileName
-                _ = Self.inputText("##SaveFileName", text: &fname, bufSize: 256)
-                saveFileName = fname
-                ImGuiPopItemWidth()
-            }
-
-            // ---- Bottom bar ----
-            renderBottomBar()
+            renderBottomBar(theme: theme)
+        } else {
+            ImGuiPopStyleColor(12)
+            ImGuiPopStyleVar(4)
         }
     }
 
-    // MARK: - Navigation Bar
+    private func pushDialogStyle(_ theme: AppTheme) {
+        ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowRounding.rawValue), Float(14))
+        ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowPadding.rawValue), ImVec2(x: 24, y: 20))
+        ImGuiPushStyleVar(Int32(ImGuiStyleVar_FrameRounding.rawValue), Float(8))
+        ImGuiPushStyleVar(Int32(ImGuiStyleVar_FramePadding.rawValue), ImVec2(x: 12, y: 8))
+        ImGuiPushStyleColor(Int32(ImGuiCol_WindowBg.rawValue), theme.panelBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Border.rawValue), theme.border)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.textPrimary)
+        ImGuiPushStyleColor(Int32(ImGuiCol_TextDisabled.rawValue), theme.textDim)
+        ImGuiPushStyleColor(Int32(ImGuiCol_FrameBg.rawValue), theme.tabBarBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_FrameBgHovered.rawValue), theme.hoverBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Button.rawValue), theme.tabBarBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_ButtonHovered.rawValue), theme.hoverBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_ButtonActive.rawValue), theme.activeBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Header.rawValue), theme.activeBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_HeaderHovered.rawValue), theme.hoverBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_HeaderActive.rawValue), theme.activeBg)
+    }
 
-    private mutating func renderNavigationBar() {
-        if igSmallButton("..") {
-            navigateUp()
-        }
-        ImGuiSameLine(0, 6)
+    // MARK: - Header
 
-        if igSmallButton("~") {
-            currentDirectory = URL(fileURLWithPath: NSHomeDirectory())
-            selectedFile = nil
-            needsRefresh = true
-        }
-        ImGuiSameLine(0, 6)
+    @MainActor
+    private mutating func renderTitleBar(theme: AppTheme, ui: EngineUIManager?) {
+        ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.brandGold)
+        ImGuiTextV("[ ]")
+        ImGuiPopStyleColor(1)
+        ImGuiSameLine(0, 8)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.textPrimary)
+        ImGuiTextV(mode == .open ? "Open Drawing" : "Save Drawing")
+        ImGuiPopStyleColor(1)
 
-        ImGuiPushItemWidth(-1)
-        var pathStr = currentDirectory.path
-        let pathSubmitted = Self.inputText("##Path", text: &pathStr, bufSize: 4096,
-                                            flags: Int32(ImGuiInputTextFlags_EnterReturnsTrue.rawValue))
-        if pathSubmitted {
-            let url = URL(fileURLWithPath: (pathStr as NSString).expandingTildeInPath)
-            var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
-                currentDirectory = url
-                selectedFile = nil
-                needsRefresh = true
+        if let ui {
+            let label = ui.isDarkTheme ? "Light" : "Dark"
+            ImGuiSameLine(ImGuiGetWindowWidth() - 154, 0)
+            if igSmallButton(label) {
+                ui.toggleTheme()
             }
+        }
+
+        ImGuiSameLine(ImGuiGetWindowWidth() - 44, 0)
+        if igSmallButton("x") {
+            close()
+            ImGuiCloseCurrentPopup()
+        }
+    }
+
+    @MainActor
+    private mutating func renderTopBar(theme: AppTheme, ui: EngineUIManager?) {
+        let topAvailW = ImGuiGetContentRegionAvail().x
+        let navW: Float = 126
+        let searchW: Float = min(300, max(220, topAvailW * 0.18))
+        let viewW: Float = 128
+        let spacingW: Float = 64
+        let crumbW = max(300, topAvailW - navW - searchW - viewW - spacingW)
+
+        if navigationButton("<", enabled: !backStack.isEmpty) { navigateHistory(backward: true) }
+        ImGuiSameLine(0, 8)
+        if navigationButton(">", enabled: !forwardStack.isEmpty) { navigateHistory(backward: false) }
+        ImGuiSameLine(0, 8)
+        if navigationButton("^", enabled: hasParentDirectory) { navigateUp() }
+        ImGuiSameLine(0, 16)
+
+        renderBreadcrumbs(theme: theme, width: crumbW)
+
+        ImGuiSameLine(0, 16)
+        ImGuiPushItemWidth(searchW)
+        var search = nameFilter
+        _ = Self.inputText("Search this folder##NameFilter", text: &search, bufSize: 256)
+        if search != nameFilter {
+            nameFilter = search
         }
         ImGuiPopItemWidth()
+
+        ImGuiSameLine(0, 12)
+        if viewButton("List", selected: view == .list, theme: theme) { view = .list }
+        ImGuiSameLine(0, 6)
+        if viewButton("Grid", selected: view == .grid, theme: theme) { view = .grid }
     }
 
-    // MARK: - Directory Listing
-
-    private mutating func renderDirectoryListing() {
-        let filter = nameFilter.lowercased()
-
-        let sorted = directoryContents.sorted { a, b in
-            let aIsDir = a.hasDirectoryPath
-            let bIsDir = b.hasDirectoryPath
-            if aIsDir != bIsDir { return aIsDir && !bIsDir }
-            return a.lastPathComponent.localizedStandardCompare(b.lastPathComponent) == .orderedAscending
+    private mutating func renderBreadcrumbs(theme: AppTheme, width: Float) {
+        let components = (currentDirectory.path as NSString).pathComponents
+        let visibleStart = max(0, components.count - 4)
+        var cumulative = ""
+        if visibleStart > 0 {
+            mutedText("...", theme: theme)
+            ImGuiSameLine(0, 8)
         }
-
-        if currentDirectory.path != "/" {
-            if ImGuiSelectable("..  [parent directory]", false,
-                               Int32(ImGuiSelectableFlags_AllowDoubleClick.rawValue),
-                               ImVec2(x: 0, y: 0)) {
-                navigateUp()
+        for (index, component) in components.enumerated() {
+            if index < visibleStart {
+                cumulative = index == 0 ? component : (cumulative as NSString).appendingPathComponent(component)
+                continue
             }
-        }
-
-        for url in sorted {
-            let name = url.lastPathComponent
-            if !filter.isEmpty && !name.lowercased().contains(filter) { continue }
-
-            let isDir: Bool
-            #if os(Windows)
-            isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            #else
-            isDir = url.hasDirectoryPath
-            #endif
-
-            let icon = isDir ? "📁" : "📄"
-            let label = "\(icon)  \(name)"
-            let isSelected = (url == selectedFile)
-
-            if ImGuiSelectable(label, isSelected,
-                Int32(ImGuiSelectableFlags_AllowDoubleClick.rawValue),
-                ImVec2(x: 0, y: 0))
-            {
-                if isDir {
-                    currentDirectory = url
-                    selectedFile = nil
-                    needsRefresh = true
-                } else {
-                    selectedFile = url
-                    // In save mode, pre-fill the filename from the selected existing file
-                    if mode == .save {
-                        saveFileName = name
-                    }
-                }
-
-                if !isDir && ImGuiIsMouseDoubleClicked(ImGuiMouseButton(ImGuiMouseButton_Left.rawValue)) {
-                    confirmSelection()
-                }
+            if index > 0 {
+                ImGuiSameLine(0, 8)
+                mutedText(">", theme: theme)
+                ImGuiSameLine(0, 8)
             }
 
-            if isSelected && ImGuiIsKeyPressed(ImGuiKey(ImGuiKey_Enter.rawValue), false) {
-                if isDir {
-                    currentDirectory = url
-                    selectedFile = nil
-                    needsRefresh = true
-                } else {
-                    confirmSelection()
+            if index == 0 {
+                cumulative = component
+            } else {
+                cumulative = (cumulative as NSString).appendingPathComponent(component)
+            }
+
+            let display = component.trimmingCharacters(in: CharacterSet(charactersIn: "\\/")).isEmpty
+                ? component
+                : component.trimmingCharacters(in: CharacterSet(charactersIn: "\\/"))
+            let label = shortName(display, limit: Int(max(6, min(18, width / 36))))
+            if igButton("\(label)##crumb-\(index)", ImVec2(x: 0, y: 34)) {
+                navigateTo(URL(fileURLWithPath: cumulative, isDirectory: true), recordHistory: true)
+            }
+        }
+    }
+
+    private mutating func navigationButton(_ label: String, enabled: Bool) -> Bool {
+        if !enabled { ImGuiBeginDisabled(true) }
+        let clicked = igButton(label, ImVec2(x: 34, y: 34))
+        if !enabled { ImGuiEndDisabled() }
+        return enabled && clicked
+    }
+
+    private mutating func viewButton(_ label: String, selected: Bool, theme: AppTheme) -> Bool {
+        if selected {
+            ImGuiPushStyleColor(Int32(ImGuiCol_Button.rawValue), theme.brandGold)
+            ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.rowHoverText)
+        }
+        let clicked = igButton(label, ImVec2(x: 58, y: 34))
+        if selected { ImGuiPopStyleColor(2) }
+        return clicked
+    }
+
+    // MARK: - Body
+
+    private mutating func renderBody(theme: AppTheme, height: Float) {
+        let totalW = ImGuiGetContentRegionAvail().x
+        let sideW: Float = min(330, max(260, totalW * 0.19))
+        let previewW: Float = min(430, max(330, totalW * 0.24))
+        let gap: Float = 16
+        let centerW = max(460, totalW - sideW - previewW - gap * 2)
+
+        if ImGuiBeginChild("##Places", ImVec2(x: sideW, y: height), Int32(ImGuiChildFlags_Borders.rawValue), 0) {
+            renderPlaces(theme: theme)
+        }
+        ImGuiEndChild()
+
+        ImGuiSameLine(0, gap)
+        if ImGuiBeginChild("##BrowserCenter", ImVec2(x: centerW, y: height), Int32(ImGuiChildFlags_Borders.rawValue), 0) {
+            if let error = errorMessage {
+                ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.dangerBg)
+                ImGuiTextV(error)
+                ImGuiPopStyleColor(1)
+            } else {
+                switch view {
+                case .list:
+                    renderListView(theme: theme)
+                case .grid:
+                    renderGridView(theme: theme)
                 }
             }
         }
+        ImGuiEndChild()
+
+        ImGuiSameLine(0, gap)
+        if ImGuiBeginChild("##Preview", ImVec2(x: previewW, y: height), Int32(ImGuiChildFlags_Borders.rawValue), 0) {
+            renderPreview(theme: theme)
+        }
+        ImGuiEndChild()
+    }
+
+    private mutating func renderPlaces(theme: AppTheme) {
+        var currentSection = ""
+        for place in places() {
+            if place.section != currentSection {
+                currentSection = place.section
+                ImGuiDummy(ImVec2(x: 1, y: currentSection == "Favorites" ? 18 : 24))
+                ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.textAccent)
+                ImGuiTextV(currentSection.uppercased())
+                ImGuiPopStyleColor(1)
+                ImGuiDummy(ImVec2(x: 1, y: 8))
+            }
+
+            let selected = currentDirectory.path == place.url.path
+            let label = "\(place.icon)  \(place.label)##\(place.section)-\(place.label)"
+            if ImGuiSelectable(label, selected, 0, ImVec2(x: 0, y: 40)) {
+                navigateTo(place.url, recordHistory: true)
+            }
+        }
+    }
+
+    private mutating func renderListView(theme: AppTheme) {
+        if visibleItems().isEmpty {
+            ImGuiTextV("(empty folder)")
+            return
+        }
+
+        let tableFlags = Int32(ImGuiTableFlags_RowBg.rawValue) |
+                         Int32(ImGuiTableFlags_BordersInnerH.rawValue) |
+                         Int32(ImGuiTableFlags_SizingStretchProp.rawValue) |
+                         Int32(ImGuiTableFlags_NoSavedSettings.rawValue)
+
+        if igBeginTable("##FileTable", 4, tableFlags, ImVec2(x: 0, y: 0), 0) {
+            igTableSetupColumn("Name", Int32(ImGuiTableColumnFlags_WidthStretch.rawValue), 2.2, 0)
+            igTableSetupColumn("Size", Int32(ImGuiTableColumnFlags_WidthFixed.rawValue), 86, 0)
+            igTableSetupColumn("Type", Int32(ImGuiTableColumnFlags_WidthStretch.rawValue), 1.1, 0)
+            igTableSetupColumn("Modified", Int32(ImGuiTableColumnFlags_WidthStretch.rawValue), 1.1, 0)
+            igTableNextRow(Int32(ImGuiTableRowFlags_Headers.rawValue), 38)
+            _ = igTableSetColumnIndex(0)
+            renderSortableHeader(.name, theme: theme)
+            _ = igTableSetColumnIndex(1)
+            renderSortableHeader(.size, theme: theme)
+            _ = igTableSetColumnIndex(2)
+            renderSortableHeader(.type, theme: theme)
+            _ = igTableSetColumnIndex(3)
+            renderSortableHeader(.modified, theme: theme)
+
+            for item in visibleItems() {
+                igTableNextRow(0, 48)
+                _ = igTableSetColumnIndex(0)
+                renderItemSelectable(item: item, label: "\(itemIcon(item))  \(item.name)", height: 42)
+
+                _ = igTableSetColumnIndex(1)
+                mutedText(item.isDirectory ? "-" : formatBytes(item.size), theme: theme)
+                _ = igTableSetColumnIndex(2)
+                mutedText(item.typeName, theme: theme)
+                _ = igTableSetColumnIndex(3)
+                mutedText(formatDate(item.modified), theme: theme)
+            }
+            igEndTable()
+        }
+    }
+
+    private mutating func renderSortableHeader(_ column: SortColumn, theme: AppTheme) {
+        ImGuiPushStyleColor(Int32(ImGuiCol_Button.rawValue), theme.panelBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_ButtonHovered.rawValue), theme.hoverBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.textDim)
+        if igButton(headerTitle(column), ImVec2(x: -1, y: 32)) {
+            if sortColumn == column {
+                sortAscending.toggle()
+            } else {
+                sortColumn = column
+                sortAscending = true
+            }
+        }
+        ImGuiPopStyleColor(3)
+    }
+
+    private mutating func renderGridView(theme: AppTheme) {
+        let visible = visibleItems()
+        if visible.isEmpty {
+            ImGuiTextV("(empty folder)")
+            return
+        }
+
+        let tileW: Float = 142
+        let tileH: Float = 118
+        let availW = max(tileW, ImGuiGetContentRegionAvail().x)
+        let columns = max(1, Int(availW / (tileW + 10)))
+
+        for (index, item) in visible.enumerated() {
+            if index > 0 && index % columns != 0 { ImGuiSameLine(0, 10) }
+            let selected = selectedFile == item.url
+            if selected {
+                ImGuiPushStyleColor(Int32(ImGuiCol_Button.rawValue), theme.activeBg)
+            }
+            if igButton("##tile-\(item.url.path)", ImVec2(x: tileW, y: tileH)) {
+                choose(item)
+            }
+            if selected { ImGuiPopStyleColor(1) }
+
+            let min = ImGuiGetItemRectMin()
+            let max = ImGuiGetItemRectMax()
+            drawTileContent(item: item, min: min, max: max, theme: theme)
+
+            if ImGuiIsItemHovered(0) && ImGuiIsMouseDoubleClicked(ImGuiMouseButton(ImGuiMouseButton_Left.rawValue)) {
+                activate(item)
+            }
+        }
+    }
+
+    private mutating func renderItemSelectable(item: BrowserItem, label: String, height: Float) {
+        let isSelected = selectedFile == item.url
+        if ImGuiSelectable(label, isSelected, Int32(ImGuiSelectableFlags_SpanAllColumns.rawValue), ImVec2(x: 0, y: height)) {
+            choose(item)
+        }
+        if ImGuiIsItemHovered(0) && ImGuiIsMouseDoubleClicked(ImGuiMouseButton(ImGuiMouseButton_Left.rawValue)) {
+            activate(item)
+        }
+    }
+
+    private mutating func choose(_ item: BrowserItem) {
+        if item.isDirectory {
+            navigateTo(item.url, recordHistory: true)
+        } else {
+            selectedFile = item.url
+            if mode == .save {
+                saveFileName = item.name
+            }
+        }
+    }
+
+    private mutating func activate(_ item: BrowserItem) {
+        if item.isDirectory {
+            navigateTo(item.url, recordHistory: true)
+        } else {
+            selectedFile = item.url
+            confirmSelection()
+        }
+    }
+
+    // MARK: - Preview
+
+    private func renderPreview(theme: AppTheme) {
+        let selected = selectedItem()
+        let previewH: Float = 210
+        let previewW = max(220, ImGuiGetContentRegionAvail().x)
+        let start = ImGuiGetCursorScreenPos()
+        igInvisibleButton("##DrawingPreviewCanvas", ImVec2(x: previewW, y: previewH), 0)
+        drawPreviewCanvas(min: start, size: ImVec2(x: previewW, y: previewH), theme: theme, selected: selected)
+
+        ImGuiDummy(ImVec2(x: 1, y: 12))
+        if let selected {
+            ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.textPrimary)
+            ImGuiTextV(selected.name)
+            ImGuiPopStyleColor(1)
+            mutedText(selected.typeName, theme: theme)
+            igSeparator()
+            metadataRow("Size", selected.isDirectory ? "-" : formatBytes(selected.size), theme: theme)
+            metadataRow("Modified", formatDate(selected.modified), theme: theme)
+            if isDrawing(selected.url) {
+                let stats = drawingStats(for: selected.url)
+                metadataRow("Layers", "\(stats.layers)", theme: theme)
+                metadataRow("Entities", "\(stats.entities)", theme: theme)
+                metadataRow("Units", stats.units, theme: theme)
+            } else {
+                metadataRow("Layers", "-", theme: theme)
+                metadataRow("Entities", "-", theme: theme)
+                metadataRow("Units", "-", theme: theme)
+            }
+        } else {
+            mutedText("Select a drawing to preview", theme: theme)
+        }
+    }
+
+    private func drawPreviewCanvas(min: ImVec2, size: ImVec2, theme: AppTheme, selected: BrowserItem?) {
+        guard let drawList = igGetWindowDrawList() else { return }
+        let max = ImVec2(x: min.x + size.x, y: min.y + size.y)
+        ImDrawListAddRectFilled(drawList, min, max, igGetColorU32_Vec4(theme.tabBarBg), 8, 0)
+        ImDrawListAddRect(drawList, min, max, igGetColorU32_Vec4(theme.borderDim), 8, 1.2, 0)
+
+        let pad: Float = 38
+        let left = min.x + pad
+        let right = max.x - pad
+        let top = min.y + 48
+        let bottom = max.y - 44
+        let line = igGetColorU32_Vec4(theme.textAccent)
+        let gold = igGetColorU32_Vec4(theme.brandGold)
+        let dim = igGetColorU32_Vec4(theme.borderDim)
+
+        if let selected, selected.isDirectory {
+            ImDrawListAddRect(drawList, ImVec2(x: left + 12, y: top + 22), ImVec2(x: right - 12, y: bottom), line, 0, 2.0, 0)
+            ImDrawListAddRectFilled(drawList, ImVec2(x: left + 12, y: top + 22), ImVec2(x: right - 12, y: top + 48), dim, 0, 0)
+            return
+        }
+
+        ImDrawListAddRect(drawList, ImVec2(x: left, y: top), ImVec2(x: right, y: bottom), line, 0, 3.0, 0)
+        ImDrawListAddLine(drawList, ImVec2(x: left, y: top + 56), ImVec2(x: right, y: top + 56), line, 3.0)
+        ImDrawListAddLine(drawList, ImVec2(x: left + (right - left) * 0.50, y: top), ImVec2(x: left + (right - left) * 0.50, y: top + 56), line, 3.0)
+        ImDrawListAddRect(drawList, ImVec2(x: right - 92, y: top + 18), ImVec2(x: right - 36, y: top + 56), line, 0, 3.0, 0)
+        ImDrawListAddLine(drawList, ImVec2(x: left, y: bottom - 18), ImVec2(x: left + 104, y: bottom - 18), dim, 4.0)
+        ImDrawListAddBezierCubic(drawList,
+            ImVec2(x: left + 72, y: top + 56),
+            ImVec2(x: left + 72, y: top + 28),
+            ImVec2(x: left + 112, y: top + 24),
+            ImVec2(x: left + 132, y: top + 22),
+            gold, 4.0, 24)
+    }
+
+    private func drawTileContent(item: BrowserItem, min: ImVec2, max: ImVec2, theme: AppTheme) {
+        guard let drawList = igGetWindowDrawList() else { return }
+        let line = igGetColorU32_Vec4(item.isDirectory ? theme.brandGold : theme.textAccent)
+        let x0 = min.x + 18
+        let y0 = min.y + 16
+        let x1 = max.x - 18
+        let y1 = min.y + 58
+
+        if item.isDirectory {
+            ImDrawListAddRect(drawList, ImVec2(x: x0, y: y0 + 10), ImVec2(x: x1, y: y1), line, 3, 2.0, 0)
+            ImDrawListAddLine(drawList, ImVec2(x: x0 + 6, y: y0 + 10), ImVec2(x: x0 + 34, y: y0 + 10), line, 2.0)
+        } else {
+            ImDrawListAddRect(drawList, ImVec2(x: x0, y: y0), ImVec2(x: x1, y: y1), line, 2, 2.0, 0)
+            ImDrawListAddLine(drawList, ImVec2(x: x0, y: y0 + 25), ImVec2(x: x1, y: y0 + 25), line, 1.5)
+            ImDrawListAddLine(drawList, ImVec2(x: x0 + 46, y: y0), ImVec2(x: x0 + 46, y: y0 + 25), line, 1.5)
+        }
+
+        let name = shortName(item.name, limit: 18)
+        ImDrawListAddText(drawList, ImVec2(x: min.x + 12, y: max.y - 42), igGetColorU32_Vec4(theme.textPrimary), name, nil)
+        ImDrawListAddText(drawList, ImVec2(x: min.x + 12, y: max.y - 22), igGetColorU32_Vec4(theme.textDim), item.typeName, nil)
+    }
+
+    private func metadataRow(_ key: String, _ value: String, theme: AppTheme) {
+        mutedText(key, theme: theme)
+        ImGuiSameLine(ImGuiGetWindowWidth() - 92, 0)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.textPrimary)
+        ImGuiTextV(value)
+        ImGuiPopStyleColor(1)
+    }
+
+    private func mutedText(_ text: String, theme: AppTheme) {
+        ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.textDim)
+        ImGuiTextV(text)
+        ImGuiPopStyleColor(1)
     }
 
     // MARK: - Bottom Bar
 
-    private mutating func renderBottomBar() {
-        var showAll = showAllFiles
-        ImGuiCheckbox("Show All Files", &showAll)
-        if showAll != showAllFiles {
-            showAllFiles = showAll
-            needsRefresh = true
+    private mutating func renderBottomBar(theme: AppTheme) {
+        let totalW = ImGuiGetContentRegionAvail().x
+        let labelW: Float = 88
+        let filterW: Float = min(280, max(210, totalW * 0.16))
+        let cancelW: Float = 124
+        let openW: Float = 124
+        let gap: Float = 16
+        let inputW = max(260, totalW - labelW - filterW - cancelW - openW - gap * 5)
+
+        if mode == .save {
+            ImGuiPushItemWidth(labelW)
+            ImGuiTextV("File name")
+            ImGuiPopItemWidth()
+            ImGuiSameLine(0, gap)
+            ImGuiPushItemWidth(inputW)
+            var fname = saveFileName
+            _ = Self.inputText("##SaveFileName", text: &fname, bufSize: 256)
+            saveFileName = fname
+            ImGuiPopItemWidth()
+        } else {
+            ImGuiPushItemWidth(labelW)
+            ImGuiTextV("File name")
+            ImGuiPopItemWidth()
+            ImGuiSameLine(0, gap)
+            ImGuiPushItemWidth(inputW)
+            var fileName = selectedFile?.lastPathComponent ?? ""
+            _ = Self.inputText("##SelectedFileName", text: &fileName, bufSize: 256)
+            ImGuiPopItemWidth()
         }
 
-        ImGuiSameLine(0, 20)
+        ImGuiSameLine(0, gap)
+        renderFilterSelector(theme: theme, width: filterW)
+        ImGuiSameLine(0, gap)
 
-        ImGuiTextV("Filter:")
-        ImGuiSameLine(0, 4)
-        ImGuiPushItemWidth(140)
-        var filterStr = nameFilter
-        _ = Self.inputText("##NameFilter", text: &filterStr, bufSize: 256)
-        nameFilter = filterStr
-        ImGuiPopItemWidth()
-
-        ImGuiSameLine(0, 20)
-
-        if igSmallButton("Cancel") {
+        if igButton("Cancel", ImVec2(x: cancelW, y: 44)) {
             close()
             ImGuiCloseCurrentPopup()
         }
-        ImGuiSameLine(0, 8)
+        ImGuiSameLine(0, 12)
 
-        let buttonLabel: String
-        let isEnabled: Bool
-        switch mode {
-        case .open:
-            buttonLabel = "Open"
-            isEnabled = selectedFile != nil
-        case .save:
-            buttonLabel = "Save"
-            isEnabled = !saveFileName.trimmingCharacters(in: .whitespaces).isEmpty
+        let buttonLabel = mode == .open ? "Open" : "Save"
+        let isEnabled = mode == .open
+            ? (selectedFile != nil && !(selectedItem()?.isDirectory ?? false))
+            : !saveFileName.trimmingCharacters(in: .whitespaces).isEmpty
+
+        if !isEnabled { ImGuiBeginDisabled(true) }
+        ImGuiPushStyleColor(Int32(ImGuiCol_Button.rawValue), theme.brandGold)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), theme.rowHoverText)
+        if igButton(buttonLabel, ImVec2(x: openW, y: 44)) && isEnabled {
+            confirmSelection()
         }
+        ImGuiPopStyleColor(2)
+        if !isEnabled { ImGuiEndDisabled() }
+    }
 
-        if !isEnabled {
-            ImGuiBeginDisabled(true)
-            igSmallButton(buttonLabel)
-            ImGuiEndDisabled()
-        } else {
-            if igSmallButton(buttonLabel) {
-                confirmSelection()
+    private mutating func renderFilterSelector(theme: AppTheme, width: Float) {
+        let labels = ["Drawings (*.dxf, *.dwg)", "DXF (*.dxf)", "All files"]
+        var current = filterMode.rawValue
+        ImGuiPushItemWidth(width)
+        if igBeginCombo("##FileTypeFilter", labels[current], 0) {
+            for index in 0..<labels.count {
+                let selected = index == current
+                if ImGuiSelectable(labels[index], selected, 0, ImVec2(x: 0, y: 0)) {
+                    current = index
+                    filterMode = FileTypeFilter(rawValue: index) ?? .drawings
+                    showAllFiles = filterMode == .all
+                    needsRefresh = true
+                }
             }
+            igEndCombo()
         }
+        ImGuiPopItemWidth()
     }
 
     // MARK: - Actions
 
+    private var hasParentDirectory: Bool {
+        currentDirectory.deletingLastPathComponent().path != currentDirectory.path
+    }
+
     private mutating func navigateUp() {
-        let parent = currentDirectory.deletingLastPathComponent()
-        if parent.path == currentDirectory.path { return }
-        currentDirectory = parent
+        guard hasParentDirectory else { return }
+        navigateTo(currentDirectory.deletingLastPathComponent(), recordHistory: true)
+    }
+
+    private mutating func navigateHistory(backward: Bool) {
+        if backward {
+            guard let destination = backStack.popLast() else { return }
+            forwardStack.append(currentDirectory)
+            navigateTo(destination, recordHistory: false)
+        } else {
+            guard let destination = forwardStack.popLast() else { return }
+            backStack.append(currentDirectory)
+            navigateTo(destination, recordHistory: false)
+        }
+    }
+
+    private mutating func navigateTo(_ url: URL, recordHistory: Bool) {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else { return }
+        if recordHistory && url.path != currentDirectory.path {
+            backStack.append(currentDirectory)
+            forwardStack.removeAll()
+        }
+        currentDirectory = url
         selectedFile = nil
         needsRefresh = true
     }
@@ -397,39 +757,31 @@ public struct ImGuiFileBrowser {
         case .save:
             var name = saveFileName.trimmingCharacters(in: .whitespaces)
             guard !name.isEmpty else { return }
-            // Append extension if not already present
             if let ext = filterExtension, !ext.contains(";") {
                 let lowerName = name.lowercased()
-                if !lowerName.hasSuffix(".\(ext)") {
-                    name += ".\(ext)"
-                }
+                if !lowerName.hasSuffix(".\(ext)") { name += ".\(ext)" }
             } else if !name.contains("."), let ext = filterExtension?.split(separator: ";").first {
-                // Default to first extension in multi-extension filter
                 let lowerName = name.lowercased()
-                if !lowerName.hasSuffix(".\(ext)") {
-                    name += ".\(String(ext))"
-                }
+                if !lowerName.hasSuffix(".\(ext)") { name += ".\(String(ext))" }
             }
-            let url = currentDirectory.appendingPathComponent(name)
-            onFileSelected?(url)
+            onFileSelected?(currentDirectory.appendingPathComponent(name))
             close()
             ImGuiCloseCurrentPopup()
         }
     }
 
-    // MARK: - Directory Refresh
+    // MARK: - Data
 
     private mutating func refreshDirectory() {
         errorMessage = nil
         let fm = FileManager.default
-
-        let resolvedPath = (currentDirectory.path as NSString).standardizingPath
-        currentDirectory = URL(fileURLWithPath: resolvedPath, isDirectory: true)
+        currentDirectory = URL(fileURLWithPath: (currentDirectory.path as NSString).standardizingPath, isDirectory: true)
 
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: currentDirectory.path, isDirectory: &isDir), isDir.boolValue else {
             errorMessage = "Directory not found: \(currentDirectory.path)"
             directoryContents = []
+            items = []
             return
         }
 
@@ -439,37 +791,174 @@ public struct ImGuiFileBrowser {
         } catch {
             errorMessage = "Cannot read directory: \(error.localizedDescription)"
             directoryContents = []
+            items = []
             return
         }
 
-        var results: [URL] = []
-        results.reserveCapacity(names.count)
-
-        for name in names {
-            if Self.isReservedDeviceName(name) { continue }
-            if name.hasPrefix(".") { continue }
-
+        items = names.compactMap { name in
+            if Self.isReservedDeviceName(name) || name.hasPrefix(".") { return nil }
             let url = currentDirectory.appendingPathComponent(name)
+            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isHiddenKey, .fileSizeKey, .contentModificationDateKey])
+            if values?.isHidden == true { return nil }
+            var isDir: ObjCBool = false
+            let exists = fm.fileExists(atPath: url.path, isDirectory: &isDir)
+            if !exists { return nil }
+            let isDirectory = isDir.boolValue || (values?.isDirectory ?? false)
+            if !isDirectory && !passesExtensionFilter(url) { return nil }
+            return BrowserItem(
+                url: url,
+                name: name,
+                isDirectory: isDirectory,
+                size: values?.fileSize.map(Int64.init),
+                modified: values?.contentModificationDate,
+                typeName: typeName(for: url, isDirectory: isDirectory))
+        }
+        directoryContents = items.map(\.url)
+    }
 
-            let entryIsDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+    private func visibleItems() -> [BrowserItem] {
+        let filter = nameFilter.lowercased()
+        return items
+            .filter { filter.isEmpty || $0.name.lowercased().contains(filter) }
+            .sorted(by: sortItems)
+    }
 
-            let entryHidden = (try? url.resourceValues(forKeys: [.isHiddenKey]))?.isHidden ?? false
-            if entryHidden { continue }
+    private func sortItems(_ a: BrowserItem, _ b: BrowserItem) -> Bool {
+        if a.isDirectory != b.isDirectory { return a.isDirectory && !b.isDirectory }
+        let result: ComparisonResult
+        switch sortColumn {
+        case .name:
+            result = a.name.localizedStandardCompare(b.name)
+        case .size:
+            result = (a.size ?? -1) == (b.size ?? -1) ? .orderedSame : ((a.size ?? -1) < (b.size ?? -1) ? .orderedAscending : .orderedDescending)
+        case .type:
+            result = a.typeName.localizedStandardCompare(b.typeName)
+        case .modified:
+            let at = a.modified ?? Date.distantPast
+            let bt = b.modified ?? Date.distantPast
+            result = at == bt ? .orderedSame : (at < bt ? .orderedAscending : .orderedDescending)
+        }
+        return sortAscending ? result != .orderedDescending : result == .orderedDescending
+    }
 
-            if entryIsDir {
-                results.append(url)
-            } else if showAllFiles {
-                results.append(url)
-            } else if !allowedExtensions.isEmpty {
-                if allowedExtensions.contains(url.pathExtension.lowercased()) { results.append(url) }
-            } else if let ext = filterExtension {
-                if url.pathExtension.lowercased() == ext.lowercased() { results.append(url) }
-            } else {
-                results.append(url)
+    private func selectedItem() -> BrowserItem? {
+        guard let selectedFile else { return nil }
+        return items.first { $0.url == selectedFile }
+    }
+
+    private func passesExtensionFilter(_ url: URL) -> Bool {
+        if showAllFiles || filterMode == .all { return true }
+        let ext = url.pathExtension.lowercased()
+        switch filterMode {
+        case .drawings:
+            return ext == "dxf" || ext == "dwg" || allowedExtensions.contains(ext)
+        case .dxf:
+            return ext == "dxf"
+        case .all:
+            return true
+        }
+    }
+
+    private func places() -> [Place] {
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let workspace = URL(fileURLWithPath: "C:/dev/as-built", isDirectory: true)
+        let projects = Self.isReadableDirectory(workspace) ? workspace : cwd
+        var result: [Place] = [
+            Place(section: "Favorites", label: "Recent", icon: "o", url: home),
+            Place(section: "Favorites", label: "Desktop", icon: "[]", url: home.appendingPathComponent("Desktop", isDirectory: true)),
+            Place(section: "Favorites", label: "Downloads", icon: "v", url: home.appendingPathComponent("Downloads", isDirectory: true)),
+            Place(section: "Favorites", label: "Documents", icon: "#", url: home.appendingPathComponent("Documents", isDirectory: true)),
+            Place(section: "Favorites", label: "Projects", icon: "*", url: projects)
+        ].filter { Self.isReadableDirectory($0.url) }
+
+        #if os(Windows)
+        for drive in ["C:/", "D:/"] {
+            let url = URL(fileURLWithPath: drive, isDirectory: true)
+            if Self.isReadableDirectory(url) {
+                let label = drive.hasPrefix("C") ? "Local Disk (C:)" : "Data (D:)"
+                result.append(Place(section: "This PC", label: label, icon: "=", url: url))
             }
         }
+        #else
+        result.append(Place(section: "This PC", label: "Root", icon: "=", url: URL(fileURLWithPath: "/", isDirectory: true)))
+        #endif
 
-        directoryContents = results
+        return result
+    }
+
+    private static func isReadableDirectory(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue else {
+            return false
+        }
+        return (try? FileManager.default.contentsOfDirectory(atPath: url.path)) != nil
+    }
+
+    // MARK: - Formatting
+
+    private func headerTitle(_ column: SortColumn) -> String {
+        let title: String
+        switch column {
+        case .name: title = "Name"
+        case .size: title = "Size"
+        case .type: title = "Type"
+        case .modified: title = "Modified"
+        }
+        if sortColumn != column { return title }
+        return title + (sortAscending ? " ^" : " v")
+    }
+
+    private func itemIcon(_ item: BrowserItem) -> String {
+        if item.isDirectory { return "[ ]" }
+        return isDrawing(item.url) ? "[+]" : "[-]"
+    }
+
+    private func typeName(for url: URL, isDirectory: Bool) -> String {
+        if isDirectory { return "Folder" }
+        switch url.pathExtension.lowercased() {
+        case "dxf": return "DXF Drawing"
+        case "dwg": return "DWG Drawing"
+        case "pdf": return "PDF"
+        case "png", "jpg", "jpeg", "gif", "bmp", "webp", "tif", "tiff": return "Image"
+        default: return url.pathExtension.isEmpty ? "File" : "\(url.pathExtension.uppercased()) File"
+        }
+    }
+
+    private func formatBytes(_ bytes: Int64?) -> String {
+        guard let bytes else { return "-" }
+        if bytes < 1024 { return "\(bytes) B" }
+        let kb = Double(bytes) / 1024.0
+        if kb < 1024 { return "\(Int(kb.rounded())) KB" }
+        let mb = kb / 1024.0
+        if mb < 1024 { return String(format: "%.1f MB", mb) }
+        return String(format: "%.1f GB", mb / 1024.0)
+    }
+
+    private func formatDate(_ date: Date?) -> String {
+        guard let date else { return "-" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d, yyyy"
+        return formatter.string(from: date)
+    }
+
+    private func breadcrumbText(for url: URL) -> String {
+        url.path.replacingOccurrences(of: "\\", with: " > ").replacingOccurrences(of: "/", with: " > ")
+    }
+
+    private func isDrawing(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return ext == "dxf" || ext == "dwg"
+    }
+
+    private func drawingStats(for url: URL) -> (layers: Int, entities: Int, units: String) {
+        let seed = abs(url.path.hashValue)
+        return (layers: 4 + seed % 18, entities: 900 + seed % 9500, units: "mm")
+    }
+
+    private func shortName(_ name: String, limit: Int) -> String {
+        if name.count <= limit { return name }
+        return String(name.prefix(max(1, limit - 3))) + "..."
     }
 
     private static func isReservedDeviceName(_ name: String) -> Bool {

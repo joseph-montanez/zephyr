@@ -553,7 +553,7 @@ public final class PDFImportCommand: FeatureCommand {
             // Copy → mutate → write-back to avoid exclusive-access violation
             // between render() and the subsequent .isOpen read.
             var fb = fileBrowser
-            fb.render()
+            fb.render(ui: engine.ui)
             let stillOpen = fb.isOpen
             fileBrowser = fb
 

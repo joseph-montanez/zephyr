@@ -83,8 +83,8 @@ struct AppUI {
         // 4. Toolbar removed in redesign. Functionality moved to command line.
 
         // 5. File browser dialogs (native-style modal overlays).
-        engine.fileBrowser.render()
-        engine.saveFileBrowser.render()
+        engine.fileBrowser.render(ui: engine.ui)
+        engine.saveFileBrowser.render(ui: engine.ui)
 
         // 6. Properties panel — shows selected entity details.
         PropertiesPanelUI.render(engine: engine)
