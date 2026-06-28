@@ -557,7 +557,8 @@ public final class TrimCommand: FeatureCommand {
                     controlPoints: controlPoints,
                     weights: w,
                     segmentA: edge.0,
-                    segmentB: edge.1
+                    segmentB: edge.1,
+                    searchSegments: 96
                 )
                 for result in results {
                     // Avoid duplicate intersections at nearly the same t
@@ -581,10 +582,10 @@ public final class TrimCommand: FeatureCommand {
                     controlPoints: controlPoints,
                     weights: w,
                     to: invClick,
-                    segments: 48)
+                    segments: 96)
 
-                let minT = knots.min() ?? 0.0
-                let maxT = knots.max() ?? 1.0
+                let minT = knots[p]
+                let maxT = knots[controlPoints.count]
                 var tBefore = minT
                 var tAfter = maxT
 

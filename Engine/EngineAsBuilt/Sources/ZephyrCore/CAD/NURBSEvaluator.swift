@@ -140,6 +140,22 @@ public enum NURBSEvaluator {
         weights: [Double]? = nil,
         segmentsPerSpan: Int = 12
     ) -> [Vector3] {
+        parameterizedSamplesByKnotSpans(
+            degree: degree,
+            knots: knots,
+            controlPoints: controlPoints,
+            weights: weights,
+            segmentsPerSpan: segmentsPerSpan
+        ).map { $0.point }
+    }
+
+    private static func parameterizedSamplesByKnotSpans(
+        degree: Int,
+        knots: [Double],
+        controlPoints: [Vector3],
+        weights: [Double]? = nil,
+        segmentsPerSpan: Int = 12
+    ) -> [(t: Double, point: Vector3)] {
         let w = weights ?? Array(repeating: 1.0, count: controlPoints.count)
         let p = degree
         let n = controlPoints.count - 1
@@ -156,7 +172,6 @@ public enum NURBSEvaluator {
 
         let eps = max(1e-12, abs(tMax - tMin) * 1e-12)
 
-        // Collect distinct knot values within the valid domain
         var breaks: [Double] = []
         for k in knots {
             if k < tMin - eps || k > tMax + eps { continue }
@@ -173,7 +188,7 @@ public enum NURBSEvaluator {
             breaks.append(tMax)
         }
 
-        var out: [Vector3] = []
+        var out: [(t: Double, point: Vector3)] = []
         let perSpan = max(2, segmentsPerSpan)
 
         for i in 0..<(breaks.count - 1) {
@@ -182,7 +197,7 @@ public enum NURBSEvaluator {
             if b - a <= eps { continue }
 
             for j in 0...perSpan {
-                if !out.isEmpty && j == 0 { continue }  // skip duplicate at span boundary
+                if !out.isEmpty && j == 0 { continue }
                 let t = a + (b - a) * Double(j) / Double(perSpan)
                 guard let pt = evaluateAtInternal(
                     degree: p,
@@ -192,11 +207,11 @@ public enum NURBSEvaluator {
                     at: t
                 ) else { continue }
 
-                if let last = out.last, (last - pt).magnitudeSquared < 1e-18 {
+                if let last = out.last, (last.point - pt).magnitudeSquared < 1e-18 {
                     continue
                 }
 
-                out.append(pt)
+                out.append((t, pt))
             }
         }
 
@@ -488,23 +503,26 @@ public enum NURBSEvaluator {
             return projT >= -1e-4 && projT <= 1.0 + 1e-4
         }
 
-        // Evaluate polyline for coarse search (knot-aware to catch corners)
-        let evaluated = evaluateByKnotSpans(
+        let samples = parameterizedSamplesByKnotSpans(
             degree: p, knots: knots,
             controlPoints: controlPoints, weights: w,
             segmentsPerSpan: max(2, searchSegments / 4))
-        guard evaluated.count >= 2 else { return [] }
+        guard samples.count >= 2 else { return [] }
         
         var results: [(t: Double, point: Vector3)] = []
 
-        // Coarse search: find segments that intersect
-        for i in 0..<(evaluated.count - 1) {
+        // Coarse search: find sampled curve chords that intersect the segment.
+        for i in 0..<(samples.count - 1) {
+            let s0 = samples[i]
+            let s1 = samples[i + 1]
+            guard s1.t > s0.t else { continue }
+
             guard let res = CADGeometryMath.segmentSegmentIntersection(
-                a: evaluated[i], b: evaluated[i + 1],
+                a: s0.point, b: s1.point,
                 c: segmentA, d: segmentB
             ) else { continue }
 
-            var t = tMin + (tMax - tMin) * (Double(i) + res.t) / Double(searchSegments)
+            var t = s0.t + (s1.t - s0.t) * res.t
             t = max(tMin + 1e-12, min(tMax - 1e-12, t))
 
             // Newton refinement: find root of signedDist(C(t))
@@ -572,31 +590,46 @@ public enum NURBSEvaluator {
         segments: Int = 48
     ) -> Double {
         let w = weights ?? Array(repeating: 1.0, count: controlPoints.count)
-        let evaluated = evaluateByKnotSpans(
+        let p = degree
+        let n = controlPoints.count - 1
+
+        guard p >= 1,
+              n >= p,
+              knots.count == n + p + 2,
+              w.count == controlPoints.count
+        else {
+            return (degree >= 0 && degree < knots.count) ? knots[degree] : 0.0
+        }
+
+        let tMin = knots[p]
+        let tMax = knots[n + 1]
+
+        let samples = parameterizedSamplesByKnotSpans(
             degree: degree, knots: knots,
             controlPoints: controlPoints, weights: w,
             segmentsPerSpan: max(2, segments / 4))
-        guard evaluated.count >= 2 else { return knots[degree] }
+        guard samples.count >= 2 else { return tMin }
 
-        let p = degree
-        let m = knots.count - 1
-        let tMin = knots[p]
-        let tMax = knots[m - p]
-
-        var bestI = 0
+        var bestT = tMin
         var bestDistSq = Double.infinity
 
-        for (i, pt) in evaluated.enumerated() {
-            let dx = pt.x - point.x
-            let dy = pt.y - point.y
-            let dSq = dx * dx + dy * dy
+        for i in 0..<(samples.count - 1) {
+            let a = samples[i]
+            let b = samples[i + 1]
+            let ab = b.point - a.point
+            let lenSq = ab.magnitudeSquared
+            guard lenSq > 1e-24 else { continue }
+
+            let projected = max(0.0, min(1.0, (point - a.point).dot(ab) / lenSq))
+            let q = a.point + ab * projected
+            let dSq = (point - q).magnitudeSquared
             if dSq < bestDistSq {
                 bestDistSq = dSq
-                bestI = i
+                bestT = a.t + (b.t - a.t) * projected
             }
         }
 
-        return tMin + (tMax - tMin) * Double(bestI) / Double(segments)
+        return max(tMin, min(tMax, bestT))
     }
 
     // =====================================================================
