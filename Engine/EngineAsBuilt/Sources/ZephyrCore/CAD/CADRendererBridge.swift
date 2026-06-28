@@ -71,9 +71,10 @@ public final class CADRendererBridge {
         fromSnapshot snapshot: CADDocumentSnapshot,
         generation: Int,
         simplifyComplexBlocks: Bool,
-        into geometryManager: GeometryManager
+        into geometryManager: GeometryManager,
+        splineTessellationDivisor: Double = 5000.0
     ) async {
-        let results = await Self.computeSpecs(fromSnapshot: snapshot, simplifyComplexBlocks: simplifyComplexBlocks)
+        let results = await Self.computeSpecs(fromSnapshot: snapshot, simplifyComplexBlocks: simplifyComplexBlocks, splineTessellationDivisor: splineTessellationDivisor)
         print("[CADBridge] computeSpecs (gen \(generation)) returned \(results.count) entity results")
         // Best-effort early-out: if a newer tab/edit cancelled this task, don't publish.
         // The generation guards below + in applyPendingIfNeeded are the authoritative checks.
@@ -91,6 +92,7 @@ public final class CADRendererBridge {
     public func applyPendingIfNeeded(
         forGeneration wantGen: Int,
         into geometryManager: GeometryManager,
+        splineTessellationDivisor: Double = 5000.0,
         engine: PhrostEngine
     ) -> Bool {
         let applied = pendingLock.withLock { () -> [EntityResult]? in
@@ -119,7 +121,7 @@ public final class CADRendererBridge {
 
     /// Pure computation from a value-typed snapshot. Safe for any thread —
     /// the snapshot is an independent copy of all document state.
-    nonisolated static func computeSpecs(fromSnapshot snapshot: CADDocumentSnapshot, simplifyComplexBlocks: Bool) async -> [EntityResult] {
+    nonisolated static func computeSpecs(fromSnapshot snapshot: CADDocumentSnapshot, simplifyComplexBlocks: Bool, splineTessellationDivisor: Double = 5000.0) async -> [EntityResult] {
         var visible:
             [(
                 index: Int, handle: UUID,
@@ -366,7 +368,8 @@ public final class CADRendererBridge {
                                     geomWidth: v.geomWidth,
                                     textStyleFonts: snapshot.textStyleFonts,
                                     linetypePatterns: snapshot.linetypePatterns,
-                                    opacityMultiplier: v.layerOpacity)
+                                    opacityMultiplier: v.layerOpacity,
+                                    splineTessellationDivisor: splineTessellationDivisor)
                                 if s.count > 10000 {
                                     let typeStr: String
                                     switch primitive {
@@ -483,7 +486,8 @@ public final class CADRendererBridge {
                                     let s = CADPrimitiveGenerator.computePrimitiveSpecs(
                                         from: prim, transform: .identity, color: color, z: z,
                                         textStyleFonts: snapshot.textStyleFonts,
-                                        linetypePatterns: snapshot.linetypePatterns)
+                                        linetypePatterns: snapshot.linetypePatterns,
+                                        splineTessellationDivisor: splineTessellationDivisor)
                                     specs.append(contentsOf: s)
                                     z += 0.01
                                 }
@@ -571,6 +575,7 @@ public final class CADRendererBridge {
     private func applySpecs(
         _ results: [EntityResult],
         into geometryManager: GeometryManager,
+        splineTessellationDivisor: Double = 5000.0,
         engine: PhrostEngine
     ) {
         // Clear old primitives atomically
@@ -1376,7 +1381,8 @@ public final class CADRendererBridge {
             lineTypeScale: style.lineTypeScale,
             geomWidth: style.geomWidth,
             linetypePatterns: document.linetypePatterns,
-            opacityMultiplier: style.layerOpacity
+            opacityMultiplier: style.layerOpacity,
+            splineTessellationDivisor: 5000.0
         )
 
         var newIDs: [SpriteID] = []

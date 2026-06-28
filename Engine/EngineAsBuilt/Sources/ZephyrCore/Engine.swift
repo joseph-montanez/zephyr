@@ -102,6 +102,11 @@ public final class PhrostEngine {
     /// index buffer overflow). Default 1000 grips across all entities.
     public var gripMax: Int = 1000
 
+    /// Divisor for adaptive spline tessellation chord tolerance.
+    /// Chord tolerance = max(0.001, splineDiagonal / divisor).
+    /// Lower = smoother curves (more segments). Default 5000.
+    public var splineTessellationDivisor: Double = 5000.0
+
     /// Toggle simplifying dense polylines.
     public func toggleSimplifyPolylines() {
         DXFEntityConverter.simplifyPolylines.toggle()

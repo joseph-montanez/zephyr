@@ -219,6 +219,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "GRID SNAP",       aliases: [],                category: .settings, syntax: "", description: "Toggle snapping to grid intersections on/off"),
         CommandDescriptor(canonicalName: "GRID SPACING",    aliases: [],                category: .settings, syntax: "<value>", description: "Set the base grid spacing in world units"),
         CommandDescriptor(canonicalName: "GRID ORIGIN",     aliases: [],                category: .settings, syntax: "<x> <y>", description: "Set the grid origin in world coordinates"),
+        CommandDescriptor(canonicalName: "SPLINETESS",  aliases: ["SPLINESEGS"],   category: .settings, syntax: "[value]", description: "Set or show spline tessellation quality divisor (lower = smoother, default 5000)"),
         CommandDescriptor(canonicalName: "SIMPLIFY",        aliases: ["SIMP", "COMPLEX", "COMPLEXBLOCKS"], category: .settings, syntax: "[ON|OFF]", description: "Toggle or set the simplification of complex block references to bounding boxes on/off"),
         CommandDescriptor(canonicalName: "SIMPLIFYPOLY",    aliases: ["SIMPPOLY", "COMPLEXPOLY", "SIMPLIFYPOLYLINES"], category: .settings, syntax: "[ON|OFF]", description: "Toggle or set the simplification of dense polylines on/off"),
         // --- Snap Toggles ---
@@ -871,6 +872,24 @@ public final class CADCommandProcessor {
             engine.gripMax = val
             print("[CAD] Grip max set to \(val) (total grip squares drawn)")
             engine.interaction.cachedGripGeneration = -1
+            clearCommand()
+        // --- Spline Tessellation ---
+        case "SPLINETESS", "SPLINESEGS":
+            guard let engine = engine else { clearCommand(); return }
+            print("[CAD] Spline tessellation divisor: \(engine.splineTessellationDivisor) (lower = smoother, default 5000)")
+            clearCommand()
+        case _ where upper.hasPrefix("SPLINETESS ") || upper.hasPrefix("SPLINESEGS "):
+            guard let engine = engine else { clearCommand(); return }
+            let prefixLen = upper.hasPrefix("SPLINETESS ") ? 12 : 11  // "SPLINESEGS "
+            let arg = String(text.dropFirst(prefixLen)).trimmingCharacters(in: .whitespaces)
+            guard let val = Double(arg), val >= 10 else {
+                print("[CAD] SPLINETESS requires a positive number >= 10 (e.g. SPLINETESS 5000)")
+                clearCommand()
+                return
+            }
+            engine.splineTessellationDivisor = val
+            engine._regenerationGeneration &+= 1
+            print("[CAD] Spline tessellation divisor set to \(val)")
             clearCommand()
         // --- Grid ---
         case "GRID":

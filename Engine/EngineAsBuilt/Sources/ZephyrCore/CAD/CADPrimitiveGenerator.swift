@@ -221,7 +221,8 @@ public enum CADPrimitiveGenerator {
         geomWidth: Double = 0.0,
         textStyleFonts: [String: String] = [:],
         linetypePatterns: [String: [Double]] = [:],
-        opacityMultiplier: Double = 1.0
+        opacityMultiplier: Double = 1.0,
+        splineTessellationDivisor: Double = 5000.0
     ) -> [PrimitiveSpec] {
         // Extract primitive color override if present
         let primColor: ColorRGBA?
@@ -597,19 +598,29 @@ public enum CADPrimitiveGenerator {
             specs.append(contentsOf: makePathSpecs(points: pts, dashPattern: dashPattern, scale: lineTypeScale, weight: lineWeight, z: z, color: finalColor))
 
         case .spline(let controlPoints, let knots, let degree, let weights, _):
+            guard !controlPoints.isEmpty else { break }
+            let worldControlPoints = controlPoints.map { transform.transformPoint($0) }
             let w = weights ?? Array(repeating: 1.0, count: controlPoints.count)
-            let evaluated = NURBSEvaluator.evaluateByKnotSpans(
+
+            var minPt = worldControlPoints[0]
+            var maxPt = worldControlPoints[0]
+            for pt in worldControlPoints.dropFirst() {
+                minPt.x = min(minPt.x, pt.x); minPt.y = min(minPt.y, pt.y); minPt.z = min(minPt.z, pt.z)
+                maxPt.x = max(maxPt.x, pt.x); maxPt.y = max(maxPt.y, pt.y); maxPt.z = max(maxPt.z, pt.z)
+            }
+            let diag = max((maxPt - minPt).magnitude, 1.0)
+            let chordTolerance = max(0.001, diag / splineTessellationDivisor)
+
+            let evaluated = NURBSEvaluator.evaluateAdaptiveByKnotSpans(
                 degree: degree,
                 knots: knots,
-                controlPoints: controlPoints,
+                controlPoints: worldControlPoints,
                 weights: w,
-                segmentsPerSpan: 12)
+                chordTolerance: chordTolerance,
+                maxDepth: 10,
+                maxSegments: 4096)
             guard evaluated.count >= 2 else { break }
-            var pts: [SDL_FPoint] = []
-            for pt in evaluated {
-                let wp = transform.transformPoint(pt)
-                pts.append(SDL_FPoint(x: Float(wp.x), y: Float(wp.y)))
-            }
+            let pts = evaluated.map { SDL_FPoint(x: Float($0.x), y: Float($0.y)) }
             specs.append(contentsOf: makePathSpecs(points: pts, dashPattern: dashPattern, scale: lineTypeScale, weight: lineWeight, z: z, color: finalColor))
             
         case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):

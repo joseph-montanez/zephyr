@@ -270,13 +270,15 @@ public final class EngineRenderer {
             engine._regenerationInFlight = wantGen
             let inBlockEditor = engine.tabManager.activeTab?.editingBlockID != nil
             let simplify = inBlockEditor ? false : engine.simplifyComplexBlocks
+            let tessDiv = engine.splineTessellationDivisor
             engine._regenerationTask = Task.detached { [weak self] in
                 guard let self else { return }
                 await engine.cadBridge.regenerate(
                     fromSnapshot: docSnapshot,
                     generation: wantGen,
                     simplifyComplexBlocks: simplify,
-                    into: engine.geometryManager
+                    into: engine.geometryManager,
+                    splineTessellationDivisor: tessDiv
                 )
             }
         }

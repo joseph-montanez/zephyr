@@ -203,6 +203,122 @@ public enum NURBSEvaluator {
         return out
     }
 
+
+    /// Adaptively evaluates a NURBS curve by knot span, adding samples only
+    /// where the curve is not flat enough. This avoids long spline spans being
+    /// rendered as visibly polygonal fixed-parameter chords.
+    public static func evaluateAdaptiveByKnotSpans(
+        degree: Int,
+        knots: [Double],
+        controlPoints: [Vector3],
+        weights: [Double]? = nil,
+        chordTolerance: Double = 0.01,
+        maxDepth: Int = 10,
+        maxSegments: Int = 4096
+    ) -> [Vector3] {
+        let w = weights ?? Array(repeating: 1.0, count: controlPoints.count)
+        let p = degree
+        let n = controlPoints.count - 1
+
+        guard p >= 1,
+              n >= p,
+              knots.count == n + p + 2,
+              w.count == controlPoints.count,
+              maxSegments > 0
+        else { return [] }
+
+        let tMin = knots[p]
+        let tMax = knots[n + 1]
+        guard tMax > tMin else { return [] }
+
+        let eps = max(1e-12, abs(tMax - tMin) * 1e-12)
+        let toleranceSq = max(chordTolerance, 1e-9) * max(chordTolerance, 1e-9)
+        let depthLimit = max(1, maxDepth)
+        let segmentLimit = max(2, maxSegments)
+
+        var breaks: [Double] = []
+        for k in knots {
+            if k < tMin - eps || k > tMax + eps { continue }
+            let clamped = min(max(k, tMin), tMax)
+            if breaks.last.map({ abs($0 - clamped) > eps }) ?? true {
+                breaks.append(clamped)
+            }
+        }
+        if breaks.isEmpty || abs(breaks[0] - tMin) > eps {
+            breaks.insert(tMin, at: 0)
+        }
+        if abs((breaks.last ?? tMin) - tMax) > eps {
+            breaks.append(tMax)
+        }
+
+        func distanceSquaredFromPointToSegment(_ p: Vector3, _ a: Vector3, _ b: Vector3) -> Double {
+            let ab = b - a
+            let lenSq = ab.magnitudeSquared
+            guard lenSq > 1e-24 else { return (p - a).magnitudeSquared }
+            let t = max(0.0, min(1.0, (p - a).dot(ab) / lenSq))
+            let q = a + ab * t
+            return (p - q).magnitudeSquared
+        }
+
+        var out: [Vector3] = []
+        out.reserveCapacity(min(segmentLimit + 1, max(16, breaks.count * 8)))
+
+        func appendPoint(_ pt: Vector3) {
+            if let last = out.last, (last - pt).magnitudeSquared < 1e-18 { return }
+            out.append(pt)
+        }
+
+        func subdivide(t0: Double, p0: Vector3, t1: Double, p1: Vector3, depth: Int) {
+            if out.count >= segmentLimit {
+                appendPoint(p1)
+                return
+            }
+
+            let tq1 = t0 + (t1 - t0) * 0.25
+            let tm = t0 + (t1 - t0) * 0.5
+            let tq3 = t0 + (t1 - t0) * 0.75
+
+            guard let q1 = evaluateAtInternal(degree: p, knots: knots, controlPoints: controlPoints, weights: w, at: tq1),
+                  let mid = evaluateAtInternal(degree: p, knots: knots, controlPoints: controlPoints, weights: w, at: tm),
+                  let q3 = evaluateAtInternal(degree: p, knots: knots, controlPoints: controlPoints, weights: w, at: tq3)
+            else {
+                appendPoint(p1)
+                return
+            }
+
+            let flatnessSq = max(
+                distanceSquaredFromPointToSegment(q1, p0, p1),
+                distanceSquaredFromPointToSegment(mid, p0, p1),
+                distanceSquaredFromPointToSegment(q3, p0, p1)
+            )
+
+            if flatnessSq <= toleranceSq || depth >= depthLimit {
+                appendPoint(p1)
+                return
+            }
+
+            subdivide(t0: t0, p0: p0, t1: tm, p1: mid, depth: depth + 1)
+            subdivide(t0: tm, p0: mid, t1: t1, p1: p1, depth: depth + 1)
+        }
+
+        for i in 0..<(breaks.count - 1) {
+            let a = breaks[i]
+            let b = breaks[i + 1]
+            if b - a <= eps { continue }
+
+            guard let p0 = evaluateAtInternal(degree: p, knots: knots, controlPoints: controlPoints, weights: w, at: a),
+                  let p1 = evaluateAtInternal(degree: p, knots: knots, controlPoints: controlPoints, weights: w, at: b)
+            else { continue }
+
+            if out.isEmpty { appendPoint(p0) }
+            subdivide(t0: a, p0: p0, t1: b, p1: p1, depth: 0)
+
+            if out.count >= segmentLimit { break }
+        }
+
+        return out
+    }
+
     // =====================================================================
     // MARK: - Single-point evaluation
     // =====================================================================
