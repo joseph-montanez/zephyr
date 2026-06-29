@@ -732,26 +732,16 @@ public enum CADPrimitiveGenerator {
                 // and breaks hatches inside transformed INSERTs.
                 let polyPoints = boundary.map { transform.transformPoint($0) }
 
-                // Compute a safe minimum spacing in world units.  This protects the
-                // renderer from huge HATCH entities with tiny pattern spacing while
-                // still preserving pattern scale/angle for normal drawing sizes.
-                var bbMinX = Double.infinity, bbMaxX = -Double.infinity
-                var bbMinY = Double.infinity, bbMaxY = -Double.infinity
-                for pt in polyPoints {
-                    bbMinX = min(bbMinX, pt.x); bbMaxX = max(bbMaxX, pt.x)
-                    bbMinY = min(bbMinY, pt.y); bbMaxY = max(bbMaxY, pt.y)
-                }
-                let diag = sqrt(pow(bbMaxX - bbMinX, 2) + pow(bbMaxY - bbMinY, 2))
-                let maxSteps = 200.0
+                let adaptiveMinimumSpacing = DXFHatchGenerator.adaptiveMinimumSpacing(for: polyPoints)
                 let nominalSpacing = DXFHatchGenerator.effectiveSpacing(patternName: pattern, scale: hatchScale)
-                let spacing = max(nominalSpacing, diag / maxSteps)
+                let spacing = max(nominalSpacing, adaptiveMinimumSpacing)
 
                 let hatchLines = DXFHatchGenerator.generatePatternHatch(
                     polygon: polyPoints,
                     patternName: pattern,
                     scale: hatchScale,
                     angleDegrees: hatchAngle * 180.0 / .pi,
-                    minimumSpacing: diag / maxSteps
+                    minimumSpacing: adaptiveMinimumSpacing
                 )
 
                 for hline in hatchLines {

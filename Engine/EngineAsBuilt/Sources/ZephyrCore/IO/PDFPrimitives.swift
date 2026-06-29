@@ -256,14 +256,13 @@ enum PDFPrimitives {
                 // Patterned hatch: use the same AutoCAD-style pattern registry
                 // as the renderer so ANSI31-ANSI38, scale, angle, and dash segments
                 // match the screen path.
-                let diag = (boundary.map { $0.x }.max()! - boundary.map { $0.x }.min()!) +
-                           (boundary.map { $0.y }.max()! - boundary.map { $0.y }.min()!)
+                let adaptiveMinimumSpacing = DXFHatchGenerator.adaptiveMinimumSpacing(for: boundary)
                 let hatchLines = DXFHatchGenerator.generatePatternHatch(
                     polygon: boundary,
                     patternName: pat,
                     scale: hatchScale,
                     angleDegrees: hatchAngle * 180.0 / .pi,
-                    minimumSpacing: max(diag / 200.0, 1.0)
+                    minimumSpacing: adaptiveMinimumSpacing
                 )
                 for hline in hatchLines {
                     switch hline {

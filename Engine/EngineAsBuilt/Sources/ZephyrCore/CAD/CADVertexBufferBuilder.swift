@@ -187,7 +187,11 @@ public final class CADVertexBufferBuilder {
                 }
 
             case .line:
-                if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines {
+                if input.isHatchLine {
+                    for p in input.points {
+                        vertices.append(CADVertex(x: p.x, y: p.y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    }
+                } else if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines {
                     guard input.points.count >= 2 else { break }
                     let p1 = input.points[0]
                     let p2 = input.points[1]
@@ -231,7 +235,14 @@ public final class CADVertexBufferBuilder {
 
             case .lines:
                 guard input.points.count >= 2 else { break }
-                if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines {
+                if input.isHatchLine {
+                    for j in 0..<(input.points.count - 1) {
+                        let p1 = input.points[j]
+                        let p2 = input.points[j+1]
+                        vertices.append(CADVertex(x: p1.x, y: p1.y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: p2.x, y: p2.y, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    }
+                } else if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines {
                     for j in 0..<(input.points.count - 1) {
                         let p1 = input.points[j]
                         let p2 = input.points[j+1]
@@ -426,7 +437,9 @@ public final class CADVertexBufferBuilder {
             case .fillRect, .fillRects:
                 pipeType = .triangle
             case .line, .lines:
-                if input.lineWeight > 0.25 || input.geomWidth > 0.0 {
+                if input.isHatchLine {
+                    pipeType = .line
+                } else if input.lineWeight > 0.25 || input.geomWidth > 0.0 {
                     pipeType = antiAliasLines ? .aaLine : .triangle
                 } else if antiAliasLines {
                     pipeType = .aaLine

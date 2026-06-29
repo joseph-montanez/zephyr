@@ -50,6 +50,26 @@ public struct DXFHatchPatternDefinition: Hashable, Sendable {
 }
 
 public enum DXFHatchGenerator {
+    public static let maxGeneratedLinesPerPatternDefinition: Double = 4096.0
+
+    public static func adaptiveMinimumSpacing(for polygon: [Vector3]) -> Double {
+        guard polygon.count >= 3 else { return 0.0 }
+        var minX = Double.infinity
+        var maxX = -Double.infinity
+        var minY = Double.infinity
+        var maxY = -Double.infinity
+        for pt in polygon {
+            minX = min(minX, pt.x)
+            maxX = max(maxX, pt.x)
+            minY = min(minY, pt.y)
+            maxY = max(maxY, pt.y)
+        }
+        let dx = maxX - minX
+        let dy = maxY - minY
+        let diag = sqrt(dx * dx + dy * dy)
+        guard diag.isFinite, diag > 0 else { return 0.0 }
+        return diag / maxGeneratedLinesPerPatternDefinition
+    }
 
     // MARK: - AutoCAD-style predefined pattern registry
 
