@@ -47,6 +47,19 @@ Zephyr is a drafting app that runs natively on macOS (Metal) and Windows (Direct
 - **PDF import** — Cross-platform: PDFKit on macOS, PDFium on Windows. Page selector with preview. Raster underlay at 150 DPI.
 - **EAB native format** — Fast binary save/load. zstd compression, BVH spatial index, viewport-culled partial loads.
 
+### libdxf (DXFrw) Enhancements
+Zephyr's DXF pipeline is built on a fork of [libdxfrw](https://github.com/LibreCAD/libdxfrw) (a C++ DXF reader/writer backed by iconv for charset conversion). Over 20,000 lines of new C++ were added to the library to fix crashes, close feature gaps, and surface data that AutoCAD and other CAD tools rely on:
+
+| Enhancement | Description |
+|---|---|
+| **Layer transparency** | Reads DXF group code 440 (opacity 0–100%) and exposes per-layer transparency. Full round-trip support. |
+| **Spline NURBS weights** | Parses rational NURBS weights (group 41) for each control point. Enables faithful rendering of weighted spline curves instead of flattening to uniform. |
+| **Hatch gradient fills** | Decodes gradient fill sub-objects (codes 450–470) — linear, cylindrical, spherical, etc. Stores gradient name, angle, and two RGB colors per hatch. |
+| **Attribute text & block attribute support** | Adds `ATTRIB` and `ATTDEF` entity types with tag, flag, and text value extraction. Block inserts now carry their full attribute payload. |
+| **Background fill color** | Hatch background fill (ACI group 63) is surfaced independently from the hatch pattern color, matching AutoCAD's background fill mechanic. |
+| **Encoding/codec improvements** | Strips malformed `$DWGCODEPAGE` headers that crash iconv, auto-detects and sanitizes MText embedded objects, and adds ICONV error recovery. Binary DXF sniffing with hex-dump diagnostics for bad input. |
+| **vcpkg + CMake integration** | Cross-platform CMake build system with vcpkg-managed dependencies (iconv). Supports static and shared builds on Windows, macOS, and Linux via `find_package` fallback chains.
+
 ### Drawing Commands
 | Command | Alias | Description |
 |---|---|---|

@@ -1,4 +1,7 @@
 import Foundation
+#if os(Windows)
+import WinSDK
+#endif
 
 // =========================================================================
 // MARK: - CADFontManager
@@ -93,6 +96,70 @@ public enum CADFontManager {
     }
 
 
+#if os(Windows)
+    /// Lazily builds and caches a mapping from font names to filenames
+    /// by reading the Windows font registry.
+    /// Keys are lowercased: both display names (stripped of "(TrueType)" etc.)
+    /// and bare filenames are indexed.
+    private static func windowsFontRegistryMap() -> [String: String]? {
+        struct RegCache { nonisolated(unsafe) static var map: [String: String]? = nil }
+        if let cached = RegCache.map { return cached }
+
+        var map: [String: String] = [:]
+        let subKey = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts"
+        var hKey: HKEY?
+        let status = subKey.withCString(encodedAs: UTF16.self) { lpSubKey in
+            RegOpenKeyExW(HKEY_LOCAL_MACHINE, lpSubKey, 0, 0x20019, &hKey)
+        }
+        guard status == ERROR_SUCCESS, let hKey = hKey else {
+            print("[CADFontManager] Failed to open Windows font registry key (status=\(status))")
+            RegCache.map = [:]
+            return nil
+        }
+        defer { RegCloseKey(hKey) }
+
+        var index: DWORD = 0
+        while true {
+            let maxLen = 256
+            var nameBuf = [WCHAR](repeating: 0, count: maxLen)
+            var dataBuf = [WCHAR](repeating: 0, count: maxLen)
+            var nameLen: DWORD = DWORD(maxLen)
+            var dataLen: DWORD = DWORD(maxLen)
+            var valueType: DWORD = 0
+            let enumStatus = RegEnumValueW(hKey, index, &nameBuf, &nameLen, nil, &valueType, &dataBuf, &dataLen)
+            if enumStatus == ERROR_NO_MORE_ITEMS { break }
+            if enumStatus != ERROR_SUCCESS || valueType != REG_SZ || nameLen == 0 || dataLen == 0 {
+                index += 1; continue
+            }
+            let displayName = nameBuf.withUnsafeBufferPointer { buf -> String in
+                let end = buf.firstIndex(of: 0) ?? buf.count
+                return String(decoding: buf[0..<end], as: UTF16.self)
+            }
+            let fileName = dataBuf.withUnsafeBufferPointer { buf -> String in
+                let end = buf.firstIndex(of: 0) ?? buf.count
+                return String(decoding: buf[0..<end], as: UTF16.self)
+            }
+            let normalized = displayName
+                .replacingOccurrences(of: " (TrueType)", with: "")
+                .replacingOccurrences(of: " (OpenType)", with: "")
+                .trimmingCharacters(in: .whitespaces)
+                .lowercased()
+            let fileLower = fileName.lowercased()
+            if !normalized.isEmpty { map[normalized] = fileName }
+            map[fileLower] = fileName
+            // Also index without extension
+            let nameNoExt = (normalized as NSString).deletingPathExtension
+            if !nameNoExt.isEmpty, nameNoExt != normalized { map[nameNoExt] = fileName }
+            let fileNoExt = (fileLower as NSString).deletingPathExtension
+            if !fileNoExt.isEmpty, fileNoExt != fileLower { map[fileNoExt] = fileName }
+            index += 1
+        }
+        RegCache.map = map
+        print("[CADFontManager] Indexed \(map.count) entries from Windows font registry")
+        return map
+    }
+#endif
+
     public static func getTTFEquivalent(filename: String) -> String? {
         let rawName = filename.trimmingCharacters(in: .whitespacesAndNewlines)
         let normName = rawName.lowercased()
@@ -104,7 +171,7 @@ public enum CADFontManager {
         let exeDir = URL(fileURLWithPath: Bundle.main.executablePath ?? ".")
             .deletingLastPathComponent()
 
-        let fontDirectories = [
+        var fontDirectories: [URL] = [
             exeDir.appendingPathComponent("Fonts"),
             URL(fileURLWithPath: "Fonts"),
             exeDir,
@@ -114,67 +181,103 @@ public enum CADFontManager {
             URL(fileURLWithPath: "/Library/Fonts"),
             URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Fonts")
         ]
+#if os(Windows)
+        fontDirectories.append(URL(fileURLWithPath: "C:/Windows/Fonts"))
+#endif
 
-        var candidates: [String] = []
+        var specificCandidates: [String] = []
+        var fallbackCandidates: [String] = []
 
-        func add(_ name: String) {
+        func addSpecific(_ name: String) {
             let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
-            if !candidates.contains(trimmed) {
-                candidates.append(trimmed)
+            if !specificCandidates.contains(trimmed) {
+                specificCandidates.append(trimmed)
             }
         }
 
-        add(rawName)
-        add(normName)
-        add(rawName.uppercased())
+        func addFallback(_ name: String) {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            if !fallbackCandidates.contains(trimmed) {
+                fallbackCandidates.append(trimmed)
+            }
+        }
+
+        addSpecific(rawName)
+        addSpecific(normName)
+        addSpecific(rawName.uppercased())
 
         if !normName.hasSuffix(".ttf") && !normName.hasSuffix(".otf") && !normName.hasSuffix(".ttc") {
-            add(rawName + ".ttf")
-            add(rawName + ".TTF")
-            add(normName + ".ttf")
-            add(rawName + ".otf")
-            add(rawName + ".OTF")
-            add(normName + ".otf")
+            addSpecific(rawName + ".ttf")
+            addSpecific(rawName + ".TTF")
+            addSpecific(normName + ".ttf")
+            addSpecific(rawName + ".otf")
+            addSpecific(rawName + ".OTF")
+            addSpecific(normName + ".otf")
         }
 
         if normName.contains("arialn") {
-            add("ARIALN.TTF")
-            add("arialn.ttf")
-            add("Arial Narrow.ttf")
-            add("ArialNarrow.ttf")
-            add("Arial.ttf")
+            addSpecific("ARIALN.TTF")
+            addSpecific("arialn.ttf")
+            addSpecific("Arial Narrow.ttf")
+            addSpecific("ArialNarrow.ttf")
         } else if normName.contains("lucon") {
-            add("lucon.TTF")
-            add("lucon.ttf")
-            add("LUCON.TTF")
-            add("Lucida Console.ttf")
-            add("LucidaConsole.ttf")
-            add("Menlo.ttc")
-            add("Monaco.ttf")
+            addSpecific("lucon.TTF")
+            addSpecific("lucon.ttf")
+            addSpecific("LUCON.TTF")
+            addSpecific("Lucida Console.ttf")
+            addSpecific("LucidaConsole.ttf")
         } else if normName.contains("romans") || normName.contains("simplex") || normName.contains("isocp") {
-            add("RomanS.ttf")
-            add("Arial.ttf")
-            add("Helvetica.ttc")
+            addSpecific("RomanS.ttf")
         }
 
-        add("Arial.ttf")
-        add("Helvetica.ttc")
-        add("Menlo.ttc")
-        add("Monaco.ttf")
+        addFallback("Arial.ttf")
+        addFallback("Helvetica.ttc")
+        addFallback("Menlo.ttc")
+        addFallback("Monaco.ttf")
 
-        for dir in fontDirectories {
-            for name in candidates {
-                let lowerName = name.lowercased()
-                guard lowerName.hasSuffix(".ttf") || lowerName.hasSuffix(".otf") || lowerName.hasSuffix(".ttc") else {
-                    continue
-                }
-                let fileURL = dir.appendingPathComponent(name)
-                if FileManager.default.fileExists(atPath: fileURL.path) {
-                    print("[CADFontManager] Using TTF font '\(name)' for DXF font '\(filename)': \(fileURL.path)")
-                    return fileURL.path
+        /// Helper to search a list of candidates across all font directories.
+        func search(_ candidates: [String], label: String) -> String? {
+            for dir in fontDirectories {
+                for name in candidates {
+                    let lowerName = name.lowercased()
+                    guard lowerName.hasSuffix(".ttf") || lowerName.hasSuffix(".otf") || lowerName.hasSuffix(".ttc") else {
+                        continue
+                    }
+                    let fileURL = dir.appendingPathComponent(name)
+                    if FileManager.default.fileExists(atPath: fileURL.path) {
+                        print("[CADFontManager] Using TTF font '\(name)' (\(label)) for DXF font '\(filename)': \(fileURL.path)")
+                        return fileURL.path
+                    }
                 }
             }
+            return nil
+        }
+
+        // Phase 1: search for the exact requested font name in all directories.
+        if let found = search(specificCandidates, label: "specific") {
+            return found
+        }
+
+#if os(Windows)
+        // Phase 2: Windows registry fallback — resolve display name → filename.
+        if let regMap = windowsFontRegistryMap(),
+           let resolvedName = regMap[normName] ?? regMap[rawName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()] {
+            let windowsDir = URL(fileURLWithPath: "C:/Windows/Fonts")
+            for name in [resolvedName, resolvedName.lowercased()] {
+                let url = windowsDir.appendingPathComponent(name)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    print("[CADFontManager] Using TTF font '\(resolvedName)' (from registry) for DXF font '\(filename)': \(url.path)")
+                    return url.path
+                }
+            }
+        }
+#endif
+
+        // Phase 3: fall back to generic fonts (Arial, Helvetica, etc.).
+        if let found = search(fallbackCandidates, label: "fallback") {
+            return found
         }
 
         print("[CADFontManager] No TTF font found for DXF font '\(filename)'")
@@ -213,10 +316,13 @@ public enum CADFontManager {
         let exeDir = URL(fileURLWithPath: Bundle.main.executablePath ?? ".")
             .deletingLastPathComponent()
 
-        let fontDirectories = [
+        var fontDirectories = [
             exeDir.appendingPathComponent("Fonts"),
             URL(fileURLWithPath: "Fonts"),
         ]
+#if os(Windows)
+        fontDirectories.append(URL(fileURLWithPath: "C:/Windows/Fonts"))
+#endif
 
         for dir in fontDirectories {
             guard let enumerator = FileManager.default.enumerator(
@@ -258,12 +364,15 @@ public enum CADFontManager {
         let exeDir = URL(fileURLWithPath: Bundle.main.executablePath ?? ".")
             .deletingLastPathComponent()
 
-        let dirs = [
+        var dirs = [
             exeDir.appendingPathComponent("Fonts"),
             URL(fileURLWithPath: "Fonts"),
             exeDir,
             URL(fileURLWithPath: ".")
         ]
+#if os(Windows)
+        dirs.append(URL(fileURLWithPath: "C:/Windows/Fonts"))
+#endif
 
         print("[CADFontManager] lookup '\(filename)'")
         for dir in dirs {
