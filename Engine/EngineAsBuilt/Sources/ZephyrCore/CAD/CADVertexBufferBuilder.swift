@@ -135,6 +135,7 @@ public final class CADVertexBufferBuilder {
     public nonisolated static func tessellate(
         _ inputs: [TessInput],
         cameraZoom: Double,
+        pixelScale: Float,
         antiAliasLines: Bool,
         hairlineQuads: Bool,
         region: (minX: Double, minY: Double, maxX: Double, maxY: Double),
@@ -154,11 +155,13 @@ public final class CADVertexBufferBuilder {
         
         var batches: [CADDrawBatch] = []
         let safeZoom = max(Float(cameraZoom), 0.000001)
+        let safePixelScale = max(pixelScale, 0.000001)
+        let safePixelZoom = max(safeZoom * safePixelScale, 0.000001)
 
         func lineWorldWidth(for input: TessInput) -> Float {
             if input.geomWidth > 0.0 {
                 let coreWidth = Float(input.geomWidth)
-                return antiAliasLines ? coreWidth + (2.0 / safeZoom) : coreWidth
+                return antiAliasLines ? coreWidth + (2.0 / safePixelZoom) : coreWidth
             }
 
             let corePixels: Float
@@ -169,7 +172,7 @@ public final class CADVertexBufferBuilder {
             }
 
             let totalPixels = antiAliasLines ? corePixels + 2.0 : corePixels
-            return totalPixels / safeZoom
+            return totalPixels / safePixelZoom
         }
 
         func appendLineVertex(_ p: SDL_FPoint, _ r: Float, _ g: Float, _ b: Float, _ a: Float) {
@@ -229,7 +232,7 @@ public final class CADVertexBufferBuilder {
             switch input.type {
             case .point, .points:
                 let pointPixels: Float = 4.0
-                let halfW: Float = (pointPixels * 0.5) / Float(cameraZoom)
+                let halfW: Float = (pointPixels * 0.5) / safePixelZoom
                 for p in input.points {
                     let x0 = p.x - halfW
                     let x1 = p.x + halfW
@@ -447,7 +450,7 @@ public final class CADVertexBufferBuilder {
             regionMinY: region.minY,
             regionMaxX: region.maxX,
             regionMaxY: region.maxY,
-            builtZoom: cameraZoom,
+            builtZoom: Double(safePixelZoom),
             mutationGen: mutationGen
         )
     }
@@ -460,13 +463,14 @@ public final class CADVertexBufferBuilder {
         inputs: [TessInput],
         token: Int,
         cameraZoom: Double,
+        pixelScale: Float,
         antiAliasLines: Bool,
         hairlineQuads: Bool,
         region: (minX: Double, minY: Double, maxX: Double, maxY: Double),
         mutationGen: Int
     ) async {
         guard let result = Self.tessellate(
-            inputs, cameraZoom: cameraZoom, antiAliasLines: antiAliasLines,
+            inputs, cameraZoom: cameraZoom, pixelScale: pixelScale, antiAliasLines: antiAliasLines,
             hairlineQuads: hairlineQuads, region: region, mutationGen: mutationGen)
         else {
             // Cancelled mid-loop — don't stash anything.

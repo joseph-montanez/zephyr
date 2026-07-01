@@ -76,12 +76,14 @@ public final class EngineRenderer {
     internal var imguiIndexCapacity: Int = 0
 
 
-    internal var usesTriangleHairlines: Bool {
-        #if os(macOS) || os(iOS)
-        return true
-        #else
-        return false
-        #endif
+    internal var usesTriangleHairlines: Bool { true }
+
+    internal var lineWidthPixelScale: Float {
+        max(1.0, max(engine.scaleX, engine.scaleY))
+    }
+
+    internal var currentLineWidthZoom: Double {
+        engine.camera.zoom * Double(lineWidthPixelScale)
     }
 
     internal func isLineWidthZoomStable(_ zoom: Double, _ referenceZoom: Double) -> Bool {
@@ -189,6 +191,7 @@ public final class EngineRenderer {
         guard let result = CADVertexBufferBuilder.tessellate(
             inputs,
             cameraZoom: engine.camera.zoom,
+            pixelScale: lineWidthPixelScale,
             antiAliasLines: antiAliasLines,
             hairlineQuads: usesTriangleHairlines,
             region: region,
@@ -321,7 +324,7 @@ public final class EngineRenderer {
         let insideBuffer =
             vp.minX >= _cachedViewportMinX && vp.maxX <= _cachedViewportMaxX &&
             vp.minY >= _cachedViewportMinY && vp.maxY <= _cachedViewportMaxY
-        let zoomStable = isLineWidthZoomStable(engine.camera.zoom, _bufferedZoom)
+        let zoomStable = isLineWidthZoomStable(currentLineWidthZoom, _bufferedZoom)
 
         // FIX: Removed `&& cadVertexBuffer != nil` — empty spaces cache via engine._cachedMutationGen
         let renderCacheHit = !pendingApplied && !engine.interaction.dragActive && !engine.interaction.gripActive

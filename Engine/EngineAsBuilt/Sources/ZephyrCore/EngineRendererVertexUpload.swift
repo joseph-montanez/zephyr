@@ -196,6 +196,7 @@ extension EngineRenderer {
             maxY: vp.maxY + marginY
         )
         let zoom = engine.camera.zoom
+        let lineZoom = currentLineWidthZoom
         let mutationGen = engine.geometryManager.mutationGeneration
         let paletteGen = engine.ui.displayPaletteGeneration
 
@@ -207,7 +208,7 @@ extension EngineRenderer {
                 vp.minX >= inFlightRegion.minX && vp.maxX <= inFlightRegion.maxX &&
                 vp.minY >= inFlightRegion.minY && vp.maxY <= inFlightRegion.maxY
 
-            let zoomStable = isLineWidthZoomStable(zoom, _vbInFlightZoom)
+            let zoomStable = isLineWidthZoomStable(lineZoom, _vbInFlightZoom)
             if vpInsideInFlight && zoomStable
                 && _vbInFlightMutationGen == mutationGen
                 && _vbInFlightPaletteGen == paletteGen
@@ -226,11 +227,12 @@ extension EngineRenderer {
 
         _vbInFlightToken = token
         _vbInFlightRegion = region
-        _vbInFlightZoom = zoom
+        _vbInFlightZoom = lineZoom
         _vbInFlightMutationGen = mutationGen
         _vbInFlightPaletteGen = paletteGen
 
         let capturedZoom = zoom
+        let capturedPixelScale = lineWidthPixelScale
         let capturedAA = antiAliasLines
         let capturedHairlineQuads = usesTriangleHairlines
         let capturedMutationGen = mutationGen
@@ -240,6 +242,7 @@ extension EngineRenderer {
                 inputs: inputs,
                 token: token,
                 cameraZoom: capturedZoom,
+                pixelScale: capturedPixelScale,
                 antiAliasLines: capturedAA,
                 hairlineQuads: capturedHairlineQuads,
                 region: region,
@@ -255,7 +258,7 @@ extension EngineRenderer {
         guard let wantToken = _vbInFlightToken else { return }
         guard let result = vbBuilder.takePending(forToken: wantToken) else { return }
 
-        if !isLineWidthZoomStable(engine.camera.zoom, result.builtZoom) {
+        if !isLineWidthZoomStable(currentLineWidthZoom, result.builtZoom) {
             _vbInFlightToken = nil
             _vbBuildTask = nil
             _vbInFlightRegion = nil
