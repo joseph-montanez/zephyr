@@ -207,13 +207,7 @@ extension EngineRenderer {
                 vp.minX >= inFlightRegion.minX && vp.maxX <= inFlightRegion.maxX &&
                 vp.minY >= inFlightRegion.minY && vp.maxY <= inFlightRegion.maxY
 
-            let zoomStable: Bool
-            if _vbInFlightZoom > 0 {
-                let ratio = zoom / _vbInFlightZoom
-                zoomStable = ratio > 0.8 && ratio < 1.25
-            } else {
-                zoomStable = false
-            }
+            let zoomStable = isLineWidthZoomStable(zoom, _vbInFlightZoom)
             if vpInsideInFlight && zoomStable
                 && _vbInFlightMutationGen == mutationGen
                 && _vbInFlightPaletteGen == paletteGen
@@ -260,6 +254,14 @@ extension EngineRenderer {
     internal func applyPendingVertexBuildIfReady() {
         guard let wantToken = _vbInFlightToken else { return }
         guard let result = vbBuilder.takePending(forToken: wantToken) else { return }
+
+        if !isLineWidthZoomStable(engine.camera.zoom, result.builtZoom) {
+            _vbInFlightToken = nil
+            _vbBuildTask = nil
+            _vbInFlightRegion = nil
+            engine._cachedMutationGen = -1
+            return
+        }
 
         let paletteGen = _vbInFlightPaletteGen
         applyVertexBuild(result, paletteGen: paletteGen)

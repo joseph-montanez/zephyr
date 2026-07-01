@@ -84,6 +84,12 @@ public final class EngineRenderer {
         #endif
     }
 
+    internal func isLineWidthZoomStable(_ zoom: Double, _ referenceZoom: Double) -> Bool {
+        guard referenceZoom > 0 else { return false }
+        let ratio = zoom / referenceZoom
+        return ratio > 0.995 && ratio < 1.005
+    }
+
     /// Anti-aliased line rendering toggle.
     public var antiAliasLines: Bool = false {
         didSet {
@@ -315,8 +321,7 @@ public final class EngineRenderer {
         let insideBuffer =
             vp.minX >= _cachedViewportMinX && vp.maxX <= _cachedViewportMaxX &&
             vp.minY >= _cachedViewportMinY && vp.maxY <= _cachedViewportMaxY
-        let zoomRatio = _bufferedZoom > 0 ? engine.camera.zoom / _bufferedZoom : Double.infinity
-        let zoomStable = zoomRatio > 0.8 && zoomRatio < 1.25
+        let zoomStable = isLineWidthZoomStable(engine.camera.zoom, _bufferedZoom)
 
         // FIX: Removed `&& cadVertexBuffer != nil` — empty spaces cache via engine._cachedMutationGen
         let renderCacheHit = !pendingApplied && !engine.interaction.dragActive && !engine.interaction.gripActive
