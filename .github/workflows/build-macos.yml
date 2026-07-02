@@ -134,6 +134,7 @@ jobs:
           export DWG_INCLUDE="$HOME/dev/libredwg/include"
           export DWG_LIB="$HOME/dev/libredwg/src/.libs"
           export DWG_SRC="$HOME/dev/libredwg/src"
+          export DWG_ROOT="$HOME/dev/libredwg"
           export ZLIB_NG_INCLUDE="$BREW_PREFIX/include"
           export ZLIB_NG_LIB="$BREW_PREFIX/lib"
           export CPATH="$BREW_PREFIX/include"
