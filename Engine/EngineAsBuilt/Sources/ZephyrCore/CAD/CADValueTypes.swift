@@ -236,6 +236,18 @@ public struct Transform3D: Hashable, Sendable {
         }
     }
 
+    // MARK: Raw element access (for lossless serialization)
+
+    /// The 16 matrix elements in row-major order. Use this for lossless
+    /// serialization — avoids the sign loss inherent in decomposing via
+    /// `position` / `scale` / `rotation` when scales are negative.
+    public var rawElements: [Double] {
+        [m.0,  m.1,  m.2,  m.3,
+         m.4,  m.5,  m.6,  m.7,
+         m.8,  m.9,  m.10, m.11,
+         m.12, m.13, m.14, m.15]
+    }
+
     // MARK: Hashable / Equatable
 
     public func hash(into hasher: inout Hasher) {

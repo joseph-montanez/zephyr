@@ -651,37 +651,15 @@ public enum EABWriter {
         w.writeInt32(Int32(dim.flags))
     }
 
+    /// Write the raw 16 f64 matrix elements in row-major order.
+    /// This preserves the full affine transform without the sign loss inherent in
+    /// decomposing via `position` / `scale` / `rotation` (the latter returns
+    /// column-vector *magnitudes*, which drop negative scale signs from mirrored
+    /// DXF INSERTs).  The reader (`readTransform`) reads back the same raw values.
     private static func writeTransform(_ t: Transform3D, to w: BinaryWriter) {
-        // Write 16 f64 values (row-major). We can't easily iterate the tuple,
-        // so extract via position/scale/rotation + manually.
-        // Simpler: serialize via withUnsafeBytes of the Transform3D.
-        // But Transform3D uses a private tuple — we serialize the known fields.
-        // Actually, let's use the raw initializer path by round-tripping through
-        // a reconstruction. Better: expose a raw property on Transform3D.
-        // For now, write identity if we can't get the internal representation.
-        // WORKAROUND: serialize known components
-        let pos = t.position
-        let scl = t.scale
-        let rot = t.rotation
-        // Reconstruct matrix from position, scale, rotation
-        let c = cos(rot)
-        let sn = sin(rot)
-        w.writeFloat64(c * scl.x)    // m00
-        w.writeFloat64(-sn * scl.y)   // m01
-        w.writeFloat64(0)             // m02
-        w.writeFloat64(pos.x)         // m03
-        w.writeFloat64(sn * scl.x)    // m10
-        w.writeFloat64(c * scl.y)     // m11
-        w.writeFloat64(0)             // m12
-        w.writeFloat64(pos.y)         // m13
-        w.writeFloat64(0)             // m20
-        w.writeFloat64(0)             // m21
-        w.writeFloat64(scl.z)         // m22
-        w.writeFloat64(pos.z)         // m23
-        w.writeFloat64(0)             // m30
-        w.writeFloat64(0)             // m31
-        w.writeFloat64(0)             // m32
-        w.writeFloat64(1)             // m33
+        for element in t.rawElements {
+            w.writeFloat64(element)
+        }
     }
 
     // MARK: - Constraints
