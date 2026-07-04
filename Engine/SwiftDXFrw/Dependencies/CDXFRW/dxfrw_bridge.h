@@ -349,6 +349,26 @@ int dxfrw_read(const char *filePath, DXFRW_Result *outResult);
  */
 void dxfrw_result_free(DXFRW_Result *result);
 
+/**
+ * Write a DXF file using libdxfrw's writer.
+ * Produces a complete, valid ASCII DXF with proper subclass markers,
+ * handles, tables, blocks, and objects sections.
+ *
+ * @param filePath    Path to the DXF file to create (overwritten if exists).
+ * @param entities    Array of entity data to write in model space.
+ * @param entityCount Number of entities.
+ * @param layers      Array of layers to include in the LAYER table.
+ * @param layerCount  Number of layers (must be >= 1; layer "0" added if missing).
+ * @param blocks      Array of block definitions. Block geometry must be in
+ *                    `entities` with `parentBlockName` set to the block name.
+ * @param blockCount  Number of block definitions.
+ * @return 1 on success, 0 on failure.
+ */
+int dxfrw_write(const char *filePath,
+                const DXFRW_EntityData *entities, int entityCount,
+                const DXFRW_LayerData *layers, int layerCount,
+                const DXFRW_BlockData *blocks, int blockCount);
+
 #ifdef __cplusplus
 }
 #endif
