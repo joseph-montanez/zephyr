@@ -31,21 +31,36 @@ public enum Earcut {
     // MARK: - Public API
 
     public static func triangulate(_ data: [Float], holeIndices: [Int] = [], dimensions: Int = 2)
-        -> [Int]
+     -> [Int]
     {
         let dim = Swift.max(2, dimensions)
+        
+        // ---------------------------------------------------------
+        // TIME: O(1)
+        // SPACE: O(N) for the pre-allocated array.
+        // Math and memory allocation are constant time operations.
+        // ---------------------------------------------------------
+        let vertexCount = data.count / dim
+        let expectedTriangles = Swift.max(0, vertexCount - 2 + 2 * holeIndices.count)
         var triangles: [Int] = []
+        triangles.reserveCapacity(expectedTriangles * 3)
 
         let hasHoles = !holeIndices.isEmpty
         let outerLen = hasHoles ? holeIndices[0] * dim : data.count
 
+        // ---------------------------------------------------------
+        // TIME: O(V) where V is the number of outer ring vertices.
+        // This linearly scans the outer ring data to build the 
+        // doubly-linked list.
+        // ---------------------------------------------------------
         guard
             var outerNode = linkedList(
                 data: data, start: 0, end: outerLen, dim: dim, clockwise: true)
         else {
             return triangles
         }
-        // A ring of fewer than three distinct vertices has no area.
+        
+        // O(1) check
         if outerNode.next === outerNode.prev {
             return triangles
         }
@@ -54,35 +69,53 @@ public enum Earcut {
         var minY: Float = 0
         var invSize: Float = 0
 
+        // ---------------------------------------------------------
+        // TIME: O(H log H + V * H) worst case, roughly O(N log N) average.
+        // H = number of holes, V = vertices.
+        // Eliminating holes requires sorting the holes by their x-bounds 
+        // O(H log H) and then finding a visible bridge vertex on the 
+        // outer ring to connect them O(V).
+        // ---------------------------------------------------------
         if hasHoles {
             outerNode = eliminateHoles(
                 data: data, holeIndices: holeIndices, outerNode: outerNode, dim: dim)
         }
 
-        // For non-trivial rings, build a bounding box and a z-order hash so ear
-        // testing becomes roughly O(n·log n) instead of O(n²).
         if data.count > 80 * dim {
-            minX = data[0]
-            minY = data[1]
-            var maxX = data[0]
-            var maxY = data[1]
+            // ---------------------------------------------------------
+            // TIME: O(V) where V is the number of outer ring vertices.
+            // A simple linear scan to find the minimum and maximum bounds.
+            // ---------------------------------------------------------
+            data.withUnsafeBufferPointer { buffer in
+                minX = buffer[0]
+                minY = buffer[1]
+                var maxX = buffer[0]
+                var maxY = buffer[1]
 
-            var i = dim
-            while i < outerLen {
-                let x = data[i]
-                let y = data[i + 1]
-                if x < minX { minX = x }
-                if y < minY { minY = y }
-                if x > maxX { maxX = x }
-                if y > maxY { maxY = y }
-                i += dim
+                var i = dim
+                while i < outerLen {
+                    let x = buffer[i]
+                    let y = buffer[i + 1]
+                    if x < minX { minX = x }
+                    if y < minY { minY = y }
+                    if x > maxX { maxX = x }
+                    if y > maxY { maxY = y }
+                    i += dim
+                }
+
+                let size = Swift.max(maxX - minX, maxY - minY)
+                invSize = size != 0 ? 32767.0 / size : 0
             }
-
-            // invSize maps the longest bbox side onto the 15-bit hash range.
-            let size = Swift.max(maxX - minX, maxY - minY)
-            invSize = size != 0 ? 32767.0 / size : 0
         }
 
+        // ---------------------------------------------------------
+        // TIME: O(N log N) average, O(N²) worst-case.
+        // This is the core ear-clipping loop. Naive ear clipping is O(N²).
+        // Because we calculate 'invSize' above, earcutLinked uses a 
+        // Z-order curve hash to quickly filter out vertices during 
+        // point-in-triangle tests, bringing the average time down to 
+        // O(N log N). Degenerate cases fall back to O(N²).
+        // ---------------------------------------------------------
         earcutLinked(
             ear: outerNode, triangles: &triangles, dim: dim, minX: minX, minY: minY,
             invSize: invSize, pass: 0)
