@@ -47,7 +47,7 @@ $env:DXFRW_INCLUDE      = "$clangDevRoot/libdxfrw/src"
 $env:DXFRW_LIB          = "$clangDevRoot/libdxfrw/build/Release"
 
 $env:DWG_INCLUDE        = "$clangDevRoot/libredwg/include"
-$env:DWG_LIB            = "$clangDevRoot/libredwg/build/Release"
+$env:DWG_LIB            = "$clangDevRoot/libredwg/build"
 
 $env:ZLIB_NG_INCLUDE    = "$clangDevRoot/zlib-ng/include"
 $env:ZLIB_NG_LIB        = "$clangDevRoot/zlib-ng/lib"
@@ -128,7 +128,7 @@ if ($pdfiumAvailable) { Copy-Item -LiteralPath $pdfiumDll -Destination $dllDest 
 
 # Copy libdxfrw & LibreDWG
 Copy-Item -Path "$DevRoot\libdxfrw\build\Release\dxfrw.dll" -Destination $dllDest -Force -ErrorAction SilentlyContinue
-Copy-Item -Path "$DevRoot\libredwg\build\Release\libredwg.dll" -Destination $dllDest -Force -ErrorAction SilentlyContinue
+Copy-Item -Path "$DevRoot\libredwg\build\libredwg.dll" -Destination $dllDest -Force -ErrorAction SilentlyContinue
 
 # Copy Iconv
 $iconvType = if ($isRelease) { "bin" } else { "debug\bin" }
