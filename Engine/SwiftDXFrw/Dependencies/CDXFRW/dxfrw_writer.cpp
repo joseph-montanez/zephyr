@@ -270,6 +270,7 @@ private:
     case DXFRW_ET_HATCH:     writeHatch(e); break;
     case DXFRW_ET_SOLID:     writeSolid(e); break;
     case DXFRW_ET_3DFACE:    write3dFace(e); break;
+    case DXFRW_ET_TABLE:    writeTable(e); break;
     default: break;
     }
   }
@@ -470,6 +471,24 @@ private:
     f.thirdPoint = toDRW(e->thirdPoint);
     f.fourPoint = toDRW(e->fourPoint);
     writer->write3dface(&f);
+  }
+
+  void writeTable(const DXFRW_EntityData *e) {
+    if (e->tableIsModified) {
+      // Modified tables: explode via Swift (handled before reaching writer).
+      // If we get here, skip — table data wasn't preserved properly.
+      WR_TRACE("writeTable: skipping modified table (should be exploded)");
+      return;
+    }
+    DRW_Table tbl;
+    fillEntity(tbl, e);
+    tbl.insertionPoint = toDRW(e->basePoint);
+    // Populate rawGroups from bridge arrays
+    for (int i = 0; i < e->tableRawGroupCount; i++) {
+      tbl.rawGroups.push_back({e->tableRawGroupCodes[i],
+                               std::string(e->tableRawGroupValues[i] ? e->tableRawGroupValues[i] : "")});
+    }
+    writer->writeTable(&tbl);
   }
 };
 

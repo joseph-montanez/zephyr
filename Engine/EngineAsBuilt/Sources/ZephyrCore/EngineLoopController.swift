@@ -222,8 +222,25 @@ public final class EngineLoopController {
             let dx = abs(x - interaction.lastClickScreenX)
             let dy = abs(y - interaction.lastClickScreenY)
             if interaction.lastClickedHandle == handle && (now - interaction.lastClickTime) < 400 && dx < 8 && dy < 8 {
+                if let entity = engine.document.entity(for: handle) {
+                    // If entity has a .table primitive, open DataTable panel
+                    if let geom = entity.localGeometry, geom.contains(where: { if case .table = $0 { return true }; return false }) {
+                        interaction.lastClickTime = 0
+                        interaction.lastClickedHandle = nil
+                        engine.ui.dataTablePanelVisible = true
+                        engine.cadSelection.addToSelection(handle)
+                        return
+                    }
+                }
                 if let entity = engine.document.entity(for: handle),
                    let blockID = entity.blockID {
+                    // Skip internal table display blocks (*T blocks)
+                    if let block = engine.document.block(for: blockID),
+                       block.isInternalTableDisplayBlock {
+                        interaction.lastClickTime = 0
+                        interaction.lastClickedHandle = nil
+                        return
+                    }
                     if entity.dimensionMetadata != nil {
                         interaction.lastClickTime = 0
                         interaction.lastClickedHandle = nil

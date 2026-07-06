@@ -310,6 +310,7 @@ enum PDFPrimitives {
             // Images are written via PDFExporter.collectItems/writeContent with
             // image XObjects, not through the path writer.
             break
+        case .table: break
         }
     }
 
@@ -403,6 +404,8 @@ enum PDFPrimitives {
         case .gradient(_, _, _, _, let c1, _):
             return c1
         case .image(_, _, _, _, _, let c):
+            return c
+        case .table(_, _, let c):
             return c
         }
     }

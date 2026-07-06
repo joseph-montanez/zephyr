@@ -210,6 +210,9 @@ public final class CADRendererBridge {
             // Resolve geometry from block or local
             let resolved: [CADPrimitive]?
             if let bid = entity.blockID, let block = snapshot.blocks[bid] {
+                // Skip internal table display blocks (*T1, *T4) — these are
+                // rendered by the .table primitive, not as block geometry
+                if block.isInternalTableDisplayBlock { continue }
                 resolved = block.geometry
             } else {
                 resolved = entity.localGeometry
@@ -390,6 +393,7 @@ public final class CADRendererBridge {
                                     case .rect: typeStr = "rect"
                                     case .fillRect: typeStr = "fillRect"
                                     case .image: typeStr = "image"
+                    case .table: typeStr = "table"
                                     }
                                     print("[CADBridge]   EXPLOSION: \(typeStr) → \(s.count) specs (lineType=\(v.lineType), lw=\(v.lineWeight), ltScale=\(v.lineTypeScale))")
                                 }
@@ -555,6 +559,7 @@ public final class CADRendererBridge {
                         case .rect: typeStr = "rect"
                         case .fillRect: typeStr = "fillRect"
                         case .image: typeStr = "image"
+                    case .table: typeStr = "table"
                         }
                         print("[CADBridge]     prim[\(i)]: \(typeStr)")
                     }
@@ -1136,6 +1141,9 @@ public final class CADRendererBridge {
                     return
                 case .image:
                     // Images cannot be vertex-edited directly
+                    return
+                case .table:
+                    // Tables cannot be vertex-edited directly
                     return
                 }
             }

@@ -247,6 +247,7 @@ public final class CleanSpecklesCommand: FeatureCommand {
     /// Excludes circles, arcs, text, and complex polygons.
     public static func isSpecklePrimitive(_ prim: CADPrimitive) -> Bool {
         switch prim {
+        case .table: return false
         case .point, .line, .rect, .polygon, .polyline, .fillRect, .fillPolygon:
             return true
         case .fillComplexPolygon, .gradient, .circle, .arc, .text, .spline, .ellipse, .hatch, .ray, .image:

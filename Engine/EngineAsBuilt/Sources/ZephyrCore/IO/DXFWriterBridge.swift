@@ -154,6 +154,7 @@ public enum DXFWriterBridge {
         case .hatch(_, _, _, _, let c, _): primColor = c
         case .ray(_, _, let c): primColor = c
         case .image: primColor = nil
+        case .table(_, _, let c): primColor = c
         }
 
         if let c = primColor, c.a == 0 { return [] }
@@ -165,6 +166,15 @@ public enum DXFWriterBridge {
         e.lineWeight = -1 // ByLayer
 
         switch p {
+        case .table(let data, _, _):
+            // Explode table to lines + text for DXF export
+            let exploded = DataTableTessellator.explodeForDXF(data: data, transform: t)
+            var allEntities: [DXFRW_EntityData] = []
+            for ep in exploded {
+                allEntities.append(contentsOf: convertPrimitive(ep, transform: .identity,
+                    layerName: layerName))
+            }
+            return allEntities
         case .point(let pos, _):
             let wp = t.transformPoint(pos)
             e.type = DXFRW_ET_POINT

@@ -276,6 +276,9 @@ public enum DXFEntityConverter {
         case DXFRW_ET_IMAGE:
             return convertImage(e, color: primColor)
 
+        case DXFRW_ET_TABLE:
+            return convertTable(e, color: primColor)
+
         default:
             return []
         }
@@ -333,6 +336,107 @@ public enum DXFEntityConverter {
             clipBoundary: clipBoundary,
             tint: nil
         )]
+    }
+
+    /// Convert a DXF ACAD_TABLE entity to a DataTable primitive.
+    private static func convertTable(_ e: DXFRW_EntityData, color: ColorRGBA?) -> [CADPrimitive] {
+        var columns: [DataTableColumn] = []
+        var rows: [DataTableRow] = []
+
+        // Create columns from column widths
+        for c in 0..<Int(e.tableNumColumns) {
+            let width = (c < Int(e.tableNumColumns) && e.tableColumnWidths != nil)
+                ? e.tableColumnWidths![c] : 0.0
+            columns.append(DataTableColumn(
+                id: UUID(),
+                name: "Column \(c + 1)",
+                width: width,
+                alignment: .left
+            ))
+        }
+
+        // Build rows from cell data
+        let cellCount = Int(e.tableCellCount)
+        var cellsByRow: [Int: [(col: Int, cell: DataTableCell)]] = [:]
+
+        for i in 0..<cellCount {
+            let row = Int(e.tableCellRow![i])
+            let col = Int(e.tableCellCol![i])
+            let text = e.tableCellText?[i].map { String(cString: $0) } ?? ""
+            let fieldHandle = e.tableCellFieldHandle?[i].map { String(cString: $0) }
+            let displayText = e.tableCellDisplayText?[i].map { String(cString: $0) }
+            let colSpan = (i < Int(e.tableCellCount) && e.tableCellColSpan != nil)
+                ? Int(e.tableCellColSpan![i]) : 1
+            let covered = (i < Int(e.tableCellCount) && e.tableCellCovered != nil)
+                ? (e.tableCellCovered![i] != 0) : false
+
+            let colID = col < columns.count ? columns[col].id : UUID()
+            let value: DataTableCellValue = text.isEmpty ? .empty : .string(text)
+
+            let cell = DataTableCell(
+                columnID: colID,
+                value: value,
+                formulaExpression: fieldHandle != nil ? "FIELD:\(fieldHandle!)" : nil,
+                cachedDisplayText: displayText,
+                rowSpan: 1,
+                colSpan: colSpan,
+                coveredByMerge: covered
+            )
+
+            if cellsByRow[row] == nil { cellsByRow[row] = [] }
+            cellsByRow[row]!.append((col: col, cell: cell))
+        }
+
+        // Sort cells within each row by column index
+        let sortedRows = cellsByRow.keys.sorted()
+        for rowIdx in sortedRows {
+            let sortedCells = (cellsByRow[rowIdx] ?? []).sorted { $0.col < $1.col }
+            rows.append(DataTableRow(id: UUID(), cells: sortedCells.map { $0.cell }))
+        }
+
+        // Build row heights
+        var rowHeights: [Double] = []
+        if e.tableRowHeights != nil {
+            for r in 0..<Int(e.tableNumRows) {
+                rowHeights.append(r < Int(e.tableNumRows) ? e.tableRowHeights![r] : 2.0)
+            }
+        }
+
+        // Build native DXF payload for raw passthrough
+        var rawGroups: [DataTableRawDXFGroup] = []
+        let rawCount = Int(e.tableRawGroupCount)
+        if rawCount > 0, let codes = e.tableRawGroupCodes, let values = e.tableRawGroupValues {
+            for i in 0..<rawCount {
+                let value = values[i].map { String(cString: $0) } ?? ""
+                rawGroups.append(DataTableRawDXFGroup(code: Int(codes[i]), value: value))
+            }
+        }
+
+        let nativePayload = DataTableNativeDXFPayload(
+            rawGroups: rawGroups,
+            blockName: e.tableBlockName.map { String(cString: $0) },
+            tableStyleHandle: e.tableStyleHandle.map { String(cString: $0) },
+            blockRecordHandle: e.tableBlockRecordHandle.map { String(cString: $0) },
+            isModified: e.tableIsModified != 0
+        )
+
+        var data = DataTableData(
+            columns: columns,
+            rows: rows,
+            rowHeights: rowHeights,
+            defaultRowHeight: 2.0,
+            defaultColumnWidth: 5.0,
+            headerRowCount: 1,
+            cellMargin: 0.25,
+            textHeight: 1.5,
+            cellAlignment: .left,
+            nativeDXFPayload: nativePayload
+        )
+
+        let insertion = DXFImporter.toVector(e.basePoint)
+        let origin = Vector3(x: insertion.x, y: -insertion.y, z: insertion.z)
+
+        return [.table(data: data, origin: origin, color: color)]
     }
 
 

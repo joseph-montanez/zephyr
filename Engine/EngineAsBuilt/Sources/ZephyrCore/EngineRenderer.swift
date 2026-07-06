@@ -1600,6 +1600,7 @@ public final class EngineRenderer {
         }
 
         switch primitive {
+        case .table: break
         case .point(let position, _):
             let p = movedWorld(position)
             let sp = engine.camera.transformWorldToScreen(worldX: p.x, worldY: p.y, cam: cam)

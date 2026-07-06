@@ -1063,6 +1063,21 @@ public enum EABReader {
                 }
                 let color = readColor()
                 prims.append(.fillComplexPolygon(outer: outer, holes: holes, color: color))
+            case 17: // table
+                let origin = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                let jsonStr = r.readString()
+                let data: DataTableData
+                if let jsonData = jsonStr.data(using: .utf8),
+                   let decoded = try? JSONDecoder().decode(DataTableData.self, from: jsonData) {
+                    data = decoded
+                } else {
+                    data = DataTableData()
+                }
+                let hasColor = r.readUInt8()
+                let color: ColorRGBA? = hasColor != 0
+                    ? ColorRGBA(r: r.readUInt8(), g: r.readUInt8(), b: r.readUInt8(), a: r.readUInt8())
+                    : nil
+                prims.append(.table(data: data, origin: origin, color: color))
             case 10: // gradient
                 let outerCount = Int(r.readUInt32())
                 var outer: [Vector3] = []

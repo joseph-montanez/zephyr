@@ -97,6 +97,7 @@ public enum CADRectSelect {
         rectMin: Vector3, rectMax: Vector3
     ) -> Bool {
         switch prim {
+        case .table: return true
         case .point(let pos, _):
             let p = transform.transformPoint(pos)
             return p.x >= rectMin.x && p.x <= rectMax.x &&

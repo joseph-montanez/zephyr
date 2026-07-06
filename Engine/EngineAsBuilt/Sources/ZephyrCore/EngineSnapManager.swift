@@ -69,7 +69,7 @@ public final class EngineSnapManager {
 
     /// Enable Ortho mode (F8) — hard-constrains cursor to cardinal axes (0°/90°/180°/270°)
     /// from the current reference point. Ortho beats polar tracking when both are on.
-    public var orthoEnabled: Bool = true
+    public var orthoEnabled: Bool = false
     /// Hysteresis: was the last ortho constraint horizontal? Prevents oscillation at 45° diagonals.
     public var orthoLastWasHorizontal: Bool = false
     /// Hysteresis: was the last ortho constraint vertical? Prevents oscillation at 45° diagonals.

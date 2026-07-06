@@ -32,6 +32,9 @@ public final class EngineUIManager {
     /// Whether the Blocks panel is visible (toggled via "BLOCKS" command).
     public var blockPanelVisible: Bool = false
 
+    /// Whether the Data Tables panel is visible (toggled via "TABLE" command).
+    public var dataTablePanelVisible: Bool = false
+
     /// Whether the Layers panel is visible (toggled via "LA"/"LAYER" command). Default true.
     public var layersPanelVisible: Bool = true
     public var fpsCacheFrame: Int = 15

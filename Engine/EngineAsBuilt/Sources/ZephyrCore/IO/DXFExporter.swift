@@ -761,6 +761,7 @@ public enum DXFExporter {
         case .hatch(_, _, _, _, let c, _): primColor = c
         case .ray(_, _, let c): primColor = c
         case .image(_, _, _, _, _, let c): primColor = c
+        case .table(_, _, let c): primColor = c
         }
 
         // Skip fully transparent primitives
@@ -1152,6 +1153,7 @@ public enum DXFExporter {
 
         case .image:
             break
+        case .table: break
         }
     }
 

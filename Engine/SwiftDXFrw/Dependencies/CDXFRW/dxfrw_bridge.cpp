@@ -822,6 +822,8 @@ public:
       break;
     case DXFRW_ET_VIEWPORT:
       break;
+    case DXFRW_ET_TABLE:
+      break;
     default:
       unknownCount++;
       break;
@@ -2154,6 +2156,72 @@ public:
     }
   }
 
+  void addTable(const DRW_Table &data) override {
+    DXFRW_EntityData e;
+    std::memset(&e, 0, sizeof(e));
+    initEntity(e, DXFRW_ET_TABLE, data);
+
+    // Raw passthrough groups
+    e.tableRawGroupCount = (int)data.rawGroups.size();
+    if (e.tableRawGroupCount > 0) {
+      e.tableRawGroupCodes = (int *)malloc(sizeof(int) * e.tableRawGroupCount);
+      e.tableRawGroupValues = (char **)malloc(sizeof(char *) * e.tableRawGroupCount);
+      for (int i = 0; i < e.tableRawGroupCount; i++) {
+        e.tableRawGroupCodes[i] = data.rawGroups[i].code;
+        e.tableRawGroupValues[i] = strToC(data.rawGroups[i].value);
+      }
+    }
+    e.tableIsModified = data.isModified ? 1 : 0;
+
+    // Parsed metadata
+    e.tableBlockName = strToC(data.blockName);
+    e.tableStyleHandle = strToC(data.tableStyleHandle);
+    e.tableBlockRecordHandle = strToC(data.blockRecordHandle);
+    e.tableNumRows = data.numRows;
+    e.tableNumColumns = data.numColumns;
+    e.basePoint = toC(data.insertionPoint);
+
+    // Row heights
+    if (!data.rowHeights.empty()) {
+      e.tableRowHeights = (double *)malloc(sizeof(double) * data.rowHeights.size());
+      std::memcpy(e.tableRowHeights, data.rowHeights.data(),
+                  sizeof(double) * data.rowHeights.size());
+    }
+    e.tableNumRows = (int)data.rowHeights.size();
+
+    // Column widths
+    if (!data.columnWidths.empty()) {
+      e.tableColumnWidths = (double *)malloc(sizeof(double) * data.columnWidths.size());
+      std::memcpy(e.tableColumnWidths, data.columnWidths.data(),
+                  sizeof(double) * data.columnWidths.size());
+    }
+    e.tableNumColumns = (int)data.columnWidths.size();
+
+    // Cell data
+    e.tableCellCount = (int)data.cells.size();
+    if (e.tableCellCount > 0) {
+      e.tableCellText = (char **)malloc(sizeof(char *) * e.tableCellCount);
+      e.tableCellRow = (int *)malloc(sizeof(int) * e.tableCellCount);
+      e.tableCellCol = (int *)malloc(sizeof(int) * e.tableCellCount);
+      e.tableCellColSpan = (int *)malloc(sizeof(int) * e.tableCellCount);
+      e.tableCellCovered = (int *)malloc(sizeof(int) * e.tableCellCount);
+      e.tableCellFieldHandle = (char **)malloc(sizeof(char *) * e.tableCellCount);
+      e.tableCellDisplayText = (char **)malloc(sizeof(char *) * e.tableCellCount);
+      for (int i = 0; i < e.tableCellCount; i++) {
+        e.tableCellText[i] = strToC(data.cells[i].text);
+        e.tableCellRow[i] = data.cells[i].row;
+        e.tableCellCol[i] = data.cells[i].column;
+        e.tableCellColSpan[i] = data.cells[i].colSpan;
+        e.tableCellCovered[i] = data.cells[i].coveredByMerge ? 1 : 0;
+        e.tableCellFieldHandle[i] = strToC(data.cells[i].fieldHandle);
+        e.tableCellDisplayText[i] = strToC(data.cells[i].displayText);
+      }
+    }
+
+    bump(e.type);
+    entities.push_back(e);
+  }
+
   void addComment(const char *comment) override { (void)comment; }
 
   /* ── Write callbacks (unused, we only read) ──────────────────────── */
@@ -2476,6 +2544,34 @@ void dxfrw_result_free(DXFRW_Result *result) {
     free(e->imageFilePath);
     if (e->imageClipVertexCount > 0 && e->imageClipVertices) {
       free(e->imageClipVertices);
+    }
+
+    /* Free table fields */
+    if (e->tableRawGroupCount > 0) {
+      for (int j = 0; j < e->tableRawGroupCount; j++) {
+        free(e->tableRawGroupValues[j]);
+      }
+      free(e->tableRawGroupCodes);
+      free(e->tableRawGroupValues);
+    }
+    free(e->tableBlockName);
+    free(e->tableStyleHandle);
+    free(e->tableBlockRecordHandle);
+    free(e->tableRowHeights);
+    free(e->tableColumnWidths);
+    if (e->tableCellCount > 0) {
+      for (int j = 0; j < e->tableCellCount; j++) {
+        free(e->tableCellText[j]);
+        free(e->tableCellFieldHandle[j]);
+        free(e->tableCellDisplayText[j]);
+      }
+      free(e->tableCellText);
+      free(e->tableCellRow);
+      free(e->tableCellCol);
+      free(e->tableCellColSpan);
+      free(e->tableCellCovered);
+      free(e->tableCellFieldHandle);
+      free(e->tableCellDisplayText);
     }
   }
   free(result->entities);

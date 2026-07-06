@@ -332,6 +332,7 @@ public enum CADGripSystem {
     /// points, circles, arcs, splines, text, or ellipses.
     public static func shouldCreateMidpointGrips(for prim: CADPrimitive) -> Bool {
         switch prim {
+        case .table: return false
         case .line, .rect, .polygon, .polyline, .fillRect, .fillPolygon,
              .fillComplexPolygon, .gradient, .hatch, .ray:
             return true

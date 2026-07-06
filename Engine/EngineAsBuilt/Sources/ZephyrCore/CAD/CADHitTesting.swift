@@ -373,6 +373,16 @@ public enum CADHitTesting {
             let corners = [c0, c1, c2, c3]
             if pointInConvexPolygon(point, corners) { return 0 }
             return minEdgeDistSq(point, corners).flatMap { $0 <= t2 ? $0 : nil }
+        case .table(let data, let origin, _):
+            // Hit test: check against table's derived bounding rect
+            let size = DataTableTessellator.computeSize(data: data)
+            let c0 = transform.transformPoint(origin)
+            let c1 = transform.transformPoint(Vector3(x: origin.x + size.width, y: origin.y, z: origin.z))
+            let c2 = transform.transformPoint(Vector3(x: origin.x + size.width, y: origin.y + size.height, z: origin.z))
+            let c3 = transform.transformPoint(Vector3(x: origin.x, y: origin.y + size.height, z: origin.z))
+            let corners = [c0, c1, c2, c3]
+            if pointInConvexPolygon(point, corners) { return 0 }
+            return minEdgeDistSq(point, corners).flatMap { $0 <= t2 ? $0 : nil }
         }
     }
 

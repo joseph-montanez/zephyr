@@ -251,6 +251,11 @@ public enum CADPrimitive: Hashable, Sendable {
         clipBoundary: [Vector3]? = nil,
         tint: ColorRGBA? = nil
     )
+    case table(
+        data: DataTableData,
+        origin: Vector3,
+        color: ColorRGBA? = nil
+    )
 
     public static func polyline(
         points: [Vector3], color: ColorRGBA? = nil
@@ -334,16 +339,22 @@ public struct CADBlock: Hashable, Sendable {
     public var name: String
     public var geometry: [CADPrimitive]
 
+    /// True if this block is an AutoCAD internal table display block (e.g. *T4).
+    /// Such blocks are preserved for raw DXF passthrough but never rendered or edited.
+    public var isInternalTableDisplayBlock: Bool = false
+
     /// Computed ONCE when the block is created or its geometry changes.
     /// Entity instances transform 8 corners of this box instead of iterating raw geometry — O(1).
     public internal(set) var localBoundingBox: BoundingBox3D
 
     public init(handle: UUID = UUID(),
                 name: String,
-                geometry: [CADPrimitive]) {
+                geometry: [CADPrimitive],
+                isInternalTableDisplayBlock: Bool = false) {
         self.handle = handle
         self.name = name
         self.geometry = geometry
+        self.isInternalTableDisplayBlock = isInternalTableDisplayBlock
         self.localBoundingBox = CADBlock.computeBoundingBox(from: geometry)
     }
 
@@ -417,6 +428,10 @@ public struct CADBlock: Hashable, Sendable {
                 points.append(Vector3(x: insertion.x + uAxis.x, y: insertion.y + uAxis.y, z: insertion.z + uAxis.z))
                 points.append(Vector3(x: insertion.x + uAxis.x + vAxis.x, y: insertion.y + uAxis.y + vAxis.y, z: insertion.z + uAxis.z + vAxis.z))
                 points.append(Vector3(x: insertion.x + vAxis.x, y: insertion.y + vAxis.y, z: insertion.z + vAxis.z))
+            case .table(let data, let origin, _):
+                let size = DataTableTessellator.computeSize(data: data)
+                points.append(origin)
+                points.append(Vector3(x: origin.x + size.width, y: origin.y + size.height, z: origin.z))
             }
         }
         return points.isEmpty ? BoundingBox3D() : BoundingBox3D(from: points)
@@ -822,6 +837,18 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
                 addMidpoint(Vector3(x: (c1.x + c2.x) / 2, y: (c1.y + c2.y) / 2, z: (c1.z + c2.z) / 2))
                 addMidpoint(Vector3(x: (c2.x + c3.x) / 2, y: (c2.y + c3.y) / 2, z: (c2.z + c3.z) / 2))
                 addMidpoint(Vector3(x: (c3.x + c0.x) / 2, y: (c3.y + c0.y) / 2, z: (c3.z + c0.z) / 2))
+            case .table(_, let origin, _):
+                pts.append(.insertionPoint(localPosition: origin))
+                // 4 corners from derived size (approximate for grips)
+                let c0 = origin
+                let c1 = Vector3(x: origin.x + 50, y: origin.y, z: origin.z)
+                let c2 = Vector3(x: origin.x + 50, y: origin.y + 50, z: origin.z)
+                let c3 = Vector3(x: origin.x, y: origin.y + 50, z: origin.z)
+                addVertex(c0)
+                addVertex(c1)
+                addVertex(c2)
+                addVertex(c3)
+                pts.append(.center(localPosition: Vector3(x: (c0.x + c2.x) / 2, y: (c0.y + c2.y) / 2, z: 0)))
             }
         }
 

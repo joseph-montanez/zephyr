@@ -833,6 +833,7 @@ public enum EABWriter {
             case .image:
                 // Images are not converted to PVA vertices
                 break
+            case .table: break
             }
         }
         return verts
@@ -1218,6 +1219,23 @@ public enum EABWriter {
                 if let t = tint {
                     w.writeUInt8(1)
                     w.writeUInt8(t.r); w.writeUInt8(t.g); w.writeUInt8(t.b); w.writeUInt8(t.a)
+                } else {
+                    w.writeUInt8(0)
+                }
+            case .table(let data, let origin, let color):
+                w.writeUInt8(17)
+                w.writeFloat64(origin.x); w.writeFloat64(origin.y); w.writeFloat64(origin.z)
+                // Encode DataTableData as JSON string for simplicity
+                let encoder = JSONEncoder()
+                if let jsonData = try? encoder.encode(data),
+                   let jsonStr = String(data: jsonData, encoding: .utf8) {
+                    w.writeString(jsonStr)
+                } else {
+                    w.writeString("{}")
+                }
+                if let c = color {
+                    w.writeUInt8(1)
+                    w.writeUInt8(c.r); w.writeUInt8(c.g); w.writeUInt8(c.b); w.writeUInt8(c.a)
                 } else {
                     w.writeUInt8(0)
                 }

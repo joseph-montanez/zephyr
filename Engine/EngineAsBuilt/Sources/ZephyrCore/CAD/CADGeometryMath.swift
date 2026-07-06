@@ -573,6 +573,7 @@ public enum CADGeometryMath {
             let c2 = transform.transformPoint(Vector3(x: insertion.x + uAxis.x + vAxis.x, y: insertion.y + uAxis.y + vAxis.y, z: insertion.z + uAxis.z + vAxis.z))
             let c3 = transform.transformPoint(Vector3(x: insertion.x + vAxis.x, y: insertion.y + vAxis.y, z: insertion.z + vAxis.z))
             return [c0, c1, c2, c3]
+        case .table: return []
         }
     }
 
@@ -670,6 +671,8 @@ public enum CADGeometryMath {
             case let .image(insertion, uAxis, vAxis, imageName, clipBoundary, tint):
                 out.append(.image(insertion: tp(insertion), uAxis: tp(uAxis), vAxis: tp(vAxis),
                                   imageName: imageName, clipBoundary: clipBoundary, tint: tint))
+            case .table:
+                out.append(p)
             }
         }
         return out

@@ -89,7 +89,7 @@ struct BlockPanelUI {
             ImGuiTextV("No blocks in this document.")
         } else {
             var blockIdx: Int32 = 0
-            for block in blocks {
+            for block in blocks where !block.isInternalTableDisplayBlock {
                 blockIdx &+= 1
 
                 // Count how many block references (INSERT entities) point to this block definition.

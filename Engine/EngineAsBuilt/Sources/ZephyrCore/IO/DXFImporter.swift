@@ -368,6 +368,27 @@ public enum DXFImporter {
             }
         }
 
+        // 3a2. Mark anonymous table display blocks (*T1, *T4, etc.) as internal.
+        // These are referenced by ACAD_TABLE entities and contain fallback MTEXT/LINE
+        // geometry. They must be preserved for raw DXF passthrough but never rendered
+        // or edited as user blocks.
+        var tableBlockNames = Set<String>()
+        for i in 0..<Int(result.entityCount) {
+            let src = result.entities[i]
+            if src.type == DXFRW_ET_TABLE {
+                if let blockName = src.tableBlockName {
+                    tableBlockNames.insert(String(cString: blockName))
+                }
+            }
+        }
+        // Also mark any block starting with "*T" as internal (AutoCAD convention)
+        for i in 0..<blocks.count {
+            let name = blocks[i].name
+            if tableBlockNames.contains(name) || (name.hasPrefix("*T") && name.count <= 4) {
+                blocks[i].isInternalTableDisplayBlock = true
+            }
+        }
+
         // 3b. Flatten block geometry: each block's own primitives plus the (recursively
         // flattened) geometry of any nested INSERTs, transformed into the parent's space.
         // Memoized; guards against cyclic block references.
@@ -852,6 +873,8 @@ public enum DXFImporter {
             case let .image(insertion, uAxis, vAxis, imageName, clipBoundary, tint):
                 out.append(.image(insertion: tp(insertion), uAxis: tp(uAxis), vAxis: tp(vAxis),
                                   imageName: imageName, clipBoundary: clipBoundary, tint: tint))
+            case .table:
+                out.append(p)
             }
         }
         return out

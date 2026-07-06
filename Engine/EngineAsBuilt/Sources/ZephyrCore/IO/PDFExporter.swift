@@ -414,6 +414,7 @@ public enum PDFExporter {
                 grow(Vector3(x: pos.x + h, y: pos.y + h, z: pos.z))
             case .ray(let start, _, _):
                 grow(start)
+            case .table: break
             case .image(let insertion, let uAxis, let vAxis, _, _, _):
                 grow(insertion)
                 grow(Vector3(x: insertion.x + uAxis.x, y: insertion.y + uAxis.y, z: insertion.z + uAxis.z))

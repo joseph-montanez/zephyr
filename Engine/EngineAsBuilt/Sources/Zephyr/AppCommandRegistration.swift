@@ -117,6 +117,11 @@ struct AppCommandRegistration {
             factory: { DDEditCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "TABLE",
+            aliases: ["DT", "DATATABLE"],
+            factory: { DataTableCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "MEASUREGEOM",
             aliases: ["MEASURE", "MEA", "MG"],
             factory: { MeasureGeomTool() }

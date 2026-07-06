@@ -68,6 +68,7 @@ typedef enum {
   DXFRW_ET_VIEWPORT = 17,
   DXFRW_ET_ATTRIB = 18,
   DXFRW_ET_ATTDEF = 19,
+  DXFRW_ET_TABLE = 20,
   DXFRW_ET_UNKNOWN = 99
 } DXFRW_EntityType;
 
@@ -242,6 +243,30 @@ typedef struct {
   DXFRW_Coord viewportViewTarget; /* model-space target, groups 17/27/37 */
   double viewportViewHeight;   /* model-space view height, group 45 */
   double viewportTwistAngle;   /* view twist in radians, group 51 */
+
+  /* TABLE (ACAD_TABLE) */
+  /* Raw passthrough payload (entire group stream, original order) */
+  int tableRawGroupCount;
+  int *tableRawGroupCodes;
+  char **tableRawGroupValues;
+  int tableIsModified;          /* 0 = unmodified passthrough, 1 = modified */
+
+  /* Parsed cell data */
+  char *tableBlockName;           /* block name (*T4) */
+  char *tableStyleHandle;         /* 342 */
+  char *tableBlockRecordHandle;   /* 343 */
+  int tableNumRows;
+  int tableNumColumns;
+  double *tableRowHeights;        /* array of tableNumRows doubles */
+  double *tableColumnWidths;      /* array of tableNumColumns doubles */
+  int tableCellCount;
+  char **tableCellText;           /* array of tableCellCount strings */
+  int *tableCellRow;              /* array of tableCellCount row indices */
+  int *tableCellCol;              /* array of tableCellCount column indices */
+  int *tableCellColSpan;          /* array of tableCellCount column spans */
+  int *tableCellCovered;          /* array of tableCellCount merge flags */
+  char **tableCellFieldHandle;    /* array of tableCellCount field handles */
+  char **tableCellDisplayText;    /* array of tableCellCount display text */
 
 } DXFRW_EntityData;
 

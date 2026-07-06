@@ -247,6 +247,7 @@ public enum CADPrimitiveGenerator {
         case .hatch(_, _, _, _, let c, _): primColor = c
         case .ray(_, _, let c): primColor = c
         case .image(_, _, _, _, _, let c): primColor = c
+        case .table(_, _, let c): primColor = c
         }
         let clampedOpacity = max(0.0, min(1.0, opacityMultiplier))
         func applyingOpacity(_ value: ColorRGBA) -> (UInt8, UInt8, UInt8, UInt8) {
@@ -787,6 +788,22 @@ public enum CADPrimitiveGenerator {
             // Images are not rendered as geometry primitives.
             // ImageSpec is produced in CADRendererBridge.computeSpecs instead.
             break
+        case .table(let data, let origin, _):
+            // Generate visual primitives (lines, text, fillRects) from table data.
+            // The tessellator builds in local space then applies the entity transform.
+            let visualPrims = DataTableTessellator.generateVisualPrimitives(
+                data: data, origin: origin, transform: transform)
+            for vp in visualPrims {
+                specs.append(contentsOf: computePrimitiveSpecs(
+                    from: vp, transform: .identity,
+                    color: finalColor, z: z,
+                    lineType: lineType, lineWeight: lineWeight,
+                    lineTypeScale: lineTypeScale, geomWidth: geomWidth,
+                    textStyleFonts: textStyleFonts,
+                    linetypePatterns: linetypePatterns,
+                    opacityMultiplier: opacityMultiplier,
+                    splineTessellationDivisor: splineTessellationDivisor))
+            }
         }
         return specs
     }

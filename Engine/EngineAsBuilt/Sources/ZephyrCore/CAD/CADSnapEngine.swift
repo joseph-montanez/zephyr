@@ -403,6 +403,7 @@ public final class SnapEngine {
             for prim in geometry {
                 let localNearest: Vector3?
                 switch prim {
+                case .table: localNearest = nil
                 case .point(let position, _):
                     localNearest = position
 

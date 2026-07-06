@@ -75,6 +75,7 @@ struct GeometryPanelUI {
         case .hatch: return "Hatch"
         case .ray: return "Ray"
         case .image: return "Image"
+        case .table: return "Table"
         }
     }
 
@@ -183,6 +184,8 @@ struct GeometryPanelUI {
                 "Image #\(i)",
                 "name=\(imageName.prefix(16))...  (\(String(format: "%.2f", w))×\(String(format: "%.2f", h)))"
             )
+        case .table(let data, _, _):
+            return ("Table #\(i)", "\(data.rows.count) rows × \(data.columns.count) cols")
         }
     }
 }

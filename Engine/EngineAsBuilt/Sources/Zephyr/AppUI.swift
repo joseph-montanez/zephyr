@@ -103,6 +103,11 @@ struct AppUI {
             BlockPanelUI.render(engine: engine)
         }
 
+        // 7b. Data Table panel — list/create/edit ACAD_TABLE entities.
+        if engine.ui.dataTablePanelVisible {
+            DataTablePanelUI.render(engine: engine)
+        }
+
         // 8. Command line overlay at the bottom (when active via Space key).
         CommandLineUI.render(engine: engine, dw: dw, dh: dh)
 
