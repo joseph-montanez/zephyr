@@ -4,12 +4,11 @@ import Foundation
 // MARK: - DXFColorTable
 //
 // AutoCAD Color Index (ACI) to RGBA conversion table. Maps DXF color
-// indices 1–255 to their standard RGBA values. Also provides helpers for
+// indices 1–255 to their standard RGBA values. Uses a high-performance
+// switch statement (canonical version). Also provides helpers for
 // DXF transparency → opacity and DXF line weight → mm conversion.
 //
-// Extracted from DXFImporter so the 250-line lookup table doesn't dominate
-// the import logic file. Used by DXF import, command processing, and PDF
-// export.
+// Used by DXF import/export, DWG import, command processing, and PDF export.
 // =========================================================================
 
 public enum DXFColorTable {

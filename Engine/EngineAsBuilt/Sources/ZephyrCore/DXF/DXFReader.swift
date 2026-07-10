@@ -969,6 +969,8 @@ extension DXFReader {
                     vertex.x = d(v)
                     e.plvert = vertex
                     pline.vertices.append(vertex)
+                } else if currentLoop == nil {
+                    e.basePoint.x = d(v)
                 }
             case 20:
                 if e.spline != nil, !(e.spline?.controlPoints ?? []).isEmpty {
@@ -977,12 +979,16 @@ extension DXFReader {
                     e.pt?.basePoint.y = d(v)
                 } else if e.plvert != nil {
                     e.plvert?.y = d(v)
+                } else if currentLoop == nil {
+                    e.basePoint.y = d(v)
                 }
             case 30:
                 if e.spline != nil, !(e.spline?.controlPoints ?? []).isEmpty {
                     e.spline?.controlPoints[e.spline!.controlPoints.count - 1].z = d(v)
                 } else if e.pt != nil {
                     e.pt?.basePoint.z = d(v)
+                } else if currentLoop == nil {
+                    e.basePoint.z = d(v)
                 }
             case 11:
                 if e.spline != nil {

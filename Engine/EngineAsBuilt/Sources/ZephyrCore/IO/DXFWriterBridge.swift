@@ -1,5 +1,4 @@
 import Foundation
-import SwiftDXFrw
 
 /// Converts Zephyr CAD types to DXF format using pure Swift DXFWriter.
 public enum DXFWriterBridge {
@@ -403,8 +402,8 @@ public enum DXFWriterBridge {
             let dashes = (value["dashes"] as? [NSNumber])?.map(\.doubleValue) ?? []
             return DXFHatchPatternLineData(
                 angle: angle,
-                base: SwiftDXFrw.Vector3(x: baseX, y: baseY, z: 0),
-                offset: SwiftDXFrw.Vector3(x: offsetX, y: offsetY, z: 0),
+                base: Vector3(x: baseX, y: baseY, z: 0),
+                offset: Vector3(x: offsetX, y: offsetY, z: 0),
                 dashes: dashes)
         }
     }
@@ -516,7 +515,7 @@ public enum DXFWriterBridge {
         return inside
     }
 
-    // MARK: - Primitive → DXFEntity (ZephyrCore.Vector3 → SwiftDXFrw.Vector3)
+    // MARK: - Primitive → DXFEntity
 
     private static func primitiveToEntity(_ p: CADPrimitive) -> DXFEntity? {
         switch p {
@@ -585,9 +584,9 @@ public enum DXFWriterBridge {
         }
     }
 
-    /// Convert ZephyrCore.Vector3 → SwiftDXFrw.Vector3
-    private static func toDXF(_ v: Vector3) -> SwiftDXFrw.Vector3 {
-        SwiftDXFrw.Vector3(x: v.x, y: v.y, z: v.z)
+    /// Identity — Vector3 is canonical across the module.
+    private static func toDXF(_ v: Vector3) -> Vector3 {
+        v
     }
 
     private static func applyTransform(_ t: Transform3D, to e: inout DXFEntity) {
@@ -613,9 +612,9 @@ public enum DXFWriterBridge {
         if let ry = e as? DXFRayEntity { ry.basePoint = toDXF(t.transformPoint(z(ry.basePoint))) }
     }
 
-    /// Convert SwiftDXFrw.Vector3 → ZephyrCore.Vector3
-    private static func z(_ v: SwiftDXFrw.Vector3) -> Vector3 {
-        Vector3(x: v.x, y: v.y, z: v.z)
+    /// Identity — Vector3 is canonical across the module.
+    private static func z(_ v: Vector3) -> Vector3 {
+        v
     }
 }
 

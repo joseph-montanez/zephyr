@@ -1,20 +1,9 @@
 import Foundation
-#if canImport(CIconv)
-import CIconv
-#endif
 
-/// Cross-platform DXF text codec.
+/// DXF text codec using Foundation String.Encoding for all code page conversions.
 ///
-/// Uses iconv for ALL code page conversions (SBCS + DBCS) — same engine
-/// that libdxfrw's DRW_ExtConverter uses via its iconv path.
-///
-/// Platforms:
-///   - macOS:  system libiconv (linked via CIconv module)
-///   - Linux:  glibc iconv (linked via CIconv module)
-///   - Windows: requires libiconv.dll (install via vcpkg/brew/apt)
-///
-/// Fallback: built-in CP1252 table for environments without iconv.
-/// Handles \U+XXXX escape sequences per the DXF spec.
+/// Handles \\U+XXXX escape sequences per the DXF spec and provides CP1252
+/// fallback encoding/decoding for code pages not natively supported by Foundation.
 ///
 /// Mirrors libdxfrw DRW_TextCodec (drw_textcodec.h/cpp).
 public class DXFTextCodec {
@@ -59,27 +48,6 @@ public class DXFTextCodec {
         return "ANSI_1252"
     }
 
-    /// Map canonical code page to iconv encoding name
-    private func iconvNameFor(_ cp: String) -> String {
-        switch cp {
-        case "ANSI_874":  return "CP874"
-        case "ANSI_1250": return "CP1250"
-        case "ANSI_1251": return "CP1251"
-        case "ANSI_1252": return "CP1252"
-        case "ANSI_1253": return "CP1253"
-        case "ANSI_1254": return "CP1254"
-        case "ANSI_1255": return "CP1255"
-        case "ANSI_1256": return "CP1256"
-        case "ANSI_1257": return "CP1257"
-        case "ANSI_1258": return "CP1258"
-        case "ANSI_932":  return "SHIFT_JIS"
-        case "ANSI_936":  return "GBK"
-        case "ANSI_949":  return "EUC-KR"
-        case "ANSI_950":  return "BIG5"
-        default:          return "CP1252"
-        }
-    }
-
     // MARK: - Public API
 
     /// Convert string from DXF code page to UTF-8.
@@ -87,13 +55,7 @@ public class DXFTextCodec {
     public func toUtf8(_ s: String) -> String {
         if codePage == "UTF-8"  { return decodeUnicodeEscapes(s) }
         if codePage == "UTF-16" { return decodeUnicodeEscapes(s) }
-
-        let decoded: String
-        if #available(macOS 10.10, *) {
-            decoded = iconvConvert(s, from: codePage, to: "UTF-8")
-        } else {
-            decoded = fallbackDecode(s)
-        }
+        let decoded = foundationDecode(s)
         return decodeUnicodeEscapes(decoded)
     }
 
@@ -102,73 +64,19 @@ public class DXFTextCodec {
     public func fromUtf8(_ s: String) -> String {
         if codePage == "UTF-8"  { return s }
         if codePage == "UTF-16" { return s }
-
-        let encoded: String
-        if #available(macOS 10.10, *) {
-            encoded = iconvConvert(s, from: "UTF-8", to: codePage)
-        } else {
-            encoded = fallbackEncode(s)
-        }
-        // If iconv result is empty (conversion failed), escape non-representable chars
+        let encoded = foundationEncode(s)
+        // If result is empty (conversion failed), escape non-representable chars
         if encoded.isEmpty && !s.isEmpty {
             return escapeNonRepresentable(s)
         }
         return encoded
     }
 
-    // MARK: - iconv Conversion
+    // MARK: - Foundation Conversion
 
-    /// Convert string between encodings using iconv.
-    /// Returns empty string on failure.
-    private func iconvConvert(_ s: String, from fromCP: String, to toCP: String) -> String {
-        #if canImport(CIconv)
-        let fromName = iconvNameFor(fromCP)
-        let toName = iconvNameFor(toCP)
-
-        let cd = CIconv.ci_iconv_open(toName, fromName)
-        // iconv_open returns (iconv_t)-1 on failure → opaque pointer with value ~0
-        let cdRaw = unsafeBitCast(cd, to: Int.self)
-        if cdRaw == -1 {
-            return fallbackConvert(s, from: fromCP, to: toCP)
-        }
-        defer { CIconv.ci_iconv_close(cd) }
-
-        // Raw bytes of the string (Swift String uses UTF-8 internally)
-        let inData = Data(s.utf8)
-        let bufSize = max(inData.count * 4 + 64, 4096)
-        var outBuf = [CChar](repeating: 0, count: bufSize)
-
-        var inBytes = size_t(inData.count)
-        var outBytes = size_t(bufSize - 2)
-
-        inData.withUnsafeBytes { rawBuf in
-            guard let base = rawBuf.baseAddress else { return }
-            var inPtr: UnsafeMutablePointer<CChar>? = UnsafeMutablePointer(mutating: base.assumingMemoryBound(to: CChar.self))
-            var outPtr: UnsafeMutablePointer<CChar>? = outBuf.withUnsafeMutableBufferPointer { $0.baseAddress! }
-            let _ = CIconv.ci_iconv(cd, &inPtr, &inBytes, &outPtr, &outBytes)
-        }
-
-        let written = bufSize - 2 - Int(outBytes)
-        let outSlice = outBuf[0..<written].map(UInt8.init)
-        return String(decoding: outSlice, as: UTF8.self)
-        #else
-        return fallbackConvert(s, from: fromCP, to: toCP)
-        #endif
-    }
-
-    // MARK: - Fallback (no iconv)
-
-    /// Fallback: use Foundation encoding or CP1252 table
-    private func fallbackConvert(_ s: String, from: String, to: String) -> String {
-        if to == "UTF-8" {
-            return fallbackDecode(s)
-        } else {
-            return fallbackEncode(s)
-        }
-    }
-
-    private func fallbackDecode(_ s: String) -> String {
-        // Try Foundation String.Encoding first
+    /// Decode string from DXF code page using Foundation String.Encoding.
+    /// Falls back to CP1252 table if Foundation encoding is unavailable.
+    private func foundationDecode(_ s: String) -> String {
         let enc = foundationEncodingFor(codePage)
         if let data = s.data(using: enc, allowLossyConversion: true),
            let decoded = String(data: data, encoding: .utf8) {
@@ -178,7 +86,9 @@ public class DXFTextCodec {
         return decode1252Table(s)
     }
 
-    private func fallbackEncode(_ s: String) -> String {
+    /// Encode string to DXF code page using Foundation String.Encoding.
+    /// Falls back to CP1252 table if Foundation encoding is unavailable.
+    private func foundationEncode(_ s: String) -> String {
         let enc = foundationEncodingFor(codePage)
         if let data = s.data(using: .utf8),
            let encoded = String(data: data, encoding: enc) {
@@ -187,11 +97,36 @@ public class DXFTextCodec {
         return encode1252Table(s)
     }
 
-    /// Best-effort Foundation encoding for fallback path
+    /// Map canonical DXF code page to Foundation String.Encoding.
+    /// Uses CFString bridging for code pages that may not have named constants
+    /// on all platforms (Linux, older macOS, etc.). Falls back to CP1252 table
+    /// for encodings not natively supported by Foundation.
     private func foundationEncodingFor(_ cp: String) -> String.Encoding {
         switch cp {
-        case "ANSI_1252": return .windowsCP1252
+        case "ANSI_874":  return .windowsCP1252      // Thai — map via CP1252 table
+        case "ANSI_1250": return .windowsCP1250
+        case "ANSI_1251": return .windowsCP1251
+        case "ANSI_1252": return .windowsCP1252       // Western Europe (default)
+        case "ANSI_1253": return .windowsCP1253
+        case "ANSI_1254": return .windowsCP1254
+        case "ANSI_1255":                          // Hebrew
+            let nsEnc1255 = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.windowsHebrew.rawValue))
+            return String.Encoding(rawValue: UInt(nsEnc1255))
+        case "ANSI_1256":                          // Arabic
+            let nsEnc1256 = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.windowsArabic.rawValue))
+            return String.Encoding(rawValue: UInt(nsEnc1256))
+        case "ANSI_1257":                          // Baltic
+            let nsEnc1257 = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.windowsBalticRim.rawValue))
+            return String.Encoding(rawValue: UInt(nsEnc1257))
+        case "ANSI_1258":                          // Vietnamese
+            let nsEnc1258 = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.windowsVietnamese.rawValue))
+            return String.Encoding(rawValue: UInt(nsEnc1258))
         case "ANSI_932":  return .shiftJIS
+        case "ANSI_936":                          // Chinese GB
+            let nsEnc936 = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
+            return String.Encoding(rawValue: UInt(nsEnc936))
+        case "ANSI_949":  return .windowsCP1252      // Korean — map via CP1252 table
+        case "ANSI_950":  return .windowsCP1252      // Chinese — map via CP1252 table
         default:          return .windowsCP1252
         }
     }

@@ -13,7 +13,6 @@ let package = Package(
         .package(name: "SwiftSDL_image", path: "../SwiftSDL_image"),
         .package(name: "SwiftSDL_ttf", path: "../SwiftSDL_ttf"),
         .package(name: "SwiftImGui", path: "../SwiftImGui"),
-        .package(name: "SwiftDXFrw", path: "../SwiftDXFrw"),
         .package(name: "SwiftDWG", path: "../SwiftDWG"),
         .package(name: "SwiftZLibNG", path: "../SwiftZLibNG"),
     ],
@@ -21,7 +20,6 @@ let package = Package(
         .target(
             name: "ZephyrCore",
             dependencies: [
-                .product(name: "SwiftDXFrw", package: "SwiftDXFrw"),
                 .product(name: "CDWG", package: "SwiftDWG"),
                 .product(name: "CZLibNG", package: "SwiftZLibNG"),
                 .product(name: "CSDL3", package: "SwiftSDL"),

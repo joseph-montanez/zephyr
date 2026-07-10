@@ -11,7 +11,7 @@ public enum DXFExporter {
 
     // MARK: - Public API
 
-    /// Export the document to a DXF file via SwiftDXFrw.
+    /// Export the document to a DXF file.
     public static func export(document: CADDocument, to url: URL) throws {
         try DXFWriterBridge.export(document: document, to: url)
     }

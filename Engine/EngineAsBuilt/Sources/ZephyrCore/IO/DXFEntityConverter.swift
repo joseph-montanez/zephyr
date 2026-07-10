@@ -1,13 +1,11 @@
 import Foundation
-import SwiftDXFrw
 
-/// Converts SwiftDXFrw entity types into Zephyr CADPrimitive arrays.
-/// Replaces the old CDXFRW bridge converter — pure Swift.
+/// Converts DXF entity types into Zephyr CADPrimitive arrays.
 public enum DXFEntityConverter {
 
     public nonisolated(unsafe) static var simplifyPolylines: Bool = false
 
-    /// Convert a SwiftDXFrw DXFEntity to CADPrimitives
+    /// Convert a DXFEntity to CADPrimitives
     internal static func convertEntityToPrimitives(
         _ e: DXFEntity,
         arrowSize: Double = 1.0,
@@ -220,13 +218,22 @@ public enum DXFEntityConverter {
 
     private static func convertHatch(_ e: DXFEntity, color: ColorRGBA?) -> [CADPrimitive] {
         guard let h = e as? DXFHatchEntity else { return [] }
-        let pathRegions = extractHatchPathRegions(from: h)
+        let boundaryTransform = hatchBoundaryTransform(for: h)
+        let pathRegions = extractHatchPathRegions(
+            from: h,
+            storedBoundaryTransform: boundaryTransform)
         guard !pathRegions.isEmpty else { return [] }
 
         let basePattern = h.name.isEmpty ? "SOLID" : h.name
-        let pattern = hatchPatternName(for: h, fallback: basePattern)
         let scale = h.scale > 0 ? h.scale : 1.0
-        let angle = h.angle_p * .pi / 180.0
+        let angle = transformedPlanarAngle(
+            h.angle_p * .pi / 180.0,
+            by: boundaryTransform)
+        let pattern = hatchPatternName(
+            for: h,
+            fallback: basePattern,
+            boundaryTransform: boundaryTransform,
+            hatchAngle: angle)
 
         if h.isGradient == 1 {
             let colors = resolvedGradientColors(for: h, fallback: color ?? .white)
@@ -237,7 +244,9 @@ public enum DXFEntityConverter {
                     outer: loops.outer,
                     holes: loops.holes,
                     gradientName: gradientName,
-                    angle: h.gradientAngle * .pi / 180.0,
+                    angle: transformedPlanarAngle(
+                        h.gradientAngle * .pi / 180.0,
+                        by: boundaryTransform),
                     color1: colors.0,
                     color2: colors.1)
             }
@@ -342,33 +351,52 @@ public enum DXFEntityConverter {
         return (first, second)
     }
 
-    private static func hatchPatternName(for h: DXFHatchEntity, fallback: String) -> String {
+    private static func hatchPatternName(
+        for h: DXFHatchEntity,
+        fallback: String,
+        boundaryTransform: Transform3D,
+        hatchAngle: Double
+    ) -> String {
         guard h.solid == 0, !h.patternLines.isEmpty else { return fallback }
         let safeScale = max(abs(h.scale), 1e-9)
-        let hatchAngle = h.angle_p
+        let transformOrigin = boundaryTransform.transformPoint(.zero)
+
+        func transformVector(_ value: Vector3) -> Vector3 {
+            boundaryTransform.transformPoint(value) - transformOrigin
+        }
 
         let lines = h.patternLines.map { line -> DXFHatchPatternLine in
-            let cadAngle = -line.angle
-            let angleRad = cadAngle * .pi / 180.0
-            let cosA = cos(-angleRad)
-            let sinA = sin(-angleRad)
+            let sourceAngle = -line.angle * .pi / 180.0
+            let sourceDirection = Vector3(
+                x: cos(sourceAngle),
+                y: sin(sourceAngle),
+                z: 0)
+            let transformedDirection = transformVector(sourceDirection)
+            let cadAngle = transformedDirection.magnitude > 1e-12
+                ? atan2(transformedDirection.y, transformedDirection.x)
+                : sourceAngle
+            let cosA = cos(-cadAngle)
+            let sinA = sin(-cadAngle)
 
-            func toLineSpace(_ p: SwiftDXFrw.Vector3) -> Vector3 {
-                let cad = Vector3(x: p.x, y: -p.y, z: 0)
+            func toLineSpace(_ p: Vector3, isVector: Bool = false) -> Vector3 {
+                let source = Vector3(x: p.x, y: -p.y, z: 0)
+                let cad = isVector
+                    ? transformVector(source)
+                    : boundaryTransform.transformPoint(source)
                 return Vector3(
                     x: (cad.x * cosA - cad.y * sinA) / safeScale,
                     y: (cad.x * sinA + cad.y * cosA) / safeScale,
                     z: 0)
             }
 
-            var offset = toLineSpace(line.offset)
+            var offset = toLineSpace(line.offset, isVector: true)
             if offset.y < 0.0 {
                 offset.x = -offset.x
                 offset.y = -offset.y
             }
 
             return DXFHatchPatternLine(
-                angleDegrees: cadAngle - hatchAngle,
+                angleDegrees: (cadAngle - hatchAngle) * 180.0 / .pi,
                 base: toLineSpace(line.base),
                 offset: offset,
                 dashes: line.dashes.map { $0 / safeScale })
@@ -402,11 +430,16 @@ public enum DXFEntityConverter {
         return primitives
     }
 
-    private static func extractHatchPathRegions(from h: DXFHatchEntity) -> [HatchPathRegion] {
+    private static func extractHatchPathRegions(
+        from h: DXFHatchEntity,
+        storedBoundaryTransform: Transform3D
+    ) -> [HatchPathRegion] {
         guard !h.loops.isEmpty else { return [] }
 
         let candidates: [(loop: DXFHatchLoop, path: CADPolyline, points: [Vector3], area: Double)] = h.loops.compactMap { loop in
-            guard let path = buildHatchLoopPath(loop) else { return nil }
+            guard let path = buildHatchLoopPath(
+                loop,
+                storedBoundaryTransform: storedBoundaryTransform) else { return nil }
             let points = cleanAdjacentPoints(path.tessellatedPoints())
             guard points.count >= 3 else { return nil }
             return (loop: loop, path: path, points: points, area: abs(signedArea(points)))
@@ -484,8 +517,15 @@ public enum DXFEntityConverter {
             z: first.z)
     }
 
-    private static func buildHatchLoopPath(_ loop: DXFHatchLoop) -> CADPolyline? {
-        let storedPath = buildHatchPath(from: loop.entities)
+    private static func buildHatchLoopPath(
+        _ loop: DXFHatchLoop,
+        storedBoundaryTransform: Transform3D
+    ) -> CADPolyline? {
+        let storedPath = buildHatchPath(from: loop.entities).map {
+            storedBoundaryTransform == .identity
+                ? $0
+                : $0.transformed(by: storedBoundaryTransform)
+        }
         guard !loop.sourceBoundaryEntities.isEmpty else { return storedPath }
 
         guard let sourcePath = buildHatchPath(from: loop.sourceBoundaryEntities) else {
@@ -1434,8 +1474,52 @@ public enum DXFEntityConverter {
         return pts.enumerated().compactMap { keep[$0.offset] ? $0.element : nil }
     }
 
+    private static func hatchBoundaryTransform(for hatch: DXFHatchEntity) -> Transform3D {
+        let hasElevation = hatch.basePoint.magnitudeSquared > 1e-24
+        let hasExtrusion = hatch.haveExtrusion && !isDefaultExtrusion(hatch.extrusion)
+        guard hasElevation || hasExtrusion else { return .identity }
+
+        var az = hasExtrusion ? hatch.extrusion : Vector3(x: 0, y: 0, z: 1)
+        var magnitude = az.magnitude
+        if magnitude < 1e-12 {
+            az = Vector3(x: 0, y: 0, z: 1)
+            magnitude = 1.0
+        }
+        az = az / magnitude
+
+        var ax: Vector3
+        if abs(az.x) < 0.015625 && abs(az.y) < 0.015625 {
+            ax = Vector3(x: az.z, y: 0, z: -az.x)
+        } else {
+            ax = Vector3(x: -az.y, y: az.x, z: 0)
+        }
+        ax = ax.normalized
+        let ay = az.cross(ax).normalized
+
+        let elevation = yflip(ocsToWcs(hatch.basePoint, extrusion: az))
+        return Transform3D(raw: [
+             ax.x, -ay.x,  az.x, elevation.x,
+            -ax.y,  ay.y, -az.y, elevation.y,
+             ax.z, -ay.z,  az.z, elevation.z,
+             0,     0,      0,    1
+        ])
+    }
+
+    private static func transformedPlanarAngle(
+        _ angle: Double,
+        by transform: Transform3D
+    ) -> Double {
+        let origin = transform.transformPoint(.zero)
+        let direction = transform.transformPoint(Vector3(
+            x: cos(angle),
+            y: sin(angle),
+            z: 0)) - origin
+        guard direction.magnitude > 1e-12 else { return angle }
+        return atan2(direction.y, direction.x)
+    }
+
     private static func cadLWPoint(_ vertex: DXFVertex2D, in polyline: DXFLWPolylineEntity) -> Vector3 {
-        let raw = SwiftDXFrw.Vector3(x: vertex.x, y: vertex.y, z: polyline.elevation)
+        let raw = Vector3(x: vertex.x, y: vertex.y, z: polyline.elevation)
         let extrusion = isDefaultExtrusion(polyline.extPoint) ? nil : polyline.extPoint
         return cadPoint(raw, extrusion: extrusion)
     }
@@ -1444,48 +1528,48 @@ public enum DXFEntityConverter {
         cadPoint(vertex.basePoint, extrusion: polyline.haveExtrusion ? polyline.extrusion : nil)
     }
 
-    private static func cadPoint(_ point: SwiftDXFrw.Vector3, extrusion: SwiftDXFrw.Vector3?) -> Vector3 {
+    private static func cadPoint(_ point: Vector3, extrusion: Vector3?) -> Vector3 {
         guard let extrusion, !isDefaultExtrusion(extrusion) else { return yflip(point) }
         return yflip(ocsToWcs(point, extrusion: extrusion))
     }
 
-    private static func isDefaultExtrusion(_ n: SwiftDXFrw.Vector3) -> Bool {
+    private static func isDefaultExtrusion(_ n: Vector3) -> Bool {
         abs(n.x) < 1e-12 && abs(n.y) < 1e-12 && abs(n.z - 1.0) < 1e-12
     }
 
-    private static func ocsToWcs(_ point: SwiftDXFrw.Vector3, extrusion n: SwiftDXFrw.Vector3) -> SwiftDXFrw.Vector3 {
+    private static func ocsToWcs(_ point: Vector3, extrusion n: Vector3) -> Vector3 {
         var az = n
         var mag = sqrt(az.x * az.x + az.y * az.y + az.z * az.z)
         if mag < 1e-12 {
-            az = SwiftDXFrw.Vector3(x: 0, y: 0, z: 1)
+            az = Vector3(x: 0, y: 0, z: 1)
             mag = 1.0
         }
         az.x /= mag; az.y /= mag; az.z /= mag
 
-        var ax: SwiftDXFrw.Vector3
+        var ax: Vector3
         if abs(az.x) < 0.015625 && abs(az.y) < 0.015625 {
-            ax = SwiftDXFrw.Vector3(x: az.z, y: 0, z: -az.x)
+            ax = Vector3(x: az.z, y: 0, z: -az.x)
         } else {
-            ax = SwiftDXFrw.Vector3(x: -az.y, y: az.x, z: 0)
+            ax = Vector3(x: -az.y, y: az.x, z: 0)
         }
         mag = sqrt(ax.x * ax.x + ax.y * ax.y + ax.z * ax.z)
         if mag > 1e-12 { ax.x /= mag; ax.y /= mag; ax.z /= mag }
 
-        var ay = SwiftDXFrw.Vector3(
+        var ay = Vector3(
             x: az.y * ax.z - az.z * ax.y,
             y: az.z * ax.x - az.x * ax.z,
             z: az.x * ax.y - az.y * ax.x)
         mag = sqrt(ay.x * ay.x + ay.y * ay.y + ay.z * ay.z)
         if mag > 1e-12 { ay.x /= mag; ay.y /= mag; ay.z /= mag }
 
-        return SwiftDXFrw.Vector3(
+        return Vector3(
             x: ax.x * point.x + ay.x * point.y + az.x * point.z,
             y: ax.y * point.x + ay.y * point.y + az.y * point.z,
             z: ax.z * point.x + ay.z * point.y + az.z * point.z)
     }
 
-    /// Convert SwiftDXFrw.Vector3 → ZephyrCore.Vector3 with Y-flip
-    private static func yflip(_ v: SwiftDXFrw.Vector3) -> Vector3 {
+    /// Convert Vector3 → ZephyrCore.Vector3 with Y-flip
+    private static func yflip(_ v: Vector3) -> Vector3 {
         Vector3(x: v.x, y: -v.y, z: v.z)
     }
 

@@ -1,44 +1,5 @@
 import Foundation
 
-// MARK: - Vector3
-
-/// 3D vector/coordinate matching libdxfrw DRW_Coord
-public struct Vector3: Equatable, Sendable {
-    public var x: Double
-    public var y: Double
-    public var z: Double
-
-    public init(x: Double = 0, y: Double = 0, z: Double = 0) {
-        self.x = x; self.y = y; self.z = z
-    }
-
-    public static let zero = Vector3()
-
-    public var unitized: Vector3 {
-        let d = sqrt(x * x + y * y + z * z)
-        if d > 0 { return Vector3(x: x/d, y: y/d, z: z/d) }
-        return self
-    }
-}
-
-// MARK: - ColorRGBA
-
-/// RGBA color
-public struct ColorRGBA: Equatable, Sendable {
-    public var r: UInt8
-    public var g: UInt8
-    public var b: UInt8
-    public var a: UInt8
-
-    public init(r: UInt8 = 255, g: UInt8 = 255, b: UInt8 = 255, a: UInt8 = 255) {
-        self.r = r; self.g = g; self.b = b; self.a = a
-    }
-
-    public static let white = ColorRGBA(r: 255, g: 255, b: 255)
-    public static let black = ColorRGBA(r: 0, g: 0, b: 0)
-    public static let clear = ColorRGBA(r: 0, g: 0, b: 0, a: 0)
-}
-
 // MARK: - DXFVersion (single canonical definition)
 
 /// AutoCAD DXF format versions, matching libdxfrw DRW::Version
@@ -263,12 +224,12 @@ open class DXFEntity {
         } else {
             axisX = Vector3(x: -ext.y, y: ext.x, z: 0)
         }
-        let unitX = axisX.unitized
+        let unitX = axisX.normalized
         let axisY = Vector3(
             x: ext.y * unitX.z - unitX.y * ext.z,
             y: ext.z * unitX.x - unitX.z * ext.x,
             z: ext.x * unitX.y - unitX.x * ext.y
-        ).unitized
+        ).normalized
         return (unitX, axisY)
     }
 
