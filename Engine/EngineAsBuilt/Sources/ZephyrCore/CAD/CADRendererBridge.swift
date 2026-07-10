@@ -236,6 +236,51 @@ public final class CADRendererBridge {
             opacityMultiplier: opacityMultiplier)
     }
 
+    private nonisolated static func makeTextBackgroundSpec(
+        text: String,
+        origin: Vector3,
+        height: Double,
+        rotation: Double,
+        alignH: Int,
+        alignV: Int,
+        maxWidth: Double?,
+        scale: Double,
+        color: ColorRGBA?,
+        usesViewportColor: Bool,
+        z: Double
+    ) -> PrimitiveSpec? {
+        guard scale >= 1.0, usesViewportColor || color != nil else { return nil }
+        let bounds = CADEntity.estimateTextLocalBounds(
+            text: text,
+            height: height,
+            alignH: alignH,
+            alignV: alignV,
+            mtextWidth: maxWidth)
+        let margin = max(0.0, (scale - 1.0) * height * 0.5)
+        let localCorners = [
+            (bounds.minX - margin, bounds.minY - margin),
+            (bounds.maxX + margin, bounds.minY - margin),
+            (bounds.maxX + margin, bounds.maxY + margin),
+            (bounds.minX - margin, bounds.maxY + margin),
+        ]
+        let cosR = cos(rotation)
+        let sinR = sin(rotation)
+        let corners = localCorners.map { local -> SDL_FPoint in
+            SDL_FPoint(
+                x: Float(origin.x + local.0 * cosR - local.1 * sinR),
+                y: Float(origin.y + local.0 * sinR + local.1 * cosR))
+        }
+        let rgba = color.map { ($0.r, $0.g, $0.b, $0.a) } ?? (0, 0, 0, 255)
+        return PrimitiveSpec(
+            type: .fillRect,
+            points: [],
+            rects: [],
+            corners: corners,
+            z: z,
+            color: rgba,
+            usesViewportBackground: usesViewportColor)
+    }
+
     /// Pure computation from a value-typed snapshot. Safe for any thread —
     /// the snapshot is an independent copy of all document state.
     nonisolated static func computeSpecs(fromSnapshot snapshot: CADDocumentSnapshot, simplifyComplexBlocks: Bool, splineTessellationDivisor: Double = 5000.0) async -> [EntityResult] {
@@ -248,11 +293,15 @@ public final class CADRendererBridge {
                 lineWeight: Double,
                 lineTypeScale: Double,
                 geomWidth: Double,
-                layerOpacity: Double
+                layerOpacity: Double,
+                textBackgroundScale: Double?,
+                textBackgroundColor: ColorRGBA?,
+                textBackgroundUsesViewportColor: Bool
             )] = []
         var visibleText: [(index: Int, handle: UUID, text: String, height: Double, textStyle: String?,
                             alignH: Int, alignV: Int, mtextWidth: Double?, transform: Transform3D, color: ColorRGBA,
-                            formattedText: FormattedText?)] = []
+                            formattedText: FormattedText?, textBackgroundScale: Double?,
+                            textBackgroundColor: ColorRGBA?, textBackgroundUsesViewportColor: Bool)] = []
         var index = 0
         let layersByName = Dictionary(
             snapshot.layers.values.map { ($0.name.uppercased(), $0) },
@@ -292,6 +341,37 @@ public final class CADRendererBridge {
                 b: entityColor.b,
                 a: UInt8(min(255, Double(entityColor.a) * combinedLayerOpacity)))
 
+            let entityTextBackgroundScale: Double?
+            if let value = entity.xdata["dxf.mtextBackgroundScale"],
+               case .double(let scale) = value {
+                entityTextBackgroundScale = scale
+            } else {
+                entityTextBackgroundScale = nil
+            }
+            let entityTextBackgroundUsesViewportColor: Bool
+            if let value = entity.xdata["dxf.mtextBackgroundUsesViewportColor"],
+               case .int(let flag) = value {
+                entityTextBackgroundUsesViewportColor = flag != 0
+            } else {
+                entityTextBackgroundUsesViewportColor = false
+            }
+            let entityTextBackgroundColor: ColorRGBA?
+            if let value = entity.xdata["dxf.mtextBackgroundColor"],
+               case .string(let hex) = value,
+               var background = ColorRGBA(hex: hex) {
+                if let opacityValue = entity.xdata["dxf.mtextBackgroundOpacity"],
+                   case .double(let opacity) = opacityValue {
+                    background = ColorRGBA(
+                        r: background.r,
+                        g: background.g,
+                        b: background.b,
+                        a: UInt8(min(255.0, Double(background.a) * max(0.0, min(1.0, opacity)))))
+                }
+                entityTextBackgroundColor = background
+            } else {
+                entityTextBackgroundColor = nil
+            }
+
             // Text entities
             if let tv = entity.xdata["dxf.text"], case .string(let text) = tv, !text.isEmpty {
                 let h: Double
@@ -327,7 +407,11 @@ public final class CADRendererBridge {
                 // Use plain text from formatted text if available, otherwise use dxf.text
                 let displayText = ft?.toPlainText() ?? text
 
-                visibleText.append((index, entity.handle, displayText, h, style, alignH, alignV, mtextWidth, entity.transform, effectiveColor, ft))
+                visibleText.append((
+                    index, entity.handle, displayText, h, style, alignH, alignV,
+                    mtextWidth, entity.transform, effectiveColor, ft,
+                    entityTextBackgroundScale, entityTextBackgroundColor,
+                    entityTextBackgroundUsesViewportColor))
                 index += 1
                 continue
             }
@@ -383,7 +467,9 @@ public final class CADRendererBridge {
 
             visible.append((index, entity.handle, geometry, primitiveStyles,
                             entity.transform, entityColor, lineType, lineWeight,
-                            lineTypeScale, geomWidth, combinedLayerOpacity))
+                            lineTypeScale, geomWidth, combinedLayerOpacity,
+                            entityTextBackgroundScale, entityTextBackgroundColor,
+                            entityTextBackgroundUsesViewportColor))
             index += 1
         }
 
@@ -431,9 +517,10 @@ public final class CADRendererBridge {
 
                             for item in orderedGeometry {
                                 let primitive = item.primitive
+                                let primitiveStyle = v.primitiveStyles[item.index]
                                 let drawStyle = Self.resolvedPrimitiveStyle(
                                     primitive: primitive,
-                                    style: v.primitiveStyles[item.index],
+                                    style: primitiveStyle,
                                     entityColor: v.color,
                                     entityLineType: v.lineType,
                                     entityLineWeight: v.lineWeight,
@@ -455,17 +542,29 @@ public final class CADRendererBridge {
                                         continue
                                     }
 
+                                    let origin = v.transform.transformPoint(pos)
+                                    let localX = Vector3(x: cos(rotation), y: sin(rotation), z: 0)
+                                    let localY = Vector3(x: -sin(rotation), y: cos(rotation), z: 0)
+                                    let worldX = v.transform.transformPoint(pos + localX) - origin
+                                    let worldY = v.transform.transformPoint(pos + localY) - origin
+                                    let finalRotation = atan2(worldX.y, worldX.x)
+                                    let heightScale = max(worldY.magnitude, 1e-12)
+                                    let widthScale = max(worldX.magnitude, 1e-12)
+                                    let worldHeight = height * heightScale
+                                    let worldWidth = mtextWidth.map { $0 * widthScale }
+                                    let backgroundScale = primitiveStyle?.textBackgroundScale
+                                        ?? v.textBackgroundScale
+                                    let backgroundColor = primitiveStyle?.textBackgroundColor
+                                        ?? v.textBackgroundColor
+                                    let backgroundUsesViewportColor =
+                                        primitiveStyle?.textBackgroundUsesViewportColor == true
+                                        || v.textBackgroundUsesViewportColor
+
                                     if CADFontManager.getOrLoadSHXFont(filename: fontFile) == nil,
                                        let ttfPath = CADFontManager.getTTFEquivalent(filename: fontFile) {
-                                        let origin = v.transform.transformPoint(pos)
-                                        let localX = Vector3(x: cos(rotation), y: sin(rotation), z: 0)
-                                        let localY = Vector3(x: -sin(rotation), y: cos(rotation), z: 0)
-                                        let worldX = v.transform.transformPoint(pos + localX) - origin
-                                        let worldY = v.transform.transformPoint(pos + localY) - origin
-                                        let finalRotation = atan2(worldX.y, worldX.x)
-                                        let heightScale = max(worldY.magnitude, 1e-12)
-                                        let widthScale = max(worldX.magnitude, 1e-12)
-
+                                        let backgroundRGBA = backgroundColor.map {
+                                            ($0.r, $0.g, $0.b, $0.a)
+                                        }
                                         textSprites.append(TextSpriteSpec(
                                             text: text,
                                             fontPath: ttfPath,
@@ -474,15 +573,34 @@ public final class CADRendererBridge {
                                             y: origin.y,
                                             z: primZ,
                                             rotation: finalRotation,
-                                            height: height * heightScale,
-                                            maxWidth: mtextWidth.map { $0 * widthScale },
+                                            height: worldHeight,
+                                            maxWidth: worldWidth,
                                             alignH: alignH,
                                             alignV: alignV,
-                                            color: spriteColor
+                                            color: spriteColor,
+                                            backgroundScale: backgroundScale,
+                                            backgroundColor: backgroundRGBA,
+                                            backgroundUsesViewportColor: backgroundUsesViewportColor
                                         ))
 
                                         currentZ += 0.01
                                         continue
+                                    }
+
+                                    if let backgroundScale,
+                                       let mask = Self.makeTextBackgroundSpec(
+                                        text: text,
+                                        origin: origin,
+                                        height: worldHeight,
+                                        rotation: finalRotation,
+                                        alignH: alignH,
+                                        alignV: alignV,
+                                        maxWidth: worldWidth,
+                                        scale: backgroundScale,
+                                        color: backgroundColor,
+                                        usesViewportColor: backgroundUsesViewportColor,
+                                        z: primZ - 0.02) {
+                                        specs.append(mask)
                                     }
                                 }
 
@@ -596,6 +714,21 @@ public final class CADRendererBridge {
                             let worldRotation = atan2(worldX.y, worldX.x)
                             
                             if let font = CADFontManager.getOrLoadSHXFont(filename: fontFile) {
+                                if let backgroundScale = vt.textBackgroundScale,
+                                   let mask = Self.makeTextBackgroundSpec(
+                                    text: vt.text,
+                                    origin: origin,
+                                    height: worldHeight,
+                                    rotation: worldRotation,
+                                    alignH: vt.alignH,
+                                    alignV: vt.alignV,
+                                    maxWidth: worldWidth,
+                                    scale: backgroundScale,
+                                    color: vt.textBackgroundColor,
+                                    usesViewportColor: vt.textBackgroundUsesViewportColor,
+                                    z: baseZ - 0.02) {
+                                    specs.append(mask)
+                                }
                                 let textPrims = font.renderText(
                                     vt.text, origin: origin,
                                     height: worldHeight, rotation: worldRotation,
@@ -628,7 +761,12 @@ public final class CADRendererBridge {
                                     maxWidth: worldWidth,
                                     alignH: vt.alignH,
                                     alignV: vt.alignV,
-                                    color: color
+                                    color: color,
+                                    backgroundScale: vt.textBackgroundScale,
+                                    backgroundColor: vt.textBackgroundColor.map {
+                                        ($0.r, $0.g, $0.b, $0.a)
+                                    },
+                                    backgroundUsesViewportColor: vt.textBackgroundUsesViewportColor
                                 )
                                 textSprites.append(spec)
                             }
@@ -714,6 +852,14 @@ public final class CADRendererBridge {
         entitySpriteMap.removeAll()
         var newEntityIndexToHandle: [UInt32: UUID] = [:]
 
+        let viewport = engine.ui.backgroundColor
+        func channel(_ value: Float) -> UInt8 {
+            UInt8(max(0.0, min(255.0, value * 255.0)).rounded())
+        }
+        let viewportBackground = (
+            channel(viewport.r), channel(viewport.g),
+            channel(viewport.b), channel(viewport.a))
+
         // Add new primitives
         for (entityIdx, res) in results.enumerated() {
             let idx = UInt32(entityIdx + 1)  // 0 = background/no-entity
@@ -721,7 +867,9 @@ public final class CADRendererBridge {
             var primIDs: [SpriteID] = []
             primIDs.reserveCapacity(res.specs.count)
             for spec in res.specs {
-                let id = spec.addTo(geometryManager)
+                let id = spec.addTo(
+                    geometryManager,
+                    viewportBackground: viewportBackground)
                 // Tag the primitive with the entity index for GPU ID-buffer pass
                 if let prim = geometryManager.getPrimitive(id: id) {
                     prim.entityIndex = idx
@@ -744,6 +892,10 @@ public final class CADRendererBridge {
                     alignH: ts.alignH,
                     alignV: ts.alignV,
                     color: ts.color,
+                    backgroundScale: ts.backgroundScale,
+                    backgroundColor: ts.backgroundUsesViewportColor
+                        ? viewportBackground
+                        : ts.backgroundColor,
                     z: ts.z,
                     geometryManager: geometryManager,
                     spriteManager: engine.spriteManager,

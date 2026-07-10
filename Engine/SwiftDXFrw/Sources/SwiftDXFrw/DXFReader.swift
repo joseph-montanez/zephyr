@@ -622,7 +622,10 @@ extension DXFReader {
     func parseMText(_ pairs: [(Int, String)]) -> DXFMTextEntity {
         let e = DXFMTextEntity()
         applyCommon(pairs, to: e)
-        for (c, v) in pairs {
+        var explicitAngleOrder = -1
+        var directionOrder = -1
+        for (pairIndex, pair) in pairs.enumerated() {
+            let (c, v) = pair
             switch c {
             case 1:   e.text = decode(v)
             case 3:   e.text += decode(v)  // MText continuation chunks
@@ -630,15 +633,37 @@ extension DXFReader {
             case 10:  e.basePoint.x = d(v)
             case 20:  e.basePoint.y = d(v)
             case 30:  e.basePoint.z = d(v)
-            case 11:  e.secPoint.x = d(v)  // X axis direction
-            case 21:  e.secPoint.y = d(v)
+            case 11:
+                e.secPoint.x = d(v)  // X axis direction
+                directionOrder = pairIndex
+            case 21:
+                e.secPoint.y = d(v)
+                directionOrder = pairIndex
+            case 31:
+                e.secPoint.z = d(v)
+                directionOrder = pairIndex
             case 40:  e.height = d(v)
             case 41:  e.widthScale = d(v)  // reference rectangle width
             case 44:  e.interlin = d(v)    // line spacing
-            case 50:  e.angle_p = d(v)     // rotation in degrees
+            case 45:  e.backgroundScale = d(v)
+            case 50:
+                e.angle_p = d(v)     // rotation in degrees
+                explicitAngleOrder = pairIndex
+            case 63:  e.backgroundColor = i(v)
             case 71:  e.textGen = i(v)     // attachment point
             case 72:  break                 // drawing direction, not alignment
+            case 90:  e.backgroundFillFlags = i(v)
+            case 421: e.backgroundColor24 = i(v)
+            case 441: e.backgroundTransparency = i(v)
             default: break
+            }
+        }
+
+        if directionOrder > explicitAngleOrder {
+            let dx = e.secPoint.x
+            let dy = e.secPoint.y
+            if abs(dx) > 1e-12 || abs(dy) > 1e-12 {
+                e.angle_p = atan2(dy, dx) * 180.0 / .pi
             }
         }
 

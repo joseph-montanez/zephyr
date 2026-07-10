@@ -354,6 +354,9 @@ public struct CADPrimitiveStyle: Hashable, Sendable {
     public var geomWidth: Double?
     public var opacity: Double?
     public var plotStyleHandle: String?
+    public var textBackgroundScale: Double?
+    public var textBackgroundColor: ColorRGBA?
+    public var textBackgroundUsesViewportColor: Bool
 
     public init(
         layerName: String? = nil,
@@ -366,7 +369,10 @@ public struct CADPrimitiveStyle: Hashable, Sendable {
         lineTypeScale: Double? = nil,
         geomWidth: Double? = nil,
         opacity: Double? = nil,
-        plotStyleHandle: String? = nil
+        plotStyleHandle: String? = nil,
+        textBackgroundScale: Double? = nil,
+        textBackgroundColor: ColorRGBA? = nil,
+        textBackgroundUsesViewportColor: Bool = false
     ) {
         self.layerName = layerName
         self.color = color
@@ -379,6 +385,9 @@ public struct CADPrimitiveStyle: Hashable, Sendable {
         self.geomWidth = geomWidth
         self.opacity = opacity
         self.plotStyleHandle = plotStyleHandle
+        self.textBackgroundScale = textBackgroundScale
+        self.textBackgroundColor = textBackgroundColor
+        self.textBackgroundUsesViewportColor = textBackgroundUsesViewportColor
     }
 }
 

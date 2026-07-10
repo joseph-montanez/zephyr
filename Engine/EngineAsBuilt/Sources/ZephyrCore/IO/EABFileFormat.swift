@@ -23,7 +23,7 @@ public let EABArchiveMagic: UInt32 = 0x41424145  // "EABA" in little-endian
 
 /// Current file format version.
 /// Bumped from 8 -> 9: Preserves layer plot metadata and flattened-block primitive styles.
-public let EABVersion: UInt32 = 9
+public let EABVersion: UInt32 = 10
 
 /// Section type identifiers in the section table.
 public enum EABSectionType: UInt32, Sendable {

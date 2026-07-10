@@ -254,6 +254,8 @@ public final class EngineTextManager {
         alignH: Int,
         alignV: Int,
         color: (UInt8, UInt8, UInt8, UInt8),
+        backgroundScale: Double? = nil,
+        backgroundColor: (UInt8, UInt8, UInt8, UInt8)? = nil,
         z: Double,
         geometryManager: GeometryManager,
         spriteManager: SpriteManager,
@@ -304,6 +306,54 @@ public final class EngineTextManager {
 
         var spriteIDs: [SpriteID] = []
         var primitiveIDs: [SpriteID] = []
+
+        if let backgroundScale,
+           let backgroundColor,
+           backgroundScale >= 1.0 {
+            var minX = Double.greatestFiniteMagnitude
+            var minY = Double.greatestFiniteMagnitude
+            var maxX = -Double.greatestFiniteMagnitude
+            var maxY = -Double.greatestFiniteMagnitude
+
+            for (lineIndex, line) in lines.enumerated() where !line.text.isEmpty {
+                let metrics = measureTextPixels(font: font, text: line.text)
+                let lineWidthWorld = metrics.w * worldScale
+                let lineHeightWorldActual = max(metrics.h, 1.0) * worldScale
+                let offsetX: Double
+                switch alignH {
+                case 1, 4:
+                    offsetX = -lineWidthWorld * 0.5
+                case 2:
+                    offsetX = -lineWidthWorld
+                default:
+                    offsetX = 0
+                }
+                let offsetY = baseY + Double(lineIndex) * lineHeightWorld
+                minX = min(minX, offsetX)
+                maxX = max(maxX, offsetX + lineWidthWorld)
+                minY = min(minY, offsetY)
+                maxY = max(maxY, offsetY + lineHeightWorldActual)
+            }
+
+            if minX.isFinite, minY.isFinite, maxX.isFinite, maxY.isFinite {
+                let margin = max(0.0, (backgroundScale - 1.0) * height * 0.5)
+                let localCorners = [
+                    (minX - margin, minY - margin),
+                    (maxX + margin, minY - margin),
+                    (maxX + margin, maxY + margin),
+                    (minX - margin, maxY + margin),
+                ]
+                let corners = localCorners.map { corner in
+                    let point = worldPoint(localX: corner.0, localY: corner.1)
+                    return SDL_FPoint(x: Float(point.x), y: Float(point.y))
+                }
+                let maskID = geometryManager.addFillCorners(
+                    corners,
+                    z: z - 0.02,
+                    color: backgroundColor)
+                primitiveIDs.append(maskID)
+            }
+        }
 
         for (lineIndex, line) in lines.enumerated() {
             let lineText = line.text

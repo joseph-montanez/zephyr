@@ -612,9 +612,19 @@ open class DXFTextEntity: DXFLineEntity {
 
 public class DXFMTextEntity: DXFTextEntity {
     public var interlin: Double   // 44
+    public var backgroundFillFlags: Int   // 90
+    public var backgroundScale: Double    // 45
+    public var backgroundColor: Int       // 63
+    public var backgroundColor24: Int     // 421
+    public var backgroundTransparency: Int // 441
 
     public override init(eType: DXFEType = .mTEXT) {
         self.interlin = 1
+        self.backgroundFillFlags = 0
+        self.backgroundScale = 1.5
+        self.backgroundColor = -1
+        self.backgroundColor24 = -1
+        self.backgroundTransparency = -1
         super.init(eType: eType)
         self.alignH = 0
         self.alignV = 3

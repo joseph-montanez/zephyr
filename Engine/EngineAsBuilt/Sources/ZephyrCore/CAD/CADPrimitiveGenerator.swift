@@ -25,6 +25,43 @@ import SwiftSDL
         public let alignH: Int
         public let alignV: Int
         public let color: (UInt8, UInt8, UInt8, UInt8)
+        public let backgroundScale: Double?
+        public let backgroundColor: (UInt8, UInt8, UInt8, UInt8)?
+        public let backgroundUsesViewportColor: Bool
+
+        public init(
+            text: String,
+            fontPath: String,
+            fontSize: Float,
+            x: Double,
+            y: Double,
+            z: Double,
+            rotation: Double,
+            height: Double,
+            maxWidth: Double?,
+            alignH: Int,
+            alignV: Int,
+            color: (UInt8, UInt8, UInt8, UInt8),
+            backgroundScale: Double? = nil,
+            backgroundColor: (UInt8, UInt8, UInt8, UInt8)? = nil,
+            backgroundUsesViewportColor: Bool = false
+        ) {
+            self.text = text
+            self.fontPath = fontPath
+            self.fontSize = fontSize
+            self.x = x
+            self.y = y
+            self.z = z
+            self.rotation = rotation
+            self.height = height
+            self.maxWidth = maxWidth
+            self.alignH = alignH
+            self.alignV = alignV
+            self.color = color
+            self.backgroundScale = backgroundScale
+            self.backgroundColor = backgroundColor
+            self.backgroundUsesViewportColor = backgroundUsesViewportColor
+        }
     }
 
 
@@ -44,6 +81,7 @@ import SwiftSDL
         let isHatchLine: Bool
         let hatchSpacing: Double
         let gradientData: RenderPrimitive.GradientData?
+        let usesViewportBackground: Bool
 
         init(
             type: PrimitiveType,
@@ -56,7 +94,8 @@ import SwiftSDL
             geomWidth: Double = 0.0,
             isHatchLine: Bool = false,
             hatchSpacing: Double = 0.0,
-            gradientData: RenderPrimitive.GradientData? = nil
+            gradientData: RenderPrimitive.GradientData? = nil,
+            usesViewportBackground: Bool = false
         ) {
             self.type = type
             self.points = points
@@ -69,59 +108,66 @@ import SwiftSDL
             self.isHatchLine = isHatchLine
             self.hatchSpacing = hatchSpacing
             self.gradientData = gradientData
+            self.usesViewportBackground = usesViewportBackground
         }
 
         /// Create RenderPrimitive from spec and add to GeometryManager. Returns the new ID.
-        func addTo(_ gm: GeometryManager) -> SpriteID {
+        func addTo(
+            _ gm: GeometryManager,
+            viewportBackground: (UInt8, UInt8, UInt8, UInt8)? = nil
+        ) -> SpriteID {
+            let effectiveColor = usesViewportBackground
+                ? (viewportBackground ?? color)
+                : color
             let id: SpriteID
             switch type {
             case .point:
                 if let p = points.first {
-                    id = gm.addPoint(x: p.x, y: p.y, z: z, color: color)
+                    id = gm.addPoint(x: p.x, y: p.y, z: z, color: effectiveColor)
                 } else {
-                    id = gm.addPoint(x: 0, y: 0, z: z, color: color)
+                    id = gm.addPoint(x: 0, y: 0, z: z, color: effectiveColor)
                 }
             case .line:
                 if points.count >= 2 {
                     id = gm.addLine(
                         x1: points[0].x, y1: points[0].y,
                         x2: points[1].x, y2: points[1].y,
-                        z: z, color: color)
+                        z: z, color: effectiveColor)
                 } else {
-                    id = gm.addPoint(x: 0, y: 0, z: z, color: color)
+                    id = gm.addPoint(x: 0, y: 0, z: z, color: effectiveColor)
                 }
             case .lines:
-                id = gm.addLines(points, z: z, color: color)
+                id = gm.addLines(points, z: z, color: effectiveColor)
             case .fillRect:
                 if !corners.isEmpty {
-                    id = gm.addFillCorners(corners, z: z, color: color, gradientData: gradientData)
+                    id = gm.addFillCorners(corners, z: z, color: effectiveColor, gradientData: gradientData)
                 } else if let r = rects.first {
                     id = gm.addFillRect(
                         x: r.x, y: r.y, w: r.w, h: r.h,
-                        z: z, color: color)
+                        z: z, color: effectiveColor)
                 } else {
-                    id = gm.addPoint(x: 0, y: 0, z: z, color: color)
+                    id = gm.addPoint(x: 0, y: 0, z: z, color: effectiveColor)
                 }
             case .fillRects:
                 if let r = rects.first {
                     id = gm.addFillRect(
                         x: r.x, y: r.y, w: r.w, h: r.h,
-                        z: z, color: color)
+                        z: z, color: effectiveColor)
                 } else {
-                    id = gm.addPoint(x: 0, y: 0, z: z, color: color)
+                    id = gm.addPoint(x: 0, y: 0, z: z, color: effectiveColor)
                 }
             case .rect:
                 if !corners.isEmpty {
-                    id = gm.addLines(corners, z: z, color: color)
+                    id = gm.addLines(corners, z: z, color: effectiveColor)
                 } else if let r = rects.first {
                     id = gm.addRect(
                         x: r.x, y: r.y, w: r.w, h: r.h,
-                        z: z, color: color)
+                        z: z, color: effectiveColor)
                 } else {
-                    id = gm.addPoint(x: 0, y: 0, z: z, color: color)
+                    id = gm.addPoint(x: 0, y: 0, z: z, color: effectiveColor)
                 }
             case .points, .rects:
-                id = gm.addPoint(x: 0, y: 0, z: z, color: color)
+                id = gm.addPoint(x: 0, y: 0, z: z, color: effectiveColor)
             }
             if let prim = gm.getPrimitive(id: id) {
                 prim.lineWeight = lineWeight

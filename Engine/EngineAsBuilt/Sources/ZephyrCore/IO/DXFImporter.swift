@@ -269,6 +269,24 @@ public enum DXFImporter {
         if !entity.colorName.isEmpty {
             xdata["dxf.colorName"] = .string(entity.colorName)
         }
+
+        if let mtext = entity as? DXFMTextEntity,
+           (mtext.backgroundFillFlags & 1) != 0 {
+            xdata["dxf.mtextBackgroundScale"] = .double(max(1.0, mtext.backgroundScale))
+            let usesViewportColor = (mtext.backgroundFillFlags & 2) != 0
+            xdata["dxf.mtextBackgroundUsesViewportColor"] = .int(usesViewportColor ? 1 : 0)
+            if !usesViewportColor {
+                let background = DXFColorTable.aciToRGBA(
+                    Int32(mtext.backgroundColor),
+                    color24: Int32(mtext.backgroundColor24))
+                xdata["dxf.mtextBackgroundColor"] = .string(String(
+                    format: "#%02X%02X%02X", background.r, background.g, background.b))
+                if mtext.backgroundTransparency >= 0 {
+                    xdata["dxf.mtextBackgroundOpacity"] = .double(
+                        DXFColorTable.transparencyToOpacity(Int32(mtext.backgroundTransparency)))
+                }
+            }
+        }
         return xdata
     }
 
@@ -292,6 +310,30 @@ public enum DXFImporter {
 
         let geomWidth = Self.polylineDisplayWidth(from: entity)
 
+        var textBackgroundScale: Double?
+        var textBackgroundColor: ColorRGBA?
+        var textBackgroundUsesViewportColor = false
+        if let mtext = entity as? DXFMTextEntity,
+           (mtext.backgroundFillFlags & 1) != 0 {
+            textBackgroundScale = max(1.0, mtext.backgroundScale)
+            textBackgroundUsesViewportColor = (mtext.backgroundFillFlags & 2) != 0
+            if !textBackgroundUsesViewportColor {
+                var background = DXFColorTable.aciToRGBA(
+                    Int32(mtext.backgroundColor),
+                    color24: Int32(mtext.backgroundColor24))
+                if mtext.backgroundTransparency >= 0 {
+                    let opacity = DXFColorTable.transparencyToOpacity(
+                        Int32(mtext.backgroundTransparency))
+                    background = ColorRGBA(
+                        r: background.r,
+                        g: background.g,
+                        b: background.b,
+                        a: UInt8(min(255.0, Double(background.a) * opacity)))
+                }
+                textBackgroundColor = background
+            }
+        }
+
         return CADPrimitiveStyle(
             layerName: entity.layer.isEmpty ? "0" : entity.layer,
             color: explicitColor,
@@ -307,7 +349,10 @@ public enum DXFImporter {
                 : nil,
             plotStyleHandle: entity.plotStyleHandle == 0
                 ? nil
-                : String(entity.plotStyleHandle, radix: 16).uppercased())
+                : String(entity.plotStyleHandle, radix: 16).uppercased(),
+            textBackgroundScale: textBackgroundScale,
+            textBackgroundColor: textBackgroundColor,
+            textBackgroundUsesViewportColor: textBackgroundUsesViewportColor)
     }
 
     private static func polylineDisplayWidth(from entity: DXFEntity) -> Double? {

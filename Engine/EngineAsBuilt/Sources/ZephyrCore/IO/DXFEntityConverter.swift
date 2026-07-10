@@ -402,16 +402,24 @@ public enum DXFEntityConverter {
 
     private static func hatchArcPath(_ arc: DXFArcEntity) -> CADPolyline? {
         guard arc.radius > 1e-12 else { return nil }
+
+        // HATCH circular-edge angles use the boundary-edge convention used by
+        // libdxfrw: walk forward from group 50 to group 51, while the edge Y
+        // coordinate is evaluated with the opposite sign before the document
+        // coordinate-system Y flip. In Zephyr coordinates that becomes the
+        // ordinary +sin form below. Negating and swapping the angles produces
+        // endpoints that do not meet the adjacent HATCH edges.
         let center = yflip(arc.basePoint)
-        let startAngle = -arc.endAngle
-        let endAngle = -arc.startAngle
-        var sweep = endAngle - startAngle
-        if sweep < 0 { sweep += .pi * 2.0 }
-        guard abs(sweep) > 1e-12 else { return nil }
+        let startAngle = arc.startAngle
+        var sweep = arc.endAngle - arc.startAngle
+        if sweep <= 0.0 { sweep += .pi * 2.0 }
+        guard sweep > 1e-12 else { return nil }
+
+        let endAngle = startAngle + sweep
         let start = Vector3(x: center.x + arc.radius * cos(startAngle),
                             y: center.y + arc.radius * sin(startAngle), z: 0)
-        let end = Vector3(x: center.x + arc.radius * cos(startAngle + sweep),
-                          y: center.y + arc.radius * sin(startAngle + sweep), z: 0)
+        let end = Vector3(x: center.x + arc.radius * cos(endAngle),
+                          y: center.y + arc.radius * sin(endAngle), z: 0)
         let bulge = tan(sweep * 0.25)
         return CADPolyline(vertices: [
             CADPolylineVertex(position: start, bulge: bulge),
@@ -765,22 +773,23 @@ public enum DXFEntityConverter {
 
     // MARK: - Boundary entity → polyline converters
 
-    /// Convert an arc to a polyline approximation
+    /// Convert a HATCH circular edge to a polyline approximation.
     private static func arcToPolyline(_ arc: DXFArcEntity, segments: Int = 64) -> [Vector3] {
         guard arc.radius > 1e-12 else { return [] }
         let center = yflip(arc.basePoint)
-        // Angles are in radians; CADPrimitive uses -endAngle/-startAngle convention
-        let startAngle = -arc.endAngle
-        let endAngle = -arc.startAngle
-        var sweep = endAngle - startAngle
-        if sweep < 0 { sweep += .pi * 2.0 }
+        let startAngle = arc.startAngle
+        var sweep = arc.endAngle - arc.startAngle
+        if sweep <= 0.0 { sweep += .pi * 2.0 }
+        guard sweep > 1e-12 else { return [] }
+
         let n = max(segments, 3)
         var pts: [Vector3] = []
+        pts.reserveCapacity(n + 1)
         for i in 0...n {
             let t = Double(i) / Double(n)
             let angle = startAngle + sweep * t
             pts.append(Vector3(x: center.x + arc.radius * cos(angle),
-                              y: center.y + arc.radius * sin(angle), z: 0))
+                               y: center.y + arc.radius * sin(angle), z: 0))
         }
         return pts
     }

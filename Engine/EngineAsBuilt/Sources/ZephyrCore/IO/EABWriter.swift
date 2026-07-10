@@ -578,6 +578,9 @@ public enum EABWriter {
             if style.geomWidth != nil { flags |= 1 << 8 }
             if style.opacity != nil { flags |= 1 << 9 }
             if style.plotStyleHandle != nil { flags |= 1 << 10 }
+            if style.textBackgroundScale != nil { flags |= 1 << 11 }
+            if style.textBackgroundColor != nil { flags |= 1 << 12 }
+            if style.textBackgroundUsesViewportColor { flags |= 1 << 13 }
             w.writeUInt16(flags)
 
             if let layerName = style.layerName { w.writeString(layerName) }
@@ -592,6 +595,14 @@ public enum EABWriter {
             if let geomWidth = style.geomWidth { w.writeFloat64(geomWidth) }
             if let opacity = style.opacity { w.writeFloat64(opacity) }
             if let plotStyleHandle = style.plotStyleHandle { w.writeString(plotStyleHandle) }
+            if let textBackgroundScale = style.textBackgroundScale { w.writeFloat64(textBackgroundScale) }
+            if let textBackgroundColor = style.textBackgroundColor {
+                let value = UInt32(textBackgroundColor.r) << 24
+                    | UInt32(textBackgroundColor.g) << 16
+                    | UInt32(textBackgroundColor.b) << 8
+                    | UInt32(textBackgroundColor.a)
+                w.writeUInt32(value)
+            }
         }
     }
 

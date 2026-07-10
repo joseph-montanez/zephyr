@@ -560,6 +560,18 @@ public enum EABReader {
             let geomWidth = (flags & (1 << 8)) != 0 ? r.readFloat64() : nil
             let opacity = (flags & (1 << 9)) != 0 ? r.readFloat64() : nil
             let plotStyleHandle = (flags & (1 << 10)) != 0 ? r.readString() : nil
+            let textBackgroundScale = (flags & (1 << 11)) != 0 ? r.readFloat64() : nil
+            let textBackgroundColor: ColorRGBA?
+            if (flags & (1 << 12)) != 0 {
+                let value = r.readUInt32()
+                textBackgroundColor = ColorRGBA(
+                    r: UInt8((value >> 24) & 0xFF),
+                    g: UInt8((value >> 16) & 0xFF),
+                    b: UInt8((value >> 8) & 0xFF),
+                    a: UInt8(value & 0xFF))
+            } else {
+                textBackgroundColor = nil
+            }
             styles[index] = CADPrimitiveStyle(
                 layerName: layerName,
                 color: color,
@@ -571,7 +583,10 @@ public enum EABReader {
                 lineTypeScale: lineTypeScale,
                 geomWidth: geomWidth,
                 opacity: opacity,
-                plotStyleHandle: plotStyleHandle)
+                plotStyleHandle: plotStyleHandle,
+                textBackgroundScale: textBackgroundScale,
+                textBackgroundColor: textBackgroundColor,
+                textBackgroundUsesViewportColor: (flags & (1 << 13)) != 0)
         }
         return styles
     }
