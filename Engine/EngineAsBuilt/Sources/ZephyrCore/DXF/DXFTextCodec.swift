@@ -1,5 +1,9 @@
 import Foundation
 
+#if os(Windows)
+import WinSDK
+#endif
+
 /// DXF text codec using Foundation String.Encoding for all code page conversions.
 ///
 /// Handles \\U+XXXX escape sequences per the DXF spec and provides CP1252
@@ -75,8 +79,14 @@ public class DXFTextCodec {
     // MARK: - Foundation Conversion
 
     /// Decode string from DXF code page using Foundation String.Encoding.
-    /// Falls back to CP1252 table if Foundation encoding is unavailable.
+    /// On Windows, uses MultiByteToWideChar for code pages not natively in Foundation.
+    /// Falls back to CP1252 table if all conversions fail.
     private func foundationDecode(_ s: String) -> String {
+#if os(Windows)
+        if let winDecoded = windowsDecode(s, codePage: codePage) {
+            return winDecoded
+        }
+#endif
         let enc = foundationEncodingFor(codePage)
         if let data = s.data(using: enc, allowLossyConversion: true),
            let decoded = String(data: data, encoding: .utf8) {
@@ -87,8 +97,14 @@ public class DXFTextCodec {
     }
 
     /// Encode string to DXF code page using Foundation String.Encoding.
-    /// Falls back to CP1252 table if Foundation encoding is unavailable.
+    /// On Windows, uses WideCharToMultiByte for code pages not natively in Foundation.
+    /// Falls back to CP1252 table if all conversions fail.
     private func foundationEncode(_ s: String) -> String {
+#if os(Windows)
+        if let winEncoded = windowsEncode(s, codePage: codePage) {
+            return winEncoded
+        }
+#endif
         let enc = foundationEncodingFor(codePage)
         if let data = s.data(using: .utf8),
            let encoded = String(data: data, encoding: enc) {
@@ -109,6 +125,7 @@ public class DXFTextCodec {
         case "ANSI_1252": return .windowsCP1252       // Western Europe (default)
         case "ANSI_1253": return .windowsCP1253
         case "ANSI_1254": return .windowsCP1254
+#if canImport(Darwin)
         case "ANSI_1255":                          // Hebrew
             let nsEnc1255 = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.windowsHebrew.rawValue))
             return String.Encoding(rawValue: UInt(nsEnc1255))
@@ -121,15 +138,109 @@ public class DXFTextCodec {
         case "ANSI_1258":                          // Vietnamese
             let nsEnc1258 = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.windowsVietnamese.rawValue))
             return String.Encoding(rawValue: UInt(nsEnc1258))
+#else
+        case "ANSI_1255": return .windowsCP1252   // Hebrew — see windowsDecode/Encode
+        case "ANSI_1256": return .windowsCP1252   // Arabic — see windowsDecode/Encode
+        case "ANSI_1257": return .windowsCP1252   // Baltic — see windowsDecode/Encode
+        case "ANSI_1258": return .windowsCP1252   // Vietnamese — see windowsDecode/Encode
+#endif
         case "ANSI_932":  return .shiftJIS
+#if canImport(Darwin)
         case "ANSI_936":                          // Chinese GB
             let nsEnc936 = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
             return String.Encoding(rawValue: UInt(nsEnc936))
-        case "ANSI_949":  return .windowsCP1252      // Korean — map via CP1252 table
-        case "ANSI_950":  return .windowsCP1252      // Chinese — map via CP1252 table
+#else
+        case "ANSI_936":  return .windowsCP1252   // Chinese GB — see windowsDecode/Encode
+#endif
+        case "ANSI_949":  return .windowsCP1252      // Korean — see windowsDecode/Encode
+        case "ANSI_950":  return .windowsCP1252      // Chinese — see windowsDecode/Encode
         default:          return .windowsCP1252
         }
     }
+
+    // MARK: - Windows Code Page Conversion
+
+#if os(Windows)
+    /// Map canonical DXF code page to Win32 code page identifier.
+    private func windowsCodePageID(_ cp: String) -> UINT? {
+        switch cp {
+        case "ANSI_874":  return 874   // Thai
+        case "ANSI_1255": return 1255  // Hebrew
+        case "ANSI_1256": return 1256  // Arabic
+        case "ANSI_1257": return 1257  // Baltic
+        case "ANSI_1258": return 1258  // Vietnamese
+        case "ANSI_936":  return 936   // GBK / GB2312
+        case "ANSI_949":  return 949   // Korean (EUC-KR)
+        case "ANSI_950":  return 950   // Traditional Chinese (BIG5)
+        default:          return nil
+        }
+    }
+
+    /// Decode a string from the Windows code page to UTF-8 using MultiByteToWideChar.
+    /// Returns nil if this code page isn't handled by Windows, so the caller can fall back.
+    private func windowsDecode(_ s: String, codePage cp: String) -> String? {
+        guard let codePageID = windowsCodePageID(cp) else { return nil }
+
+        // Extract raw bytes from the string (each unicode scalar's low byte = one code-page byte).
+        // This assumes the DXF file was read as Latin-1 so bytes survive intact.
+        var chars = [CHAR]()
+        chars.reserveCapacity(s.unicodeScalars.count)
+        for scalar in s.unicodeScalars {
+            chars.append(CHAR(bitPattern: UInt8(scalar.value & 0xFF)))
+        }
+
+        return chars.withUnsafeBufferPointer { charPtr -> String? in
+            guard let base = charPtr.baseAddress else { return nil }
+            let wideLen = MultiByteToWideChar(
+                codePageID, 0,
+                base, Int32(charPtr.count),
+                nil, 0
+            )
+            guard wideLen > 0 else { return nil }
+            var wideBuf = [WCHAR](repeating: 0, count: Int(wideLen))
+            MultiByteToWideChar(
+                codePageID, 0,
+                base, Int32(charPtr.count),
+                &wideBuf, wideLen
+            )
+            return wideBuf.withUnsafeBufferPointer { wPtr -> String in
+                String(utf16CodeUnits: wPtr.baseAddress!, count: Int(wideLen))
+            }
+        }
+    }
+
+    /// Encode a string from UTF-8 to the Windows code page using WideCharToMultiByte.
+    /// Returns nil if this code page isn't handled by Windows, so the caller can fall back.
+    private func windowsEncode(_ s: String, codePage cp: String) -> String? {
+        guard let codePageID = windowsCodePageID(cp) else { return nil }
+
+        let utf16 = s.utf16
+        return ContiguousArray(utf16).withUnsafeBufferPointer { widePtr -> String? in
+            guard let base = widePtr.baseAddress else { return nil }
+
+            // First call to get required buffer size
+            let byteLen = WideCharToMultiByte(
+                codePageID, 0,
+                base, Int32(widePtr.count),
+                nil, 0,
+                nil, nil
+            )
+            guard byteLen > 0 else { return nil }
+
+            var byteBuf = [CHAR](repeating: 0, count: Int(byteLen))
+            WideCharToMultiByte(
+                codePageID, 0,
+                base, Int32(widePtr.count),
+                &byteBuf, byteLen,
+                nil, nil
+            )
+
+            // Convert [CHAR] → [UInt8] → Latin-1 String (each byte maps to Unicode 0x00-0xFF)
+            let unsigned = byteBuf.map { UInt8(bitPattern: $0) }
+            return String(bytes: unsigned, encoding: .isoLatin1)
+        }
+    }
+#endif
 
     // MARK: - \U+XXXX Escape Handling
 
