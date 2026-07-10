@@ -215,17 +215,37 @@ public enum DXFImporter {
     }
 
     private static func insertTransform(_ insert: DXFInsertEntity, blockBase: Vector3, column: Int = 0, row: Int = 0) -> Transform3D {
-        let insertion = Self.cadPoint(insert.basePoint)
+        let sx = insert.xScale == 0 ? 1.0 : insert.xScale
+        let sy = insert.yScale == 0 ? 1.0 : insert.yScale
+        let sz = insert.zScale == 0 ? 1.0 : insert.zScale
+        let mirrored = insert.haveExtrusion && insert.extrusion.z < 0
+
+        let insertion: Vector3
+        let rotation: Double
+        let scaleVector: Vector3
+
+        if mirrored {
+            insertion = Vector3(
+                x: -insert.basePoint.x,
+                y: -insert.basePoint.y,
+                z: -insert.basePoint.z)
+            rotation = insert.angle + .pi
+            scaleVector = Vector3(x: sx, y: -sy, z: sz)
+        } else {
+            insertion = Self.cadPoint(
+                insert.basePoint,
+                extrusion: insert.haveExtrusion ? insert.extrusion : nil)
+            rotation = -insert.angle
+            scaleVector = Vector3(x: sx, y: sy, z: sz)
+        }
+
         let translate = Transform3D.translated(by: insertion)
-        let rotate = Transform3D.rotated(by: -insert.angle)
+        let rotate = Transform3D.rotated(by: rotation)
         let arrayOffset = Transform3D.translated(by: Vector3(
             x: Double(column) * insert.colSpace,
             y: -Double(row) * insert.rowSpace,
             z: 0))
-        let scale = Transform3D.scaled(by: Vector3(
-            x: insert.xScale == 0 ? 1.0 : insert.xScale,
-            y: insert.yScale == 0 ? 1.0 : insert.yScale,
-            z: insert.zScale == 0 ? 1.0 : insert.zScale))
+        let scale = Transform3D.scaled(by: scaleVector)
         let base = Transform3D.translated(by: Vector3(x: -blockBase.x, y: -blockBase.y, z: -blockBase.z))
         return translate
             .multiplying(by: rotate)
