@@ -60,6 +60,7 @@ $env:DWG_LIB            = "$clangDevRoot/libredwg/build"
 $env:ZLIB_NG_INCLUDE    = "$clangDevRoot/zlib-ng/include"
 $env:ZLIB_NG_LIB        = "$clangDevRoot/zlib-ng/lib"
 
+$env:ICONV_INCLUDE      = "$clangDevRoot/vcpkg/installed/$vcpkgTriplet/include"
 $env:ICONV_LIB          = "$clangDevRoot/vcpkg/installed/$vcpkgTriplet/lib"
 
 # PDFium

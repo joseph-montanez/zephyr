@@ -1,5 +1,0 @@
-module CIconv [system] {
-    header "include/CIconv.h"
-    link "iconv"
-    export *
-}

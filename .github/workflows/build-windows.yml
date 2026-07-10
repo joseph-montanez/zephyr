@@ -490,7 +490,8 @@ jobs:
           $env:ZLIB_NG_LIB     = "C:/dev/zlib-ng/lib"
 
           # iconv (from vcpkg)
-          $env:ICONV_LIB = "$vcpkgRoot\installed\$triplet\lib"
+          $env:ICONV_INCLUDE = "$vcpkgRoot\installed\$triplet\include"
+          $env:ICONV_LIB     = "$vcpkgRoot\installed\$triplet\lib"
 
           # PDFium (optional)
           $pdfiumHeaderFile = "C:\dev\pdfium\include\fpdfview.h"
@@ -531,6 +532,7 @@ jobs:
           Write-Host "DWG_LIB            = $env:DWG_LIB"
           Write-Host "ZLIB_NG_INCLUDE    = $env:ZLIB_NG_INCLUDE"
           Write-Host "ZLIB_NG_LIB        = $env:ZLIB_NG_LIB"
+          Write-Host "ICONV_INCLUDE      = $env:ICONV_INCLUDE"
           Write-Host "ICONV_LIB          = $env:ICONV_LIB"
           if ($env:PDFIUM_INCLUDE) { Write-Host "PDFIUM_INCLUDE     = $env:PDFIUM_INCLUDE" }
           if ($env:PDFIUM_LIB)     { Write-Host "PDFIUM_LIB         = $env:PDFIUM_LIB" }
