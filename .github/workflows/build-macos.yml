@@ -63,18 +63,7 @@ jobs:
           brew install sdl3 sdl3_image sdl3_ttf zlib-ng cmake autoconf automake libtool
 
       # ------------------------------------------------------------------
-      # 4. Build libdxfrw from source
-      # ------------------------------------------------------------------
-      - name: Build libdxfrw
-        run: |
-          DXFRW_ROOT="$HOME/dev/libdxfrw"
-          git clone --depth 1 https://github.com/joseph-montanez/libdxfrw.git "$DXFRW_ROOT"
-          cd "$DXFRW_ROOT"
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=12.0
-          cmake --build build --config Release
-
-      # ------------------------------------------------------------------
-      # 5. Build LibreDWG from source
+      # 4. Build LibreDWG from source
       # ------------------------------------------------------------------
       - name: Build LibreDWG
         run: |
@@ -87,7 +76,7 @@ jobs:
           make -j$(sysctl -n hw.logicalcpu)
 
       # ------------------------------------------------------------------
-      # 6. Download PDFium (optional, loaded at runtime via dlopen)
+      # 5. Download PDFium (optional, loaded at runtime via dlopen)
       # ------------------------------------------------------------------
       - name: Download PDFium
         run: |
@@ -116,7 +105,7 @@ jobs:
           fi
 
       # ------------------------------------------------------------------
-      # 7. Build Engine
+      # 6. Build Engine
       # ------------------------------------------------------------------
       - name: Build Engine
         run: |
@@ -129,8 +118,6 @@ jobs:
           export SDL3_IMAGE_LIB="$BREW_PREFIX/lib"
           export SDL3_TTF_INCLUDE="$BREW_PREFIX/include"
           export SDL3_TTF_LIB="$BREW_PREFIX/lib"
-          export DXFRW_INCLUDE="$HOME/dev/libdxfrw/src"
-          export DXFRW_LIB="$HOME/dev/libdxfrw/build"
           export DWG_INCLUDE="$HOME/dev/libredwg/include"
           export DWG_LIB="$HOME/dev/libredwg/src/.libs"
           export DWG_SRC="$HOME/dev/libredwg/src"
@@ -152,7 +139,7 @@ jobs:
           swift build -c "$CONFIG"
 
       # ------------------------------------------------------------------
-      # 8. Create .app Bundle
+      # 7. Create .app Bundle
       # ------------------------------------------------------------------
       - name: Create .app Bundle
         run: |
@@ -347,7 +334,7 @@ jobs:
           echo "Signing complete."
 
       # ------------------------------------------------------------------
-      # 9. Package .app for distribution
+      # 8. Package .app for distribution
       # ------------------------------------------------------------------
       - name: Package .app
         run: |
@@ -361,7 +348,7 @@ jobs:
           ls -lh "$RUNNER_TEMP/$ZIP_NAME"
 
       # ------------------------------------------------------------------
-      # 10. Upload to Nightly Release
+      # 9. Upload to Nightly Release
       # ------------------------------------------------------------------
       - name: Upload to Nightly Release
         uses: softprops/action-gh-release@v2

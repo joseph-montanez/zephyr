@@ -25,7 +25,7 @@ winget install --id Git.Git -e --source winget
 
 ## 2. Automated Workspace Setup
 
-Once the prerequisites are installed, open a standard PowerShell terminal and run the following one-liner. This script will download and compile Vcpkg, libiconv, zlib-ng, LibDXFRW, LibreDWG, PDFium, SDL3 (Core, Image, TTF), and finally build Zephyr.
+Once the prerequisites are installed, open a standard PowerShell terminal and run the following one-liner. This script will download and compile Vcpkg, zlib-ng, LibreDWG, PDFium, SDL3 (Core, Image, TTF), and finally build Zephyr.
 
 ```powershell
 Invoke-Command -ScriptBlock ([Scriptblock]::Create((irm [https://raw.githubusercontent.com/joseph-montanez/zephyr/refs/heads/main/setup-dev.ps1](https://raw.githubusercontent.com/joseph-montanez/zephyr/refs/heads/main/setup-dev.ps1)))) -ArgumentList "C:\dev"
@@ -58,27 +58,6 @@ To work on the Swift files with correct inferencing, use `launch-vscode.bat` to 
 
 If you need to compile dependencies manually without the script, here is the reference guide assuming a `C:\dev` workspace and an `x64` machine. (Substitute `x64` with `arm64` if on a Snapdragon/ARM device).
 
-**Install iconv (via vcpkg)**
-```powershell
-cd C:\dev
-git clone [https://github.com/microsoft/vcpkg.git](https://github.com/microsoft/vcpkg.git)
-cd vcpkg
-.\bootstrap-vcpkg.bat
-$env:VCPKG_VISUAL_STUDIO_PATH="C:\Program Files\Microsoft Visual Studio\2022\Community"
-.\vcpkg.exe install libiconv:x64-windows
-```
-
-**Build LibDXFRW**
-```powershell
-cd C:\dev
-git clone [https://github.com/joseph-montanez/libdxfrw](https://github.com/joseph-montanez/libdxfrw)
-cd libdxfrw
-mkdir build
-cd build
-cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE="C:\dev\vcpkg\scripts\buildsystems\vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows -DICONV_ROOT="C:\dev\vcpkg\installed\x64-windows"
-cmake --build . --config Release
-```
-
 **Build LibreDWG**
 ```powershell
 cd C:\dev
@@ -102,7 +81,7 @@ cd C:\dev\zephyr\Engine\EngineAsBuilt
 # Map dependencies
 $env:SDL3_INCLUDE = "C:\dev\SDL3\include"
 $env:SDL3_LIB = "C:\dev\SDL3\lib"
-# Note: You must also map DXFRW_INCLUDE, DXFRW_LIB, DWG_INCLUDE, DWG_LIB, ZLIB_NG_INCLUDE, ZLIB_NG_LIB, PDFIUM_INCLUDE, PDFIUM_LIB and ICONV_LIB
+# Note: You must also map DWG_INCLUDE, DWG_LIB, ZLIB_NG_INCLUDE, ZLIB_NG_LIB, PDFIUM_INCLUDE, PDFIUM_LIB
 
 # Launch build via vcvarsall.bat to ensure the MSVC linker is available
 cmd.exe /c "call `"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat`" x64 && swift build -c release -Xcc -I`"$env:SDL3_INCLUDE`""
