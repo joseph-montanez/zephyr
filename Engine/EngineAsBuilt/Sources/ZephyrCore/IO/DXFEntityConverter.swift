@@ -9,7 +9,8 @@ public enum DXFEntityConverter {
     internal static func convertEntityToPrimitives(
         _ e: DXFEntity,
         arrowSize: Double = 1.0,
-        bylayerColor: ColorRGBA? = nil
+        bylayerColor: ColorRGBA? = nil,
+        showAttributeDefinitionTagWhenEmpty: Bool = false
     ) -> [CADPrimitive] {
         let explicitColor: ColorRGBA? = resolveEntityColor(e)
         let primColor: ColorRGBA? = explicitColor ?? (e.color == 256 ? bylayerColor : nil)
@@ -36,8 +37,11 @@ public enum DXFEntityConverter {
             return convertEllipse(e, color: primColor)
         case .sPLINE:
             return convertSpline(e, color: primColor)
-        case .tEXT, .mTEXT:
-            return convertText(e, color: primColor)
+        case .tEXT, .mTEXT, .aTTDEF, .aTTRIB:
+            return convertText(
+                e,
+                color: primColor,
+                showAttributeDefinitionTagWhenEmpty: showAttributeDefinitionTagWhenEmpty)
         case .iNSERT:
             return []
         case .sOLID:
@@ -160,11 +164,24 @@ public enum DXFEntityConverter {
 
     // MARK: - Text
 
-    private static func convertText(_ e: DXFEntity, color: ColorRGBA?) -> [CADPrimitive] {
+    private static func convertText(
+        _ e: DXFEntity,
+        color: ColorRGBA?,
+        showAttributeDefinitionTagWhenEmpty: Bool
+    ) -> [CADPrimitive] {
         guard let tx = e as? DXFTextEntity else { return [] }
-        let cleaned = cleanMTextFormatting(tx.text)
+        let sourceText: String
+        if showAttributeDefinitionTagWhenEmpty,
+           e.eType == .aTTDEF,
+           tx.text.isEmpty {
+            sourceText = tx.attributeTag
+        } else {
+            sourceText = tx.text
+        }
+        let cleaned = cleanMTextFormatting(sourceText)
+        guard !cleaned.isEmpty else { return [] }
         let height = tx.height > 0 ? tx.height : 2.5
-        let isText = e.eType == .tEXT
+        let isText = e.eType == .tEXT || e.eType == .aTTDEF || e.eType == .aTTRIB
         let isMText = e.eType == .mTEXT
         let useSec = isText && (tx.alignH != 0 || tx.alignV != 0)
         let ref = useSec ? tx.secPoint : tx.basePoint

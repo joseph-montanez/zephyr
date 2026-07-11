@@ -499,6 +499,8 @@ public class DXFInsertEntity: DXFPointEntity {
     public var rowCount: Int   // 71
     public var colSpace: Double // 44
     public var rowSpace: Double // 45
+    public var attributesFollow: Bool // 66
+    public var attributes: [DXFTextEntity]
 
     public override init(eType: DXFEType = .iNSERT) {
         self.name = ""
@@ -510,6 +512,8 @@ public class DXFInsertEntity: DXFPointEntity {
         self.rowCount = 1
         self.colSpace = 0
         self.rowSpace = 0
+        self.attributesFollow = false
+        self.attributes = []
         super.init(eType: eType)
     }
 }

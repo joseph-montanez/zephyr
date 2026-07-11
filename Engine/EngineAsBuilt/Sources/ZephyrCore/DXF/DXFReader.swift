@@ -302,8 +302,8 @@ public class DXFReader {
         case "SPLINE":   return parseSpline(allPairs)
         case "TEXT":     return parseText(allPairs)
         case "MTEXT":    return parseMText(allPairs)
-        case "ATTDEF":   return parseText(allPairs)
-        case "ATTRIB":   return parseText(allPairs)
+        case "ATTDEF":   return parseText(allPairs, entityType: .aTTDEF)
+        case "ATTRIB":   return parseText(allPairs, entityType: .aTTRIB)
         case "INSERT":   return parseInsert(allPairs)
         case "SOLID":    return parseSolid(allPairs)
         case "TRACE":    return parseTrace(allPairs)
@@ -320,6 +320,33 @@ public class DXFReader {
         }
     }
 
+    private func collectInsertAttributes(_ insert: DXFInsertEntity) throws {
+        let nextIsAttribute = pos < pairs.count
+            && pairs[pos].0 == 0
+            && pairs[pos].1.uppercased() == "ATTRIB"
+        guard insert.attributesFollow || nextIsAttribute else { return }
+
+        while pos < pairs.count {
+            let (code, typeName) = pairs[pos]
+            guard code == 0 else {
+                pos += 1
+                continue
+            }
+
+            switch typeName.uppercased() {
+            case "ATTRIB":
+                if let attribute = try parseEntity(at: &pos) as? DXFTextEntity {
+                    insert.attributes.append(attribute)
+                }
+            case "SEQEND":
+                _ = try parseEntity(at: &pos)
+                return
+            default:
+                return
+            }
+        }
+    }
+
     /// Parse all entities (ENTITIES section or block content)
     private func parseEntities() throws {
         while pos < pairs.count {
@@ -328,6 +355,9 @@ public class DXFReader {
             if c == 0 && v == "ENDBLK" { return }
             if c == 0 {
                 if let entity = try parseEntity(at: &pos) {
+                    if let insert = entity as? DXFInsertEntity {
+                        try collectInsertAttributes(insert)
+                    }
                     entities.append(entity)
                 }
             } else {
@@ -594,12 +624,21 @@ extension DXFReader {
         return e
     }
 
-    func parseText(_ pairs: [(Int, String)]) -> DXFTextEntity {
-        let e = DXFTextEntity()
+    func parseText(
+        _ pairs: [(Int, String)],
+        entityType: DXFEType = .tEXT
+    ) -> DXFTextEntity {
+        let e = DXFTextEntity(eType: entityType)
+        let isAttribute = entityType == .aTTRIB
+        let isAttributeDefinition = entityType == .aTTDEF
+        e.isAttribute = isAttribute
+        e.isAttributeDefinition = isAttributeDefinition
         applyCommon(pairs, to: e)
         for (c, v) in pairs {
             switch c {
             case 1:   e.text = decode(v)
+            case 2 where isAttribute || isAttributeDefinition:
+                e.attributeTag = decode(v)
             case 7:   e.style = decode(v)
             case 10:  e.basePoint.x = d(v)
             case 20:  e.basePoint.y = d(v)
@@ -611,9 +650,14 @@ extension DXFReader {
             case 41:  e.widthScale = d(v)
             case 50:  e.angle_p = d(v)  // degrees
             case 51:  e.oblique = d(v)  // degrees
+            case 70 where isAttribute || isAttributeDefinition:
+                e.attributeFlags = i(v)
             case 71:  e.textGen = i(v)
             case 72:  e.alignH = i(v)
-            case 73:  e.alignV = i(v)
+            case 73 where !isAttribute && !isAttributeDefinition:
+                e.alignV = i(v)
+            case 74 where isAttribute || isAttributeDefinition:
+                e.alignV = i(v)
             default: break
             }
         }
@@ -690,7 +734,8 @@ extension DXFReader {
         applyCommon(pairs, to: e)
         for (c, v) in pairs {
             switch c {
-            case 2:   e.name = v
+            case 2:   e.name = decode(v)
+            case 66:  e.attributesFollow = i(v) != 0
             case 10:  e.basePoint.x = d(v)
             case 20:  e.basePoint.y = d(v)
             case 30:  e.basePoint.z = d(v)
@@ -1621,6 +1666,9 @@ extension DXFReader {
             }
             if c == 0 {
                 if let entity = try parseEntity(at: &pos) {
+                    if let insert = entity as? DXFInsertEntity {
+                        try collectInsertAttributes(insert)
+                    }
                     block.entities.append(entity)
                 }
             } else {

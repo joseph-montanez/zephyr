@@ -206,6 +206,8 @@ public enum DXFImporter {
             var geometry: [StyledPrimitive] = []
 
             for entity in block.entities {
+                guard Self.shouldRenderAttributeEntity(entity, insideBlockDefinition: true) else { continue }
+
                 if let insert = entity as? DXFInsertEntity, blockByName[insert.name] != nil {
                     let child = convertBlockGeometry(named: insert.name, visited: nextVisited)
                     guard !child.isEmpty else { continue }
@@ -220,6 +222,20 @@ public enum DXFImporter {
                                 by: transform,
                                 nestedInsertStyle: Self.primitiveStyle(from: insert)))
                         }
+                    }
+                    for attribute in insert.attributes
+                        where Self.shouldRenderAttributeEntity(attribute) {
+                        let values = DXFEntityConverter.convertEntityToPrimitives(
+                            attribute,
+                            bylayerColor: nil).map {
+                                StyledPrimitive(
+                                    primitive: $0,
+                                    style: Self.primitiveStyle(from: attribute))
+                            }
+                        geometry.append(contentsOf: Self.transformStyledPrimitives(
+                            values,
+                            by: .identity,
+                            nestedInsertStyle: Self.primitiveStyle(from: insert)))
                     }
                     continue
                 }
@@ -265,6 +281,8 @@ public enum DXFImporter {
             converted.reserveCapacity(sourceEntities.count)
 
             for (drawOrder, entity) in sourceEntities.enumerated() {
+                guard Self.shouldRenderAttributeEntity(entity) else { continue }
+
                 if let insert = entity as? DXFInsertEntity,
                    let blockID = blockNameToID[insert.name],
                    let block = blockByID[blockID] {
@@ -291,6 +309,31 @@ public enum DXFImporter {
                             cadEnt.drawOrder = drawOrder
                             converted.append(cadEnt)
                         }
+                    }
+
+                    for attribute in insert.attributes
+                        where Self.shouldRenderAttributeEntity(attribute) {
+                        let primitives = DXFEntityConverter.convertEntityToPrimitives(
+                            attribute,
+                            bylayerColor: nil)
+                        guard !primitives.isEmpty else { continue }
+                        let attributeLayerID = attribute.layer.isEmpty
+                            || attribute.layer == "0"
+                            ? layerID(for: insert)
+                            : layerID(for: attribute)
+                        var attributeEntity = CADEntity(
+                            handle: UUID(),
+                            layerID: attributeLayerID,
+                            blockID: nil,
+                            localGeometry: primitives,
+                            transform: .identity,
+                            xdata: Self.attributeStyleXData(
+                                from: attribute,
+                                insert: insert,
+                                globalLineTypeScale: globalLineTypeScale),
+                            drawOrder: drawOrder)
+                        attributeEntity.drawOrder = drawOrder
+                        converted.append(attributeEntity)
                     }
                     continue
                 }
@@ -340,7 +383,8 @@ public enum DXFImporter {
 
                 let primitives = DXFEntityConverter.convertEntityToPrimitives(
                     entity,
-                    bylayerColor: nil)
+                    bylayerColor: nil,
+                    showAttributeDefinitionTagWhenEmpty: entity.eType == .aTTDEF)
                 guard !primitives.isEmpty || entity.eType == .pOINT else { continue }
                 var cadEnt = CADEntity(
                     handle: UUID(),
@@ -529,6 +573,16 @@ public enum DXFImporter {
             xdata["dxf.colorName"] = .string(entity.colorName)
         }
 
+        if let text = entity as? DXFTextEntity,
+           text.eType == .aTTRIB || text.eType == .aTTDEF {
+            xdata["dxf.attributeType"] = .string(
+                text.eType == .aTTRIB ? "ATTRIB" : "ATTDEF")
+            xdata["dxf.attributeFlags"] = .int(text.attributeFlags)
+            if !text.attributeTag.isEmpty {
+                xdata["dxf.attributeTag"] = .string(text.attributeTag)
+            }
+        }
+
         if let mtext = entity as? DXFMTextEntity,
            (mtext.backgroundFillFlags & 1) != 0 {
             xdata["dxf.mtextBackgroundScale"] = .double(max(1.0, mtext.backgroundScale))
@@ -549,6 +603,63 @@ public enum DXFImporter {
         for (key, value) in DXFEntityConverter.hatchXData(from: entity) {
             xdata[key] = value
         }
+        return xdata
+    }
+
+    private static func shouldRenderAttributeEntity(
+        _ entity: DXFEntity,
+        insideBlockDefinition: Bool = false
+    ) -> Bool {
+        guard let text = entity as? DXFTextEntity else { return true }
+
+        let invisibleFlag = 1
+        let constantFlag = 2
+        switch text.eType {
+        case .aTTRIB:
+            return text.visible
+                && (text.attributeFlags & invisibleFlag) == 0
+                && !text.text.isEmpty
+        case .aTTDEF:
+            guard text.visible, (text.attributeFlags & invisibleFlag) == 0 else {
+                return false
+            }
+            if insideBlockDefinition,
+               (text.attributeFlags & constantFlag) == 0 {
+                return false
+            }
+            return !text.text.isEmpty || !text.attributeTag.isEmpty
+        default:
+            return true
+        }
+    }
+
+    private static func attributeStyleXData(
+        from attribute: DXFTextEntity,
+        insert: DXFInsertEntity,
+        globalLineTypeScale: Double
+    ) -> [String: XDataValue] {
+        var xdata = entityStyleXData(
+            from: attribute,
+            globalLineTypeScale: globalLineTypeScale)
+
+        if attribute.color == 0 {
+            if insert.color24 >= 0 || (insert.color > 0 && insert.color < 256) {
+                let color = DXFColorTable.aciToRGBA(
+                    insert.color,
+                    color24: insert.color24)
+                xdata["dxf.color"] = .string(String(
+                    format: "#%02X%02X%02X", color.r, color.g, color.b))
+            }
+        }
+
+        if attribute.lineType.uppercased() == "BYBLOCK", !insert.lineType.isEmpty {
+            xdata["dxf.lineType"] = .string(insert.lineType)
+        }
+        if attribute.lWeight == .byBlock, insert.lWeight.dxfInt >= 0 {
+            xdata["dxf.lineWeight"] = .double(
+                DXFColorTable.lineWeightToMM(Double(insert.lWeight.dxfInt)))
+        }
+
         return xdata
     }
 
