@@ -27,14 +27,9 @@ public enum DXFEntityConverter {
         case .aRC:
             guard let a = e as? DXFArcEntity else { return [] }
             let center = cadPoint(a.basePoint, extrusion: a.haveExtrusion ? a.extrusion : nil)
-            var startAngle = -a.endAngle
-            var endAngle = -a.startAngle
-            if a.haveExtrusion && a.extrusion.z < 0 {
-                startAngle = -a.startAngle
-                endAngle = -a.endAngle
-            }
+            let angles = arcPrimitiveAngles(a)
             return [.arc(center: center, radius: a.radius,
-                        startAngle: startAngle, endAngle: endAngle, color: primColor)]
+                        startAngle: angles.start, endAngle: angles.end, color: primColor)]
         case .lWPOLYLINE, .pOLYLINE:
             return convertPolyline(e, color: primColor)
         case .eLLIPSE:
@@ -1516,6 +1511,30 @@ public enum DXFEntityConverter {
             z: 0)) - origin
         guard direction.magnitude > 1e-12 else { return angle }
         return atan2(direction.y, direction.x)
+    }
+
+    private static func arcPrimitiveAngles(
+        _ arc: DXFArcEntity
+    ) -> (start: Double, end: Double) {
+        var start = arc.startAngle
+        var end = arc.endAngle
+
+        let mirroredPlanarExtrusion = arc.haveExtrusion
+            && abs(arc.extrusion.x) < 0.015625
+            && abs(arc.extrusion.y) < 0.015625
+            && arc.extrusion.z < 0.0
+
+        if mirroredPlanarExtrusion {
+            let transformedStart = Double.pi - start
+            let transformedEnd = Double.pi - end
+            start = transformedEnd
+            end = transformedStart
+        }
+
+        if arc.isCCW == 0 {
+            return (-start, -end)
+        }
+        return (-end, -start)
     }
 
     private static func cadLWPoint(_ vertex: DXFVertex2D, in polyline: DXFLWPolylineEntity) -> Vector3 {

@@ -1058,7 +1058,7 @@ extension DXFReader {
                     e.spline?.nFit = i32(v)
                     splineFitCountSeen = true
                 } else if let loop = currentLoop {
-                    sourceHandlesRemaining = max(0, i(v))
+                    sourceHandlesRemaining = min(100_000, max(0, i(v)))
                     loop.sourceBoundaryHandles.removeAll(keepingCapacity: true)
                     loop.sourceBoundaryHandles.reserveCapacity(sourceHandlesRemaining)
                 }
@@ -1069,7 +1069,7 @@ extension DXFReader {
                 }
             case 450: e.isGradient = i(v); e.gradientColors = []
             case 452: e.singleColorGrad = i(v)
-            case 453: e.gradientColors.reserveCapacity(i(v))
+            case 453: e.gradientColors.reserveCapacity(min(10_000, i(v)))
             case 460: e.gradientAngle = d(v) * 180.0 / .pi  // radians → degrees
             case 461: e.gradientShift = d(v)
             case 462: e.gradientTint = d(v)
