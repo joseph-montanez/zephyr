@@ -186,19 +186,32 @@ public final class CADVertexEditor {
         }
     }
 
+    @discardableResult
     public func forEachWorldSegment(
         handle: UUID, in gm: GeometryManager,
+        maxSegments: Int = .max,
         _ body: @MainActor (_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double) -> Void
-    ) {
-        guard let ids = bridge.entityPrimitiveMap[handle] else { return }
+    ) -> Int {
+        guard maxSegments > 0,
+              let ids = bridge.entityPrimitiveMap[handle]
+        else { return 0 }
+
+        var emitted = 0
         for id in ids {
+            guard emitted < maxSegments else { break }
             guard let rp = gm.getPrimitive(id: id), rp.points.count >= 2 else { continue }
-            let pts = rp.points  // local reference, no copy
-            for i in 0..<(pts.count - 1) {
+
+            let pts = rp.points
+            let count = min(pts.count - 1, maxSegments - emitted)
+            guard count > 0 else { break }
+
+            for i in 0..<count {
                 body(Double(pts[i].x), Double(pts[i].y),
-                     Double(pts[i+1].x), Double(pts[i+1].y))
+                     Double(pts[i + 1].x), Double(pts[i + 1].y))
             }
+            emitted += count
         }
+        return emitted
     }
 
 

@@ -504,76 +504,124 @@ public final class EngineRenderer {
             totalIdxCount += Int(cmdList.pointee.IdxBuffer.Size)
         }
 
+        var imguiDrawDataReady = false
         if totalVtxCount > 0 && totalIdxCount > 0 {
             if imguiVertexBuffer == nil || imguiVertexCapacity < totalVtxCount {
-                if let buf = imguiVertexBuffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) }
-                imguiVertexCapacity = totalVtxCount + 5000
-                let size = UInt32(imguiVertexCapacity * MemoryLayout<ImDrawVert>.stride)
-                var createInfo = SDL_GPUBufferCreateInfo(usage: SDL_GPU_BUFFERUSAGE_VERTEX, size: size, props: 0)
-                imguiVertexBuffer = SDL_CreateGPUBuffer(engine.gpuDevice, &createInfo)
+                let newCapacity = totalVtxCount + 5000
+                let size = UInt32(newCapacity * MemoryLayout<ImDrawVert>.stride)
+                var createInfo = SDL_GPUBufferCreateInfo(
+                    usage: SDL_GPU_BUFFERUSAGE_VERTEX, size: size, props: 0)
+                if let newBuffer = SDL_CreateGPUBuffer(engine.gpuDevice, &createInfo) {
+                    if let oldBuffer = imguiVertexBuffer {
+                        SDL_ReleaseGPUBuffer(engine.gpuDevice, oldBuffer)
+                    }
+                    imguiVertexBuffer = newBuffer
+                    imguiVertexCapacity = newCapacity
+                } else {
+                    print("Failed to grow ImGui GPU vertex buffer: \(String(cString: SDL_GetError()))")
+                }
             }
 
             if imguiIndexBuffer == nil || imguiIndexCapacity < totalIdxCount {
-                if let buf = imguiIndexBuffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) }
-                imguiIndexCapacity = totalIdxCount + 10000
-                let size = UInt32(imguiIndexCapacity * MemoryLayout<ImDrawIdx>.stride)
-                var createInfo = SDL_GPUBufferCreateInfo(usage: SDL_GPU_BUFFERUSAGE_INDEX, size: size, props: 0)
-                imguiIndexBuffer = SDL_CreateGPUBuffer(engine.gpuDevice, &createInfo)
-            }
-
-            let vtxSizeInBytes = UInt32(totalVtxCount * MemoryLayout<ImDrawVert>.stride)
-            let idxSizeInBytes = UInt32(totalIdxCount * MemoryLayout<ImDrawIdx>.stride)
-
-            var vtxTransferInfo = SDL_GPUTransferBufferCreateInfo()
-            vtxTransferInfo.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
-            vtxTransferInfo.size = vtxSizeInBytes
-            let vtxTransferBuf = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &vtxTransferInfo)
-
-            var idxTransferInfo = SDL_GPUTransferBufferCreateInfo()
-            idxTransferInfo.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
-            idxTransferInfo.size = idxSizeInBytes
-            let idxTransferBuf = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &idxTransferInfo)
-
-            if vtxTransferBuf != nil && idxTransferBuf != nil {
-                let vtxMapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, vtxTransferBuf, false)
-                let idxMapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, idxTransferBuf, false)
-
-                if vtxMapped != nil && idxMapped != nil {
-                    var vtxOffset = 0
-                    var idxOffset = 0
-                    for n in 0..<Int(drawData.pointee.CmdListsCount) {
-                        guard let cmdList = drawData.pointee.CmdLists.Data?[n] else { continue }
-                        let vtxSize = Int(cmdList.pointee.VtxBuffer.Size) * MemoryLayout<ImDrawVert>.stride
-                        let idxSize = Int(cmdList.pointee.IdxBuffer.Size) * MemoryLayout<ImDrawIdx>.stride
-
-                        memcpy(vtxMapped!.advanced(by: vtxOffset), cmdList.pointee.VtxBuffer.Data, vtxSize)
-                        memcpy(idxMapped!.advanced(by: idxOffset), cmdList.pointee.IdxBuffer.Data, idxSize)
-
-                        vtxOffset += vtxSize
-                        idxOffset += idxSize
+                let newCapacity = totalIdxCount + 10000
+                let size = UInt32(newCapacity * MemoryLayout<ImDrawIdx>.stride)
+                var createInfo = SDL_GPUBufferCreateInfo(
+                    usage: SDL_GPU_BUFFERUSAGE_INDEX, size: size, props: 0)
+                if let newBuffer = SDL_CreateGPUBuffer(engine.gpuDevice, &createInfo) {
+                    if let oldBuffer = imguiIndexBuffer {
+                        SDL_ReleaseGPUBuffer(engine.gpuDevice, oldBuffer)
                     }
-                }
-                SDL_UnmapGPUTransferBuffer(engine.gpuDevice, vtxTransferBuf)
-                SDL_UnmapGPUTransferBuffer(engine.gpuDevice, idxTransferBuf)
-
-                if let cmd = SDL_AcquireGPUCommandBuffer(engine.gpuDevice) {
-                    let copyPass = SDL_BeginGPUCopyPass(cmd)
-                    if copyPass != nil {
-                        var srcVtx = SDL_GPUTransferBufferLocation(transfer_buffer: vtxTransferBuf, offset: 0)
-                        var dstVtx = SDL_GPUBufferRegion(buffer: imguiVertexBuffer, offset: 0, size: vtxSizeInBytes)
-                        SDL_UploadToGPUBuffer(copyPass, &srcVtx, &dstVtx, false)
-
-                        var srcIdx = SDL_GPUTransferBufferLocation(transfer_buffer: idxTransferBuf, offset: 0)
-                        var dstIdx = SDL_GPUBufferRegion(buffer: imguiIndexBuffer, offset: 0, size: idxSizeInBytes)
-                        SDL_UploadToGPUBuffer(copyPass, &srcIdx, &dstIdx, false)
-
-                        SDL_EndGPUCopyPass(copyPass)
-                    }
-                    SDL_SubmitGPUCommandBuffer(cmd)
+                    imguiIndexBuffer = newBuffer
+                    imguiIndexCapacity = newCapacity
+                } else {
+                    print("Failed to grow ImGui GPU index buffer: \(String(cString: SDL_GetError()))")
                 }
             }
-            if let buf = vtxTransferBuf { SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, buf) }
-            if let buf = idxTransferBuf { SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, buf) }
+
+            if imguiVertexCapacity >= totalVtxCount,
+               imguiIndexCapacity >= totalIdxCount,
+               let vertexBuffer = imguiVertexBuffer,
+               let indexBuffer = imguiIndexBuffer
+            {
+                let vtxSizeInBytes = UInt32(totalVtxCount * MemoryLayout<ImDrawVert>.stride)
+                let idxSizeInBytes = UInt32(totalIdxCount * MemoryLayout<ImDrawIdx>.stride)
+
+                var vtxTransferInfo = SDL_GPUTransferBufferCreateInfo()
+                vtxTransferInfo.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
+                vtxTransferInfo.size = vtxSizeInBytes
+                let vtxTransferBuf = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &vtxTransferInfo)
+
+                var idxTransferInfo = SDL_GPUTransferBufferCreateInfo()
+                idxTransferInfo.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
+                idxTransferInfo.size = idxSizeInBytes
+                let idxTransferBuf = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &idxTransferInfo)
+
+                if let vtxTransferBuf,
+                   let idxTransferBuf
+                {
+                    let vtxMapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, vtxTransferBuf, false)
+                    let idxMapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, idxTransferBuf, false)
+
+                    if let vtxMapped,
+                       let idxMapped
+                    {
+                        var vtxOffset = 0
+                        var idxOffset = 0
+                        for n in 0..<Int(drawData.pointee.CmdListsCount) {
+                            guard let cmdList = drawData.pointee.CmdLists.Data?[n] else { continue }
+                            let vtxSize = Int(cmdList.pointee.VtxBuffer.Size) * MemoryLayout<ImDrawVert>.stride
+                            let idxSize = Int(cmdList.pointee.IdxBuffer.Size) * MemoryLayout<ImDrawIdx>.stride
+
+                            memcpy(vtxMapped.advanced(by: vtxOffset), cmdList.pointee.VtxBuffer.Data, vtxSize)
+                            memcpy(idxMapped.advanced(by: idxOffset), cmdList.pointee.IdxBuffer.Data, idxSize)
+
+                            vtxOffset += vtxSize
+                            idxOffset += idxSize
+                        }
+
+                        SDL_UnmapGPUTransferBuffer(engine.gpuDevice, vtxTransferBuf)
+                        SDL_UnmapGPUTransferBuffer(engine.gpuDevice, idxTransferBuf)
+
+                        if let uploadCmd = SDL_AcquireGPUCommandBuffer(engine.gpuDevice) {
+                            if let copyPass = SDL_BeginGPUCopyPass(uploadCmd) {
+                                var srcVtx = SDL_GPUTransferBufferLocation(
+                                    transfer_buffer: vtxTransferBuf, offset: 0)
+                                var dstVtx = SDL_GPUBufferRegion(
+                                    buffer: vertexBuffer, offset: 0, size: vtxSizeInBytes)
+                                SDL_UploadToGPUBuffer(copyPass, &srcVtx, &dstVtx, true)
+
+                                var srcIdx = SDL_GPUTransferBufferLocation(
+                                    transfer_buffer: idxTransferBuf, offset: 0)
+                                var dstIdx = SDL_GPUBufferRegion(
+                                    buffer: indexBuffer, offset: 0, size: idxSizeInBytes)
+                                SDL_UploadToGPUBuffer(copyPass, &srcIdx, &dstIdx, true)
+
+                                SDL_EndGPUCopyPass(copyPass)
+                                imguiDrawDataReady = SDL_SubmitGPUCommandBuffer(uploadCmd)
+                                if !imguiDrawDataReady {
+                                    print("Failed to submit ImGui GPU upload: \(String(cString: SDL_GetError()))")
+                                }
+                            } else {
+                                SDL_CancelGPUCommandBuffer(uploadCmd)
+                            }
+                        }
+                    } else {
+                        if vtxMapped != nil {
+                            SDL_UnmapGPUTransferBuffer(engine.gpuDevice, vtxTransferBuf)
+                        }
+                        if idxMapped != nil {
+                            SDL_UnmapGPUTransferBuffer(engine.gpuDevice, idxTransferBuf)
+                        }
+                    }
+                }
+
+                if let vtxTransferBuf {
+                    SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, vtxTransferBuf)
+                }
+                if let idxTransferBuf {
+                    SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, idxTransferBuf)
+                }
+            }
         }
 
         // --- Phase 2: GPU ID-buffer pick pass ---
@@ -756,7 +804,7 @@ public final class EngineRenderer {
                     }
                 }
 
-                if totalVtxCount > 0 && totalIdxCount > 0 {
+                if imguiDrawDataReady {
                     engine.ui.renderImGuiDrawData(cmd: cmd, renderPass: renderPass!, renderer: self, fontTexture: engine.fontTexture)
                 }
 
@@ -908,17 +956,23 @@ public final class EngineRenderer {
             return
         }
 
-        let maxSegments = (_foregroundVertexLimit - _foregroundVertexEstimate) / 6
-        var segmentsDrawn = 0
         let drawList = igGetBackgroundDrawList(nil)
-        engine.cadBridge.vertexEditor.forEachWorldSegment(handle: hoverHandle, in: engine.geometryManager) { x1, y1, x2, y2 in
-            guard segmentsDrawn < maxSegments else { return }
+        let remainingVertices = max(
+            0,
+            _foregroundVertexLimit - Int(drawList.pointee.VtxBuffer.Size))
+        let maxSegments = min(4096, remainingVertices / 8)
+        guard maxSegments > 0 else { return }
+
+        let segmentsDrawn = engine.cadBridge.vertexEditor.forEachWorldSegment(
+            handle: hoverHandle,
+            in: engine.geometryManager,
+            maxSegments: maxSegments
+        ) { x1, y1, x2, y2 in
             let s0 = engine.camera.transformWorldToScreen(worldX: x1, worldY: y1, cam: cam)
             let s1 = engine.camera.transformWorldToScreen(worldX: x2, worldY: y2, cam: cam)
             ImDrawListAddLine(drawList, ImVec2(x: s0.x, y: s0.y), ImVec2(x: s1.x, y: s1.y), hc, lineWidth)
-            segmentsDrawn += 1
         }
-        _foregroundVertexEstimate += segmentsDrawn * 2
+        _foregroundVertexEstimate += segmentsDrawn * 8
     }
 
     /// Renders a live preview of what the selection will look like after
