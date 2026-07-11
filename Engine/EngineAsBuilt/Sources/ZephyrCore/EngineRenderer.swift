@@ -956,7 +956,7 @@ public final class EngineRenderer {
             return
         }
 
-        let drawList = igGetBackgroundDrawList(nil)
+        guard let drawList = igGetBackgroundDrawList(nil) else { return }
         let remainingVertices = max(
             0,
             _foregroundVertexLimit - Int(drawList.pointee.VtxBuffer.Size))
