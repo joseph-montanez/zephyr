@@ -575,8 +575,34 @@ public enum CADBoundaryDetector {
                     }
                 }
 
-            case .ellipse(_, _, _, _):
-                break  // Ellipses are approximated later if needed.
+            case .ellipse(let center, let majorAxis, let minorRatio, _):
+                let majorLen = majorAxis.magnitude
+                let minorLen = majorLen * minorRatio
+                guard majorLen > 1e-12, minorLen > 1e-12 else { break }
+
+                let rotation = atan2(majorAxis.y, majorAxis.x)
+                let cosRotation = cos(rotation)
+                let sinRotation = sin(rotation)
+                let segmentCount = 64
+
+                let points = (0..<segmentCount).map { index -> Vector3 in
+                    let angle = Double(index) * 2.0 * .pi / Double(segmentCount)
+                    let localX = cos(angle) * majorLen
+                    let localY = sin(angle) * minorLen
+                    return transform.transformPoint(Vector3(
+                        x: center.x + localX * cosRotation - localY * sinRotation,
+                        y: center.y + localX * sinRotation + localY * cosRotation,
+                        z: center.z
+                    ))
+                }
+
+                for index in 0..<points.count {
+                    edges.append(Edge(
+                        a: points[index],
+                        b: points[(index + 1) % points.count],
+                        entityHandle: handle
+                    ))
+                }
 
             case .spline(let controlPoints, let knots, let degree, let weights, _):
                 let w = weights ?? Array(repeating: 1.0, count: controlPoints.count)
