@@ -581,6 +581,13 @@ public final class PhrostEngine {
     }
 
     internal func setupFontAtlas(dpiScale: Float, uiScale: Float) {
+        // Guard against pathological scale inputs (e.g. from minimized window
+        // or NaN propagation) that would produce gargantuan font sizes.
+        guard dpiScale > 0.01, uiScale > 0.01, uiScale < 64.0 else {
+            print("Warning: setupFontAtlas skipped — unreasonable scale dpi=\(dpiScale) ui=\(uiScale)")
+            return
+        }
+
         let atlas = io.pointee.Fonts!
         
         // Release old GPU texture if any
@@ -595,12 +602,18 @@ public final class PhrostEngine {
         // imgui 1.92.x: Build font atlas with CJK support.
         igImFontAtlasBuildInit(atlas)
 
-        // Build glyph ranges: Basic Latin + Japanese (Hiragana, Katakana, common Kanji).
+        // Build glyph ranges: Basic Latin + Latin-1 Supplement + common
+        // symbols needed for a CAD UI (arrows, math, box drawing, shapes).
+        // Full CJK ranges (thousands of glyphs × 9 font sizes) overflow
+        // the font atlas, so we omit Hiragana/Katakana/Hangul/CJK.
+        // Qt/ICU-based text shaping for CAD entities is handled separately
+        // by CADFormattedText; this atlas only serves the ImGui UI.
         let rangesBuilder = ImFontGlyphRangesBuilder_ImFontGlyphRangesBuilder()!
         defer { ImFontGlyphRangesBuilder_destroy(rangesBuilder) }
 
         // Pairs of (start, end) ImWchar codepoints, 0-terminated.
-        let cjkRanges: [ImWchar] = [
+        // ~1000 glyphs total — fits comfortably at 8192² even with 9 sizes.
+        let glyphRanges: [ImWchar] = [
             0x0020, 0x00FF,   // Basic Latin + Latin-1 Supplement
             0x0370, 0x03FF,   // Greek and Coptic
             0x0400, 0x04FF,   // Cyrillic
@@ -612,16 +625,10 @@ public final class PhrostEngine {
             0x2580, 0x259F,   // Block Elements
             0x25A0, 0x25FF,   // Geometric Shapes
             0x2600, 0x26FF,   // Misc Symbols
-            0x3000, 0x303F,   // CJK Symbols and Punctuation
-            0x3040, 0x309F,   // Hiragana
-            0x30A0, 0x30FF,   // Katakana
-            0x3100, 0x312F,   // Bopomofo
-            0x3130, 0x318F,   // Hangul Compatibility Jamo
-            0x31F0, 0x31FF,   // Katakana Phonetic Extensions
             0xFF00, 0xFFEF,   // Halfwidth and Fullwidth Forms
             0,                // Terminator
         ]
-        cjkRanges.withUnsafeBufferPointer { ptr in
+        glyphRanges.withUnsafeBufferPointer { ptr in
             ImFontGlyphRangesBuilder_AddRanges(rangesBuilder, ptr.baseAddress!)
         }
 
@@ -804,6 +811,11 @@ public final class PhrostEngine {
     /// Recompute UI scale and rebuild font atlas if display scale or framebuffer density changes.
     /// Safe to call during a frame — the actual rebuild is deferred to before the next NewFrame.
     public func updateScale(dpiScale: Float, fbScale: Float, force: Bool = false) {
+        // Guard against zero/negative values when the window is minimized or
+        // otherwise in an invalid state.  Rebuilding the font atlas with bogus
+        // scale values produces gargantuan glyphs that overflow the atlas.
+        guard dpiScale > 0.01, fbScale > 0.01 else { return }
+
         let autoScale = (fbScale > 0.001) ? dpiScale / fbScale : 1.0
         let newUiScale = uiScaleOverride ?? autoScale
         

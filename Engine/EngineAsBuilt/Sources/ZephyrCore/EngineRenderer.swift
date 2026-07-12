@@ -208,10 +208,33 @@ public final class EngineRenderer {
     }
 
     internal func render(deltaSec: Double) {
-        SDL_GetWindowSize(engine.window, &engine.windowWidth, &engine.windowHeight)
-        SDL_GetWindowSizeInPixels(engine.window, &engine.pixelWidth, &engine.pixelHeight)
-        let newScaleX = (engine.windowWidth > 0) ? Float(engine.pixelWidth) / Float(engine.windowWidth) : 1.0
-        let newScaleY = (engine.windowHeight > 0) ? Float(engine.pixelHeight) / Float(engine.windowHeight) : 1.0
+        let windowFlags = SDL_GetWindowFlags(engine.window)
+        let isMinimized = (windowFlags & 0x0000_0000_0000_0040) != 0
+        if isMinimized {
+            return
+        }
+
+        var windowWidth: Int32 = 0
+        var windowHeight: Int32 = 0
+        var pixelWidth: Int32 = 0
+        var pixelHeight: Int32 = 0
+        guard SDL_GetWindowSize(engine.window, &windowWidth, &windowHeight),
+              SDL_GetWindowSizeInPixels(engine.window, &pixelWidth, &pixelHeight),
+              windowWidth > 0,
+              windowHeight > 0,
+              pixelWidth > 0,
+              pixelHeight > 0
+        else {
+            return
+        }
+
+        engine.windowWidth = windowWidth
+        engine.windowHeight = windowHeight
+        engine.pixelWidth = pixelWidth
+        engine.pixelHeight = pixelHeight
+
+        let newScaleX = Float(pixelWidth) / Float(windowWidth)
+        let newScaleY = Float(pixelHeight) / Float(windowHeight)
 
         // print("newScaleX: \(newScaleX), newScaleY: \(newScaleY), engine.scaleX: \(engine.scaleX), engine.scaleY: \(engine.scaleY) engine.windowWidth: \(engine.windowWidth), engine.windowHeight: \(engine.windowHeight), engine.pixelWidth: \(engine.pixelWidth), engine.pixelHeight: \(engine.pixelHeight)")
 
