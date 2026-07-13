@@ -28,8 +28,8 @@ struct AppFileCallbacks {
 
         // Callback invoked when the user selects a destination in the Save As dialog.
         // Launches background save with progress; cancel-and-restart if already saving.
-        engine.saveFileBrowser.onFileSelected = { url in
-            engine.tabManager.startSaveActiveTabAs(url: url)
+        engine.saveFileBrowser.onSaveFileSelected = { url, dxfVersion in
+            engine.tabManager.startSaveActiveTabAs(url: url, dxfVersion: dxfVersion)
         }
     }
 }

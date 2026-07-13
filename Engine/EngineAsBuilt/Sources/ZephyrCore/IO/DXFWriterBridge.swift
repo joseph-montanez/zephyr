@@ -3,7 +3,7 @@ import Foundation
 /// Converts Zephyr CAD types to DXF format using pure Swift DXFWriter.
 public enum DXFWriterBridge {
 
-    public static let defaultExportVersion: DXFVersion = .r2018
+    public static let defaultExportVersion: DXFVersion = .defaultExport
 
     private struct ExportViewData {
         var name: String
@@ -36,7 +36,11 @@ public enum DXFWriterBridge {
         var maximumLimits: Vector3
     }
 
-    public static func export(document: CADDocument, to url: URL) throws {
+    public static func export(
+        document: CADDocument,
+        to url: URL,
+        dxfVersion: DXFVersion = .defaultExport
+    ) throws {
         let view = ExportViewData(
             name: "Model",
             kind: .model,
@@ -46,10 +50,14 @@ public enum DXFWriterBridge {
             textStyleFonts: document.textStyleFonts,
             linetypePatterns: document.linetypePatterns,
             unit: document.unit)
-        try exportToDXF(views: [view], filePath: url.path, dxfVersion: defaultExportVersion)
+        try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion)
     }
 
-    public static func export(views: [DrawingView], to url: URL) throws {
+    public static func export(
+        views: [DrawingView],
+        to url: URL,
+        dxfVersion: DXFVersion = .defaultExport
+    ) throws {
         let exportViews = views.map {
             ExportViewData(
                 name: $0.name,
@@ -61,7 +69,7 @@ public enum DXFWriterBridge {
                 linetypePatterns: $0.document.linetypePatterns,
                 unit: $0.document.unit)
         }
-        try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: defaultExportVersion)
+        try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion)
     }
 
     public static func exportToDXF(
@@ -71,7 +79,7 @@ public enum DXFWriterBridge {
         textStyleFonts: [String: String] = [:],
         linetypePatterns: [String: [Double]] = [:],
         filePath: String,
-        dxfVersion: DXFVersion = .r2018
+        dxfVersion: DXFVersion = .defaultExport
     ) throws {
         let view = ExportViewData(
             name: "Model",
@@ -88,7 +96,7 @@ public enum DXFWriterBridge {
     private static func exportToDXF(
         views sourceViews: [ExportViewData],
         filePath: String,
-        dxfVersion: DXFVersion = .r2018
+        dxfVersion: DXFVersion = .defaultExport
     ) throws {
         guard !sourceViews.isEmpty else {
             throw DXFWriter.WriterError.invalidEntity("Cannot export a DXF without a drawing view")
@@ -101,7 +109,7 @@ public enum DXFWriterBridge {
         }
 
         let writer = DXFWriter()
-        writer.version = defaultExportVersion
+        writer.version = dxfVersion
         writer.codePage = "ANSI_1252"
         writer.headerVars["$INSUNITS"] = modelView.unit.dxfINSUNITS
 

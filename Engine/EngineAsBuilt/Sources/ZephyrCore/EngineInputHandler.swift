@@ -231,7 +231,8 @@ internal final class EngineInputHandler {
                     if engine.io.pointee.KeyShift {
                         engine.saveFileBrowser.openSave(
                             filterExtension: "dxf;eab;pdf",
-                            defaultName: engine.tabManager.activeTab?.displayName ?? "untitled")
+                            defaultName: engine.tabManager.activeTab?.displayName ?? "untitled",
+                            defaultDXFVersion: engine.tabManager.activeTab?.dxfVersion ?? .defaultExport)
                     } else {
                         engine.tabManager.startSaveActiveTab()
                         // If the tab has no file URL, startSaveActiveTab does nothing —
@@ -239,7 +240,8 @@ internal final class EngineInputHandler {
                         if engine.tabManager.activeFileURL == nil {
                             engine.saveFileBrowser.openSave(
                                 filterExtension: "dxf;eab;pdf",
-                                defaultName: engine.tabManager.activeTab?.displayName ?? "untitled")
+                                defaultName: engine.tabManager.activeTab?.displayName ?? "untitled",
+                                defaultDXFVersion: engine.tabManager.activeTab?.dxfVersion ?? .defaultExport)
                         }
                     }
                 case SDL_SCANCODE_C:

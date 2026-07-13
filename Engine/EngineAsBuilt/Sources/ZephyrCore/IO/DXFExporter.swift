@@ -12,26 +12,36 @@ public enum DXFExporter {
     // MARK: - Public API
 
     /// Export the document to a DXF file.
-    public static func export(document: CADDocument, to url: URL) throws {
-        try DXFWriterBridge.export(document: document, to: url)
+    public static func export(
+        document: CADDocument,
+        to url: URL,
+        dxfVersion: DXFVersion = .defaultExport
+    ) throws {
+        try DXFWriterBridge.export(document: document, to: url, dxfVersion: dxfVersion)
     }
 
-    public static func export(views: [DrawingView], to url: URL) throws {
-        try DXFWriterBridge.export(views: views, to: url)
+    public static func export(
+        views: [DrawingView],
+        to url: URL,
+        dxfVersion: DXFVersion = .defaultExport
+    ) throws {
+        try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion)
     }
 
     /// Background-save: export from a snapshot with progress and cancellation.
     public static func export(snapshot: CADDocumentSnapshot, to url: URL,
+                               dxfVersion: DXFVersion = .defaultExport,
                                progress: ((Float) -> Void)? = nil) throws {
         try Task.checkCancellation()
         progress?(0.5)
         let tempDoc = CADDocument()
         tempDoc.restore(from: snapshot)
-        try DXFWriterBridge.export(document: tempDoc, to: url)
+        try DXFWriterBridge.export(document: tempDoc, to: url, dxfVersion: dxfVersion)
         progress?(1.0)
     }
 
     public static func export(snapshots: [SaveDocumentSnapshot], to url: URL,
+                              dxfVersion: DXFVersion = .defaultExport,
                               progress: ((Float) -> Void)? = nil) throws {
         try Task.checkCancellation()
         guard !snapshots.isEmpty else {
@@ -51,7 +61,7 @@ public enum DXFExporter {
                 cameraState: snapshot.cameraState))
             progress?(0.1 + 0.4 * Float(index + 1) / Float(snapshots.count))
         }
-        try DXFWriterBridge.export(views: views, to: url)
+        try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion)
         progress?(1.0)
     }
 

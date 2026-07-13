@@ -63,6 +63,8 @@ public struct DocumentTab {
     public var fileURL: URL?
     /// Display name shown in the tab bar.
     public var displayName: String
+    /// DXF version used for manual DXF saves. New tabs default to AutoCAD 2018.
+    public var dxfVersion: DXFVersion
     /// Per-tab camera state (zoom, pan, rotation). Preserved across tab switches.
     public var cameraState: CameraState {
         get { drawingViews[activeViewIndex].cameraState }
@@ -77,6 +79,7 @@ public struct DocumentTab {
     public init(document: CADDocument = CADDocument(),
                 fileURL: URL? = nil,
                 displayName: String = "Untitled",
+                dxfVersion: DXFVersion = .defaultExport,
                 editingBlockID: UUID? = nil,
                 parentDocument: CADDocument? = nil,
                 cameraState: CameraState = .default,
@@ -86,6 +89,7 @@ public struct DocumentTab {
         ]
         self.fileURL = fileURL
         self.displayName = displayName
+        self.dxfVersion = dxfVersion
         self.editingBlockID = editingBlockID
         self.parentDocument = parentDocument
     }
@@ -854,13 +858,13 @@ public final class TabManager {
         guard let fileURL = tab.fileURL else {
             throw TabError.noFileURL
         }
-        try saveActiveTabAs(url: fileURL)
+        try saveActiveTabAs(url: fileURL, dxfVersion: tab.dxfVersion)
     }
 
     /// Save the active tab to a new file URL (sync, legacy — blocks UI).
     /// Auto-detects format from file extension (.eab → binary, .dwg → DWG, .dxf → DXF).
     /// - Throws: `DXFExportError`, `DWGExportError` or `EABError` if writing fails.
-    public func saveActiveTabAs(url: URL) throws {
+    public func saveActiveTabAs(url: URL, dxfVersion: DXFVersion = .defaultExport) throws {
         guard var tab = activeTab else { throw TabError.noActiveTab }
         if tab.editingBlockID != nil {
             throw TabError.cannotSaveWhileInBlockEditor
@@ -874,10 +878,11 @@ public final class TabManager {
         } else if ext == "dwg" {
             try DWGExporter.export(document: tab.document, to: url)
         } else {
-            try DXFExporter.export(views: tab.drawingViews, to: url)
+            try DXFExporter.export(views: tab.drawingViews, to: url, dxfVersion: dxfVersion)
         }
         tab.fileURL = url
         tab.displayName = url.lastPathComponent
+        if ext == "dxf" { tab.dxfVersion = dxfVersion }
         tab.document.savedRevision = tab.document.editRevision  // sync save — no race
         tabs[activeIndex] = tab
     }
@@ -888,16 +893,16 @@ public final class TabManager {
     public func startSaveActiveTab() {
         guard let tab = activeTab, tab.editingBlockID == nil else { return }
         if let fileURL = tab.fileURL {
-            startSave(tab: tab, to: fileURL, isAutosave: false)
+            startSave(tab: tab, to: fileURL, isAutosave: false, dxfVersion: tab.dxfVersion)
         } else {
             // No file URL — caller should open the Save As browser
         }
     }
 
     /// Manual save-as (Ctrl+Shift+S, file browser). Cancel-and-restart if already saving.
-    public func startSaveActiveTabAs(url: URL) {
+    public func startSaveActiveTabAs(url: URL, dxfVersion: DXFVersion = .defaultExport) {
         guard let tab = activeTab, tab.editingBlockID == nil else { return }
-        startSave(tab: tab, to: url, isAutosave: false)
+        startSave(tab: tab, to: url, isAutosave: false, dxfVersion: dxfVersion)
     }
 
     /// Autosave triggered by the timer. Does NOT update fileURL, displayName, or savedRevision.
@@ -906,7 +911,7 @@ public final class TabManager {
               tabs[idx].editingBlockID == nil else { return }
         let tab = tabs[idx]
         guard let url = autosaveURL(for: tabID) else { return }
-        startSave(tab: tab, to: url, isAutosave: true)
+        startSave(tab: tab, to: url, isAutosave: true, dxfVersion: tab.dxfVersion)
     }
 
     /// Cancel an in-flight save for a tab.
@@ -954,7 +959,12 @@ public final class TabManager {
 
     // MARK: - Save Implementation
 
-    private func startSave(tab: DocumentTab, to url: URL, isAutosave: Bool) {
+    private func startSave(
+        tab: DocumentTab,
+        to url: URL,
+        isAutosave: Bool,
+        dxfVersion: DXFVersion
+    ) {
         let saveID = UUID()
         // 1. Cancel any existing save for this tab (restart — no flicker)
         cancelSave(for: tab.id, reason: .restart)
@@ -973,7 +983,8 @@ public final class TabManager {
             guard let self else { return }
             await self.performBackgroundSave(
                 snapshot: snapshot, saveID: saveID,
-                targetURL: url, isAutosave: isAutosave
+                targetURL: url, isAutosave: isAutosave,
+                dxfVersion: dxfVersion
             )
         }
         saveTasksByTabID[tab.id] = (task, saveID)
@@ -981,7 +992,8 @@ public final class TabManager {
 
     nonisolated private func performBackgroundSave(
         snapshot: SaveTabSnapshot, saveID: UUID,
-        targetURL: URL, isAutosave: Bool
+        targetURL: URL, isAutosave: Bool,
+        dxfVersion: DXFVersion
     ) async {
         let ext = targetURL.pathExtension.lowercased()
         do {
@@ -1016,6 +1028,7 @@ public final class TabManager {
                 try DXFExporter.export(
                     snapshots: snapshot.drawingViews,
                     to: targetURL,
+                    dxfVersion: dxfVersion,
                     progress: progressHandler
                 )
             }
@@ -1034,13 +1047,15 @@ public final class TabManager {
                       self.saveStateByTabID[snapshot.tabID]?.saveID == saveID else { return }
                 self.finishSave(tabID: snapshot.tabID, saveID: saveID,
                                 snapshot: snapshot, targetURL: targetURL,
-                                isAutosave: isAutosave, success: true)
+                                isAutosave: isAutosave, dxfVersion: dxfVersion,
+                                success: true)
             }
         } catch is CancellationError {
             await MainActor.run { [weak self] in
                 self?.finishSave(tabID: snapshot.tabID, saveID: saveID,
                                  snapshot: snapshot, targetURL: targetURL,
-                                 isAutosave: isAutosave, success: false)
+                                 isAutosave: isAutosave, dxfVersion: dxfVersion,
+                                 success: false)
             }
         } catch {
             await MainActor.run { [weak self] in
@@ -1048,7 +1063,8 @@ public final class TabManager {
                       self.saveStateByTabID[snapshot.tabID]?.saveID == saveID else { return }
                 self.finishSave(tabID: snapshot.tabID, saveID: saveID,
                                 snapshot: snapshot, targetURL: targetURL,
-                                isAutosave: isAutosave, success: false,
+                                isAutosave: isAutosave, dxfVersion: dxfVersion,
+                                success: false,
                                 errorMessage: error.localizedDescription)
             }
         }
@@ -1056,7 +1072,8 @@ public final class TabManager {
 
     @MainActor
     private func finishSave(tabID: UUID, saveID: UUID, snapshot: SaveTabSnapshot,
-                             targetURL: URL, isAutosave: Bool, success: Bool,
+                             targetURL: URL, isAutosave: Bool,
+                             dxfVersion: DXFVersion, success: Bool,
                              errorMessage: String? = nil) {
         guard saveStateByTabID[tabID]?.saveID == saveID else { return }
         saveTasksByTabID.removeValue(forKey: tabID)
@@ -1067,6 +1084,9 @@ public final class TabManager {
                 if let idx = tabs.firstIndex(where: { $0.id == tabID }) {
                     tabs[idx].fileURL = targetURL
                     tabs[idx].displayName = targetURL.lastPathComponent
+                    if targetURL.pathExtension.lowercased() == "dxf" {
+                        tabs[idx].dxfVersion = dxfVersion
+                    }
                     tabs[idx].document.markSaved(upTo: snapshot.editRevision)
                     // Force UI refresh so tab bar asterisk clears immediately
                     tabs[idx].document.markNeedsRegeneration()

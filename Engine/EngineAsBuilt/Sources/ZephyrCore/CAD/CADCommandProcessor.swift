@@ -467,7 +467,8 @@ public final class CADCommandProcessor {
             } catch TabManager.TabError.noFileURL {
                 eng.saveFileBrowser.openSave(
                     filterExtension: "dxf;dwg;eab;pdf",
-                    defaultName: eng.tabManager.activeTab?.displayName ?? "untitled")
+                    defaultName: eng.tabManager.activeTab?.displayName ?? "untitled",
+                    defaultDXFVersion: eng.tabManager.activeTab?.dxfVersion ?? .defaultExport)
             } catch {
                 print("Save failed: \(error)")
             }
@@ -475,7 +476,8 @@ public final class CADCommandProcessor {
         case "SAVEAS":
             engine?.saveFileBrowser.openSave(
                 filterExtension: "dxf;dwg;eab;pdf",
-                defaultName: engine?.tabManager.activeTab?.displayName ?? "untitled")
+                defaultName: engine?.tabManager.activeTab?.displayName ?? "untitled",
+                defaultDXFVersion: engine?.tabManager.activeTab?.dxfVersion ?? .defaultExport)
             clearCommand()
         case "PDFEXPORT", "EXPORTPDF":
             engine?.saveFileBrowser.openSave(

@@ -55,8 +55,10 @@ public struct ImGuiFileBrowser {
     public var directoryContents: [URL] = []
     public var selectedFile: URL? = nil
     public var onFileSelected: ((URL) -> Void)? = nil
+    public var onSaveFileSelected: ((URL, DXFVersion) -> Void)? = nil
 
     public var saveFileName: String = "untitled"
+    public var selectedDXFVersion: DXFVersion = .defaultExport
     public var filterExtension: String? = "dxf"
     private var allowedExtensions: Set<String> = []
     public var showAllFiles: Bool = false
@@ -103,9 +105,11 @@ public struct ImGuiFileBrowser {
     public mutating func openSave(
         directory: URL? = nil,
         filterExtension: String? = "dxf",
-        defaultName: String = "untitled"
+        defaultName: String = "untitled",
+        defaultDXFVersion: DXFVersion = .defaultExport
     ) {
         saveFileName = defaultName
+        selectedDXFVersion = defaultDXFVersion
         openCommon(directory: directory, filterExtension: filterExtension, mode: .save)
     }
 
@@ -210,7 +214,7 @@ public struct ImGuiFileBrowser {
             ImGuiDummy(ImVec2(x: 1, y: 10))
             igSeparator()
 
-            let footerH: Float = 70
+            let footerH: Float = isDXFSaveTarget ? 116 : 70
             let bodyH = max(220, ImGuiGetContentRegionAvail().y - footerH - 12)
             renderBody(theme: theme, height: bodyH)
             ImGuiDummy(ImVec2(x: 1, y: 10))
@@ -690,6 +694,42 @@ public struct ImGuiFileBrowser {
         }
         ImGuiPopStyleColor(2)
         if !isEnabled { ImGuiEndDisabled() }
+
+        if isDXFSaveTarget {
+            ImGuiDummy(ImVec2(x: 1, y: 8))
+            ImGuiTextV("DXF version")
+            ImGuiSameLine(0, gap)
+            renderDXFVersionSelector(width: filterW)
+        }
+    }
+
+    private mutating func renderDXFVersionSelector(width: Float) {
+        let versions: [(DXFVersion, String)] = [
+            (.r2018, "AutoCAD 2018 (AC1032)"),
+            (.r2013, "AutoCAD 2013 (AC1027)"),
+            (.r2010, "AutoCAD 2010 (AC1024)"),
+            (.r2007, "AutoCAD 2007 (AC1021)"),
+            (.r2004, "AutoCAD 2004 (AC1018)"),
+            (.r2000, "AutoCAD 2000 (AC1015)"),
+            (.r14, "AutoCAD R14 (AC1014)"),
+            (.r13, "AutoCAD R13 (AC1012)"),
+            (.r12, "AutoCAD R12 (AC1009)"),
+            (.r10, "AutoCAD R10 (AC1006)")
+        ]
+        let currentLabel = versions.first(where: { $0.0 == selectedDXFVersion })?.1
+            ?? "AutoCAD 2018 (AC1032)"
+
+        ImGuiPushItemWidth(width)
+        if igBeginCombo("##DXFVersion", currentLabel, 0) {
+            for (version, label) in versions {
+                let selected = version == selectedDXFVersion
+                if ImGuiSelectable(label, selected, 0, ImVec2(x: 0, y: 0)) {
+                    selectedDXFVersion = version
+                }
+            }
+            igEndCombo()
+        }
+        ImGuiPopItemWidth()
     }
 
     private mutating func renderFilterSelector(theme: AppTheme, width: Float) {
@@ -712,6 +752,15 @@ public struct ImGuiFileBrowser {
     }
 
     // MARK: - Actions
+
+    private var isDXFSaveTarget: Bool {
+        guard mode == .save else { return false }
+        let trimmedName = saveFileName.trimmingCharacters(in: .whitespaces)
+        let explicitExtension = URL(fileURLWithPath: trimmedName).pathExtension.lowercased()
+        if !explicitExtension.isEmpty { return explicitExtension == "dxf" }
+        if filterMode == .dxf { return true }
+        return filterExtension?.split(separator: ";").first?.lowercased() == "dxf"
+    }
 
     private var hasParentDirectory: Bool {
         currentDirectory.deletingLastPathComponent().path != currentDirectory.path
@@ -764,7 +813,12 @@ public struct ImGuiFileBrowser {
                 let lowerName = name.lowercased()
                 if !lowerName.hasSuffix(".\(ext)") { name += ".\(String(ext))" }
             }
-            onFileSelected?(currentDirectory.appendingPathComponent(name))
+            let url = currentDirectory.appendingPathComponent(name)
+            if let onSaveFileSelected {
+                onSaveFileSelected(url, selectedDXFVersion)
+            } else {
+                onFileSelected?(url)
+            }
             close()
             ImGuiCloseCurrentPopup()
         }

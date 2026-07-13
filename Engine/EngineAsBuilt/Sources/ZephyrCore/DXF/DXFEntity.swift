@@ -15,6 +15,8 @@ public enum DXFVersion: String, Sendable {
     case r2010       = "AC1024"
     case r2013       = "AC1027"
     case r2018       = "AC1032"
+
+    public static let defaultExport: DXFVersion = .r2018
 }
 
 // MARK: - Line Width

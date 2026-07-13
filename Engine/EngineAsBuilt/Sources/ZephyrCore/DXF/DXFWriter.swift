@@ -32,7 +32,7 @@ public class DXFWriter {
 
     // MARK: - Configuration
 
-    public var version: DXFVersion = .r2018
+    public var version: DXFVersion = .defaultExport
     public var codePage: String = "ANSI_1252"
     public var textCodec = DXFTextCodec()
     /// Header variables to write (populated by caller or defaults are used)
