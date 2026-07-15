@@ -283,53 +283,7 @@ jobs:
           Get-ChildItem $zlibLib -Filter "*.lib" | ForEach-Object { Write-Host "  $($_.Name)" }
 
       # ------------------------------------------------------------------
-# 4. Build LibreDWG from source
-      # ------------------------------------------------------------------
-      - name: Build LibreDWG
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $dwgRoot = "$env:DEV_ROOT\libredwg"
-
-          Write-Host "Cloning LibreDWG..."
-          git clone --depth 1 https://github.com/libredwg/libredwg.git $dwgRoot
-
-          Write-Host "Initializing submodules (jsmn)..."
-          Push-Location $dwgRoot
-          git submodule update --init --recursive
-          Pop-Location
-
-          # Find Visual Studio and vcvars (cl.exe is only on PATH after vcvarsall.bat)
-          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          $vcvarsPath = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
-          Write-Host "Visual Studio: $vsPath"
-          Write-Host "vcvarsall.bat: $vcvarsPath"
-
-          Write-Host "Configuring LibreDWG (cmake) for ${{ matrix.cmake-arch }}..."
-          $dwgBuildDir = "$dwgRoot\build"
-          $cmakeConfigureCmd = "cmake -S `"$dwgRoot`" -B `"$dwgBuildDir`" -G Ninja -DCMAKE_C_COMPILER=cl -DCMAKE_BUILD_TYPE=Release"
-          $cmakeBuildCmd = "cmake --build `"$dwgBuildDir`" --config Release"
-
-          # Run cmake inside vcvars context so cl.exe is on PATH
-          $scriptPath = "$env:TEMP\build-libredwg-${{ matrix.arch }}.cmd"
-          Set-Content -Path $scriptPath -Encoding ASCII -Value @(
-            "@echo off",
-            "call `"$vcvarsPath`" ${{ matrix.vcvars-arch }} >nul 2>&1",
-            "if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%",
-            $cmakeConfigureCmd,
-            "if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%",
-            $cmakeBuildCmd,
-            "if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%"
-          )
-          cmd.exe /c $scriptPath
-          if ($LASTEXITCODE -ne 0) { throw "LibreDWG build failed with exit code $LASTEXITCODE" }
-
-          Write-Host "--- LibreDWG build output ---"
-          Get-ChildItem "$dwgBuildDir" -Filter "*.lib" | ForEach-Object { Write-Host "  $($_.Name)" }
-          Get-ChildItem "$dwgBuildDir" -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
-
-      # ------------------------------------------------------------------
-      # 5. Download PDFium
+      # 4. Download PDFium
       # ------------------------------------------------------------------
       - name: Download PDFium
         run: |
@@ -365,7 +319,7 @@ jobs:
           Remove-Item $tgzPath -Force -ErrorAction SilentlyContinue
 
       # ------------------------------------------------------------------
-# 6. Install Swift for Windows
+      # 5. Install Swift for Windows
       # ------------------------------------------------------------------
       - name: Install Swift
         uses: SwiftyLab/setup-swift@v1
@@ -373,7 +327,7 @@ jobs:
           swift-version: '6.3.2'
 
       # ------------------------------------------------------------------
-      # 7. Locate Visual Studio and DXC
+      # 6. Locate Visual Studio and DXC
       # ------------------------------------------------------------------
       - name: Locate Build Tools
         id: tools
@@ -402,7 +356,7 @@ jobs:
           "dxcPath=$dxcPath" >> $env:GITHUB_OUTPUT
 
       # ------------------------------------------------------------------
-      # 8. Swift Build
+      # 7. Swift Build
       # ------------------------------------------------------------------
       - name: Swift Build (${{ inputs.configuration || 'debug' }})
         run: |
@@ -424,10 +378,6 @@ jobs:
           $env:SDL3_IMAGE_LIB     = "C:/dev/SDL3/lib"
           $env:SDL3_TTF_INCLUDE   = "C:/dev/SDL3/include"
           $env:SDL3_TTF_LIB       = "C:/dev/SDL3/lib"
-
-          # LibreDWG
-          $env:DWG_INCLUDE = "C:/dev/libredwg/include"
-          $env:DWG_LIB     = "C:/dev/libredwg/build"
 
           # zlib-ng (pre-built, see Download zlib-ng step)
           $env:ZLIB_NG_INCLUDE = "C:/dev/zlib-ng/include"
@@ -466,8 +416,6 @@ jobs:
           Write-Host "SDL3_IMAGE_LIB     = $env:SDL3_IMAGE_LIB"
           Write-Host "SDL3_TTF_INCLUDE   = $env:SDL3_TTF_INCLUDE"
           Write-Host "SDL3_TTF_LIB       = $env:SDL3_TTF_LIB"
-          Write-Host "DWG_INCLUDE        = $env:DWG_INCLUDE"
-          Write-Host "DWG_LIB            = $env:DWG_LIB"
           Write-Host "ZLIB_NG_INCLUDE    = $env:ZLIB_NG_INCLUDE"
           Write-Host "ZLIB_NG_LIB        = $env:ZLIB_NG_LIB"
           if ($env:PDFIUM_INCLUDE) { Write-Host "PDFIUM_INCLUDE     = $env:PDFIUM_INCLUDE" }
@@ -492,7 +440,7 @@ jobs:
           Write-Host "Swift build succeeded."
 
       # ------------------------------------------------------------------
-# 9. Compile HLSL Shaders with DXC
+# 8. Compile HLSL Shaders with DXC
       # ------------------------------------------------------------------
       - name: Compile Shaders
         run: |
@@ -539,7 +487,7 @@ jobs:
           }
 
       # ------------------------------------------------------------------
-      # 10. Copy runtime DLLs to build output
+      # 9. Copy runtime DLLs to build output
       # ------------------------------------------------------------------
       - name: Copy Runtime DLLs
         run: |
@@ -569,15 +517,6 @@ jobs:
             Write-Warning "pdfium.dll not found."
           }
 
-          # LibreDWG
-          $dwgDll = "C:\dev\libredwg\build\libredwg.dll"
-          if (Test-Path $dwgDll) {
-            Copy-Item -Path $dwgDll -Destination $dllDest -Force
-            Write-Host "  libredwg.dll"
-          } else {
-            Write-Warning "libredwg.dll not found."
-          }
-
           # Copy fonts (SHX/TTF/OTF)
           $fontSource = "$swiftDir\Fonts"
           if (Test-Path $fontSource) {
@@ -603,7 +542,7 @@ jobs:
           Get-ChildItem $dllDest -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
 
       # ------------------------------------------------------------------
-      # 11. Package for distribution
+      # 10. Package for distribution
       # ------------------------------------------------------------------
       - name: Package Build
         run: |
@@ -637,7 +576,7 @@ jobs:
           Get-Item $zipPath | ForEach-Object { Write-Host "  Size: $($_.Length) bytes" }
 
       # ------------------------------------------------------------------
-      # 12. Upload to Nightly Release
+      # 11. Upload to Nightly Release
       # ------------------------------------------------------------------
       - name: Upload to Nightly Release
         uses: softprops/action-gh-release@v2

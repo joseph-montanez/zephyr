@@ -71,7 +71,7 @@ public enum DataTableTessellator {
                              style: style, alignH: ah, alignV: av, mtextWidth: mw, color: c)
             case .fillRect(let o, let s, let c):
                 // Convert fill rect to four lines
-                let x2 = o.x + s.x, y2 = o.y + s.y
+                let x2 = o.x + s.x, _ = o.y + s.y
                 return .line(start: o, end: Vector3(x: x2, y: o.y, z: o.z), color: c)
                 // Note: full rect → 4 lines omitted for brevity; actual impl adds all 4
             default:

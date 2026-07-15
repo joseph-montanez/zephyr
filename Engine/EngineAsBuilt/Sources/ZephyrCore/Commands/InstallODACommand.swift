@@ -1,4 +1,5 @@
 import Foundation
+import ImGui
 import SwiftSDL
 import CSDL3
 
@@ -6,11 +7,6 @@ import CSDL3
 // MARK: - InstallODACommand
 //
 // Installs the ODA FileConverter CLI tool for DWG ↔ DXF conversion.
-// Shows a modal with the ODA Community User Agreement, requires the user
-// to check "I Agree" before proceeding, then downloads and runs the
-// platform-appropriate installer into the user's Application Support folder.
-//
-// No admin privileges are required — the install target is user-writable.
 // =========================================================================
 
 @MainActor
@@ -30,15 +26,10 @@ public final class InstallODACommand: FeatureCommand {
     private var statusText: String = ""
     private var installTask: Task<Void, Never>?
     private var popupOpened: Bool = false
-    private var okClicked: Bool = false  // Set when user clicks OK on finished modal
+    private var progressPopupOpened: Bool = false
+    private var finishedPopupOpened: Bool = false
+    private var okClicked: Bool = false
 
-    // MARK: - ODA Download URLs
-
-    /// Manifest URL for dynamically fetching the latest download URLs.
-    /// Falls back to baked-in URLs if the manifest cannot be fetched.
-    private static let manifestURL = "https://zephyr-cad.app/oda-manifest.json"
-
-    /// Baked-in fallback URLs (version 27.1).
     private static let fallbackURLs: [String: String] = [
         "windows": "https://www.opendesign.com/guestfiles/get?filename=ODAFileConverter_QT6_vc16_amd64dll_27.1.msi",
         "macos_arm64": "https://www.opendesign.com/guestfiles/get?filename=ODAFileConverter_QT6_macOsX_arm64_15.0dll_27.1.dmg",
@@ -46,8 +37,6 @@ public final class InstallODACommand: FeatureCommand {
     ]
 
     private static let agreementURL = "https://www.opendesign.com/agreements/2025/en/ODA%20Community%20User%20Agreement%2009-2025.pdf"
-
-    // MARK: - Init
 
     public init() {}
 
@@ -60,6 +49,9 @@ public final class InstallODACommand: FeatureCommand {
         downloadSpeed = ""
         statusText = ""
         popupOpened = false
+        progressPopupOpened = false
+        finishedPopupOpened = false
+        okClicked = false
         processor.commandPrompt = "ODA FileConverter installation."
     }
 
@@ -70,586 +62,244 @@ public final class InstallODACommand: FeatureCommand {
         processor.commandPrompt = nil
     }
 
-    public func handleMouseClick(
-        worldX: Double, worldY: Double,
-        engine: PhrostEngine, processor: CADCommandProcessor
-    ) -> CommandResult {
-        if okClicked {
-            okClicked = false
-            processor.commandPrompt = nil
-            return .finished
-        }
+    public func handleMouseClick(worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult {
+        if okClicked { okClicked = false; processor.commandPrompt = nil; return .finished }
         return .continue
     }
 
-    public func handleMouseMotion(
-        worldX: Double, worldY: Double,
-        engine: PhrostEngine, processor: CADCommandProcessor
-    ) {}
-
-    public func handleKeyDown(
-        scancode: SDL_Scancode, engine: PhrostEngine, processor: CADCommandProcessor
-    ) -> CommandResult {
-        if okClicked {
-            okClicked = false
-            processor.commandPrompt = nil
-            return .finished
-        }
+    public func handleMouseMotion(worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor) {}
+    public func handleKeyDown(scancode: SDL_Scancode, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult {
+        if okClicked { okClicked = false; processor.commandPrompt = nil; return .finished }
         return .continue
     }
-
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
+    public var isSnappingEnabled: Bool { false }
+    public func getDrawingSnapPoints() -> [Vector3] { [] }
+    public func handleCommandText(_ text: String, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult { .continue }
 
     public func renderImGui(engine: PhrostEngine) {
         switch state {
-        case .showingAgreement:
-            renderAgreementModal(engine: engine)
-        case .downloading:
-            renderDownloadModal(engine: engine)
-        case .installing:
-            renderInstallingModal(engine: engine)
-        case .finished(let success, let message):
-            renderFinishedModal(engine: engine, success: success, message: message)
+        case .showingAgreement: renderAgreementModal(engine: engine)
+        case .downloading: renderProgressModal(engine: engine, title: "Downloading ODA FileConverter...", showCancel: true)
+        case .installing: renderProgressModal(engine: engine, title: statusText.isEmpty ? "Installing ODA FileConverter..." : statusText, showCancel: false)
+        case .finished(let s, let m): renderFinishedModal(engine: engine, success: s, message: m)
         }
     }
 
-    public var isSnappingEnabled: Bool { false }
+    // MARK: - Modals
 
-    public func getDrawingSnapPoints() -> [Vector3] { [] }
-
-    public func handleCommandText(
-        _ text: String, engine: PhrostEngine, processor: CADCommandProcessor
-    ) -> CommandResult {
-        return .continue
+    private func popup(_ id: String, size: (w: Float, h: Float), flags: Int32, body: () -> Void) {
+        let io = ImGuiGetIO()!
+        let dw = io.pointee.DisplaySize.x; let dh = io.pointee.DisplaySize.y
+        let mw = min(size.w, dw * 0.70); let mh = min(size.h, dh * 0.70)
+        ImGuiSetNextWindowPos(ImVec2(x: (dw - mw) * 0.5, y: (dh - mh) * 0.5), Int32(ImGuiCond_Appearing.rawValue), ImVec2(x: 0, y: 0))
+        ImGuiSetNextWindowSize(ImVec2(x: mw, y: mh), Int32(ImGuiCond_Appearing.rawValue))
+        var open = true
+        if ImGuiBeginPopupModal(id, &open, flags) { defer { ImGuiEndPopup() }; body() }
     }
-
-    // MARK: - Agreement Modal
 
     private func renderAgreementModal(engine: PhrostEngine) {
-        let popupID = "Install ODA FileConverter##InstallODA"
-        let theme = engine.ui.theme
-
-        if !popupOpened {
-            ImGuiOpenPopup(popupID, Int32(ImGuiPopupFlags_None.rawValue))
-            popupOpened = true
-        }
-
-        let io = ImGuiGetIO()!
-        let displayW = io.pointee.DisplaySize.x
-        let displayH = io.pointee.DisplaySize.y
-        let modalW = min(ImGuiGetFontSize() * 52, displayW * 0.70)
-        let modalH = min(ImGuiGetFontSize() * 34, displayH * 0.70)
-
-        ImGuiSetNextWindowPos(
-            ImVec2(x: (displayW - modalW) * 0.5, y: (displayH - modalH) * 0.5),
-            Int32(ImGuiCond_Appearing.rawValue),
-            ImVec2(x: 0, y: 0))
-        ImGuiSetNextWindowSize(ImVec2(x: modalW, y: modalH), Int32(ImGuiCond_Appearing.rawValue))
-
-        var openFlag = true
-        let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue) |
-                    Int32(ImGuiWindowFlags_NoResize.rawValue) |
-                    Int32(ImGuiWindowFlags_NoCollapse.rawValue)
-
-        if ImGuiBeginPopupModal(popupID, &openFlag, flags) {
-            defer { ImGuiEndPopup() }
-
-            if !openFlag {
-                state = .finished(success: false, message: "Installation cancelled.")
-                return
-            }
-
-            // Title
-            ImGuiTextV("ODA FileConverter Installation")
+        let id = "Install ODA FileConverter##InstallODA"
+        if !popupOpened { ImGuiOpenPopup(id, Int32(ImGuiPopupFlags_None.rawValue)); popupOpened = true }
+        let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue) | Int32(ImGuiWindowFlags_NoResize.rawValue) | Int32(ImGuiWindowFlags_NoCollapse.rawValue)
+        popup(id, size: (ImGuiGetFontSize() * 52, ImGuiGetFontSize() * 34), flags: flags) {
+            ImGuiTextV("ODA FileConverter Installation"); ImGuiSpacing(); ImGuiSeparator(); ImGuiSpacing()
+            ImGuiTextWrappedV("The ODA FileConverter converts between DWG and DXF formats. It is required to open and save AutoCAD DWG files.")
             ImGuiSpacing()
-            ImGuiSeparator()
+            ImGuiTextWrappedV("To use this software, you must accept the ODA Community User Agreement.")
             ImGuiSpacing()
-
-            // Description
-            ImGuiTextWrappedV(
-                "The ODA FileConverter is a free tool from the Open Design Alliance that converts " +
-                "between DWG and DXF file formats. It is required to open and save AutoCAD DWG files.")
-
-            ImGuiSpacing()
-            ImGuiTextWrappedV(
-                "To use this software, you must accept the ODA Community User Agreement. " +
-                "Please review the agreement before proceeding.")
-
-            ImGuiSpacing()
-
-            // View Agreement button
-            if ImGuiButton("View Agreement (opens in browser)", ImVec2(x: 0, y: 0)) {
-                Self.agreementURL.withCString { SDL_OpenURL($0) }
-            }
-
-            ImGuiSpacing()
-            ImGuiSeparator()
-            ImGuiSpacing()
-
-            // Checkbox: I Agree
+            if ImGuiButton("View Agreement (opens in browser)", ImVec2(x: 0, y: 0)) { _ = Self.agreementURL.withCString { SDL_OpenURL($0) } }
+            ImGuiSpacing(); ImGuiSeparator(); ImGuiSpacing()
             ImGuiCheckbox("I agree to the ODA Community User Agreement", &agreed)
-
             ImGuiSpacing()
-
-            let installDir: String
-            if let appSupport = FileManager.default.urls(
-                for: .applicationSupportDirectory, in: .userDomainMask
-            ).first {
-                installDir = appSupport.appendingPathComponent("ODAFileConverter").path
-            } else {
-                installDir = "~/Library/Application Support/ODAFileConverter"
-            }
-
-            ImGuiTextV("Install location:")
-            ImGuiSameLine()
-            ImGuiTextDisabledV(installDir)
-
-            ImGuiSpacing()
-            ImGuiSeparator()
-            ImGuiSpacing()
-
-            // Install button (disabled until agreed)
+            let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("ODAFileConverter").path ?? "~/Library/Application Support/ODAFileConverter"
+            ImGuiTextV("Install location:"); ImGuiSameLine(0, -1); ImGuiTextDisabledV(dir)
+            ImGuiSpacing(); ImGuiSeparator(); ImGuiSpacing()
             if !agreed {
                 ImGuiPushStyleVar(Int32(ImGuiStyleVar_Alpha.rawValue), Float(0.5))
                 ImGuiButton("Install", ImVec2(x: 120, y: 0))
-                ImGuiPopStyleVar()
-                if ImGuiIsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled.rawValue) {
-                    ImGuiSetTooltip("You must agree to the ODA Community User Agreement first.")
-                }
-            } else {
-                if ImGuiButton("Install", ImVec2(x: 120, y: 0)) {
-                    startInstallation()
-                }
-            }
-
-            ImGuiSameLine()
-            if ImGuiButton("Cancel", ImVec2(x: 120, y: 0)) {
-                state = .finished(success: false, message: "Installation cancelled.")
-            }
+                ImGuiPopStyleVar(1); ImGuiSameLine(0, -1); ImGuiTextDisabledV("(you must agree first)")
+            } else if ImGuiButton("Install", ImVec2(x: 120, y: 0)) { startInstall() }
+            ImGuiSameLine(0, -1)
+            if ImGuiButton("Cancel", ImVec2(x: 120, y: 0)) { state = .finished(success: false, message: "Cancelled.") }
         }
     }
 
-    // MARK: - Download Modal
-
-    private func renderDownloadModal(engine: PhrostEngine) {
-        let popupID = "Installing ODA FileConverter##InstallODA"
-
-        let io = ImGuiGetIO()!
-        let displayW = io.pointee.DisplaySize.x
-        let displayH = io.pointee.DisplaySize.y
-        let modalW = min(ImGuiGetFontSize() * 42, displayW * 0.50)
-        let modalH = ImGuiGetFontSize() * 12
-
-        ImGuiSetNextWindowPos(
-            ImVec2(x: (displayW - modalW) * 0.5, y: (displayH - modalH) * 0.5),
-            Int32(ImGuiCond_Always.rawValue),
-            ImVec2(x: 0, y: 0))
-        ImGuiSetNextWindowSize(ImVec2(x: modalW, y: modalH), Int32(ImGuiCond_Always.rawValue))
-
-        var openFlag = true
-        let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue) |
-                    Int32(ImGuiWindowFlags_NoResize.rawValue) |
-                    Int32(ImGuiWindowFlags_NoCollapse.rawValue) |
-                    Int32(ImGuiWindowFlags_NoMove.rawValue)
-
-        if ImGuiBeginPopupModal(popupID, &openFlag, flags) {
-            defer { ImGuiEndPopup() }
-
-            if !openFlag {
-                installTask?.cancel()
-                state = .finished(success: false, message: "Installation cancelled.")
-                return
-            }
-
-            ImGuiTextV("Downloading ODA FileConverter...")
+    private func renderProgressModal(engine: PhrostEngine, title: String, showCancel: Bool) {
+        let id = "Installing ODA FileConverter##InstallODA"
+        if !progressPopupOpened { ImGuiOpenPopup(id, Int32(ImGuiPopupFlags_None.rawValue)); progressPopupOpened = true }
+        let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue) | Int32(ImGuiWindowFlags_NoResize.rawValue) | Int32(ImGuiWindowFlags_NoCollapse.rawValue) | Int32(ImGuiWindowFlags_NoMove.rawValue)
+        popup(id, size: (ImGuiGetFontSize() * 42, ImGuiGetFontSize() * 12), flags: flags) {
+            ImGuiTextV(title); ImGuiSpacing()
+            if case .downloading = state { ImGuiProgressBar(downloadProgress, ImVec2(x: 0, y: 0), nil) }
+            else { ImGuiProgressBar(-1.0, ImVec2(x: 0, y: 0), nil) }
             ImGuiSpacing()
-
-            // Progress bar
-            ImGuiProgressBar(downloadProgress, ImVec2(x: 0, y: 0), nil)
-
-            ImGuiSpacing()
-
-            // Status text with speed
-            if !statusText.isEmpty {
-                ImGuiTextV(statusText)
-            }
-            if !downloadSpeed.isEmpty {
-                ImGuiSameLine()
-                ImGuiTextDisabledV(downloadSpeed)
-            }
-
-            ImGuiSpacing()
-            if ImGuiButton("Cancel", ImVec2(x: 120, y: 0)) {
-                installTask?.cancel()
-                state = .finished(success: false, message: "Installation cancelled.")
-            }
+            if !statusText.isEmpty { ImGuiTextV(statusText) }
+            if showCancel { ImGuiSpacing(); if ImGuiButton("Cancel", ImVec2(x: 120, y: 0)) { installTask?.cancel(); state = .finished(success: false, message: "Cancelled.") } }
         }
     }
-
-    // MARK: - Installing Modal
-
-    private func renderInstallingModal(engine: PhrostEngine) {
-        let popupID = "Installing ODA FileConverter##InstallODA"
-
-        let io = ImGuiGetIO()!
-        let displayW = io.pointee.DisplaySize.x
-        let displayH = io.pointee.DisplaySize.y
-        let modalW = min(ImGuiGetFontSize() * 42, displayW * 0.50)
-        let modalH = ImGuiGetFontSize() * 10
-
-        ImGuiSetNextWindowPos(
-            ImVec2(x: (displayW - modalW) * 0.5, y: (displayH - modalH) * 0.5),
-            Int32(ImGuiCond_Always.rawValue),
-            ImVec2(x: 0, y: 0))
-        ImGuiSetNextWindowSize(ImVec2(x: modalW, y: modalH), Int32(ImGuiCond_Always.rawValue))
-
-        var openFlag = true
-        let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue) |
-                    Int32(ImGuiWindowFlags_NoResize.rawValue) |
-                    Int32(ImGuiWindowFlags_NoCollapse.rawValue) |
-                    Int32(ImGuiWindowFlags_NoMove.rawValue)
-
-        if ImGuiBeginPopupModal(popupID, &openFlag, flags) {
-            defer { ImGuiEndPopup() }
-
-            ImGuiTextV(statusText.isEmpty ? "Installing ODA FileConverter..." : statusText)
-            ImGuiSpacing()
-
-            // Indeterminate progress
-            ImGuiProgressBar(-1.0, ImVec2(x: 0, y: 0), nil)
-        }
-    }
-
-    // MARK: - Finished Modal
 
     private func renderFinishedModal(engine: PhrostEngine, success: Bool, message: String) {
-        let popupID = "ODA FileConverter##InstallODA"
-
-        let io = ImGuiGetIO()!
-        let displayW = io.pointee.DisplaySize.x
-        let displayH = io.pointee.DisplaySize.y
-        let modalW = min(ImGuiGetFontSize() * 42, displayW * 0.50)
-        let modalH = ImGuiGetFontSize() * 10
-
-        ImGuiSetNextWindowPos(
-            ImVec2(x: (displayW - modalW) * 0.5, y: (displayH - modalH) * 0.5),
-            Int32(ImGuiCond_Always.rawValue),
-            ImVec2(x: 0, y: 0))
-        ImGuiSetNextWindowSize(ImVec2(x: modalW, y: modalH), Int32(ImGuiCond_Always.rawValue))
-
-        var openFlag = true
-        let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue) |
-                    Int32(ImGuiWindowFlags_NoResize.rawValue) |
-                    Int32(ImGuiWindowFlags_NoCollapse.rawValue) |
-                    Int32(ImGuiWindowFlags_NoMove.rawValue)
-
-        if ImGuiBeginPopupModal(popupID, &openFlag, flags) {
-            defer { ImGuiEndPopup() }
-
-            if success {
-                ImGuiTextColoredV(ImVec2(x: 0.2, y: 0.9, z: 0.3, w: 1.0), "Installation Complete!")
-            } else {
-                ImGuiTextColoredV(ImVec2(x: 0.9, y: 0.3, z: 0.3, w: 1.0), "Installation Failed")
-            }
-
-            ImGuiSpacing()
-            ImGuiTextWrappedV(message)
-
-            ImGuiSpacing()
-            ImGuiSpacing()
-
-            if ImGuiButton("OK", ImVec2(x: 120, y: 0)) || !openFlag {
-                okClicked = true
-                state = .showingAgreement  // Reset for next time
-                popupOpened = false
-            }
+        let id = "ODA FileConverter##InstallODA"
+        if !finishedPopupOpened { ImGuiOpenPopup(id, Int32(ImGuiPopupFlags_None.rawValue)); finishedPopupOpened = true }
+        let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue) | Int32(ImGuiWindowFlags_NoResize.rawValue) | Int32(ImGuiWindowFlags_NoCollapse.rawValue) | Int32(ImGuiWindowFlags_NoMove.rawValue)
+        popup(id, size: (ImGuiGetFontSize() * 42, ImGuiGetFontSize() * 10), flags: flags) {
+            if success { ImGuiTextColoredV(ImVec4(x: 0.2, y: 0.9, z: 0.3, w: 1.0), "Installation Complete!") }
+            else { ImGuiTextColoredV(ImVec4(x: 0.9, y: 0.3, z: 0.3, w: 1.0), "Installation Failed") }
+            ImGuiSpacing(); ImGuiTextWrappedV(message); ImGuiSpacing(); ImGuiSpacing()
+            if ImGuiButton("OK", ImVec2(x: 120, y: 0)) { okClicked = true; state = .showingAgreement; popupOpened = false }
         }
     }
 
-    // MARK: - Installation Logic
+    // MARK: - Install
 
-    private func startInstallation() {
+    private func startInstall() {
         state = .downloading
-        statusText = "Fetching download information..."
+        progressPopupOpened = false
+        finishedPopupOpened = false
+        statusText = "Starting download..."
         downloadProgress = 0.0
         downloadSpeed = ""
 
         installTask = Task { [weak self] in
-            guard let self = self else { return }
-
+            guard let self else { return }
             do {
-                // Resolve download URL
-                let downloadURL = try await self.resolveDownloadURL()
-
-                // Download
-                let downloadedFile = try await self.download(url: downloadURL)
-
-                // Install
-                await MainActor.run {
-                    self.state = .installing
-                    self.statusText = "Running installer..."
-                }
-
-                try await self.runInstaller(file: downloadedFile)
-
-                // Cleanup
-                try? FileManager.default.removeItem(at: downloadedFile)
-
-                // Store converter path
-                if let converterPath = await ODADWGConverter.locateConverter() {
-                    UserDefaults.standard.set(converterPath, forKey: "ODAFileConverterPath")
-                }
-
-                await MainActor.run {
-                    self.state = .finished(
-                        success: true,
-                        message: "ODA FileConverter has been installed successfully. " +
-                            "You can now open and save DWG files."
-                    )
-                }
+                let url = try self.resolveURL()
+                let file = try await self.download(url: url)
+                await MainActor.run { self.state = .installing; self.progressPopupOpened = false; self.statusText = "Running installer..." }
+                try await self.runInstall(file: file)
+                try? FileManager.default.removeItem(at: file)
+                if let p = ODADWGConverter.locateConverter() { UserDefaults.standard.set(p, forKey: "ODAFileConverterPath") }
+                await MainActor.run { self.state = .finished(success: true, message: "ODA FileConverter installed. You can now open and save DWG files."); self.progressPopupOpened = false }
             } catch is CancellationError {
-                await MainActor.run {
-                    self.state = .finished(success: false, message: "Installation cancelled.")
-                }
+                await MainActor.run { self.state = .finished(success: false, message: "Cancelled."); self.progressPopupOpened = false }
             } catch {
-                await MainActor.run {
-                    self.state = .finished(
-                        success: false,
-                        message: "Installation error: \(error.localizedDescription)"
-                    )
-                }
+                await MainActor.run { self.state = .finished(success: false, message: error.localizedDescription); self.progressPopupOpened = false }
             }
         }
     }
 
-    /// Resolve the platform-appropriate download URL from the manifest or fallback.
-    private func resolveDownloadURL() async throws -> URL {
-        let platformKey: String
+    private func resolveURL() throws -> URL {
         #if os(Windows)
-            platformKey = "windows"
+        let key = "windows"
         #elseif os(macOS)
-            // Determine ARM vs x64 on macOS
-            #if arch(arm64)
-                platformKey = "macos_arm64"
-            #else
-                platformKey = "macos_x64"
-            #endif
+        #if arch(arm64)
+        let key = "macos_arm64"
         #else
-            throw NSError(domain: "InstallODA", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Unsupported platform"])
+        let key = "macos_x64"
         #endif
-
-        // Try manifest first
-        if let manifestURL = URL(string: Self.manifestURL),
-           let (data, _) = try? await URLSession.shared.data(from: manifestURL),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: [String: String]],
-           let entry = json[platformKey],
-           let urlString = entry["url"],
-           let url = URL(string: urlString) {
-            return url
+        #else
+        throw NSError(domain: "InstallODA", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unsupported platform"])
+        #endif
+        guard let s = Self.fallbackURLs[key], let u = URL(string: s) else {
+            throw NSError(domain: "InstallODA", code: -2, userInfo: [NSLocalizedDescriptionKey: "No URL for \(key)"])
         }
-
-        // Fallback
-        if let fallback = Self.fallbackURLs[platformKey],
-           let url = URL(string: fallback) {
-            return url
-        }
-
-        throw NSError(domain: "InstallODA", code: -2,
-                      userInfo: [NSLocalizedDescriptionKey: "No download URL for platform: \(platformKey)"])
+        return u
     }
 
-    /// Download a file with progress tracking.
+    // MARK: - Download
+
     private func download(url: URL) async throws -> URL {
-        await MainActor.run {
-            self.statusText = "Downloading..."
-            self.downloadProgress = 0.0
-            self.downloadSpeed = ""
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(url.lastPathComponent)
+        let curlPath = "C:\\Windows\\System32\\curl.exe"
+#if !os(Windows)
+        let curlPath = "/usr/bin/curl"
+#endif
+        print("[InstallODA] Downloading \(url.absoluteString)")
+        print("[InstallODA] To: \(tmp.path)")
+
+        // Run curl synchronously - most reliable on Windows Swift
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: curlPath)
+        proc.arguments = ["-L", "-s", "-S", "-o", tmp.path, url.absoluteString]
+
+        let errPipe = Pipe()
+        proc.standardError = errPipe
+        proc.standardOutput = FileHandle.nullDevice
+
+        do {
+            try proc.run()
+        } catch {
+            print("[InstallODA] Failed to launch curl: \(error)")
+            throw NSError(domain: "InstallODA", code: -4, userInfo: [NSLocalizedDescriptionKey: "curl not found at \(curlPath)"])
         }
 
-        let request = URLRequest(url: url, timeoutInterval: 600)
+        // Show indeterminate progress while curl runs
+        await MainActor.run { self.statusText = "Downloading... (this may take a few minutes)" }
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        proc.waitUntilExit()
 
-        let expectedLength = Int(response.expectedContentLength)
-        var data = Data()
-        data.reserveCapacity(expectedLength > 0 ? expectedLength : 16 * 1024 * 1024)
+        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        let errStr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
-        var lastUpdate = Date()
-        var bytesSinceLastUpdate = 0
-        let startTime = Date()
+        print("[InstallODA] curl exit: \(proc.terminationStatus)")
+        if !errStr.isEmpty { print("[InstallODA] curl stderr: \(errStr)") }
 
-        for try await byte in bytes {
-            try Task.checkCancellation()
-            data.append(byte)
-
-            let now = Date()
-            bytesSinceLastUpdate += 1
-
-            // Update progress every 100ms
-            if now.timeIntervalSince(lastUpdate) > 0.1 {
-                let elapsed = now.timeIntervalSince(startTime)
-                let totalBytes = data.count
-
-                if expectedLength > 0 {
-                    let progress = Float(totalBytes) / Float(expectedLength)
-                    let speed = elapsed > 0 ? Double(totalBytes) / elapsed : 0
-                    let speedStr = formatSpeed(speed)
-
-                    await MainActor.run {
-                        self.downloadProgress = progress
-                        self.statusText = "Downloading... \(Int(progress * 100))%"
-                        self.downloadSpeed = speedStr
-                    }
-                } else {
-                    let speed = elapsed > 0 ? Double(totalBytes) / elapsed : 0
-                    let speedStr = formatSpeed(speed)
-                    let sizeStr = formatBytes(totalBytes)
-
-                    await MainActor.run {
-                        self.statusText = "Downloaded \(sizeStr)"
-                        self.downloadSpeed = speedStr
-                    }
-                }
-
-                lastUpdate = now
-                bytesSinceLastUpdate = 0
-            }
+        if proc.terminationStatus != 0 {
+            let msg = errStr.isEmpty ? "curl exit code \(proc.terminationStatus)" : errStr
+            throw NSError(domain: "InstallODA", code: -5, userInfo: [NSLocalizedDescriptionKey: msg])
         }
 
-        // Write to temp file
-        let tmpDir = FileManager.default.temporaryDirectory
-        let filename = url.lastPathComponent
-        let tmpFile = tmpDir.appendingPathComponent(filename)
-        try data.write(to: tmpFile)
+        guard FileManager.default.fileExists(atPath: tmp.path) else {
+            throw NSError(domain: "InstallODA", code: -6, userInfo: [NSLocalizedDescriptionKey: "Download completed but file not found at \(tmp.path)"])
+        }
 
-        return tmpFile
+        let attrs = try? FileManager.default.attributesOfItem(atPath: tmp.path)
+        let size = attrs?[.size] as? Int64 ?? 0
+        print("[InstallODA] Downloaded \(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))")
+        await MainActor.run { self.downloadProgress = 1.0 }
+        return tmp
     }
 
-    /// Run the platform-specific installer.
-    private func runInstaller(file: URL) async throws {
-        guard let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory, in: .userDomainMask
-        ).first else {
-            throw NSError(domain: "InstallODA", code: -3,
-                          userInfo: [NSLocalizedDescriptionKey: "Cannot find Application Support directory"])
+    // MARK: - Install
+
+    private func runInstall(file: URL) async throws {
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            throw NSError(domain: "InstallODA", code: -3, userInfo: [NSLocalizedDescriptionKey: "No Application Support dir"])
         }
+        let target = appSupport.appendingPathComponent("ODAFileConverter")
+        try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
 
-        let targetDir = appSupport.appendingPathComponent("ODAFileConverter")
-        try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+#if os(Windows)
+        try await run(exe: "msiexec", args: ["/a", file.path, "/qb", "TARGETDIR=\(target.path)"])
+#elseif os(macOS)
+        await MainActor.run { self.statusText = "Mounting disk image..." }
+        let out = try await run(exe: "/usr/bin/hdiutil", args: ["attach", file.path, "-nobrowse", "-plist"])
+        let mp: String
+        if let d = out.data(using: .utf8), let p = try? PropertyListSerialization.propertyList(from: d, options: [], format: nil) as? [String: Any],
+           let e = p["system-entities"] as? [[String: Any]], let f = e.first, let m = f["mount-point"] as? String { mp = m } else { mp = "/Volumes/ODAFileConverter" }
+        defer { _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/hdiutil"), arguments: ["detach", mp]) }
 
-        #if os(Windows)
-        // Windows: msiexec /a "<msi>" /qb TARGETDIR="<targetDir>"
-        try await runProcess(
-            executable: "msiexec",
-            arguments: ["/a", file.path, "/qb", "TARGETDIR=\(targetDir.path)"]
-        )
-        #elseif os(macOS)
-        // macOS: hdiutil attach → cp → hdiutil detach → clear quarantine
-        await MainActor.run {
-            self.statusText = "Mounting disk image..."
-        }
+        await MainActor.run { self.statusText = "Copying..." }
+        let src = "\(mp)/ODAFileConverter.app"
+        let dst = target.appendingPathComponent("ODAFileConverter.app")
+        if FileManager.default.fileExists(atPath: dst.path) { try FileManager.default.removeItem(at: dst) }
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: src), to: dst)
 
-        // Attach DMG
-        let attachResult = try await runProcess(
-            executable: "/usr/bin/hdiutil",
-            arguments: ["attach", file.path, "-nobrowse", "-plist"]
-        )
-
-        // Parse mount point from plist output
-        let mountPoint: String
-        if let plistData = attachResult.data(using: .utf8),
-           let plist = try? PropertyListSerialization.propertyList(
-               from: plistData, options: [], format: nil
-           ) as? [String: Any],
-           let entities = plist["system-entities"] as? [[String: Any]],
-           let firstEntity = entities.first,
-           let mp = firstEntity["mount-point"] as? String {
-            mountPoint = mp
-        } else {
-            // Fallback: guess the volume name
-            mountPoint = "/Volumes/ODAFileConverter"
-        }
-
-        defer {
-            try? Process.run(
-                URL(fileURLWithPath: "/usr/bin/hdiutil"),
-                arguments: ["detach", mountPoint]
-            )
-        }
-
-        await MainActor.run {
-            self.statusText = "Copying files..."
-        }
-
-        // Copy .app to target
-        let appName = "ODAFileConverter.app"
-        let sourceApp = "\(mountPoint)/\(appName)"
-        let targetApp = targetDir.appendingPathComponent(appName)
-
-        if FileManager.default.fileExists(atPath: targetApp.path) {
-            try FileManager.default.removeItem(at: targetApp)
-        }
-
-        try FileManager.default.copyItem(
-            at: URL(fileURLWithPath: sourceApp),
-            to: targetApp
-        )
-
-        await MainActor.run {
-            self.statusText = "Clearing quarantine flag..."
-        }
-
-        // Clear Gatekeeper quarantine flag (mandatory for Process execution)
-        _ = try? await runProcess(
-            executable: "/usr/bin/xattr",
-            arguments: ["-r", "-d", "com.apple.quarantine", targetApp.path]
-        )
-        #endif
+        await MainActor.run { self.statusText = "Clearing quarantine..." }
+        _ = try? await run(exe: "/usr/bin/xattr", args: ["-r", "-d", "com.apple.quarantine", dst.path])
+#endif
     }
 
-    /// Run a subprocess and return its stdout as a string.
     @discardableResult
-    private func runProcess(executable: String, arguments: [String]) async throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        print("[InstallODA] Running: \(executable) \(arguments.joined(separator: " "))")
-
-        try process.run()
-        process.waitUntilExit()
-
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stdoutStr = String(data: stdoutData, encoding: .utf8) ?? ""
-
-        if process.terminationStatus != 0 {
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrStr = String(data: stderrData, encoding: .utf8) ?? "(no stderr)"
-            print("[InstallODA] Error: exit \(process.terminationStatus), stderr: \(stderrStr)")
-            throw NSError(domain: "InstallODA", code: Int(process.terminationStatus),
-                          userInfo: [NSLocalizedDescriptionKey: "Installer failed: \(stderrStr)"])
+    private func run(exe: String, args: [String]) async throws -> String {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: exe)
+        p.arguments = args
+        let outPipe = Pipe(); let errPipe = Pipe()
+        p.standardOutput = outPipe; p.standardError = errPipe
+        print("[InstallODA] \(exe) \(args.joined(separator: " "))")
+        try p.run(); p.waitUntilExit()
+        let outStr = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        if p.terminationStatus != 0 {
+            let errStr = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            print("[InstallODA] FAILED: \(errStr)")
+            throw NSError(domain: "InstallODA", code: Int(p.terminationStatus), userInfo: [NSLocalizedDescriptionKey: errStr])
         }
-
-        return stdoutStr
+        return outStr
     }
 
-    // MARK: - Formatting Helpers
-
-    private func formatBytes(_ bytes: Int) -> String {
-        if bytes < 1024 { return "\(bytes) B" }
-        if bytes < 1024 * 1024 { return String(format: "%.1f KB", Double(bytes) / 1024) }
-        return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
-    }
-
-    private func formatSpeed(_ bytesPerSec: Double) -> String {
-        if bytesPerSec < 1024 { return String(format: "%.0f B/s", bytesPerSec) }
-        if bytesPerSec < 1024 * 1024 { return String(format: "%.1f KB/s", bytesPerSec / 1024) }
-        return String(format: "%.1f MB/s", bytesPerSec / (1024 * 1024))
-    }
+    // Helpers unused now but kept for future
+    private func formatBytes(_ bytes: Int) -> String { ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file) }
+    private func formatSpeed(_ bps: Double) -> String { formatBytes(Int(bps)) + "/s" }
 }

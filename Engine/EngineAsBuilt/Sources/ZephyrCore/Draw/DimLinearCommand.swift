@@ -115,16 +115,13 @@ public final class DimLinearCommand: FeatureCommand {
             
             let dimStart: Vector3
             let dimEnd: Vector3
-            let textValue: String
-            
+
             if isHorizontal {
                 dimStart = Vector3(x: p1.x, y: dimLinePos.y, z: 0)
                 dimEnd = Vector3(x: p2.x, y: dimLinePos.y, z: 0)
-                textValue = String(format: "%.2f", abs(p2.x - p1.x))
             } else {
                 dimStart = Vector3(x: dimLinePos.x, y: p1.y, z: 0)
                 dimEnd = Vector3(x: dimLinePos.x, y: p2.y, z: 0)
-                textValue = String(format: "%.2f", abs(p2.y - p1.y))
             }
             
             // Render rubber band lines

@@ -1745,7 +1745,7 @@ public final class CADDocument {
         // Validate internal dictionaries haven't been corrupted
         let entityCount = entityRegistry.count
         let layerCount = layerTable.count
-        let blockCount = blockTable.count
+        _ = blockTable.count
         guard entityCount < 10_000_000 else {
             print("[CADDocument] FATAL: entityRegistry.count = \(entityCount) — possible memory corruption, refusing snapshot")
             return CADDocumentSnapshot(

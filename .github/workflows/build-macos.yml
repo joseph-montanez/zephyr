@@ -63,20 +63,7 @@ jobs:
           brew install sdl3 sdl3_image sdl3_ttf zlib-ng cmake autoconf automake libtool
 
       # ------------------------------------------------------------------
-      # 4. Build LibreDWG from source
-      # ------------------------------------------------------------------
-      - name: Build LibreDWG
-        run: |
-          DWG_ROOT="$HOME/dev/libredwg"
-          git clone --depth 1 https://github.com/libredwg/libredwg.git "$DWG_ROOT"
-          cd "$DWG_ROOT"
-          git submodule update --init --recursive
-          sh autogen.sh
-          ./configure --disable-bindings --disable-docs --disable-werror
-          make -j$(sysctl -n hw.logicalcpu)
-
-      # ------------------------------------------------------------------
-      # 5. Download PDFium (optional, loaded at runtime via dlopen)
+      # 4. Download PDFium (optional, loaded at runtime via dlopen)
       # ------------------------------------------------------------------
       - name: Download PDFium
         run: |
@@ -105,7 +92,7 @@ jobs:
           fi
 
       # ------------------------------------------------------------------
-      # 6. Build Engine
+      # 5. Build Engine
       # ------------------------------------------------------------------
       - name: Build Engine
         run: |
@@ -118,10 +105,6 @@ jobs:
           export SDL3_IMAGE_LIB="$BREW_PREFIX/lib"
           export SDL3_TTF_INCLUDE="$BREW_PREFIX/include"
           export SDL3_TTF_LIB="$BREW_PREFIX/lib"
-          export DWG_INCLUDE="$HOME/dev/libredwg/include"
-          export DWG_LIB="$HOME/dev/libredwg/src/.libs"
-          export DWG_SRC="$HOME/dev/libredwg/src"
-          export DWG_ROOT="$HOME/dev/libredwg"
           export ZLIB_NG_INCLUDE="$BREW_PREFIX/include"
           export ZLIB_NG_LIB="$BREW_PREFIX/lib"
           export CPATH="$BREW_PREFIX/include"
@@ -139,7 +122,7 @@ jobs:
           swift build -c "$CONFIG"
 
       # ------------------------------------------------------------------
-      # 7. Create .app Bundle
+      # 6. Create .app Bundle
       # ------------------------------------------------------------------
       - name: Create .app Bundle
         run: |
@@ -334,7 +317,7 @@ jobs:
           echo "Signing complete."
 
       # ------------------------------------------------------------------
-      # 8. Package .app for distribution
+      # 7. Package .app for distribution
       # ------------------------------------------------------------------
       - name: Package .app
         run: |
@@ -348,7 +331,7 @@ jobs:
           ls -lh "$RUNNER_TEMP/$ZIP_NAME"
 
       # ------------------------------------------------------------------
-      # 9. Upload to Nightly Release
+      # 8. Upload to Nightly Release
       # ------------------------------------------------------------------
       - name: Upload to Nightly Release
         uses: softprops/action-gh-release@v2

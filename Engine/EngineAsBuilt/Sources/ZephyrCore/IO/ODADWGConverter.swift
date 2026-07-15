@@ -220,21 +220,26 @@ public enum ODADWGConverter {
         toFormat: String
     ) throws {
         let semaphore = DispatchSemaphore(value: 0)
-        var resultError: Error?
+        let errorBox = ErrorBox()
 
-        Task {
+        Task { @Sendable [errorBox] in
             do {
                 try await convert(input: input, output: output, toFormat: toFormat)
             } catch {
-                resultError = error
+                errorBox.error = error
             }
             semaphore.signal()
         }
 
         semaphore.wait()
-        if let error = resultError {
+        if let error = errorBox.error {
             throw error
         }
+    }
+
+    /// Thread-safe box for bridging errors across async/sync boundary.
+    private final class ErrorBox: @unchecked Sendable {
+        var error: (any Error)?
     }
 
     // MARK: - Private: Process Execution

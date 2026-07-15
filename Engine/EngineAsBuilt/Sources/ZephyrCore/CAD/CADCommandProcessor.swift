@@ -241,6 +241,9 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "UNITS",          aliases: ["UNIT", "DDUNITS"], category: .settings, syntax: "[mm|cm|m|in|ft|yd]", description: "Set or display the drawing base unit"),
         CommandDescriptor(canonicalName: "SETUISCALE",     aliases: ["ZOOMUI", "UISCALE"], category: .settings, syntax: "[scale|AUTO]", description: "Override UI zoom (1.0=100%, 1.5=150%, AUTO=system DPI)"),
         CommandDescriptor(canonicalName: "LANGUAGE",       aliases: ["LANG", "UILANGUAGE", "FONTLANG"], category: .settings, syntax: "<profile>", description: "Set the UI font glyph profile without translating UI text"),
+
+        // --- System ---
+        CommandDescriptor(canonicalName: "INSTALLODA",  aliases: ["ODAINSTALL"],   category: .settings, syntax: "", description: "Download and install ODA FileConverter for DWG support"),
     ]
 }
 
