@@ -372,7 +372,7 @@ private final class ODADownloadOperation: @unchecked Sendable {
                     lastProgressUpdate = now
                 }
 
-                try await Task.sleep(for: .milliseconds(100))
+                try await Task.sleep(nanoseconds: 100_000_000)
             }
             try Task.checkCancellation()
         } catch {
@@ -1496,18 +1496,7 @@ public final class InstallODACommand: FeatureCommand {
 
             while process.isRunning {
                 try Task.checkCancellation()
-
-                if let runningStatus,
-                   let onStatus,
-                   Date().timeIntervalSince(lastStatusUpdate) >= 1 {
-                    let elapsed = Date().timeIntervalSince(processStartedAt)
-                    onStatus(
-                        "\(runningStatus)... \(Self.formatDuration(elapsed)) elapsed"
-                    )
-                    lastStatusUpdate = Date()
-                }
-
-                try await Task.sleep(for: .milliseconds(100))
+                try await Task.sleep(nanoseconds: 100_000_000)
             }
             try Task.checkCancellation()
         } catch {
