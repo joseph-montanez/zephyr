@@ -16,12 +16,12 @@ on:
           - release
 
 env:
-  SDL3_VERSION: "3.4.10"
+  SDL3_VERSION: "3.4.12"
   SDL3_TTF_VERSION: "3.2.2"
   SDL3_IMAGE_VERSION: "3.4.4"
   ZLIB_NG_VERSION: "2.3.3"
   PDFIUM_TAG: "chromium%2F7891"
-  SWIFT_VERSION: "6.3.2"
+  SWIFT_VERSION: "6.3.3"
   DEV_ROOT: "C:/dev"
 
 jobs:

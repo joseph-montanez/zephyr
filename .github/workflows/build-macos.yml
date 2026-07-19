@@ -16,7 +16,7 @@ on:
           - release
 
 env:
-  SWIFT_VERSION: "6.3.2"
+  SWIFT_VERSION: "6.3.3"
   PDFIUM_TAG: "chromium%2F7891"
 
 jobs:
@@ -53,7 +53,7 @@ jobs:
       - name: Install Swift
         uses: SwiftyLab/setup-swift@v1
         with:
-          swift-version: '6.3.2'
+          swift-version: '6.3.3'
 
       # ------------------------------------------------------------------
       # 3. Install Homebrew Dependencies
