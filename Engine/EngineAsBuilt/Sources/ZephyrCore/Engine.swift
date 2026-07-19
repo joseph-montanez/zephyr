@@ -228,8 +228,8 @@ public final class PhrostEngine {
 
     // MARK: State
     internal var running = true
-    internal var windowWidth: Int32 = 0
-    internal var windowHeight: Int32 = 0
+    public internal(set) var windowWidth: Int32 = 0
+    public internal(set) var windowHeight: Int32 = 0
     internal var pixelWidth: Int32 = 0
     internal var pixelHeight: Int32 = 0
     internal var scaleX: Float = 0

@@ -136,6 +136,7 @@ private enum CornerPickKind {
 private struct CornerPick {
     let handle: UUID
     let primitiveIndex: Int
+    let segmentIndex: Int?
     let entity: CADEntity
     let primitive: CADPrimitive
     let kind: CornerPickKind
@@ -143,11 +144,6 @@ private struct CornerPick {
     let pickWorld: Vector3
     let nearestWorld: Vector3
 
-    var segmentIndex: Int? {
-        let pickKind = kind
-        if case .polyline(_, let segmentIndex, _) = pickKind { return segmentIndex }
-        return nil
-    }
 
     var isLineLike: Bool {
         let pickKind = kind
@@ -221,6 +217,7 @@ private enum CornerPicker {
                     best = CornerPick(
                         handle: handle,
                         primitiveIndex: primitiveIndex,
+                        segmentIndex: nil,
                         entity: entity,
                         primitive: primitive,
                         kind: .line(localStart: localStart, localEnd: localEnd, color: color),
@@ -241,6 +238,7 @@ private enum CornerPicker {
                     best = CornerPick(
                         handle: handle,
                         primitiveIndex: primitiveIndex,
+                        segmentIndex: nil,
                         entity: entity,
                         primitive: primitive,
                         kind: .ray(localStart: localStart, localDirection: localDirection, color: color),
@@ -270,6 +268,7 @@ private enum CornerPicker {
                     best = CornerPick(
                         handle: handle,
                         primitiveIndex: primitiveIndex,
+                        segmentIndex: nil,
                         entity: entity,
                         primitive: primitive,
                         kind: .arc(
@@ -302,6 +301,7 @@ private enum CornerPicker {
                     best = CornerPick(
                         handle: handle,
                         primitiveIndex: primitiveIndex,
+                        segmentIndex: nil,
                         entity: entity,
                         primitive: primitive,
                         kind: .circle(localCenter: localCenter, localRadius: localRadius, color: color),
@@ -343,6 +343,7 @@ private enum CornerPicker {
                     best = CornerPick(
                         handle: handle,
                         primitiveIndex: primitiveIndex,
+                        segmentIndex: segmentIndex,
                         entity: entity,
                         primitive: primitive,
                         kind: .polyline(path: path, segmentIndex: segmentIndex, color: color),
@@ -1313,6 +1314,7 @@ private enum CornerCommandApply {
             adjustedSecond = CornerPick(
                 handle: second.handle,
                 primitiveIndex: second.primitiveIndex,
+                segmentIndex: second.segmentIndex,
                 entity: sameEntity,
                 primitive: second.primitive,
                 kind: second.kind,
