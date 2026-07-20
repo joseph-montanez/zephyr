@@ -33,6 +33,7 @@ public final class EngineLoopController {
 
         // Create the input handler once and reuse it for the lifetime of the loop.
         let inputHandler = EngineInputHandler(engine: engine)
+        engine.activateInitialWindowForInput()
 
         // The core of the "Lazy Loop": Determines if the engine should render.
         // Starts at 5 to ensure initial ImGui setup frames render cleanly.

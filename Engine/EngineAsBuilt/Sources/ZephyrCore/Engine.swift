@@ -671,6 +671,33 @@ public final class PhrostEngine {
         print("Zephyr Initialized Successfully")
     }
 
+    internal func activateInitialWindowForInput() {
+        #if os(macOS)
+        let application = NSApplication.shared
+        _ = application.setActivationPolicy(.regular)
+        application.activate(ignoringOtherApps: true)
+
+        let properties = SDL_GetWindowProperties(window)
+        if let cocoaWindowPointer = SDL_GetPointerProperty(
+            properties,
+            "SDL.window.cocoa.window",
+            nil
+        ) {
+            let cocoaWindow = Unmanaged<NSWindow>
+                .fromOpaque(cocoaWindowPointer)
+                .takeUnretainedValue()
+            cocoaWindow.makeKeyAndOrderFront(nil)
+            _ = cocoaWindow.makeFirstResponder(cocoaWindow.contentView)
+        }
+
+        _ = SDL_RaiseWindow(window)
+        SDL_StartTextInput(window)
+        if let io {
+            ImGuiIO_AddFocusEvent(io, true)
+        }
+        #endif
+    }
+
     // MARK: Deinitialization
     deinit {
         MainActor.assumeIsolated {

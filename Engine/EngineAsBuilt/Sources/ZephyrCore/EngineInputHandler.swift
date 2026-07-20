@@ -76,6 +76,7 @@ internal final class EngineInputHandler {
                 break
 
             case UInt32(SDL_EVENT_WINDOW_FOCUS_GAINED.rawValue):
+                SDL_StartTextInput(engine.window)
                 // Inform ImGui that the window is now focused so it can
                 // correctly track mouse/key state going forward.
                 if let io = engine.io {
