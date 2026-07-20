@@ -326,6 +326,99 @@ public enum CADGripSystem {
         return result
     }
 
+    public struct LengthenConstraint: Sendable {
+        public let anchor: Vector3
+        public let axis: Vector3
+
+        public init(anchor: Vector3, axis: Vector3) {
+            self.anchor = anchor
+            self.axis = axis
+        }
+    }
+
+    public static func lengthenConstraint(
+        for handle: UUID,
+        vertexIndex: Int,
+        document: CADDocument
+    ) -> LengthenConstraint? {
+        guard let entity = document.entity(for: handle),
+              let geometry = document.resolvedGeometry(for: entity),
+              vertexIndex >= 0
+        else { return nil }
+
+        var globalIndex = 0
+
+        func makeConstraint(dragged: Vector3, anchor: Vector3) -> LengthenConstraint? {
+            let dx = dragged.x - anchor.x
+            let dy = dragged.y - anchor.y
+            let length = hypot(dx, dy)
+            guard length > 1e-12 else { return nil }
+            return LengthenConstraint(
+                anchor: anchor,
+                axis: Vector3(x: dx / length, y: dy / length, z: 0))
+        }
+
+        for primitive in geometry {
+            switch primitive {
+            case .polyline(let path, _):
+                let gripCount = path.hatchEdges.isEmpty
+                    ? path.vertices.count
+                    : analyticHatchGripPoints(path).count
+                let localIndex = vertexIndex - globalIndex
+                globalIndex += gripCount
+
+                guard localIndex >= 0, localIndex < gripCount else { continue }
+                guard path.hatchEdges.isEmpty,
+                      !path.isClosed,
+                      path.vertices.count >= 2,
+                      localIndex == 0 || localIndex == path.vertices.count - 1
+                else { return nil }
+
+                let neighborIndex: Int
+                let segmentIndex: Int
+                if localIndex == 0 {
+                    neighborIndex = 1
+                    segmentIndex = 0
+                } else {
+                    neighborIndex = path.vertices.count - 2
+                    segmentIndex = neighborIndex
+                }
+
+                guard abs(path.vertices[segmentIndex].bulge) <= 1e-12 else { return nil }
+
+                let dragged = entity.transform.transformPoint(
+                    path.vertices[localIndex].position)
+                let anchor = entity.transform.transformPoint(
+                    path.vertices[neighborIndex].position)
+                return makeConstraint(dragged: dragged, anchor: anchor)
+
+            case .hatchPath(let boundary, _, _, _, _, _, _):
+                let gripCount = boundary.hatchEdges.isEmpty
+                    ? boundary.vertices.count
+                    : analyticHatchGripPoints(boundary).count
+                let localIndex = vertexIndex - globalIndex
+                globalIndex += gripCount
+                if localIndex >= 0, localIndex < gripCount { return nil }
+
+            default:
+                let points = CADGeometryMath.worldPointsForPrimitive(
+                    primitive, transform: entity.transform)
+                let localIndex = vertexIndex - globalIndex
+                globalIndex += points.count
+
+                guard localIndex >= 0, localIndex < points.count else { continue }
+                guard case .line = primitive, points.count >= 2, localIndex < 2 else {
+                    return nil
+                }
+                return makeConstraint(
+                    dragged: points[localIndex],
+                    anchor: points[localIndex == 0 ? 1 : 0])
+            }
+        }
+
+        return nil
+    }
+
     /// Returns the 4 oriented world-space corners of an entity's bounding box.
     /// If the entity has no rotation, returns the axis-aligned corners.
     /// Otherwise transforms the local bounding box corners into world space.

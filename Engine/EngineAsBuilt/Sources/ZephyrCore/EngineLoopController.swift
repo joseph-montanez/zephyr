@@ -203,6 +203,18 @@ public final class EngineLoopController {
             interaction.dragTotalWorldY = 0
             interaction.gripDragAccumRotation = 0
             interaction.gripDragAccumScale = 1.0
+            interaction.resetGripVertexEditMode()
+            interaction.gripAppliedWorldPosition = gripHit.worldPos
+
+            if case .vertex(let entityHandle, let index) = gripHit.grip,
+               index < 1000,
+               let constraint = CADGripSystem.lengthenConstraint(
+                    for: entityHandle,
+                    vertexIndex: index,
+                    document: engine.document) {
+                interaction.gripLengthenAnchor = constraint.anchor
+                interaction.gripLengthenAxis = constraint.axis
+            }
 
             if case .rotation = gripHit.grip,
                 let center = engine.cadSelection.collectiveCenter(document: engine.document)
@@ -396,6 +408,7 @@ public final class EngineLoopController {
             interaction.gripActive = false
             interaction.gripHandle = nil
             interaction.gripUndoSnapshot = nil
+            interaction.resetGripVertexEditMode()
             
             engine.snap.currentSnapResult = nil
             engine.snap.snapTrackingEngine.clear()
@@ -479,10 +492,36 @@ public final class EngineLoopController {
         }
 
         if interaction.gripActive {
-            let dx = snapWX - interaction.dragLastWorldX
-            let dy = snapWY - interaction.dragLastWorldY
+            var dx = snapWX - interaction.dragLastWorldX
+            var dy = snapWY - interaction.dragLastWorldY
             interaction.dragLastWorldX = snapWX
             interaction.dragLastWorldY = snapWY
+
+            if case .vertex(_, let index) = interaction.gripType,
+               index < 1000,
+               let previous = interaction.gripAppliedWorldPosition {
+                var target = Vector3(x: snapWX, y: snapWY, z: previous.z)
+
+                if interaction.gripVertexEditMode == .lengthen,
+                   let anchor = interaction.gripLengthenAnchor,
+                   let axis = interaction.gripLengthenAxis {
+                    let cursorFromAnchor = Vector3(
+                        x: snapWX - anchor.x,
+                        y: snapWY - anchor.y,
+                        z: 0)
+                    let distanceAlongAxis = cursorFromAnchor.x * axis.x
+                        + cursorFromAnchor.y * axis.y
+                    target = Vector3(
+                        x: anchor.x + axis.x * distanceAlongAxis,
+                        y: anchor.y + axis.y * distanceAlongAxis,
+                        z: previous.z)
+                }
+
+                dx = target.x - previous.x
+                dy = target.y - previous.y
+                interaction.gripAppliedWorldPosition = target
+            }
+
             interaction.dragTotalWorldX += dx
             interaction.dragTotalWorldY += dy
 

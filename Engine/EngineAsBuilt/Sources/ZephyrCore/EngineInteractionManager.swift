@@ -55,6 +55,11 @@ public final class EngineInteractionManager {
     public var popupNeedsOpen: Bool = false
 
     // MARK: - Grip State
+
+    public enum GripVertexEditMode: Sendable, Equatable {
+        case stretch
+        case lengthen
+    }
     
     /// Whether the cursor is currently dragging a grip.
     public internal(set) var gripActive: Bool = false
@@ -84,6 +89,31 @@ public final class EngineInteractionManager {
     
     /// Accumulated scale factor during corner grip drag.
     public var gripDragAccumScale: Double = 1.0
+
+    public internal(set) var gripVertexEditMode: GripVertexEditMode = .stretch
+    public internal(set) var gripLengthenAnchor: Vector3? = nil
+    public internal(set) var gripLengthenAxis: Vector3? = nil
+    public internal(set) var gripAppliedWorldPosition: Vector3? = nil
+
+    @discardableResult
+    public func cycleGripVertexEditMode() -> Bool {
+        guard gripActive,
+              case .vertex(_, let index) = gripType,
+              index < 1000,
+              gripLengthenAnchor != nil,
+              gripLengthenAxis != nil
+        else { return false }
+
+        gripVertexEditMode = gripVertexEditMode == .stretch ? .lengthen : .stretch
+        return true
+    }
+
+    public func resetGripVertexEditMode() {
+        gripVertexEditMode = .stretch
+        gripLengthenAnchor = nil
+        gripLengthenAxis = nil
+        gripAppliedWorldPosition = nil
+    }
 
     // MARK: - Data Table Editing
 

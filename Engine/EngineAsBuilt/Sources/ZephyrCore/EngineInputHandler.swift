@@ -191,6 +191,15 @@ internal final class EngineInputHandler {
     // MARK: - Keyboard Handling
 
     private func handleKeyDown(event e: SDL_Event, handledByImGui: Bool) {
+        if (e.key.scancode == SDL_SCANCODE_LCTRL
+                || e.key.scancode == SDL_SCANCODE_RCTRL),
+           engine.interaction.cycleGripVertexEditMode() {
+            engine.loopController.handleToolMouseMotion(
+                x: engine.interaction.lastMouseX,
+                y: engine.interaction.lastMouseY)
+            return
+        }
+
         // Escape-to-close the command line / layer-move popup works even
         // when ImGui has keyboard capture.
         if e.key.scancode == SDL_SCANCODE_ESCAPE {
