@@ -644,7 +644,11 @@ public final class CADCommandProcessor {
                 clearCommand()
                 break
             }
-            engine.snap.snapAngle = val.truncatingRemainder(dividingBy: 360.0)
+            var normalizedAngle = val.truncatingRemainder(dividingBy: 360.0)
+            if normalizedAngle < 0 { normalizedAngle += 360.0 }
+            engine.snap.snapAngle = normalizedAngle
+            engine.snap.orthoLastWasHorizontal = false
+            engine.snap.orthoLastWasVertical = false
             print("[CAD] Snap angle set to \(engine.snap.snapAngle)°")
             clearCommand()
 

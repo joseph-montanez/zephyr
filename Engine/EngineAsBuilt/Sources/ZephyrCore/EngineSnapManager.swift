@@ -67,7 +67,7 @@ public final class EngineSnapManager {
     /// Enable extension snapping (snap to line/arc extensions past endpoints).
     public var extensionSnapEnabled: Bool = true
 
-    /// Enable Ortho mode (F8) — hard-constrains cursor to cardinal axes (0°/90°/180°/270°)
+    /// Enable Ortho mode (F8) — hard-constrains cursor to the axes established by SNAPANG
     /// from the current reference point. Ortho beats polar tracking when both are on.
     public var orthoEnabled: Bool = false
     /// Hysteresis: was the last ortho constraint horizontal? Prevents oscillation at 45° diagonals.
@@ -75,8 +75,8 @@ public final class EngineSnapManager {
     /// Hysteresis: was the last ortho constraint vertical? Prevents oscillation at 45° diagonals.
     public var orthoLastWasVertical: Bool = false
 
-    /// Wiggle room in screen pixels before the hover dwell timer resets.
-    /// Does NOT affect the drawing — only the cursor and ortho direction.
+    /// Rotation of the snap axes in degrees. Rotates the crosshair and Ortho directions
+    /// without changing the document coordinate system.
     public var snapAngle: Double = 0.0
 
     /// Wiggle room in screen pixels before the hover dwell timer resets.
