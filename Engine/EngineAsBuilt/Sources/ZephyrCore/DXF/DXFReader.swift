@@ -670,10 +670,16 @@ extension DXFReader {
             case 11:  e.secPoint.x = d(v)
             case 21:  e.secPoint.y = d(v)
             case 31:  e.secPoint.z = d(v)
-            case 40:  e.height = d(v)
-            case 41:  e.widthScale = d(v)
+            case 40:
+                e.height = d(v)
+                e.hasExplicitHeight = true
+            case 41:
+                e.widthScale = d(v)
+                e.hasExplicitWidthScale = true
             case 50:  e.angle_p = d(v)  // degrees
-            case 51:  e.oblique = d(v)  // degrees
+            case 51:
+                e.oblique = d(v)  // degrees
+                e.hasExplicitOblique = true
             case 70 where isAttribute || isAttributeDefinition:
                 e.attributeFlags = i(v)
             case 71:  e.textGen = i(v)
@@ -710,8 +716,12 @@ extension DXFReader {
             case 31:
                 e.secPoint.z = d(v)
                 directionOrder = pairIndex
-            case 40:  e.height = d(v)
-            case 41:  e.widthScale = d(v)  // reference rectangle width
+            case 40:
+                e.height = d(v)
+                e.hasExplicitHeight = true
+            case 41:
+                e.widthScale = d(v)  // reference rectangle width
+                e.hasExplicitWidthScale = true
             case 44:  e.interlin = d(v)    // line spacing
             case 45:  e.backgroundScale = d(v)
             case 50:

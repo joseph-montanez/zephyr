@@ -347,8 +347,11 @@ public final class CADRendererBridge {
                 textBackgroundColor: ColorRGBA?,
                 textBackgroundUsesViewportColor: Bool
             )] = []
-        var visibleText: [(index: Int, handle: UUID, text: String, height: Double, textStyle: String?,
-                            alignH: Int, alignV: Int, widthFactor: Double, oblique: Double,
+        var visibleText: [(index: Int, handle: UUID, text: String, height: Double,
+                            heightOverride: Bool, textStyle: String?,
+                            alignH: Int, alignV: Int, widthFactor: Double,
+                            widthFactorOverride: Bool, oblique: Double,
+                            obliqueOverride: Bool,
                             mtextWidth: Double?, mtextLineSpacing: Double,
                             mtextLineSpacingStyle: Int,
                             transform: Transform3D, color: ColorRGBA,
@@ -429,7 +432,15 @@ public final class CADRendererBridge {
                 let h: Double
                 if let th = entity.xdata["dxf.textHeight"], case .double(let v) = th { h = v }
                 else { h = 2.5 }
-                
+
+                let heightOverride: Bool
+                if let value = entity.xdata["dxf.textHeightOverride"],
+                   case .int(let flag) = value {
+                    heightOverride = flag != 0
+                } else {
+                    heightOverride = entity.xdata["dxf.textEntityType"] != nil
+                }
+
                 let style: String?
                 if let ts = entity.xdata["dxf.textStyle"], case .string(let s) = ts { style = s }
                 else { style = nil }
@@ -460,11 +471,29 @@ public final class CADRendererBridge {
                     widthFactor = 1.0
                 }
 
+                let widthFactorOverride: Bool
+                if !isMTextEntity,
+                   let value = entity.xdata["dxf.textWidthScaleOverride"],
+                   case .int(let flag) = value {
+                    widthFactorOverride = flag != 0
+                } else {
+                    widthFactorOverride = !isMTextEntity && abs(widthFactor - 1.0) > 1e-12
+                }
+
                 let oblique: Double
                 if let value = entity.xdata["dxf.textOblique"], case .double(let angle) = value {
                     oblique = angle
                 } else {
                     oblique = 0
+                }
+
+                let obliqueOverride: Bool
+                if !isMTextEntity,
+                   let value = entity.xdata["dxf.textObliqueOverride"],
+                   case .int(let flag) = value {
+                    obliqueOverride = flag != 0
+                } else {
+                    obliqueOverride = !isMTextEntity && abs(oblique) > 1e-12
                 }
 
                 let mtextWidth: Double?
@@ -503,14 +532,16 @@ public final class CADRendererBridge {
                 let displayText = ft?.toPlainText() ?? text
 
                 visibleText.append((
-                    index, entity.handle, displayText, h, style, alignH, alignV,
-                    widthFactor, oblique, mtextWidth, mtextLineSpacing, mtextLineSpacingStyle,
-                    entity.transform, effectiveColor, ft,
+                    index, entity.handle, displayText, h, heightOverride, style,
+                    alignH, alignV, widthFactor, widthFactorOverride,
+                    oblique, obliqueOverride, mtextWidth, mtextLineSpacing,
+                    mtextLineSpacingStyle, entity.transform, effectiveColor, ft,
                     entityTextBackgroundScale, entityTextBackgroundColor,
                     entityTextBackgroundUsesViewportColor))
                 index += 1
                 continue
             }
+
             // Resolve geometry from block or local
             let resolved: [CADPrimitive]?
             var primitiveStyles: [Int: CADPrimitiveStyle]
@@ -681,6 +712,15 @@ public final class CADRendererBridge {
                                         isMTextPrimitive = false
                                     }
 
+                                    let heightOverride: Bool
+                                    if let value = primitiveXData["dxf.textHeightOverride"],
+                                       case .int(let flag) = value {
+                                        heightOverride = flag != 0
+                                    } else {
+                                        heightOverride =
+                                            primitiveXData["dxf.textEntityType"] != nil
+                                    }
+
                                     let entityWidthFactor: Double
                                     if !isMTextPrimitive,
                                        let width = primitiveXData["dxf.textWidthScale"],
@@ -690,17 +730,46 @@ public final class CADRendererBridge {
                                     } else {
                                         entityWidthFactor = 1.0
                                     }
-                                    primitiveTextWidthFactor = entityWidthFactor * textStyle.widthFactor
+                                    let widthFactorOverride: Bool
+                                    if !isMTextPrimitive,
+                                       let value = primitiveXData["dxf.textWidthScaleOverride"],
+                                       case .int(let flag) = value {
+                                        widthFactorOverride = flag != 0
+                                    } else {
+                                        widthFactorOverride =
+                                            !isMTextPrimitive
+                                            && abs(entityWidthFactor - 1.0) > 1e-12
+                                    }
+                                    primitiveTextWidthFactor = widthFactorOverride
+                                        ? entityWidthFactor
+                                        : textStyle.widthFactor
+
                                     let entityOblique: Double
-                                    if let value = primitiveXData["dxf.textOblique"], case .double(let angle) = value {
+                                    if let value = primitiveXData["dxf.textOblique"],
+                                       case .double(let angle) = value {
                                         entityOblique = angle
                                     } else {
                                         entityOblique = 0
                                     }
-                                    primitiveTextObliqueAngle = textStyle.obliqueAngle + entityOblique
+                                    let obliqueOverride: Bool
+                                    if !isMTextPrimitive,
+                                       let value = primitiveXData["dxf.textObliqueOverride"],
+                                       case .int(let flag) = value {
+                                        obliqueOverride = flag != 0
+                                    } else {
+                                        obliqueOverride =
+                                            !isMTextPrimitive && abs(entityOblique) > 1e-12
+                                    }
+                                    primitiveTextObliqueAngle = obliqueOverride
+                                        ? entityOblique
+                                        : textStyle.obliqueAngle
+
                                     let effectiveWidthFactor =
                                         primitiveTextWidthFactor * widthScale / heightScale
-                                    let effectiveHeight = textStyle.fixedHeight > 0 ? textStyle.fixedHeight : height
+                                    let effectiveHeight =
+                                        heightOverride || textStyle.fixedHeight <= 0
+                                        ? height
+                                        : textStyle.fixedHeight
                                     let worldHeight = effectiveHeight * heightScale
                                     primitiveForRender = .text(
                                         position: pos,
@@ -896,11 +965,19 @@ public final class CADRendererBridge {
                             let worldY = vt.transform.transformPoint(localY) - origin
                             let heightScale = max(worldY.magnitude, 1e-12)
                             let widthScale = max(worldX.magnitude, 1e-12)
+                            let baseWidthFactor = vt.widthFactorOverride
+                                ? vt.widthFactor
+                                : textStyle.widthFactor
                             let effectiveWidthFactor =
-                                vt.widthFactor * textStyle.widthFactor * widthScale / heightScale
-                            let effectiveHeight = textStyle.fixedHeight > 0 ? textStyle.fixedHeight : vt.height
+                                baseWidthFactor * widthScale / heightScale
+                            let effectiveHeight =
+                                vt.heightOverride || textStyle.fixedHeight <= 0
+                                ? vt.height
+                                : textStyle.fixedHeight
                             let worldHeight = effectiveHeight * heightScale
-                            let effectiveOblique = textStyle.obliqueAngle + vt.oblique
+                            let effectiveOblique = vt.obliqueOverride
+                                ? vt.oblique
+                                : textStyle.obliqueAngle
                             let worldWidth = vt.mtextWidth.map { $0 * widthScale }
                             let worldRotation = atan2(worldX.y, worldX.x)
                             
@@ -932,8 +1009,10 @@ public final class CADRendererBridge {
                                             if let runHeight = formatted.paragraphs[paragraphIndex].runs[runIndex].height {
                                                 formatted.paragraphs[paragraphIndex].runs[runIndex].height = runHeight * localHeightScale * heightScale
                                             }
-                                            let runOblique = formatted.paragraphs[paragraphIndex].runs[runIndex].oblique ?? 0
-                                            formatted.paragraphs[paragraphIndex].runs[runIndex].oblique = runOblique + effectiveOblique
+                                            if formatted.paragraphs[paragraphIndex].runs[runIndex].oblique == nil {
+                                                formatted.paragraphs[paragraphIndex].runs[runIndex].oblique =
+                                                    effectiveOblique
+                                            }
                                         }
                                     }
                                     textPrims = font.renderFormattedText(

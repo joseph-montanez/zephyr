@@ -115,7 +115,9 @@ public struct TextEditorUI {
                 if ImGuiSelectable(style.name, isSelected, 0, ImVec2(x: 0, y: 0)) {
                     state.styleName = style.name
                     state.fontName = style.fontFile
-                    if style.fixedHeight > 0 { state.height = style.fixedHeight }
+                    if isCreating, style.fixedHeight > 0 {
+                        state.height = style.fixedHeight
+                    }
                 }
                 if isSelected { ImGuiSetItemDefaultFocus() }
             }
@@ -126,17 +128,13 @@ public struct TextEditorUI {
         igSpacing()
 
         // ---- Height ----
-        let selectedStyle = engine.document.textStyle(named: state.styleName) ?? .standard
-        if selectedStyle.fixedHeight > 0 { state.height = selectedStyle.fixedHeight }
         ImGuiTextV("Height:")
         ImGuiSameLine(0, 8)
         ImGuiPushItemWidth(100)
-        if selectedStyle.fixedHeight > 0 { ImGuiBeginDisabled(true) }
         var h = Float(state.height)
         if ImGuiDragFloat("##HeightDrag", &h, 0.1, 0.1, 1000.0, "%.2f", ImGuiSliderFlags(0)) {
             state.height = Double(h)
         }
-        if selectedStyle.fixedHeight > 0 { ImGuiEndDisabled() }
         ImGuiPopItemWidth()
 
         ImGuiSameLine(0, 20)

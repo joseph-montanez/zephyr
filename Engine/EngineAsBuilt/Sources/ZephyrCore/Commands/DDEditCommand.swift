@@ -371,7 +371,7 @@ public final class DDEditCommand: FeatureCommand {
 
         let styleName = engine.document.resolvedTextStyleName(editorState.styleName)
         let style = engine.document.textStyle(named: styleName) ?? .standard
-        let height = engine.document.effectiveTextHeight(styleName: styleName, localHeight: editorState.height)
+        let height = max(editorState.height, 1e-9)
         let rotation = editorState.rotation
         let fontName = style.fontFile
         let alignH = editorState.alignH
@@ -403,6 +403,7 @@ public final class DDEditCommand: FeatureCommand {
         engine.document.setXData(for: handle, key: "dxf.text", value: .string(text))
         engine.document.setXData(for: handle, key: "dxf.textStyle", value: .string(styleName))
         engine.document.setXData(for: handle, key: "dxf.textHeight", value: .double(height))
+        engine.document.setXData(for: handle, key: "dxf.textHeightOverride", value: .int(1))
         engine.document.setXData(for: handle, key: "dxf.alignH", value: .int(alignH))
         engine.document.setXData(for: handle, key: "dxf.alignV", value: .int(alignV))
         if mtextWidth > 0 {

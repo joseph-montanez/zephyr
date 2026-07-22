@@ -868,11 +868,18 @@ public enum DXFImporter {
                 DXFEntityConverter.cleanMTextFormatting(text.text))
             xdata["dxf.textEntityType"] = .string(text.eType.rawValue)
             xdata["dxf.textHeight"] = .double(text.height)
+            xdata["dxf.textHeightOverride"] = .int(text.hasExplicitHeight ? 1 : 0)
             xdata["dxf.textStyle"] = .string(text.style)
             xdata["dxf.alignH"] = .int(text.alignH)
             xdata["dxf.alignV"] = .int(text.alignV)
             xdata["dxf.textWidthScale"] = .double(text.widthScale)
             xdata["dxf.textOblique"] = .double(text.oblique)
+            if text.eType != .mTEXT {
+                xdata["dxf.textWidthScaleOverride"] = .int(
+                    text.hasExplicitWidthScale ? 1 : 0)
+                xdata["dxf.textObliqueOverride"] = .int(
+                    text.hasExplicitOblique ? 1 : 0)
+            }
             xdata["dxf.textGenerationFlags"] = .int(text.textGen)
             if text.eType == .mTEXT {
                 xdata["dxf.mtextRaw"] = .string(text.text)

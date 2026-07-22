@@ -852,6 +852,7 @@ public final class CADDocument {
                     alignV: alignV,
                     mtextWidth: width,
                     transform: entity.transform,
+                    textXData: entity.xdata,
                     backgroundScale: entityBackgroundScale,
                     hasVisibleBackground: entityBackgroundUsesViewportColor || entityHasBackgroundColor,
                     into: &bounds)
@@ -860,17 +861,20 @@ public final class CADDocument {
 
             let geometry: [CADPrimitive]
             let primitiveStyles: [Int: CADPrimitiveStyle]
+            let primitiveXData: [Int: [String: XDataValue]]
             if let blockID = entity.blockID {
                 guard let block = blockTable[blockID],
                       !block.isInternalTableDisplayBlock,
                       !block.geometry.isEmpty else { continue }
                 geometry = block.geometry
                 primitiveStyles = block.primitiveStyles
+                primitiveXData = block.primitiveXData
             } else {
                 guard let localGeometry = entity.localGeometry,
                       !localGeometry.isEmpty else { continue }
                 geometry = localGeometry
                 primitiveStyles = [:]
+                primitiveXData = [:]
             }
 
             for (index, primitive) in geometry.enumerated() {
@@ -885,6 +889,7 @@ public final class CADDocument {
                 includePrimitiveRenderBounds(
                     primitive,
                     transform: entity.transform,
+                    textXData: primitiveXData[index] ?? [:],
                     backgroundScale: backgroundScale,
                     hasVisibleBackground: hasVisibleBackground,
                     into: &bounds)
@@ -897,6 +902,7 @@ public final class CADDocument {
     private func includePrimitiveRenderBounds(
         _ primitive: CADPrimitive,
         transform: Transform3D,
+        textXData: [String: XDataValue],
         backgroundScale: Double?,
         hasVisibleBackground: Bool,
         into bounds: inout CADRenderBoundsAccumulator
@@ -1001,6 +1007,7 @@ public final class CADDocument {
                 alignV: alignV,
                 mtextWidth: mtextWidth,
                 transform: transform,
+                textXData: textXData,
                 backgroundScale: backgroundScale,
                 hasVisibleBackground: hasVisibleBackground,
                 into: &bounds)
@@ -1143,13 +1150,76 @@ public final class CADDocument {
         alignV: Int,
         mtextWidth: Double?,
         transform: Transform3D,
+        textXData: [String: XDataValue],
         backgroundScale: Double?,
         hasVisibleBackground: Bool,
         into bounds: inout CADRenderBoundsAccumulator
     ) {
         let textStyle = CADTextStyle.resolve(style, in: textStyles)
-        let effectiveHeight = textStyle.fixedHeight > 0 ? textStyle.fixedHeight : height
-        guard !text.isEmpty, effectiveHeight.isFinite, effectiveHeight > 0, rotation.isFinite else { return }
+
+        let heightOverride: Bool
+        if let value = textXData["dxf.textHeightOverride"],
+           case .int(let flag) = value {
+            heightOverride = flag != 0
+        } else {
+            heightOverride = textXData["dxf.textEntityType"] != nil
+        }
+        let effectiveHeight =
+            heightOverride || textStyle.fixedHeight <= 0
+            ? height
+            : textStyle.fixedHeight
+
+        let isMText: Bool
+        if let value = textXData["dxf.textEntityType"],
+           case .string(let entityType) = value {
+            isMText = entityType.uppercased() == "MTEXT"
+        } else {
+            isMText = mtextWidth != nil
+        }
+
+        let entityWidthFactor: Double
+        if !isMText,
+           let value = textXData["dxf.textWidthScale"],
+           case .double(let width) = value,
+           width > 0 {
+            entityWidthFactor = width
+        } else {
+            entityWidthFactor = 1.0
+        }
+        let widthFactorOverride: Bool
+        if !isMText,
+           let value = textXData["dxf.textWidthScaleOverride"],
+           case .int(let flag) = value {
+            widthFactorOverride = flag != 0
+        } else {
+            widthFactorOverride = !isMText && abs(entityWidthFactor - 1.0) > 1e-12
+        }
+        let effectiveWidthFactor = widthFactorOverride
+            ? entityWidthFactor
+            : textStyle.widthFactor
+
+        let entityOblique: Double
+        if !isMText,
+           let value = textXData["dxf.textOblique"],
+           case .double(let angle) = value {
+            entityOblique = angle
+        } else {
+            entityOblique = 0
+        }
+        let obliqueOverride: Bool
+        if !isMText,
+           let value = textXData["dxf.textObliqueOverride"],
+           case .int(let flag) = value {
+            obliqueOverride = flag != 0
+        } else {
+            obliqueOverride = !isMText && abs(entityOblique) > 1e-12
+        }
+        let effectiveOblique = obliqueOverride
+            ? entityOblique
+            : textStyle.obliqueAngle
+
+        guard !text.isEmpty, effectiveHeight.isFinite, effectiveHeight > 0,
+              rotation.isFinite else { return }
 
         let origin = transform.transformPoint(position)
         let localX = Vector3(x: cos(rotation), y: sin(rotation), z: 0)
@@ -1171,8 +1241,8 @@ public final class CADDocument {
                 rotation: worldRotation,
                 alignH: alignH,
                 alignV: alignV,
-                widthFactor: textStyle.widthFactor,
-                obliqueAngle: textStyle.obliqueAngle,
+                widthFactor: effectiveWidthFactor,
+                obliqueAngle: effectiveOblique,
                 maxWidth: worldWidth)
             for primitive in primitives {
                 if case .line(let start, let end, _) = primitive {

@@ -165,7 +165,7 @@ public final class TextCommand: FeatureCommand {
 
         let styleName = engine.document.resolvedTextStyleName(editorState.styleName)
         let style = engine.document.textStyle(named: styleName) ?? .standard
-        let height = engine.document.effectiveTextHeight(styleName: styleName, localHeight: editorState.height)
+        let height = max(editorState.height, 1e-9)
         let rotation = editorState.rotation
         let fontName = style.fontFile
         let alignH = editorState.alignH
@@ -202,6 +202,7 @@ public final class TextCommand: FeatureCommand {
         entity.xdata["dxf.text"] = .string(text)
         entity.xdata["dxf.textStyle"] = .string(styleName)
         entity.xdata["dxf.textHeight"] = .double(height)
+        entity.xdata["dxf.textHeightOverride"] = .int(1)
         entity.xdata["dxf.alignH"] = .int(alignH)
         entity.xdata["dxf.alignV"] = .int(alignV)
         if mtextWidth > 0 {

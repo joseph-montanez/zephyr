@@ -572,6 +572,9 @@ open class DXFTextEntity: DXFLineEntity {
     public var angle_p: Double       // 50 (degrees)
     public var widthScale: Double    // 41
     public var oblique: Double       // 51
+    public var hasExplicitHeight: Bool
+    public var hasExplicitWidthScale: Bool
+    public var hasExplicitOblique: Bool
     public var style: String         // 7
     public var textGen: Int          // 71
     public var alignH: Int           // 72  (0=left,1=center,2=right,3=aligned,4=middle,5=fit)
@@ -587,6 +590,9 @@ open class DXFTextEntity: DXFLineEntity {
         self.angle_p = 0
         self.widthScale = 1
         self.oblique = 0
+        self.hasExplicitHeight = false
+        self.hasExplicitWidthScale = false
+        self.hasExplicitOblique = false
         self.style = "STANDARD"
         self.textGen = 0
         self.alignH = 0
