@@ -378,7 +378,9 @@ public final class CADVertexBufferBuilder {
 
             switch input.type {
             case .point, .points:
-                let pointPixels: Float = 4.0
+                let pointPixels: Float = input.isHatchLine
+                    ? lineRasterMetrics(for: input).coreHalfPixels * 2.0
+                    : 4.0
                 let halfW: Float = (pointPixels * 0.5) / safePixelZoom
                 for p in input.points {
                     let x0 = p.x - halfW
