@@ -799,8 +799,17 @@ public final class CADRendererBridge {
                                         formattedText = nil
                                     }
 
-                                    if CADFontManager.getOrLoadSHXFont(filename: fontFile) == nil,
-                                       let ttfPath = CADFontManager.getTTFEquivalent(filename: fontFile) {
+                                    let formattedTTFPath = CADFontManager.resolveFormattedTTFPath(
+                                        formattedText,
+                                        styleName: style,
+                                        textStyleFonts: snapshot.textStyleFonts)
+                                    let styleTTFPath = CADFontManager.getOrLoadSHXFont(
+                                        filename: fontFile,
+                                        allowFallback: false) == nil
+                                        ? CADFontManager.getTTFEquivalent(filename: fontFile)
+                                        : nil
+
+                                    if let ttfPath = formattedTTFPath ?? styleTTFPath {
                                         let backgroundRGBA = backgroundColor.map {
                                             ($0.r, $0.g, $0.b, $0.a)
                                         }
@@ -942,16 +951,25 @@ public final class CADRendererBridge {
                             let color = (vt.color.r, vt.color.g, vt.color.b, vt.color.a)
                             let textStyle = CADTextStyle.resolve(vt.textStyle, in: snapshot.textStyles)
                             let fontFile = textStyle.fontFile
-                            let formattedSHXFont = CADFontManager.resolveFormattedSHXFont(
+                            let formattedTTFPath = CADFontManager.resolveFormattedTTFPath(
                                 vt.formattedText,
                                 styleName: vt.textStyle,
                                 textStyleFonts: snapshot.textStyleFonts)
+                            let formattedSHXFont = formattedTTFPath == nil
+                                ? CADFontManager.resolveFormattedSHXFont(
+                                    vt.formattedText,
+                                    styleName: vt.textStyle,
+                                    textStyleFonts: snapshot.textStyleFonts)
+                                : nil
                             let exactStyleSHXFont = CADFontManager.getOrLoadSHXFont(
                                 filename: fontFile,
                                 allowFallback: false)
-                            let ttfPath = CADFontManager.getTTFEquivalent(filename: fontFile)
+                            let ttfPath = formattedTTFPath
+                                ?? (exactStyleSHXFont == nil
+                                    ? CADFontManager.getTTFEquivalent(filename: fontFile)
+                                    : nil)
                             let shapeFont = formattedSHXFont
-                                ?? exactStyleSHXFont
+                                ?? (formattedTTFPath == nil ? exactStyleSHXFont : nil)
                                 ?? (ttfPath == nil
                                     ? CADFontManager.getOrLoadSHXFont(filename: "simplex.shx")
                                     : nil)

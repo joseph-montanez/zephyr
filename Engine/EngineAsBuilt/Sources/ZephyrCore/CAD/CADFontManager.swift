@@ -103,6 +103,50 @@ public enum CADFontManager {
         return nil
     }
 
+    public static func resolveFormattedTTFPath(
+        _ formatted: FormattedText?,
+        styleName: String?,
+        textStyleFonts: [String: String]
+    ) -> String? {
+        guard let formatted else { return nil }
+
+        var ttfPaths: [String] = []
+        var hasSHXContent = false
+
+        for paragraph in formatted.paragraphs {
+            for run in paragraph.runs {
+                guard !run.text.isEmpty || run.stack != nil else { continue }
+                let reference: String?
+                if let fontName = run.fontName, !fontName.isEmpty {
+                    reference = fontName
+                } else if !formatted.defaultFont.isEmpty {
+                    reference = formatted.defaultFont
+                } else {
+                    reference = styleName
+                }
+                let resolved = resolveFontReference(
+                    reference,
+                    textStyleFonts: textStyleFonts,
+                    fallback: "")
+                guard !resolved.isEmpty else { continue }
+
+                if resolved.lowercased().hasSuffix(".shx")
+                    || getOrLoadSHXFont(filename: resolved, allowFallback: false) != nil {
+                    hasSHXContent = true
+                    continue
+                }
+
+                if let path = getTTFEquivalent(filename: resolved),
+                   !ttfPaths.contains(where: { $0.caseInsensitiveCompare(path) == .orderedSame }) {
+                    ttfPaths.append(path)
+                }
+            }
+        }
+
+        guard !hasSHXContent, ttfPaths.count == 1 else { return nil }
+        return ttfPaths[0]
+    }
+
     internal nonisolated static let cacheLock = NSRecursiveLock()
     internal static nonisolated(unsafe) var shxFontCache: [String: SHXShapeFont] = [:]
 

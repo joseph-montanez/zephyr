@@ -809,6 +809,9 @@ public final class SHXShapeFont: @unchecked Sendable {
         var glyphs: [FormattedGlyphLayout]
         let alignment: Int
         let isLastInParagraph: Bool
+        let leftIndent: Double
+        let rightIndent: Double
+        let tabStops: [Double]
     }
 
     public func renderFormattedText(
@@ -872,10 +875,10 @@ public final class SHXShapeFont: @unchecked Sendable {
             }
         }
 
-        func advance(_ glyph: FormattedGlyphLayout) -> Double {
+        func baseAdvance(_ glyph: FormattedGlyphLayout) -> Double {
             let codePoint = Int(glyph.scalar.value)
-            let localAdvance: Double
             let glyphSpaceAdvance = spaceAdvance(for: glyph.font)
+            let localAdvance: Double
             if codePoint == 0x20 || codePoint == 0x09 {
                 localAdvance = glyphSpaceAdvance
             } else {
@@ -887,14 +890,49 @@ public final class SHXShapeFont: @unchecked Sendable {
                 * glyph.tracking
         }
 
-        func lineAdvance(_ glyphs: [FormattedGlyphLayout]) -> Double {
-            glyphs.reduce(0.0) { $0 + advance($1) }
+        func advance(
+            _ glyph: FormattedGlyphLayout,
+            cursor: Double,
+            lineLeft: Double,
+            tabStops: [Double]
+        ) -> Double {
+            guard glyph.scalar.value == 0x09 else {
+                return baseAdvance(glyph)
+            }
+
+            if let stop = tabStops.first(where: { $0 > cursor + 1e-9 }) {
+                return stop - cursor
+            }
+
+            let step = max(baseAdvance(glyph) * 4.0, 1e-9)
+            let fallbackOrigin = max(lineLeft, tabStops.last ?? lineLeft)
+            let distance = max(0.0, cursor - fallbackOrigin)
+            let next = fallbackOrigin + (floor(distance / step) + 1.0) * step
+            return max(next - cursor, step)
+        }
+
+        func lineAdvance(
+            _ glyphs: [FormattedGlyphLayout],
+            lineLeft: Double,
+            tabStops: [Double]
+        ) -> Double {
+            var cursor = lineLeft
+            for glyph in glyphs {
+                cursor += advance(
+                    glyph,
+                    cursor: cursor,
+                    lineLeft: lineLeft,
+                    tabStops: tabStops)
+            }
+            return cursor - lineLeft
         }
 
         func drawableBounds(
-            _ glyphs: [FormattedGlyphLayout]
+            _ glyphs: [FormattedGlyphLayout],
+            lineLeft: Double,
+            tabStops: [Double]
         ) -> (minX: Double, maxX: Double)? {
-            var cursor = 0.0
+            var cursor = lineLeft
             var minX = Double.infinity
             var maxX = -Double.infinity
 
@@ -911,100 +949,156 @@ public final class SHXShapeFont: @unchecked Sendable {
                         maxX = max(maxX, x1, x2)
                     }
                 }
-                cursor += advance(glyph)
+                cursor += advance(
+                    glyph,
+                    cursor: cursor,
+                    lineLeft: lineLeft,
+                    tabStops: tabStops)
             }
 
             guard minX.isFinite, maxX.isFinite else { return nil }
             return (minX, maxX)
         }
 
-        func wrappingWidth(_ glyphs: [FormattedGlyphLayout]) -> Double {
-            guard let bounds = drawableBounds(glyphs) else {
-                return lineAdvance(glyphs)
+        func wrappingWidth(
+            _ glyphs: [FormattedGlyphLayout],
+            lineLeft: Double,
+            tabStops: [Double]
+        ) -> Double {
+            let advanceWidth = lineAdvance(
+                glyphs,
+                lineLeft: lineLeft,
+                tabStops: tabStops)
+            guard let bounds = drawableBounds(
+                glyphs,
+                lineLeft: lineLeft,
+                tabStops: tabStops) else {
+                return advanceWidth
             }
-            return max(0.0, bounds.maxX)
+            return max(advanceWidth, bounds.maxX - lineLeft)
         }
 
-        func splitWords(_ glyphs: [FormattedGlyphLayout]) -> [[FormattedGlyphLayout]] {
-            var words: [[FormattedGlyphLayout]] = []
+        func splitRuns(
+            _ glyphs: [FormattedGlyphLayout]
+        ) -> [(glyphs: [FormattedGlyphLayout], isWhitespace: Bool)] {
+            var result: [(glyphs: [FormattedGlyphLayout], isWhitespace: Bool)] = []
             var current: [FormattedGlyphLayout] = []
+            var currentWhitespace: Bool? = nil
+
+            func flush() {
+                guard let whitespace = currentWhitespace, !current.isEmpty else { return }
+                result.append((current, whitespace))
+                current.removeAll(keepingCapacity: true)
+            }
+
             for glyph in glyphs {
-                if glyph.scalar.value == 0x20 || glyph.scalar.value == 0x09 {
-                    if !current.isEmpty {
-                        words.append(current)
-                        current.removeAll(keepingCapacity: true)
-                    }
-                } else {
-                    current.append(glyph)
+                let whitespace = glyph.scalar.value == 0x20 || glyph.scalar.value == 0x09
+                if let currentWhitespace, currentWhitespace != whitespace {
+                    flush()
                 }
+                currentWhitespace = whitespace
+                current.append(glyph)
             }
-            if !current.isEmpty {
-                words.append(current)
-            }
-            return words
+            flush()
+            return result
         }
 
         var lines: [FormattedLineLayout] = []
         for paragraph in formatted.paragraphs {
             let paragraphGlyphs = paragraph.runs.flatMap(makeGlyphs)
+            let paragraphHeight = paragraphGlyphs.map(\.height).first ?? defaultHeight
+            let leftIndent = (paragraph.leftIndent ?? 0.0) * paragraphHeight
+            let firstLineIndent = (paragraph.firstLineIndent ?? 0.0) * paragraphHeight
+            let rightIndent = max(0.0, (paragraph.rightIndent ?? 0.0) * paragraphHeight)
+            let firstLineLeft = leftIndent + firstLineIndent
+            let continuationLeft = leftIndent
+            let tabStops = (paragraph.tabStops ?? [])
+                .map { $0 * paragraphHeight }
+                .sorted()
+
             guard let maxWidth, maxWidth > 0 else {
                 lines.append(FormattedLineLayout(
                     glyphs: paragraphGlyphs,
                     alignment: paragraph.alignment,
-                    isLastInParagraph: true))
+                    isLastInParagraph: true,
+                    leftIndent: firstLineLeft,
+                    rightIndent: rightIndent,
+                    tabStops: tabStops))
                 continue
             }
 
-            let words = splitWords(paragraphGlyphs)
-            if words.isEmpty {
+            let runs = splitRuns(paragraphGlyphs)
+            if runs.isEmpty {
                 lines.append(FormattedLineLayout(
-                    glyphs: [], alignment: paragraph.alignment,
-                    isLastInParagraph: true))
+                    glyphs: [],
+                    alignment: paragraph.alignment,
+                    isLastInParagraph: true,
+                    leftIndent: firstLineLeft,
+                    rightIndent: rightIndent,
+                    tabStops: tabStops))
                 continue
             }
 
             var current: [FormattedGlyphLayout] = []
-            for word in words {
-                var candidate = current
-                var breakSpaceAdvance = 0.0
-                if !candidate.isEmpty, let style = word.first ?? current.last {
-                    let spaceGlyph = FormattedGlyphLayout(
-                        scalar: " ",
-                        font: style.font,
-                        height: style.height,
-                        underline: style.underline,
-                        overline: style.overline,
-                        widthFactor: style.widthFactor,
-                        tracking: style.tracking,
-                        oblique: style.oblique)
-                    breakSpaceAdvance = advance(spaceGlyph)
-                    candidate.append(spaceGlyph)
-                }
-                candidate.append(contentsOf: word)
+            var pendingWhitespace: [FormattedGlyphLayout] = []
+            var currentLeft = firstLineLeft
 
-                let candidateWrappingWidth = max(
-                    0.0,
-                    wrappingWidth(candidate) - breakSpaceAdvance)
-                if !current.isEmpty && candidateWrappingWidth > maxWidth {
+            for run in runs {
+                if run.isWhitespace {
+                    if current.isEmpty {
+                        current.append(contentsOf: run.glyphs)
+                    } else {
+                        pendingWhitespace.append(contentsOf: run.glyphs)
+                    }
+                    continue
+                }
+
+                let candidate = current + pendingWhitespace + run.glyphs
+                let currentHasText = current.contains {
+                    $0.scalar.value != 0x20 && $0.scalar.value != 0x09
+                }
+                let availableWidth = max(0.0, maxWidth - currentLeft - rightIndent)
+                let candidateWidth = wrappingWidth(
+                    candidate,
+                    lineLeft: currentLeft,
+                    tabStops: tabStops)
+
+                if currentHasText && candidateWidth > availableWidth {
                     lines.append(FormattedLineLayout(
                         glyphs: current,
                         alignment: paragraph.alignment,
-                        isLastInParagraph: false))
-                    current = word
+                        isLastInParagraph: false,
+                        leftIndent: currentLeft,
+                        rightIndent: rightIndent,
+                        tabStops: tabStops))
+                    current = run.glyphs
+                    currentLeft = continuationLeft
                 } else {
                     current = candidate
                 }
+                pendingWhitespace.removeAll(keepingCapacity: true)
+            }
+
+            if !pendingWhitespace.isEmpty {
+                current.append(contentsOf: pendingWhitespace)
             }
             lines.append(FormattedLineLayout(
                 glyphs: current,
                 alignment: paragraph.alignment,
-                isLastInParagraph: true))
+                isLastInParagraph: true,
+                leftIndent: currentLeft,
+                rightIndent: rightIndent,
+                tabStops: tabStops))
         }
 
         if lines.isEmpty {
             lines = [FormattedLineLayout(
-                glyphs: [], alignment: 0,
-                isLastInParagraph: true)]
+                glyphs: [],
+                alignment: 0,
+                isLastInParagraph: true,
+                leftIndent: 0,
+                rightIndent: 0,
+                tabStops: [])]
         }
 
         let lineHeights = lines.map { line in
@@ -1055,9 +1149,16 @@ public final class SHXShapeFont: @unchecked Sendable {
 
         for lineIndex in lines.indices {
             let line = lines[lineIndex]
-            let measuredBounds = drawableBounds(line.glyphs)
-            let minX = measuredBounds?.minX ?? 0.0
-            let maxX = measuredBounds?.maxX ?? lineAdvance(line.glyphs)
+            let measuredBounds = drawableBounds(
+                line.glyphs,
+                lineLeft: line.leftIndent,
+                tabStops: line.tabStops)
+            let minX = measuredBounds?.minX ?? line.leftIndent
+            let maxX = measuredBounds?.maxX
+                ?? (line.leftIndent + lineAdvance(
+                    line.glyphs,
+                    lineLeft: line.leftIndent,
+                    tabStops: line.tabStops))
 
             let hasParagraphAlignment = line.alignment != 0
             let paragraphAlignment = hasParagraphAlignment ? line.alignment : alignH
@@ -1065,7 +1166,7 @@ public final class SHXShapeFont: @unchecked Sendable {
             let referenceBoxLeft: Double
             if let maxWidth, maxWidth > 0 {
                 switch alignH {
-                case 1:
+                case 1, 4:
                     referenceBoxLeft = -maxWidth * 0.5
                 case 2:
                     referenceBoxLeft = -maxWidth
@@ -1077,19 +1178,21 @@ public final class SHXShapeFont: @unchecked Sendable {
             }
 
             let offsetX: Double
-            if hasParagraphAlignment, let maxWidth, maxWidth > 0 {
+            if let maxWidth, maxWidth > 0 {
+                let contentLeft = referenceBoxLeft + line.leftIndent
+                let contentRight = referenceBoxLeft + maxWidth - line.rightIndent
                 switch effectiveAlignment {
-                case 1:
-                    offsetX = referenceBoxLeft + maxWidth * 0.5
+                case 1, 4:
+                    offsetX = (contentLeft + contentRight) * 0.5
                         - 0.5 * (minX + maxX)
                 case 2:
-                    offsetX = referenceBoxLeft + maxWidth - maxX
+                    offsetX = contentRight - maxX
                 default:
-                    offsetX = referenceBoxLeft - minX
+                    offsetX = contentLeft - minX
                 }
             } else {
                 switch effectiveAlignment {
-                case 1:
+                case 1, 4:
                     offsetX = -0.5 * (minX + maxX)
                 case 2:
                     offsetX = -maxX
@@ -1101,23 +1204,34 @@ public final class SHXShapeFont: @unchecked Sendable {
             let shouldJustify = effectiveAlignment == 4
                 || (effectiveAlignment == 3 && !line.isLastInParagraph)
             let spaceCount = line.glyphs.reduce(into: 0) { count, glyph in
-                if glyph.scalar.value == 0x20 || glyph.scalar.value == 0x09 {
+                if glyph.scalar.value == 0x20 {
                     count += 1
                 }
             }
             let extraSpace: Double
             if shouldJustify, spaceCount > 0, let maxWidth {
-                extraSpace = max(0.0, maxWidth - lineAdvance(line.glyphs))
+                let availableWidth = max(
+                    0.0,
+                    maxWidth - line.leftIndent - line.rightIndent)
+                let usedWidth = lineAdvance(
+                    line.glyphs,
+                    lineLeft: line.leftIndent,
+                    tabStops: line.tabStops)
+                extraSpace = max(0.0, availableWidth - usedWidth)
                     / Double(spaceCount)
             } else {
                 extraSpace = 0
             }
 
-            var cursor = 0.0
+            var cursor = line.leftIndent
             let lineTop = verticalOffset + lineTops[lineIndex]
             for glyph in line.glyphs {
                 let codePoint = Int(glyph.scalar.value)
-                let glyphAdvance = advance(glyph)
+                let glyphAdvance = advance(
+                    glyph,
+                    cursor: cursor,
+                    lineLeft: line.leftIndent,
+                    tabStops: line.tabStops)
                 let scaleY = glyph.height / glyph.font.fontHeight
                 let scaleX = scaleY * glyph.widthFactor
                 let shear = tan(glyph.oblique)
@@ -1152,7 +1266,7 @@ public final class SHXShapeFont: @unchecked Sendable {
                 }
 
                 cursor += glyphAdvance
-                if glyph.scalar.value == 0x20 || glyph.scalar.value == 0x09 {
+                if glyph.scalar.value == 0x20 {
                     cursor += extraSpace
                 }
             }

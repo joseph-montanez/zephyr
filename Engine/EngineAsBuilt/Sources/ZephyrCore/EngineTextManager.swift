@@ -465,6 +465,45 @@ public final class EngineTextManager {
             return result
         }
 
+        func horizontalOffset(
+            for line: CADTextFormatter.Line,
+            lineWidthWorld: Double
+        ) -> Double {
+            let hasParagraphAlignment = line.alignment != 0
+            let paragraphAlignment = hasParagraphAlignment ? line.alignment : alignH
+            let effectiveAlignment = paragraphAlignment == 5 ? 0 : paragraphAlignment
+
+            if hasParagraphAlignment, let maxWidth, maxWidth > 0 {
+                let referenceBoxLeft: Double
+                switch alignH {
+                case 1, 4:
+                    referenceBoxLeft = -maxWidth * 0.5
+                case 2:
+                    referenceBoxLeft = -maxWidth
+                default:
+                    referenceBoxLeft = 0
+                }
+
+                switch effectiveAlignment {
+                case 1, 4:
+                    return referenceBoxLeft + (maxWidth - lineWidthWorld) * 0.5
+                case 2:
+                    return referenceBoxLeft + maxWidth - lineWidthWorld
+                default:
+                    return referenceBoxLeft
+                }
+            }
+
+            switch effectiveAlignment {
+            case 1, 4:
+                return -lineWidthWorld * 0.5
+            case 2:
+                return -lineWidthWorld
+            default:
+                return 0
+            }
+        }
+
         var spriteIDs: [SpriteID] = []
         var primitiveIDs: [SpriteID] = []
 
@@ -480,15 +519,9 @@ public final class EngineTextManager {
                 let lineMetrics = linePixelMetrics[lineIndex]
                 let lineWidthWorld = lineMetrics.w * horizontalWorldScale
                 let lineHeightWorldActual = max(lineMetrics.h, 1.0) * worldScale
-                let offsetX: Double
-                switch alignH {
-                case 1, 4:
-                    offsetX = -lineWidthWorld * 0.5
-                case 2:
-                    offsetX = -lineWidthWorld
-                default:
-                    offsetX = 0
-                }
+                let offsetX = horizontalOffset(
+                    for: line,
+                    lineWidthWorld: lineWidthWorld)
                 let offsetY = baseY + Double(lineIndex) * lineHeightWorld
                 minX = min(minX, offsetX)
                 maxX = max(maxX, offsetX + lineWidthWorld)
@@ -527,15 +560,9 @@ public final class EngineTextManager {
             let lineWidthWorld = lineMetrics.w * horizontalWorldScale
             let lineHeightWorldActual = max(lineMetrics.h, 1.0) * worldScale
 
-            let offsetX: Double
-            switch alignH {
-            case 1, 4:
-                offsetX = -lineWidthWorld * 0.5
-            case 2:
-                offsetX = -lineWidthWorld
-            default:
-                offsetX = 0
-            }
+            let offsetX = horizontalOffset(
+                for: line,
+                lineWidthWorld: lineWidthWorld)
 
             let offsetY = baseY + Double(lineIndex) * lineHeightWorld
             let halfWidth = lineWidthWorld * 0.5

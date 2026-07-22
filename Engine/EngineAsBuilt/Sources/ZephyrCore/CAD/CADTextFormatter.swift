@@ -32,6 +32,12 @@ public enum CADTextFormatter {
 
     public struct Line: Sendable {
         public let glyphs: [Glyph]
+        public let alignment: Int
+
+        public init(glyphs: [Glyph], alignment: Int = 0) {
+            self.glyphs = glyphs
+            self.alignment = alignment
+        }
 
         public var text: String {
             glyphs.map { $0.text }.joined()
@@ -48,21 +54,24 @@ public enum CADTextFormatter {
         measure: (String) -> Double
     ) -> [Line] {
         let paragraphs = formatted.paragraphs.map { paragraph in
-            paragraph.runs.flatMap { run -> [Glyph] in
-                let value: String
-                if let stack = run.stack {
-                    value = "\(stack.numerator)/\(stack.denominator)"
-                } else {
-                    value = run.text
-                }
-                return value.map {
-                    Glyph(
-                        String($0),
-                        underline: run.underline,
-                        bold: run.bold,
-                        italic: run.italic)
-                }
-            }
+            (
+                glyphs: paragraph.runs.flatMap { run -> [Glyph] in
+                    let value: String
+                    if let stack = run.stack {
+                        value = "\(stack.numerator)/\(stack.denominator)"
+                    } else {
+                        value = run.text
+                    }
+                    return value.map {
+                        Glyph(
+                            String($0),
+                            underline: run.underline,
+                            bold: run.bold,
+                            italic: run.italic)
+                    }
+                },
+                alignment: paragraph.alignment
+            )
         }
         return layoutParagraphs(paragraphs, maxWidth: maxWidth, measure: measure)
     }
@@ -72,25 +81,30 @@ public enum CADTextFormatter {
         maxWidth: Double?,
         measure: (String) -> Double
     ) -> [Line] {
-        layoutParagraphs(parse(raw), maxWidth: maxWidth, measure: measure)
+        layoutParagraphs(
+            parse(raw).map { (glyphs: $0, alignment: 0) },
+            maxWidth: maxWidth,
+            measure: measure)
     }
 
     private static func layoutParagraphs(
-        _ paragraphs: [[Glyph]],
+        _ paragraphs: [(glyphs: [Glyph], alignment: Int)],
         maxWidth: Double?,
         measure: (String) -> Double
     ) -> [Line] {
         guard let maxWidth, maxWidth > 0 else {
-            return paragraphs.map { Line(glyphs: $0) }
+            return paragraphs.map {
+                Line(glyphs: $0.glyphs, alignment: $0.alignment)
+            }
         }
 
         var lines: [Line] = []
 
         for paragraph in paragraphs {
-            let runs = splitRuns(paragraph)
+            let runs = splitRuns(paragraph.glyphs)
 
             if runs.isEmpty {
-                lines.append(Line(glyphs: []))
+                lines.append(Line(glyphs: [], alignment: paragraph.alignment))
                 continue
             }
 
@@ -111,7 +125,9 @@ public enum CADTextFormatter {
                 let currentHasText = current.contains { !isWhitespace($0) }
 
                 if currentHasText && measure(string(from: candidate)) > maxWidth {
-                    lines.append(Line(glyphs: current))
+                    lines.append(Line(
+                        glyphs: current,
+                        alignment: paragraph.alignment))
                     current = run.glyphs
                 } else {
                     current = candidate
@@ -123,11 +139,13 @@ public enum CADTextFormatter {
                 current.append(contentsOf: pendingWhitespace)
             }
             if !current.isEmpty {
-                lines.append(Line(glyphs: current))
+                lines.append(Line(
+                    glyphs: current,
+                    alignment: paragraph.alignment))
             }
         }
 
-        return lines.isEmpty ? [Line(glyphs: [])] : lines
+        return lines.isEmpty ? [Line(glyphs: [], alignment: 0)] : lines
     }
 
     public static func underlineRanges(
@@ -212,6 +230,26 @@ public enum CADTextFormatter {
                     add(String(c))
                     i += 1
                     continue
+                }
+            }
+
+            if c == "^", i + 1 < chars.count {
+                let next = chars[i + 1]
+                switch next {
+                case "I", "i":
+                    add("\t")
+                    i += 2
+                    continue
+                case "J", "j", "M", "m":
+                    newline()
+                    i += 2
+                    continue
+                case "^":
+                    add("^")
+                    i += 2
+                    continue
+                default:
+                    break
                 }
             }
 
