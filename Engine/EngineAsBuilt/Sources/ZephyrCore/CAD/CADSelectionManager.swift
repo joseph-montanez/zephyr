@@ -31,6 +31,12 @@ public final class CADSelectionManager {
         case vertex(entity: UUID, index: Int)
         /// Midpoint grip between two consecutive vertices of an entity's polyline.
         case midpoint(entity: UUID, betweenA: Int, andB: Int)
+        /// Associative rectangular-array base point.
+        case arrayBase
+        /// Associative rectangular-array spacing grip. Axis 0 = columns, 1 = rows.
+        case arraySpacing(axis: Int)
+        /// Associative rectangular-array count/extent grip. Axis 0 = columns, 1 = rows.
+        case arrayCount(axis: Int)
     }
 
     // MARK: - Selection State
@@ -264,7 +270,22 @@ public final class CADSelectionManager {
         public let handle: UUID
         public let grip: GripType
         public let screenPos: SDL_FPoint
-        public var worldPos: Vector3  // var: mutated incrementally during grip drag
+        public var worldPos: Vector3
+        public let screenDirection: SDL_FPoint?
+
+        public init(
+            handle: UUID,
+            grip: GripType,
+            screenPos: SDL_FPoint,
+            worldPos: Vector3,
+            screenDirection: SDL_FPoint? = nil
+        ) {
+            self.handle = handle
+            self.grip = grip
+            self.screenPos = screenPos
+            self.worldPos = worldPos
+            self.screenDirection = screenDirection
+        }
     }
 
     /// Returns the grip (if any) at the given screen position. Delegates to

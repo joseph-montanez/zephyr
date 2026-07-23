@@ -1080,35 +1080,44 @@ public final class EngineRenderer {
     private func renderCadGrips(cam: CameraTransform) {
         guard engine.cadSelection.hasSelection else { return }
         let drawList = igGetBackgroundDrawList(nil)
-
-        // 1. Cap grips to prevent ImGui 16-bit index crash.
-        // 65535 limit / ~12 vertices per grip = max ~5400 grips.
-        // Cap at the configured limit (default 1000) to leave room for other
-        // ImGui draw-list primitives (crosshairs, rect-select previews, etc.).
         let maxGripsToDraw = engine.gripMax
         var drawnGrips = 0
 
         for grip in engine._cachedCadGrips {
             if drawnGrips >= maxGripsToDraw { break }
 
-            // During active drag, compute screen position from the incrementally
-            // transformed world position rather than using a stale cached screenPos.
             let screenPos: SDL_FPoint = engine.interaction.gripActive
-                ? engine.camera.transformWorldToScreen(worldX: grip.worldPos.x, worldY: grip.worldPos.y, cam: cam)
+                ? engine.camera.transformWorldToScreen(
+                    worldX: grip.worldPos.x, worldY: grip.worldPos.y, cam: cam)
                 : grip.screenPos
 
-            // 2. Viewport culling: Don't push vertices for grips outside the screen
             let margin: Float = 10.0
-            if screenPos.x < -margin || screenPos.x > Float(engine.windowWidth) + margin ||
-               screenPos.y < -margin || screenPos.y > Float(engine.windowHeight) + margin {
+            if screenPos.x < -margin || screenPos.x > Float(engine.windowWidth) + margin
+                || screenPos.y < -margin || screenPos.y > Float(engine.windowHeight) + margin {
                 continue
             }
 
             let isHovered: Bool
-            if let hg = engine.interaction.hoveredGrip, engine.interaction.hoveredGripHandle == grip.handle {
-                isHovered = gripTypeMatches(hg, grip.grip)
+            if let hovered = engine.interaction.hoveredGrip,
+               engine.interaction.hoveredGripHandle == grip.handle {
+                isHovered = gripTypeMatches(hovered, grip.grip)
             } else {
                 isHovered = false
+            }
+
+            if case .arraySpacing = grip.grip {
+                drawArrayTriangleGrip(
+                    grip: grip, screenPos: screenPos, hovered: isHovered,
+                    drawList: drawList, filled: false)
+                drawnGrips += 1
+                continue
+            }
+            if case .arrayCount = grip.grip {
+                drawArrayTriangleGrip(
+                    grip: grip, screenPos: screenPos, hovered: isHovered,
+                    drawList: drawList, filled: true)
+                drawnGrips += 1
+                continue
             }
 
             let fill: UInt32
@@ -1117,7 +1126,7 @@ public final class EngineRenderer {
             case .corner:
                 fill = isHovered ? makeImCol32(r: 80, g: 180, b: 255, a: 255) : makeImCol32(r: 0, g: 128, b: 255, a: 255)
                 half = 4.0
-            case .center:
+            case .center, .arrayBase:
                 fill = isHovered ? makeImCol32(r: 128, g: 255, b: 255, a: 255) : makeImCol32(r: 0, g: 255, b: 255, a: 255)
                 half = 4.0
             case .rotation:
@@ -1129,17 +1138,54 @@ public final class EngineRenderer {
             case .midpoint:
                 fill = isHovered ? makeImCol32(r: 128, g: 255, b: 180, a: 255) : makeImCol32(r: 0, g: 200, b: 140, a: 255)
                 half = 3.0
+            case .arraySpacing, .arrayCount:
+                continue
             }
-            
+
             let pMin = ImVec2(x: screenPos.x - half, y: screenPos.y - half)
             let pMax = ImVec2(x: screenPos.x + half, y: screenPos.y + half)
-
             ImDrawListAddRectFilled(drawList, pMin, pMax, fill, 0.0, 0)
-            ImDrawListAddRect(drawList, pMin, pMax, makeImCol32(r: 255, g: 255, b: 255, a: 255), 0.0, 1.0, 0)
-            
+            ImDrawListAddRect(
+                drawList, pMin, pMax,
+                makeImCol32(r: 255, g: 255, b: 255, a: 255), 0.0, 1.0, 0)
             drawnGrips += 1
         }
-        _foregroundVertexEstimate += drawnGrips * 10  // filled rect + outline ≈ 10 verts
+        _foregroundVertexEstimate += drawnGrips * 10
+    }
+
+    private func drawArrayTriangleGrip(
+        grip: CADSelectionManager.CadGripInfo,
+        screenPos: SDL_FPoint,
+        hovered: Bool,
+        drawList: UnsafeMutablePointer<ImDrawList>?,
+        filled: Bool
+    ) {
+        let rawDirection = grip.screenDirection ?? SDL_FPoint(x: 1, y: 0)
+        let length = max(0.001, sqrt(Double(
+            rawDirection.x * rawDirection.x + rawDirection.y * rawDirection.y)))
+        let dx = Float(Double(rawDirection.x) / length)
+        let dy = Float(Double(rawDirection.y) / length)
+        let nx = -dy
+        let ny = dx
+        let tip = ImVec2(x: screenPos.x + dx * 7, y: screenPos.y + dy * 7)
+        let baseX = screenPos.x - dx * 5
+        let baseY = screenPos.y - dy * 5
+        let a = ImVec2(x: baseX + nx * 5, y: baseY + ny * 5)
+        let b = ImVec2(x: baseX - nx * 5, y: baseY - ny * 5)
+        let color = hovered
+            ? makeImCol32(r: 80, g: 180, b: 255, a: 255)
+            : makeImCol32(r: 0, g: 128, b: 255, a: 255)
+        let outline = makeImCol32(r: 255, g: 255, b: 255, a: 255)
+
+        if filled {
+            ImDrawListAddTriangleFilled(drawList, tip, a, b, color)
+        } else {
+            ImDrawListAddTriangleFilled(
+                drawList, tip, a, b, makeImCol32(r: 0, g: 30, b: 50, a: 255))
+        }
+        ImDrawListAddLine(drawList, tip, a, outline, 1.0)
+        ImDrawListAddLine(drawList, a, b, outline, 1.0)
+        ImDrawListAddLine(drawList, b, tip, outline, 1.0)
     }
 
     private func gripTypeMatches(
@@ -1148,10 +1194,13 @@ public final class EngineRenderer {
         switch (a, b) {
         case (.center, .center): return true
         case (.rotation, .rotation): return true
+        case (.arrayBase, .arrayBase): return true
         case (.corner(let i), .corner(let j)): return i == j
         case (.vertex(let e1, let i1), .vertex(let e2, let i2)): return e1 == e2 && i1 == i2
         case (.midpoint(let e1, let a1, let b1), .midpoint(let e2, let a2, let b2)):
             return e1 == e2 && a1 == a2 && b1 == b2
+        case (.arraySpacing(let a1), .arraySpacing(let a2)): return a1 == a2
+        case (.arrayCount(let a1), .arrayCount(let a2)): return a1 == a2
         default: return false
         }
     }

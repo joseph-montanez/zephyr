@@ -501,6 +501,7 @@ public enum DXFImporter {
                 ownerHandle: ownerHandle)
             var converted: [CADEntity] = []
             converted.reserveCapacity(orderedEntities.count)
+            var seenArrayGroups = Set<UUID>()
 
             for (drawOrder, entity) in orderedEntities.enumerated() {
                 guard Self.shouldRenderAttributeEntity(entity) else { continue }
@@ -511,26 +512,78 @@ public enum DXFImporter {
                     let columns = max(1, insert.colCount)
                     let rows = max(1, insert.rowCount)
                     let blockBase = blockBaseByName[insert.name] ?? .zero
-                    for row in 0..<rows {
-                        for column in 0..<columns {
+                    let arrayXData = Self.arrayXData(from: insert)
+                    if let groupID = arrayXData.groupID {
+                        if arrayXData.role == "I" || seenArrayGroups.contains(groupID) {
+                            continue
+                        }
+                        if arrayXData.role == "M",
+                           let payload = CADArrayDXFCodec.decode(arrayXData.payloadChunks),
+                           let containerTransform = payload.transform {
+                            seenArrayGroups.insert(groupID)
+                            var arrayData = payload.data
+                            arrayData.pathEntityHandle = nil
                             var cadEnt = CADEntity(
                                 handle: UUID(),
                                 layerID: layerID(for: entity),
                                 blockID: blockID,
-                                localGeometry: nil,
-                                transform: Self.insertTransform(
-                                    insert,
-                                    blockBase: blockBase,
-                                    column: column,
-                                    row: row),
+                                arrayData: arrayData,
+                                transform: containerTransform,
                                 xdata: Self.entityStyleXData(
                                     from: entity,
                                     globalLineTypeScale: globalLineTypeScale),
                                 drawOrder: drawOrder,
-                                localBoundingBox: block.localBoundingBox)
+                                localBoundingBox: arrayData.localBoundingBox(
+                                    source: block.localBoundingBox,
+                                    pathPoints: arrayData.cachedPath))
                             cadEnt.drawOrder = drawOrder
                             converted.append(cadEnt)
+                            continue
                         }
+                    }
+
+                    if columns > 1 || rows > 1 {
+                        let sx = abs(insert.xScale) > 1e-12 ? insert.xScale : 1.0
+                        let rawSY = abs(insert.yScale) > 1e-12 ? insert.yScale : 1.0
+                        let effectiveSY = insert.haveExtrusion && insert.extrusion.z < 0 ? -rawSY : rawSY
+                        let transform = Self.insertTransform(
+                            insert,
+                            blockBase: blockBase)
+                        let arrayData = CADArrayData.rectangular(
+                            columns: columns,
+                            rows: rows,
+                            columnSpacing: insert.colSpace / sx,
+                            rowSpacing: -insert.rowSpace / effectiveSY)
+                        var cadEnt = CADEntity(
+                            handle: UUID(),
+                            layerID: layerID(for: entity),
+                            blockID: blockID,
+                            arrayData: arrayData,
+                            transform: transform,
+                            xdata: Self.entityStyleXData(
+                                from: entity,
+                                globalLineTypeScale: globalLineTypeScale),
+                            drawOrder: drawOrder,
+                            localBoundingBox: arrayData.localBoundingBox(
+                                source: block.localBoundingBox))
+                        cadEnt.drawOrder = drawOrder
+                        converted.append(cadEnt)
+                    } else {
+                        var cadEnt = CADEntity(
+                            handle: UUID(),
+                            layerID: layerID(for: entity),
+                            blockID: blockID,
+                            localGeometry: nil,
+                            transform: Self.insertTransform(
+                                insert,
+                                blockBase: blockBase),
+                            xdata: Self.entityStyleXData(
+                                from: entity,
+                                globalLineTypeScale: globalLineTypeScale),
+                            drawOrder: drawOrder,
+                            localBoundingBox: block.localBoundingBox)
+                        cadEnt.drawOrder = drawOrder
+                        converted.append(cadEnt)
                     }
 
                     for attribute in insert.attributes
@@ -774,6 +827,7 @@ public enum DXFImporter {
                             blockID: modelEntity.blockID,
                             localGeometry: modelEntity.localGeometry,
                             dimensionMetadata: modelEntity.dimensionMetadata,
+                            arrayData: modelEntity.arrayData,
                             transform: projection.multiplying(by: modelEntity.transform),
                             xdata: viewport.projectedXData(modelEntity.xdata),
                             drawOrder: projectedDrawOrder,
@@ -796,6 +850,7 @@ public enum DXFImporter {
                             blockID: modelEntity.blockID,
                             localGeometry: modelEntity.localGeometry,
                             dimensionMetadata: modelEntity.dimensionMetadata,
+                            arrayData: modelEntity.arrayData,
                             transform: projection.multiplying(by: modelEntity.transform),
                             xdata: syntheticViewportXData(modelEntity.xdata, projection: projection),
                             drawOrder: projectedDrawOrder,
@@ -821,6 +876,29 @@ public enum DXFImporter {
             linetypePatterns: linetypePatterns,
             dimensionStyles: dimensionStyles,
             views: views)
+    }
+
+    private static func arrayXData(
+        from entity: DXFEntity
+    ) -> (groupID: UUID?, role: String?, payloadChunks: [String]) {
+        var active = false
+        var values: [String] = []
+        for pair in entity.extendedData {
+            if pair.code == 1001 {
+                active = (pair.value as? String)?.caseInsensitiveCompare(
+                    CADArrayDXFCodec.appID) == .orderedSame
+                continue
+            }
+            if active, pair.code == 1000, let value = pair.value as? String {
+                values.append(value)
+            }
+        }
+        guard values.contains(CADArrayDXFCodec.marker) else { return (nil, nil, []) }
+        let groupID = values.first(where: { $0.hasPrefix("G:") })
+            .flatMap { UUID(uuidString: String($0.dropFirst(2))) }
+        let role = values.first(where: { $0.hasPrefix("R:") })
+            .map { String($0.dropFirst(2)) }
+        return (groupID, role, values.filter { $0.hasPrefix("D:") })
     }
 
     private static func entityStyleXData(

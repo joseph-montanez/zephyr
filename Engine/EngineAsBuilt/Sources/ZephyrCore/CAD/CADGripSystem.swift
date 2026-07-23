@@ -66,6 +66,13 @@ public enum CADGripSystem {
         for handle in handles {
             guard let entity = document.entity(for: handle) else { continue }
             guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+
+            if let array = entity.arrayData, array.kind == .rectangular {
+                results.append(contentsOf: rectangularArrayGrips(
+                    for: handle, entity: entity, array: array, cam: cam))
+                continue
+            }
+
             guard let geometry = document.resolvedGeometry(for: entity), !geometry.isEmpty else { continue }
 
             // ── Dimension entities: generate dimension-specific control grips
@@ -485,6 +492,100 @@ public enum CADGripSystem {
             if let p3 = metadata.defPoint3 {
                 addGrip(.vertex(entity: handle, index: 1002), localPos: p3)
             }
+        }
+
+        return grips
+    }
+
+    private static func rectangularArrayGrips(
+        for handle: UUID,
+        entity: CADEntity,
+        array: CADArrayData,
+        cam: CameraTransform
+    ) -> [CADSelectionManager.CadGripInfo] {
+        let c = cos(array.axisAngle)
+        let s = sin(array.axisAngle)
+        let columnUnit = Vector3(x: c, y: s, z: 0)
+        let rowUnit = Vector3(x: -s, y: c, z: 0)
+        var grips: [CADSelectionManager.CadGripInfo] = []
+
+        func addGrip(
+            _ type: CADSelectionManager.GripType,
+            localPosition: Vector3,
+            localDirection: Vector3? = nil
+        ) {
+            let worldPosition = entity.transform.transformPoint(localPosition)
+            let screenPosition = EngineCameraManager.worldToScreen(
+                worldX: worldPosition.x, worldY: worldPosition.y, cam: cam)
+            var screenDirection: SDL_FPoint? = nil
+            if let localDirection {
+                let directionPoint = entity.transform.transformPoint(localPosition + localDirection)
+                let directionScreen = EngineCameraManager.worldToScreen(
+                    worldX: directionPoint.x, worldY: directionPoint.y, cam: cam)
+                screenDirection = SDL_FPoint(
+                    x: directionScreen.x - screenPosition.x,
+                    y: directionScreen.y - screenPosition.y)
+            }
+            grips.append(CADSelectionManager.CadGripInfo(
+                handle: handle,
+                grip: type,
+                screenPos: screenPosition,
+                worldPos: worldPosition,
+                screenDirection: screenDirection))
+        }
+
+        addGrip(.arrayBase, localPosition: .zero)
+
+        let columns = max(1, array.columns)
+        let rows = max(1, array.rows)
+        let columnDirection = columnUnit * (array.columnSpacing < 0 ? -1 : 1)
+        let rowDirection = rowUnit * (array.rowSpacing < 0 ? -1 : 1)
+        let columnSpacing = columnUnit * array.columnSpacing
+        let rowSpacing = rowUnit * array.rowSpacing
+
+        func overlapSeparation(along unit: Vector3, spacing: Double) -> Double {
+            let origin = entity.transform.transformPoint(.zero)
+            let axisPoint = entity.transform.transformPoint(unit)
+            let worldPerLocalUnit = max(
+                1e-9,
+                hypot(axisPoint.x - origin.x, axisPoint.y - origin.y))
+            let desiredLocalDistance = 18.0 / max(1e-9, cam.camZoom * worldPerLocalUnit)
+            guard abs(spacing) > 1e-9 else { return desiredLocalDistance }
+            return min(desiredLocalDistance, abs(spacing) * 0.4)
+        }
+
+        if abs(array.columnSpacing) > 1e-9 {
+            addGrip(
+                .arraySpacing(axis: 0),
+                localPosition: columnSpacing,
+                localDirection: columnDirection)
+
+            var countPosition = columnSpacing * Double(max(1, columns - 1))
+            if columns <= 2 {
+                countPosition = countPosition + columnDirection * overlapSeparation(
+                    along: columnDirection, spacing: array.columnSpacing)
+            }
+            addGrip(
+                .arrayCount(axis: 0),
+                localPosition: countPosition,
+                localDirection: columnDirection)
+        }
+
+        if abs(array.rowSpacing) > 1e-9 {
+            addGrip(
+                .arraySpacing(axis: 1),
+                localPosition: rowSpacing,
+                localDirection: rowDirection)
+
+            var countPosition = rowSpacing * Double(max(1, rows - 1))
+            if rows <= 2 {
+                countPosition = countPosition + rowDirection * overlapSeparation(
+                    along: rowDirection, spacing: array.rowSpacing)
+            }
+            addGrip(
+                .arrayCount(axis: 1),
+                localPosition: countPosition,
+                localDirection: rowDirection)
         }
 
         return grips

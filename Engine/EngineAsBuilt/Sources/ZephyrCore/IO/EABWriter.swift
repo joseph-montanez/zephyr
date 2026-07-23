@@ -650,6 +650,7 @@ public enum EABWriter {
             // Always set drawOrder flag (0x04) — every entity has a drawOrder property.
             flags |= 0x04
             if entity.dimensionMetadata != nil { flags |= 0x08 }
+            if entity.arrayData != nil { flags |= 0x10 }
             w.writeUInt8(flags)
             // bbox (local-space)
             if let bb = entity.localBoundingBox {
@@ -678,6 +679,11 @@ public enum EABWriter {
             // dimensionMetadata
             if flags & 0x08 != 0, let dim = entity.dimensionMetadata?.value {
                 serializeDimensionMetadata(dim, to: w)
+            }
+            if flags & 0x10 != 0, let array = entity.arrayData {
+                let data = (try? JSONEncoder().encode(array)) ?? Data()
+                w.writeUInt32(UInt32(data.count))
+                w.writeBytes(data)
             }
         }
         return w.build()

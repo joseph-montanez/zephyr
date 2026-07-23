@@ -364,7 +364,31 @@ public enum PDFExporter {
             }
 
             guard entity.resolvedGeometry(in: document)?.isEmpty == false else { continue }
-            items.append(.geometry(entity: entity, color: entityColor, lineWeightMM: lineWeightMM))
+            if let array = entity.arrayData {
+                let path = CADArrayPathResolver.points(
+                    for: array,
+                    containerTransform: entity.transform,
+                    document: document)
+                let sourceBox = entity.blockID.flatMap { document.block(for: $0)?.localBoundingBox }
+                for instance in array.evaluatedInstances(pathPoints: path) {
+                    let virtual = CADEntity(
+                        handle: entity.handle,
+                        layerID: entity.layerID,
+                        blockID: entity.blockID,
+                        localGeometry: entity.localGeometry,
+                        dimensionMetadata: entity.dimensionMetadata,
+                        transform: entity.transform.multiplying(by: instance.transform),
+                        xdata: entity.xdata,
+                        drawOrder: entity.drawOrder,
+                        localBoundingBox: sourceBox)
+                    items.append(.geometry(
+                        entity: virtual,
+                        color: entityColor,
+                        lineWeightMM: lineWeightMM))
+                }
+            } else {
+                items.append(.geometry(entity: entity, color: entityColor, lineWeightMM: lineWeightMM))
+            }
         }
         return items
     }

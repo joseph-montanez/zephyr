@@ -48,6 +48,71 @@ struct AppCommandRegistration {
             factory: { ChamferCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAY",
+            aliases: ["AR"],
+            factory: { ArrayCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYRECT",
+            aliases: ["ARRAYR"],
+            factory: { ArrayCommand(initialKind: .rectangular) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYPOLAR",
+            aliases: ["ARRAYP"],
+            factory: { ArrayCommand(initialKind: .polar) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYPATH",
+            aliases: ["ARRAYPA"],
+            factory: { ArrayCommand(initialKind: .path) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYEDIT",
+            factory: { ArrayEditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYCLOSE",
+            factory: { ArrayCloseCommand(commandLineOnly: false) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-ARRAYCLOSE",
+            factory: { ArrayCloseCommand(commandLineOnly: true) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYCLASSIC",
+            factory: {
+                ArrayCommand(
+                    forceAssociative: false,
+                    allowedKinds: [.rectangular, .polar])
+            }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-ARRAY",
+            factory: {
+                ArrayCommand(
+                    forceAssociative: false,
+                    allowedKinds: [.rectangular, .polar])
+            }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYASSOCIATIVITY",
+            factory: { ArrayAssociativityCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYEDITSTATE",
+            factory: { ArrayEditStateCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYTYPE",
+            factory: { ArrayTypeCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "EXPLODE",
+            aliases: ["X"],
+            factory: { ExplodeArrayCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "MATCHPROP",
             aliases: ["MA", "MATCH"],
             factory: { MatchPropCommand() }

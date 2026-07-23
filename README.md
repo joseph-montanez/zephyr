@@ -132,6 +132,7 @@ Zephyr's DXF pipeline runs entirely in Swift — a native port of [libdxfrw](htt
 | SPLINEEDIT | `SPE` | Edit splines: convert to polyline, close, reverse, insert knot, join |
 | MATCHPROP | `MA` | Format painter — copy layer, color, weight, and linetype from source to destinations |
 | DDEDIT | `ED` | Edit text and attributes in-place via text editor dialog |
+| ARRAY | `AR` | Create a rectangular, polar, or path array |
 | CLEANSPECKLES | `CS` | Sample-and-erase speckle artifacts from scanned drawings |
 | MEASUREGEOM | `MEA` | Quick Measure — hover to raycast orthogonal distances |
 | ERASE | `E` | Delete selected entities |
@@ -146,6 +147,23 @@ Zephyr's DXF pipeline runs entirely in Swift — a native port of [libdxfrw](htt
 | CHAMFER | `CHA` | Bevel corners between two objects |
 | ALIGN | `AL` | Align objects by matching two pairs of source/destination points (move, rotate, optionally scale) |
 | TORIENT | `TO` | Rotate text individually to an absolute or most-readable angle |
+
+### Array Commands
+| Command | Alias | Description |
+|---|---|---|
+| ARRAY | `AR` | Create a rectangular, polar, or path array |
+| ARRAYRECT | `ARRAYR` | Create an associative rectangular array |
+| ARRAYPOLAR | `ARRAYP` | Create an associative polar array |
+| ARRAYPATH | `ARRAYPA` | Create an associative path array |
+| ARRAYEDIT | | Select and edit an associative array |
+| ARRAYCLOSE | | Close array editing or source-edit mode |
+| -ARRAYCLOSE | | Close array source editing from command line (`[Yes|No]`) |
+| ARRAYCLASSIC | | Create a legacy non-associative rectangular or polar array |
+| -ARRAY | | Create a non-associative rectangular or polar array from prompts |
+| ARRAYASSOCIATIVITY | | Set whether new arrays are associative (`[0|1]`) |
+| ARRAYEDITSTATE | | Display whether array source editing is active |
+| ARRAYTYPE | | Set the default array type (`[0|1|2]`: rectangular, path, polar) |
+| EXPLODE | `X` | Convert associative arrays to independent block references |
 
 ### Clipboard (Copy/Paste)
 | Command | Description |

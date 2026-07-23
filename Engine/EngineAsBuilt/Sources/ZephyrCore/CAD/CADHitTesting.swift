@@ -47,15 +47,27 @@ public enum CADHitTesting {
         forEachCandidate(in: document, near: point, threshold: threshold) { entity, geometry in
             var hitDist: Double? = nil
             
+            let transforms = instanceTransforms(for: entity, document: document)
             if simplifyComplexBlocks && geometry.count > 50 {
-                if let d = boundingBoxDistSq(point, entity: entity, threshold: threshold), d <= t2 {
-                    hitDist = d
+                var minDist = Double.infinity
+                let sourceBox = entity.blockID.flatMap { document.block(for: $0)?.localBoundingBox }
+                    ?? entity.localBoundingBox
+                if let sourceBox {
+                    for transform in transforms {
+                        let box = BoundingBox3D(transforming: sourceBox, by: transform)
+                        if let d = boundingBoxDistSq(point, box: box, threshold: threshold) {
+                            minDist = min(minDist, d)
+                        }
+                    }
                 }
+                if minDist <= t2 { hitDist = minDist }
             } else {
                 var minDist: Double = .infinity
-                for prim in geometry {
-                    if let d = distanceSqToPrimitive(prim, point: point, transform: entity.transform, t2: t2) {
-                        if d < minDist { minDist = d }
+                for transform in transforms {
+                    for prim in geometry {
+                        if let d = distanceSqToPrimitive(prim, point: point, transform: transform, t2: t2) {
+                            if d < minDist { minDist = d }
+                        }
                     }
                 }
                 if minDist <= t2 { hitDist = minDist }
@@ -127,7 +139,8 @@ public enum CADHitTesting {
             {
                 let label: String
                 if let bid = entity.blockID, let block = document.block(for: bid) {
-                    label = "\(block.name) #\(entity.handle.uuidString.prefix(8))"
+                    let prefix = entity.arrayData == nil ? "" : "Array: "
+                    label = "\(prefix)\(block.name) #\(entity.handle.uuidString.prefix(8))"
                 } else {
                     label = "Entity #\(entity.handle.uuidString.prefix(8))"
                 }
@@ -156,23 +169,24 @@ public enum CADHitTesting {
 
         let t2 = threshold * threshold
 
+        let transforms = instanceTransforms(for: entity, document: document)
         if simplifyComplexBlocks && geom.count > 50 {
-            let corners: [Vector3] = [
-                Vector3(x: wbb.min.x, y: wbb.min.y, z: 0),
-                Vector3(x: wbb.max.x, y: wbb.min.y, z: 0),
-                Vector3(x: wbb.max.x, y: wbb.max.y, z: 0),
-                Vector3(x: wbb.min.x, y: wbb.max.y, z: 0)
-            ]
-            for i in 0..<4 {
-                let d = CADGeometryMath.pointToSegmentDistSq(point, corners[i], corners[(i + 1) % 4])
-                if d <= t2 { return true }
+            let sourceBox = entity.blockID.flatMap { document.block(for: $0)?.localBoundingBox }
+                ?? entity.localBoundingBox
+            if let sourceBox {
+                for transform in transforms {
+                    let box = BoundingBox3D(transforming: sourceBox, by: transform)
+                    if boundingBoxDistSq(point, box: box, threshold: threshold) != nil { return true }
+                }
             }
             return false
         }
 
-        for prim in geom {
-            if distanceSqToPrimitive(prim, point: point, transform: entity.transform, t2: t2) != nil {
-                return true
+        for transform in transforms {
+            for prim in geom {
+                if distanceSqToPrimitive(prim, point: point, transform: transform, t2: t2) != nil {
+                    return true
+                }
             }
         }
         return false
@@ -451,6 +465,39 @@ public enum CADHitTesting {
             if d < best { best = d }
         }
         return best <= t2 ? best : nil
+    }
+
+    private static func instanceTransforms(
+        for entity: CADEntity,
+        document: CADDocument
+    ) -> [Transform3D] {
+        guard let array = entity.arrayData else { return [entity.transform] }
+        let path = CADArrayPathResolver.points(
+            for: array,
+            containerTransform: entity.transform,
+            document: document)
+        return array.evaluatedInstances(pathPoints: path).map {
+            entity.transform.multiplying(by: $0.transform)
+        }
+    }
+
+    private static func boundingBoxDistSq(
+        _ point: Vector3,
+        box: BoundingBox3D,
+        threshold: Double
+    ) -> Double? {
+        let corners = [
+            Vector3(x: box.min.x, y: box.min.y, z: 0),
+            Vector3(x: box.max.x, y: box.min.y, z: 0),
+            Vector3(x: box.max.x, y: box.max.y, z: 0),
+            Vector3(x: box.min.x, y: box.max.y, z: 0)
+        ]
+        var best = Double.infinity
+        for index in 0..<4 {
+            best = min(best, CADGeometryMath.pointToSegmentDistSq(
+                point, corners[index], corners[(index + 1) % 4]))
+        }
+        return best <= threshold * threshold ? best : nil
     }
 
     /// Returns the minimum squared distance from a point to the bounding box

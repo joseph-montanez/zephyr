@@ -26,6 +26,7 @@ public enum DXFWriterBridge {
         var layerID: UUID
         var blockID: UUID?
         var geometry: [CADPrimitive]?
+        var arrayData: CADArrayData?
         var xdata: [ProjectionXDataPair]
     }
 
@@ -114,6 +115,9 @@ public enum DXFWriterBridge {
         writer.version = dxfVersion
         writer.codePage = "ANSI_1252"
         writer.headerVars["$INSUNITS"] = modelView.unit.dxfINSUNITS
+        let arrayAppID = DXFAppIdEntry()
+        arrayAppID.name = CADArrayDXFCodec.appID
+        writer.addAppId(arrayAppID)
 
         addHeaderExtents(entities: modelView.entities, to: writer)
 
@@ -249,21 +253,74 @@ public enum DXFWriterBridge {
 
                 if let blockID = entity.blockID,
                    let blockName = blockNameByID[blockID] {
-                    let insert = DXFInsertEntity()
-                    insert.name = blockName
-                    insert.layer = layerName
-                    insert.space = isPaperSpace ? 1 : 0
-                    let origin = entity.transform.transformPoint(.zero)
-                    let xAxis = transformedVector(Vector3(x: 1, y: 0, z: 0), by: entity.transform)
-                    let yAxis = transformedVector(Vector3(x: 0, y: 1, z: 0), by: entity.transform)
-                    let zAxis = transformedVector(Vector3(x: 0, y: 0, z: 1), by: entity.transform)
-                    insert.basePoint = toDXF(origin)
-                    insert.xScale = max(xAxis.magnitude, 1e-12)
-                    insert.yScale = max(yAxis.magnitude, 1e-12)
-                    insert.zScale = max(zAxis.magnitude, 1e-12)
-                    insert.angle = -atan2(xAxis.y, xAxis.x)
-                    applyEntityStyle(entity.xdata, to: insert)
-                    writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                    if let array = entity.arrayData {
+                        let groupID = UUID()
+                        let payload = CADArrayDXFPayload(
+                            groupID: groupID,
+                            containerTransform: entity.transform,
+                            data: array)
+                        let payloadChunks = CADArrayDXFCodec.encode(payload)
+
+                        if canExportAsMInsert(array: array, transform: entity.transform) {
+                            let insert = makeInsert(
+                                blockName: blockName,
+                                layerName: layerName,
+                                paperSpace: isPaperSpace,
+                                transform: entity.transform)
+                            insert.colCount = max(1, array.columns)
+                            insert.rowCount = max(1, array.rows)
+                            insert.colSpace = array.columnSpacing * insert.xScale
+                            insert.rowSpace = -array.rowSpacing * insert.yScale
+                            applyEntityStyle(entity.xdata, to: insert)
+                            appendArrayXData(
+                                to: insert,
+                                groupID: groupID,
+                                role: "M",
+                                payloadChunks: payloadChunks)
+                            writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                        } else {
+                            let instances = array.evaluatedInstances(pathPoints: array.cachedPath)
+                            if instances.isEmpty {
+                                let insert = makeInsert(
+                                    blockName: blockName,
+                                    layerName: layerName,
+                                    paperSpace: isPaperSpace,
+                                    transform: entity.transform)
+                                insert.visible = false
+                                applyEntityStyle(entity.xdata, to: insert)
+                                appendArrayXData(
+                                    to: insert,
+                                    groupID: groupID,
+                                    role: "M",
+                                    payloadChunks: payloadChunks)
+                                writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                            } else {
+                                for (instanceIndex, instance) in instances.enumerated() {
+                                    let transform = entity.transform.multiplying(by: instance.transform)
+                                    let insert = makeInsert(
+                                        blockName: blockName,
+                                        layerName: layerName,
+                                        paperSpace: isPaperSpace,
+                                        transform: transform)
+                                    applyEntityStyle(entity.xdata, to: insert)
+                                    appendArrayXData(
+                                        to: insert,
+                                        groupID: groupID,
+                                        role: instanceIndex == 0 ? "M" : "I",
+                                        payloadChunks: instanceIndex == 0 ? payloadChunks : [])
+                                    writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                                }
+                            }
+                        }
+                    } else {
+                        let insert = makeInsert(
+                            blockName: blockName,
+                            layerName: layerName,
+                            paperSpace: isPaperSpace,
+                            transform: entity.transform)
+                        applyEntityStyle(entity.xdata, to: insert)
+                        writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                    }
                     continue
                 }
 
@@ -541,6 +598,7 @@ public enum DXFWriterBridge {
             layerID: entity.layerID,
             blockID: entity.blockID,
             geometry: entity.localGeometry,
+            arrayData: entity.arrayData,
             xdata: metadata)
     }
 
@@ -1965,6 +2023,62 @@ public enum DXFWriterBridge {
             r: UInt8((rgb >> 16) & 0xFF),
             g: UInt8((rgb >> 8) & 0xFF),
             b: UInt8(rgb & 0xFF))
+    }
+
+    private static func canExportAsMInsert(
+        array: CADArrayData,
+        transform: Transform3D
+    ) -> Bool {
+        guard array.kind == .rectangular,
+              array.levels == 1,
+              abs(array.axisAngle) <= 1e-10,
+              abs(array.columnElevationIncrement) <= 1e-10,
+              abs(array.rowElevationIncrement) <= 1e-10,
+              array.hiddenItems.isEmpty
+        else { return false }
+
+        let origin = transform.transformPoint(.zero)
+        let x = transform.transformPoint(Vector3(x: 1, y: 0, z: 0)) - origin
+        let y = transform.transformPoint(Vector3(x: 0, y: 1, z: 0)) - origin
+        let determinant = x.x * y.y - x.y * y.x
+        let orthogonality = abs(x.x * y.x + x.y * y.y)
+        return determinant > 1e-12
+            && orthogonality <= 1e-9 * max(1.0, x.magnitude * y.magnitude)
+    }
+
+    private static func appendArrayXData(
+        to entity: DXFEntity,
+        groupID: UUID,
+        role: String,
+        payloadChunks: [String]
+    ) {
+        entity.extendedData.append((1001, CADArrayDXFCodec.appID))
+        entity.extendedData.append((1000, CADArrayDXFCodec.marker))
+        entity.extendedData.append((1000, "G:\(groupID.uuidString)"))
+        entity.extendedData.append((1000, "R:\(role)"))
+        for chunk in payloadChunks { entity.extendedData.append((1000, chunk)) }
+    }
+
+    private static func makeInsert(
+        blockName: String,
+        layerName: String,
+        paperSpace: Bool,
+        transform: Transform3D
+    ) -> DXFInsertEntity {
+        let insert = DXFInsertEntity()
+        insert.name = blockName
+        insert.layer = layerName
+        insert.space = paperSpace ? 1 : 0
+        let origin = transform.transformPoint(.zero)
+        let xAxis = transformedVector(Vector3(x: 1, y: 0, z: 0), by: transform)
+        let yAxis = transformedVector(Vector3(x: 0, y: 1, z: 0), by: transform)
+        let zAxis = transformedVector(Vector3(x: 0, y: 0, z: 1), by: transform)
+        insert.basePoint = toDXF(origin)
+        insert.xScale = max(xAxis.magnitude, 1e-12)
+        insert.yScale = max(yAxis.magnitude, 1e-12)
+        insert.zScale = max(zAxis.magnitude, 1e-12)
+        insert.angle = -atan2(xAxis.y, xAxis.x)
+        return insert
     }
 
     private static func transformedVector(_ vector: Vector3, by transform: Transform3D) -> Vector3 {

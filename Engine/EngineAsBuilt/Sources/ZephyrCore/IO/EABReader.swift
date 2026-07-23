@@ -659,6 +659,7 @@ public enum EABReader {
             let hasLocalGeom = (flags & 0x02) != 0
             let hasDrawOrder = (flags & 0x04) != 0
             let hasDimensionMetadata = (flags & 0x08) != 0
+            let hasArrayData = version >= 14 && (flags & 0x10) != 0
 
             // bbox
             let bminX = Double(r.readFloat32())
@@ -703,10 +704,17 @@ public enum EABReader {
             if hasDimensionMetadata {
                 dimensionMetadataBox = try parseDimensionMetadata(r)
             }
+            var arrayData: CADArrayData? = nil
+            if hasArrayData {
+                let byteCount = safeCount(r.readUInt32(), limit: 16 * 1024 * 1024, label: "arrayData")
+                let bytes = r.readBytes(count: byteCount)
+                arrayData = try? JSONDecoder().decode(CADArrayData.self, from: bytes)
+            }
 
             var entity = CADEntity(
                 handle: handle, layerID: layerID, blockID: blockID,
                 localGeometry: localGeom, dimensionMetadata: dimensionMetadataBox,
+                arrayData: arrayData,
                 transform: transform, xdata: xdata,
                 drawOrder: drawOrder,
                 localBoundingBox: isEmptyBBox ? nil : bbox

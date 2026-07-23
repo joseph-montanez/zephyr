@@ -530,7 +530,13 @@ public final class CADRendererBridge {
             guard var geometry = resolved else { continue }
             
             if simplifyComplexBlocks && geometry.count > 50 {
-                if let localBox = entity.localBoundingBox {
+                let simplificationBox: BoundingBox3D?
+                if entity.arrayData != nil, let blockID = entity.blockID {
+                    simplificationBox = snapshot.blocks[blockID]?.localBoundingBox
+                } else {
+                    simplificationBox = entity.localBoundingBox
+                }
+                if let localBox = simplificationBox {
                     geometry = [.rect(origin: localBox.min, size: localBox.size, color: nil)]
                     primitiveStyles = [:]
                     primitiveXData = [:]
@@ -565,12 +571,27 @@ public final class CADRendererBridge {
                 geomWidth = 0.0
             }
 
-            visible.append((index, entity.handle, geometry, primitiveStyles,
-                            primitiveXData, entity.transform, entityColor, lineType, lineWeight,
-                            lineTypeScale, geomWidth, combinedLayerOpacity,
-                            entityTextBackgroundScale, entityTextBackgroundColor,
-                            entityTextBackgroundUsesViewportColor))
-            index += 1
+            if let array = entity.arrayData {
+                let path = CADArrayPathResolver.points(
+                    for: array,
+                    containerTransform: entity.transform,
+                    snapshot: snapshot)
+                for instance in array.evaluatedInstances(pathPoints: path) {
+                    visible.append((index, entity.handle, geometry, primitiveStyles,
+                                    primitiveXData, entity.transform.multiplying(by: instance.transform),
+                                    entityColor, lineType, lineWeight, lineTypeScale, geomWidth,
+                                    combinedLayerOpacity, entityTextBackgroundScale,
+                                    entityTextBackgroundColor, entityTextBackgroundUsesViewportColor))
+                    index += 1
+                }
+            } else {
+                visible.append((index, entity.handle, geometry, primitiveStyles,
+                                primitiveXData, entity.transform, entityColor, lineType, lineWeight,
+                                lineTypeScale, geomWidth, combinedLayerOpacity,
+                                entityTextBackgroundScale, entityTextBackgroundColor,
+                                entityTextBackgroundUsesViewportColor))
+                index += 1
+            }
         }
 
         let zBand: Double = 100.0
@@ -1079,6 +1100,8 @@ public final class CADRendererBridge {
         entityPrimitiveMap.removeAll()
         entitySpriteMap.removeAll()
         var newEntityIndexToHandle: [UInt32: UUID] = [:]
+        var newHandleToEntityIndex: [UUID: UInt32] = [:]
+        var nextEntityIndex: UInt32 = 1
 
         let viewport = engine.ui.backgroundColor
         func channel(_ value: Float) -> UInt8 {
@@ -1090,8 +1113,15 @@ public final class CADRendererBridge {
 
         // Add new primitives
         for (entityIdx, res) in results.enumerated() {
-            let idx = UInt32(entityIdx + 1)  // 0 = background/no-entity
-            newEntityIndexToHandle[idx] = res.handle
+            let idx: UInt32
+            if let existing = newHandleToEntityIndex[res.handle] {
+                idx = existing
+            } else {
+                idx = nextEntityIndex
+                nextEntityIndex &+= 1
+                newHandleToEntityIndex[res.handle] = idx
+                newEntityIndexToHandle[idx] = res.handle
+            }
             var primIDs: [SpriteID] = []
             primIDs.reserveCapacity(res.specs.count)
             for spec in res.specs {
@@ -1104,7 +1134,7 @@ public final class CADRendererBridge {
                 }
                 primIDs.append(id)
             }
-            entityPrimitiveMap[res.handle] = primIDs
+            entityPrimitiveMap[res.handle, default: []].append(contentsOf: primIDs)
 
             var spriteIDs: [SpriteID] = []
             spriteIDs.reserveCapacity(res.textSprites.count)
@@ -1141,7 +1171,7 @@ public final class CADRendererBridge {
                 primIDs.append(contentsOf: rendered.primitiveIDs)
             }
             if !spriteIDs.isEmpty {
-                entitySpriteMap[res.handle] = spriteIDs
+                entitySpriteMap[res.handle, default: []].append(contentsOf: spriteIDs)
             }
 
             // Handle image specs: load textures and create textured sprites
@@ -1184,13 +1214,13 @@ public final class CADRendererBridge {
                 spriteIDs.append(spriteID)
             }
             if !spriteIDs.isEmpty {
-                entitySpriteMap[res.handle] = spriteIDs
+                entitySpriteMap[res.handle, default: []].append(contentsOf: spriteIDs)
             }
         }
 
         // Store entity index → handle mapping for GPU ID-buffer pass
         geometryManager.entityIndexToHandle = newEntityIndexToHandle
-        geometryManager.handleToEntityIndex = Dictionary(uniqueKeysWithValues: newEntityIndexToHandle.map { ($1, $0) })
+        geometryManager.handleToEntityIndex = newHandleToEntityIndex
 
         // Build spatial grid for large datasets
         geometryManager.buildSpatialGridIfNeeded()

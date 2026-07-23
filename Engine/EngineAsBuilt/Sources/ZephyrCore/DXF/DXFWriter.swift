@@ -1562,6 +1562,39 @@ public class DXFWriter {
         default:
             break
         }
+        writeExtendedData(e, &out)
+    }
+
+    private func writeExtendedData(_ entity: DXFEntity, _ out: inout String) {
+        guard hasExtendedData else { return }
+        let registered = Set(appids.map { $0.name.uppercased() })
+        var active = false
+        for pair in entity.extendedData {
+            if pair.code == 1001 {
+                guard let appID = pair.value as? String else {
+                    active = false
+                    continue
+                }
+                active = registered.contains(appID.uppercased())
+                if active { writeStr(1001, appID, &out) }
+                continue
+            }
+            guard active else { continue }
+            switch pair.value {
+            case let value as String:
+                writeStr(pair.code, value, &out)
+            case let value as Double:
+                writeDbl(pair.code, value, &out)
+            case let value as Int:
+                writeInt(pair.code, value, &out)
+            case let value as Int32:
+                writeInt(pair.code, Int(value), &out)
+            case let value as UInt32:
+                writeInt(pair.code, Int(value), &out)
+            default:
+                continue
+            }
+        }
     }
 
     private func writeEntityHeader(
@@ -1609,7 +1642,7 @@ public class DXFWriter {
         if e.color24 >= 0 { writeInt(420, Int(e.color24), &out) }
         if e.lineType != "BYLAYER" { writeStr(6, e.lineType, &out) }
         if e.ltypeScale != 1.0 { writeDbl(48, e.ltypeScale, &out) }
-        if !e.visible { writeInt(60, 0, &out) }
+        if !e.visible { writeInt(60, 1, &out) }
         if e.space != 0 { writeInt(67, e.space, &out) }
         if e.lWeight != .byLayer { writeInt(370, e.lWeight.dxfInt, &out) }
         if !e.colorName.isEmpty { writeStr(430, e.colorName, &out) }

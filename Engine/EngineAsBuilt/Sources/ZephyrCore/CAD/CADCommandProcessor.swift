@@ -192,6 +192,19 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "TRIM",       aliases: ["TR"],            category: .modify,  syntax: "", description: "Trim lines at intersections — click the side to remove"),
         CommandDescriptor(canonicalName: "FILLET",     aliases: ["F"],            category: .modify,  syntax: "", description: "Round corners between objects using an exact tangent arc"),
         CommandDescriptor(canonicalName: "CHAMFER",    aliases: ["CHA", "BEVEL"], category: .modify,  syntax: "", description: "Bevel corners using distances or a distance and angle"),
+        CommandDescriptor(canonicalName: "ARRAY", aliases: ["AR"], category: .modify, syntax: "", description: "Create a rectangular, polar, or path array"),
+        CommandDescriptor(canonicalName: "ARRAYRECT", aliases: ["ARRAYR"], category: .modify, syntax: "", description: "Create an associative rectangular array"),
+        CommandDescriptor(canonicalName: "ARRAYPOLAR", aliases: ["ARRAYP"], category: .modify, syntax: "", description: "Create an associative polar array"),
+        CommandDescriptor(canonicalName: "ARRAYPATH", aliases: ["ARRAYPA"], category: .modify, syntax: "", description: "Create an associative path array"),
+        CommandDescriptor(canonicalName: "ARRAYEDIT", aliases: [], category: .modify, syntax: "", description: "Select and edit an associative array"),
+        CommandDescriptor(canonicalName: "ARRAYCLOSE", aliases: [], category: .modify, syntax: "", description: "Close array editing or source-edit mode"),
+        CommandDescriptor(canonicalName: "-ARRAYCLOSE", aliases: [], category: .modify, syntax: "[Yes|No]", description: "Close array source editing from the command line"),
+        CommandDescriptor(canonicalName: "ARRAYCLASSIC", aliases: [], category: .modify, syntax: "", description: "Create a legacy non-associative rectangular or polar array"),
+        CommandDescriptor(canonicalName: "-ARRAY", aliases: [], category: .modify, syntax: "", description: "Create a non-associative rectangular or polar array from prompts"),
+        CommandDescriptor(canonicalName: "ARRAYASSOCIATIVITY", aliases: [], category: .settings, syntax: "[0|1]", description: "Set whether new arrays are associative"),
+        CommandDescriptor(canonicalName: "ARRAYEDITSTATE", aliases: [], category: .settings, syntax: "", description: "Display whether array source editing is active"),
+        CommandDescriptor(canonicalName: "ARRAYTYPE", aliases: [], category: .settings, syntax: "[0|1|2]", description: "Set the default array type: rectangular, path, or polar"),
+        CommandDescriptor(canonicalName: "EXPLODE", aliases: ["X"], category: .modify, syntax: "", description: "Convert selected associative arrays to independent block references"),
         CommandDescriptor(canonicalName: "MATCHPROP",   aliases: ["MA", "MATCH"],  category: .modify,  syntax: "", description: "Copy properties from one entity to others"),
         CommandDescriptor(canonicalName: "TORIENT",    aliases: ["TO", "TEXTO"], category: .modify, syntax: "", description: "Rotate text individually to an absolute or most-readable angle"),
         CommandDescriptor(canonicalName: "SPLINEEDIT", aliases: ["SPE"],           category: .modify,  syntax: "", description: "Edit an existing spline (reverse, convert to polyline, etc.)"),
@@ -324,6 +337,31 @@ public final class CADCommandProcessor {
     /// Registry of feature command factories, keyed by canonical name and aliases.
     public typealias FeatureCommandFactory = () -> any FeatureCommand
     private var featureCommandRegistry: [String: FeatureCommandFactory] = [:]
+
+    public var arrayAssociativity: Bool =
+        UserDefaults.standard.object(forKey: "Zephyr.ArrayAssociativity") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(arrayAssociativity, forKey: "Zephyr.ArrayAssociativity")
+        }
+    }
+    public var arrayDefaultType: CADArrayKind = {
+        let raw = UserDefaults.standard.integer(forKey: "Zephyr.ArrayType")
+        switch raw {
+        case 1: return .path
+        case 2: return .polar
+        default: return .rectangular
+        }
+    }() {
+        didSet {
+            let raw: Int
+            switch arrayDefaultType {
+            case .rectangular: raw = 0
+            case .path: raw = 1
+            case .polar: raw = 2
+            }
+            UserDefaults.standard.set(raw, forKey: "Zephyr.ArrayType")
+        }
+    }
 
     // MARK: Engine Reference
 
@@ -1152,10 +1190,23 @@ public final class CADCommandProcessor {
                 }
             }
             // Try feature command registry before giving up.
-            else if let factory = featureCommandRegistry[upper], let eng = engine {
+            else if let eng = engine {
+                let parts = upper.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+                let commandName = parts.first.map(String.init) ?? upper
+                guard let factory = featureCommandRegistry[commandName] else {
+                    clearCommand()
+                    return
+                }
                 let cmd = factory()
                 activeFeatureCommand = cmd
                 cmd.start(engine: eng, processor: self)
+                if parts.count > 1, activeFeatureCommand != nil {
+                    let argument = String(parts[1])
+                    let result = cmd.handleCommandText(argument, engine: eng, processor: self)
+                    if result == .finished, activeFeatureCommand != nil {
+                        finishFeatureCommand(engine: eng)
+                    }
+                }
             } else {
                 clearCommand()
             }
@@ -1610,6 +1661,8 @@ public final class CADCommandProcessor {
                 layerID: entity.layerID,
                 blockID: entity.blockID,
                 localGeometry: entity.localGeometry,
+                dimensionMetadata: entity.dimensionMetadata,
+                arrayData: entity.arrayData,
                 transform: entity.transform,
                 xdata: entity.xdata,
                 drawOrder: entity.drawOrder

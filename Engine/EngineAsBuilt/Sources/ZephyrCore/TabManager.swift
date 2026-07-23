@@ -830,6 +830,15 @@ public final class TabManager {
         return xdata
     }
 
+    public var editingArrayHandle: UUID? {
+        guard let tab = activeTab,
+              let blockID = tab.editingBlockID,
+              let parentDocument = tab.parentDocument else { return nil }
+        return parentDocument.entitiesView.first {
+            $0.blockID == blockID && $0.arrayData != nil
+        }?.handle
+    }
+
     /// Enters block editor mode for the given block ID.
     public func enterBlockEditor(blockID: UUID) {
         guard var tab = activeTab else { return }

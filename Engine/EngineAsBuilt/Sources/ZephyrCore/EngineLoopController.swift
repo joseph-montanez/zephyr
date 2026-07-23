@@ -692,6 +692,10 @@ public final class EngineLoopController {
                 return
             }
 
+            if applyRectangularArrayGripDrag(worldX: snapWX, worldY: snapWY) {
+                return
+            }
+
             if case .vertex(let entityHandle, let index) = interaction.gripType {
                 engine.cadBridge.moveVertexDirect(
                     handle: entityHandle,
@@ -1455,5 +1459,63 @@ public final class EngineLoopController {
 
 
 
+
+    private func applyRectangularArrayGripDrag(worldX: Double, worldY: Double) -> Bool {
+        let interaction = engine.interaction
+        guard let handle = interaction.gripHandle,
+              var entity = engine.document.entity(for: handle),
+              var array = entity.arrayData,
+              array.kind == .rectangular else {
+            return false
+        }
+
+        let axis: Int
+        let changesSpacing: Bool
+        switch interaction.gripType {
+        case .arraySpacing(let value):
+            axis = value
+            changesSpacing = true
+        case .arrayCount(let value):
+            axis = value
+            changesSpacing = false
+        default:
+            return false
+        }
+
+        let localCursor = entity.transform.inverse().transformPoint(
+            Vector3(x: worldX, y: worldY, z: entity.transform.position.z))
+        let c = cos(array.axisAngle)
+        let s = sin(array.axisAngle)
+        let unit = axis == 0
+            ? Vector3(x: c, y: s, z: 0)
+            : Vector3(x: -s, y: c, z: 0)
+        let projected = localCursor.x * unit.x + localCursor.y * unit.y
+
+        if changesSpacing {
+            let minimum = 1e-6
+            let spacing = abs(projected) < minimum
+                ? (projected < 0 ? -minimum : minimum)
+                : projected
+            if axis == 0 {
+                array.columnSpacing = spacing
+            } else {
+                array.rowSpacing = spacing
+            }
+        } else {
+            let spacing = axis == 0 ? array.columnSpacing : array.rowSpacing
+            guard abs(spacing) > 1e-9 else { return true }
+            let count = max(1, Int((projected / spacing).rounded()) + 1)
+            if axis == 0 {
+                array.columns = count
+            } else {
+                array.rows = count
+            }
+        }
+
+        entity.arrayData = array
+        engine.document.updateEntityLive(entity)
+        interaction.cachedGripGeneration = -1
+        return true
+    }
 
 }

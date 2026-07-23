@@ -807,6 +807,9 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
 
     public var dimensionMetadata: CADDimensionMetadataBox?
 
+    /// Associative rectangular, polar, or path array parameters.
+    public var arrayData: CADArrayData?
+
     public var transform: Transform3D {
         didSet { refreshWorldBoundingBox() }
     }
@@ -900,6 +903,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
                 blockID: UUID? = nil,
                 localGeometry: [CADPrimitive]? = nil,
                 dimensionMetadata: CADDimensionMetadataBox? = nil,
+                arrayData: CADArrayData? = nil,
                 transform: Transform3D = .identity,
                 xdata: [String: XDataValue] = [:],
                 drawOrder: Int = Int.max,
@@ -910,6 +914,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
         self.blockID = blockID
         self.localGeometry = localGeometry
         self.dimensionMetadata = dimensionMetadata
+        self.arrayData = arrayData
         self.transform = transform
         self.xdata = xdata
         self.drawOrder = drawOrder
@@ -926,6 +931,17 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
 
         if anchorPoints.isEmpty {
             self.updateAnchorCache()
+        }
+    }
+
+    public mutating func updateArrayCache(sourceBoundingBox: BoundingBox3D?, pathPoints: [Vector3]? = nil) {
+        if let arrayData {
+            localBoundingBox = arrayData.localBoundingBox(
+                source: sourceBoundingBox,
+                pathPoints: pathPoints)
+            updateAnchorCacheFromBoundingBox()
+        } else {
+            localBoundingBox = sourceBoundingBox
         }
     }
 
