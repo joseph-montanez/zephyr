@@ -95,6 +95,8 @@ public enum EABReader {
                 unit: components.unit,
                 textStyles: components.textStyles,
                 dimensionStyles: components.dimensionStyles,
+                leaderStyles: components.leaderStyles,
+                currentLeaderStyleName: components.currentLeaderStyleName,
                 linetypePatterns: components.linetypePatterns,
                 activeLayerID: components.activeLayerID,
                 imageStore: components.imageStore
@@ -114,6 +116,8 @@ public enum EABReader {
         unit: CADUnit,
         textStyles: [String: CADTextStyle],
         dimensionStyles: [String: CADDimensionStyle],
+        leaderStyles: [String: CADLeaderStyle],
+        currentLeaderStyleName: String,
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset]
@@ -199,6 +203,8 @@ public enum EABReader {
                 unit: components.unit,
                 textStyles: components.textStyles,
                 dimensionStyles: components.dimensionStyles,
+                leaderStyles: components.leaderStyles,
+                currentLeaderStyleName: components.currentLeaderStyleName,
                 linetypePatterns: components.linetypePatterns,
                 activeLayerID: components.activeLayerID,
                 imageStore: components.imageStore
@@ -260,6 +266,8 @@ public enum EABReader {
         unit: CADUnit,
         textStyles: [String: CADTextStyle],
         dimensionStyles: [String: CADDimensionStyle],
+        leaderStyles: [String: CADLeaderStyle],
+        currentLeaderStyleName: String,
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset]
@@ -274,6 +282,8 @@ public enum EABReader {
         var solvedTransforms: [UUID: Transform3D] = [:]
         var textStyles: [String: CADTextStyle] = ["Standard": .standard]
         var dimensionStyles: [String: CADDimensionStyle] = [:]
+        var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
+        var currentLeaderStyleName = "Standard"
         var linetypePatterns: [String: [Double]] = [:]
         var activeLayerID: UUID? = nil
         var loadedImageStore: [String: CADImageAsset] = [:]
@@ -295,6 +305,10 @@ public enum EABReader {
                 textStyles = try parseTextStyles(reader, version: header.version)
             case .dimensionStyles:
                 dimensionStyles = try parseDimensionStyles(reader)
+            case .leaderStyles:
+                let parsed = try parseLeaderStyles(reader)
+                leaderStyles = parsed.styles
+                currentLeaderStyleName = parsed.currentName
             case .lineTypes:
                 linetypePatterns = try parseLinetypePatterns(reader)
             case .images:
@@ -307,7 +321,8 @@ public enum EABReader {
         }
 
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
-                textStyles, dimensionStyles, linetypePatterns, activeLayerID, loadedImageStore)
+                textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
+                linetypePatterns, activeLayerID, loadedImageStore)
     }
 
     private static func parseDimensionStyles(_ r: BinaryReader) throws -> [String: CADDimensionStyle] {
@@ -325,6 +340,24 @@ public enum EABReader {
             }
         }
         return styles
+    }
+
+    private static func parseLeaderStyles(_ r: BinaryReader) throws -> (styles: [String: CADLeaderStyle], currentName: String) {
+        let currentName = r.readString()
+        let count = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "leaderStyles")
+        let decoder = JSONDecoder()
+        var styles: [String: CADLeaderStyle] = [:]
+        for _ in 0..<count {
+            let name = r.readString()
+            let byteCount = safeCount(r.readUInt32(), limit: 16 * 1024 * 1024, label: "leaderStyle")
+            let bytes = r.readBytes(count: byteCount)
+            if let style = try? decoder.decode(CADLeaderStyle.self, from: bytes) {
+                styles[name] = style
+            }
+        }
+        if styles.isEmpty { styles["Standard"] = .standard }
+        let resolved = styles.keys.first(where: { $0.caseInsensitiveCompare(currentName) == .orderedSame }) ?? "Standard"
+        return (styles, resolved)
     }
 
     // MARK: - Public API: Header Only
@@ -352,6 +385,8 @@ public enum EABReader {
         unit: CADUnit,
         textStyles: [String: CADTextStyle],
         dimensionStyles: [String: CADDimensionStyle],
+        leaderStyles: [String: CADLeaderStyle],
+        currentLeaderStyleName: String,
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset]
@@ -377,6 +412,8 @@ public enum EABReader {
         var solvedTransforms: [UUID: Transform3D] = [:]
         var textStyles: [String: CADTextStyle] = ["Standard": .standard]
         var dimensionStyles: [String: CADDimensionStyle] = [:]
+        var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
+        var currentLeaderStyleName = "Standard"
         var linetypePatterns: [String: [Double]] = [:]
         var activeLayerID: UUID? = nil
         var loadedImageStore: [String: CADImageAsset] = [:]
@@ -402,6 +439,10 @@ public enum EABReader {
                 textStyles = try parseTextStyles(reader, version: header.version)
             case .dimensionStyles:
                 dimensionStyles = try parseDimensionStyles(reader)
+            case .leaderStyles:
+                let parsed = try parseLeaderStyles(reader)
+                leaderStyles = parsed.styles
+                currentLeaderStyleName = parsed.currentName
             case .lineTypes:
                 linetypePatterns = try parseLinetypePatterns(reader)
             case .images:
@@ -414,7 +455,8 @@ public enum EABReader {
         }
 
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
-                textStyles, dimensionStyles, linetypePatterns, activeLayerID, loadedImageStore)
+                textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
+                linetypePatterns, activeLayerID, loadedImageStore)
     }
 
     // MARK: - Header Parsing
@@ -660,6 +702,7 @@ public enum EABReader {
             let hasDrawOrder = (flags & 0x04) != 0
             let hasDimensionMetadata = (flags & 0x08) != 0
             let hasArrayData = version >= 14 && (flags & 0x10) != 0
+            let hasLeaderData = version >= 15 && (flags & 0x20) != 0
 
             // bbox
             let bminX = Double(r.readFloat32())
@@ -711,9 +754,19 @@ public enum EABReader {
                 arrayData = try? JSONDecoder().decode(CADArrayData.self, from: bytes)
             }
 
+            var leaderData: CADLeaderDataBox? = nil
+            if hasLeaderData {
+                let byteCount = safeCount(r.readUInt32(), limit: 16 * 1024 * 1024, label: "leaderData")
+                let bytes = r.readBytes(count: byteCount)
+                if let decoded = try? JSONDecoder().decode(CADLeaderData.self, from: bytes) {
+                    leaderData = CADLeaderDataBox(decoded)
+                }
+            }
+
             var entity = CADEntity(
                 handle: handle, layerID: layerID, blockID: blockID,
                 localGeometry: localGeom, dimensionMetadata: dimensionMetadataBox,
+                leaderData: leaderData,
                 arrayData: arrayData,
                 transform: transform, xdata: xdata,
                 drawOrder: drawOrder,

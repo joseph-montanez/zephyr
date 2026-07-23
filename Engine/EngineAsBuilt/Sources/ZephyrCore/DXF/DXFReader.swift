@@ -48,6 +48,7 @@ public class DXFReader {
     public var imagedefs: [DXFImageDefEntry] = []
     public var layouts: [DXFLayoutEntry] = []
     public var sortEntsTables: [DXFSortEntsTable] = []
+    public var mleaderStyles: [DXFMLeaderStyleEntry] = []
     public var blocks: [DXFBlockEntity] = []
     public var entities: [DXFEntity] = []
 
@@ -56,6 +57,7 @@ public class DXFReader {
     private var pairs: [(code: Int, value: String)] = []
     private var pos: Int = 0
     private var tableStylesByHandle: [UInt32: TableStyleInfo] = [:]
+    private var objectDictionaryNameByHandle: [UInt32: String] = [:]
     public var textCodec = DXFTextCodec()
 
     public init() {}
@@ -337,6 +339,7 @@ public class DXFReader {
         case "RAY":      return parseRay(allPairs)
         case "DIMENSION": return parseDimension(allPairs)
         case "LEADER":   return parseLeader(allPairs)
+        case "MULTILEADER", "MLEADER": return parseMLeader(allPairs)
         case "IMAGE":    return parseImage(allPairs)
         case "VIEWPORT": return parseViewport(allPairs)
         case "ACAD_TABLE", "TABLE": return parseTable(allPairs)
@@ -1209,6 +1212,86 @@ extension DXFReader {
         return e
     }
 
+    func parseMLeader(_ pairs: [(Int, String)]) -> DXFMLeaderEntity {
+        let e = DXFMLeaderEntity()
+        applyCommon(pairs, to: e)
+        var inContext = false
+        var inLeader = false
+        var inLeaderLine = false
+        var currentBranch: [Vector3] = []
+
+        func flushBranch() {
+            if currentBranch.count >= 2 { e.branches.append(currentBranch) }
+            currentBranch.removeAll(keepingCapacity: true)
+        }
+
+        for (c, raw) in pairs {
+            let marker = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if c == 300, marker.contains("CONTEXT_DATA{") { inContext = true; continue }
+            if c == 301, marker == "}" { inContext = false; continue }
+            if c == 302, marker.contains("LEADER{") { flushBranch(); inLeader = true; continue }
+            if c == 303, marker == "}" { flushBranch(); inLeader = false; inLeaderLine = false; continue }
+            if c == 304, marker.contains("LEADER_LINE{") { inLeaderLine = true; continue }
+            if c == 305, marker == "}" { inLeaderLine = false; continue }
+
+            if inLeaderLine {
+                switch c {
+                case 10: currentBranch.append(Vector3(x: d(raw), y: 0, z: 0))
+                case 20: if !currentBranch.isEmpty { currentBranch[currentBranch.count - 1].y = d(raw) }
+                case 30: if !currentBranch.isEmpty { currentBranch[currentBranch.count - 1].z = d(raw) }
+                default: break
+                }
+                continue
+            }
+
+            if inLeader {
+                switch c {
+                case 40: e.doglegLength = d(raw)
+                case 290: e.landingEnabled = i(raw) != 0
+                case 291: e.doglegEnabled = i(raw) != 0
+                default: break
+                }
+                continue
+            }
+
+            if inContext {
+                switch c {
+                case 40: e.contentScale = d(raw)
+                case 41: e.textHeight = d(raw)
+                case 42: e.textRotation = d(raw)
+                case 43: e.textWidth = d(raw)
+                case 140: e.arrowSize = d(raw)
+                case 145: e.landingGap = d(raw)
+                case 12: e.textPosition.x = d(raw)
+                case 22: e.textPosition.y = d(raw)
+                case 32: e.textPosition.z = d(raw)
+                case 13: e.textDirection.x = d(raw)
+                case 23: e.textDirection.y = d(raw)
+                case 33: e.textDirection.z = d(raw)
+                case 304: e.text += decode(raw)
+                default: break
+                }
+                continue
+            }
+
+            switch c {
+            case 170: e.pathType = i(raw)
+            case 172: e.contentType = i(raw)
+            case 290: e.landingEnabled = i(raw) != 0
+            case 291: e.doglegEnabled = i(raw) != 0
+            case 40: e.contentScale = d(raw)
+            case 41: e.doglegLength = d(raw)
+            case 42: e.arrowSize = d(raw)
+            case 45: e.landingGap = d(raw)
+            case 340: e.styleHandle = parseHandle(raw)
+            case 341: e.blockContentHandle = parseHandle(raw)
+            default: break
+            }
+        }
+        flushBranch()
+        return e
+    }
+
     func parseImage(_ pairs: [(Int, String)]) -> DXFImageEntity {
         let e = DXFImageEntity()
         applyCommon(pairs, to: e)
@@ -1827,8 +1910,19 @@ extension DXFReader {
     private func parseObjects() throws {
         while pos < pairs.count {
             let (c, v) = pairs[pos]
-            if c == 0 && v == "ENDSEC" { pos += 1; return }
-            if c == 0 && v == "IMAGEDEF" {
+            if c == 0 && v == "ENDSEC" {
+                for index in mleaderStyles.indices {
+                    if let dictionaryName = objectDictionaryNameByHandle[mleaderStyles[index].handle],
+                       !dictionaryName.isEmpty {
+                        mleaderStyles[index].name = dictionaryName
+                    }
+                }
+                pos += 1
+                return
+            }
+            if c == 0 && (v == "DICTIONARY" || v == "ACDBDICTIONARYWDFLT") {
+                tryParse { try parseObjectDictionary(at: pos) }
+            } else if c == 0 && v == "IMAGEDEF" {
                 tryParse { try parseImageDef(at: pos) }
             } else if c == 0 && v == "LAYOUT" {
                 tryParse { try parseLayout(at: pos) }
@@ -1836,10 +1930,78 @@ extension DXFReader {
                 tryParse { try parseTableStyle(at: pos) }
             } else if c == 0 && v == "SORTENTSTABLE" {
                 tryParse { try parseSortEntsTable(at: pos) }
+            } else if c == 0 && v == "MLEADERSTYLE" {
+                tryParse { try parseMLeaderStyle(at: pos) }
             } else {
                 pos += 1
             }
         }
+    }
+
+    private func parseObjectDictionary(at startIdx: Int) throws {
+        var idx = startIdx + 1
+        var pendingName: String?
+        while idx < pairs.count {
+            let (code, value) = pairs[idx]
+            if code == 0 { break }
+            idx += 1
+            switch code {
+            case 3:
+                pendingName = decode(value)
+            case 350, 360:
+                if let name = pendingName {
+                    let handle = parseHandle(value)
+                    if handle != 0 { objectDictionaryNameByHandle[handle] = name }
+                    pendingName = nil
+                }
+            default:
+                break
+            }
+        }
+        pos = idx
+    }
+
+    private func parseMLeaderStyle(at startIdx: Int) throws {
+        var idx = startIdx + 1
+        var style = DXFMLeaderStyleEntry()
+        var inStyleSubclass = false
+
+        while idx < pairs.count {
+            let (code, value) = pairs[idx]
+            if code == 0 { break }
+            idx += 1
+
+            if code == 5 {
+                style.handle = parseHandle(value)
+                continue
+            }
+            if code == 100 {
+                inStyleSubclass = value.caseInsensitiveCompare("AcDbMLeaderStyle") == .orderedSame
+                continue
+            }
+            guard inStyleSubclass else { continue }
+
+            switch code {
+            case 3: style.name = decode(value)
+            case 90: style.maxLeaderPoints = max(2, i(value))
+            case 170: style.contentType = i(value)
+            case 173: style.pathType = i(value)
+            case 42, 46: style.landingGap = d(value)
+            case 43: style.doglegLength = d(value)
+            case 44: style.arrowSize = d(value)
+            case 45: style.textHeight = d(value)
+            case 47: style.blockScale = d(value)
+            case 141: style.blockRotation = d(value)
+            case 290: style.landingEnabled = i(value) != 0
+            case 291: style.doglegEnabled = i(value) != 0
+            case 292: style.textFrameEnabled = i(value) != 0
+            case 342: style.textStyleHandle = parseHandle(value)
+            default: break
+            }
+        }
+        pos = idx
+        if style.name.isEmpty { style.name = "Standard" }
+        if style.handle != 0 { mleaderStyles.append(style) }
     }
 
     private func parseSortEntsTable(at startIdx: Int) throws {

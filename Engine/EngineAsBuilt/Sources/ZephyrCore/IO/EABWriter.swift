@@ -405,6 +405,15 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
+        // Native leader styles (added in EAB v15)
+        if !document.leaderStyles.isEmpty {
+            let leaderStylesData = serializeLeaderStyles(document: document)
+            entries.append(EABSectionEntry(type: .leaderStyles, offset: UInt64(w.count),
+                                            size: UInt64(leaderStylesData.count), compression: .none))
+            w.writeBytes(leaderStylesData)
+            w.pad(to: 4)
+        }
+
         // Linetype patterns (added in EAB v4)
         if !document.linetypePatterns.isEmpty {
             let lineTypesData = serializeLinetypePatterns(document: document)
@@ -651,6 +660,7 @@ public enum EABWriter {
             flags |= 0x04
             if entity.dimensionMetadata != nil { flags |= 0x08 }
             if entity.arrayData != nil { flags |= 0x10 }
+            if entity.leaderData != nil { flags |= 0x20 }
             w.writeUInt8(flags)
             // bbox (local-space)
             if let bb = entity.localBoundingBox {
@@ -682,6 +692,11 @@ public enum EABWriter {
             }
             if flags & 0x10 != 0, let array = entity.arrayData {
                 let data = (try? JSONEncoder().encode(array)) ?? Data()
+                w.writeUInt32(UInt32(data.count))
+                w.writeBytes(data)
+            }
+            if flags & 0x20 != 0, let leader = entity.leaderData?.value {
+                let data = (try? JSONEncoder().encode(leader)) ?? Data()
                 w.writeUInt32(UInt32(data.count))
                 w.writeBytes(data)
             }
@@ -1071,6 +1086,22 @@ public enum EABWriter {
             } else {
                 w.writeString("{}")
             }
+        }
+        return w.build()
+    }
+
+    // MARK: - Leader Styles
+
+    private static func serializeLeaderStyles(document: CADDocument) -> Data {
+        let w = BinaryWriter()
+        w.writeString(document.currentLeaderStyleName)
+        w.writeUInt32(UInt32(document.leaderStyles.count))
+        let encoder = JSONEncoder()
+        for (styleName, style) in document.leaderStyles.sorted(by: { $0.key < $1.key }) {
+            w.writeString(styleName)
+            let data = (try? encoder.encode(style)) ?? Data()
+            w.writeUInt32(UInt32(data.count))
+            w.writeBytes(data)
         }
         return w.build()
     }

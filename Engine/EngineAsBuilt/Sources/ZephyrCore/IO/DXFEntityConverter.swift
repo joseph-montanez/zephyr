@@ -62,6 +62,8 @@ public enum DXFEntityConverter {
             return def != txt ? [.line(start: def, end: txt, color: primColor)] : [.point(position: def, color: primColor)]
         case .lEADER:
             return convertLeader(e, arrowSize: arrowSize, color: primColor)
+        case .mLEADER:
+            return convertMLeader(e, color: primColor)
         case .iMAGE:
             return convertImage(e, color: primColor)
         case .xLINE:
@@ -1479,6 +1481,51 @@ public enum DXFEntityConverter {
             prims.append(.line(start: pts[i], end: pts[i + 1], color: color))
         }
         return prims
+    }
+
+    private static func convertMLeader(_ e: DXFEntity, color: ColorRGBA?) -> [CADPrimitive] {
+        guard let ml = e as? DXFMLeaderEntity else { return [] }
+        let style = CADLeaderStyle(
+            pathType: ml.pathType == 2 ? .spline : (ml.pathType == 0 ? .none : .straight),
+            arrowEnabled: ml.arrowSize > 0,
+            arrowSize: ml.arrowSize,
+            landingEnabled: ml.landingEnabled,
+            doglegEnabled: ml.doglegEnabled,
+            doglegLength: ml.doglegLength,
+            contentGap: ml.landingGap,
+            textHeight: ml.textHeight)
+        let data = CADLeaderData(
+            branches: ml.branches.map { CADLeaderBranch(vertices: $0.map(yflip)) },
+            contentType: ml.contentType == 1 ? .block : (ml.text.isEmpty ? .none : .mtext),
+            text: cleanMTextFormatting(ml.text),
+            blockName: ml.blockName.isEmpty ? nil : ml.blockName,
+            contentPosition: yflip(ml.textPosition),
+            contentRotation: -ml.textRotation,
+            textWidth: ml.textWidth > 0 ? ml.textWidth : nil,
+            styleOverrides: style)
+        return CADLeaderGeometry.build(data: data, style: style, blockResolver: { _ in nil }).map {
+            applyingColor(color, to: $0)
+        }
+    }
+
+    private static func applyingColor(_ color: ColorRGBA?, to primitive: CADPrimitive) -> CADPrimitive {
+        guard let color else { return primitive }
+        switch primitive {
+        case .point(let p, _): return .point(position: p, color: color)
+        case .line(let a, let b, _): return .line(start: a, end: b, color: color)
+        case .rect(let o, let s, _): return .rect(origin: o, size: s, color: color)
+        case .fillRect(let o, let s, _): return .fillRect(origin: o, size: s, color: color)
+        case .polygon(let points, _): return .polygon(points: points, color: color)
+        case .polyline(let path, _): return .polyline(path: path, color: color)
+        case .fillPolygon(let points, _): return .fillPolygon(points: points, color: color)
+        case .fillComplexPolygon(let outer, let holes, _): return .fillComplexPolygon(outer: outer, holes: holes, color: color)
+        case .circle(let center, let radius, _): return .circle(center: center, radius: radius, color: color)
+        case .arc(let center, let radius, let start, let end, _): return .arc(center: center, radius: radius, startAngle: start, endAngle: end, color: color)
+        case .spline(let points, let knots, let degree, let weights, _): return .spline(controlPoints: points, knots: knots, degree: degree, weights: weights, color: color)
+        case .text(let position, let text, let height, let rotation, let style, let ah, let av, let width, _):
+            return .text(position: position, text: text, height: height, rotation: rotation, style: style, alignH: ah, alignV: av, mtextWidth: width, color: color)
+        default: return primitive
+        }
     }
 
     // MARK: - Image

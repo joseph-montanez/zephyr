@@ -12,6 +12,7 @@ public enum DXFWriterBridge {
         var blocks: [CADBlock]
         var entities: [CADEntity]
         var textStyles: [String: CADTextStyle]
+        var leaderStyles: [String: CADLeaderStyle]
         var linetypePatterns: [String: [Double]]
         var unit: CADUnit
     }
@@ -27,6 +28,7 @@ public enum DXFWriterBridge {
         var blockID: UUID?
         var geometry: [CADPrimitive]?
         var arrayData: CADArrayData?
+        var leaderData: CADLeaderDataBox?
         var xdata: [ProjectionXDataPair]
     }
 
@@ -49,6 +51,7 @@ public enum DXFWriterBridge {
             blocks: document.allBlocks,
             entities: document.allEntities,
             textStyles: document.textStyles,
+            leaderStyles: document.leaderStyles,
             linetypePatterns: document.linetypePatterns,
             unit: document.unit)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion)
@@ -67,6 +70,7 @@ public enum DXFWriterBridge {
                 blocks: $0.document.allBlocks,
                 entities: $0.document.allEntities,
                 textStyles: $0.document.textStyles,
+                leaderStyles: $0.document.leaderStyles,
                 linetypePatterns: $0.document.linetypePatterns,
                 unit: $0.document.unit)
         }
@@ -91,6 +95,7 @@ public enum DXFWriterBridge {
             textStyles: Dictionary(uniqueKeysWithValues: textStyleFonts.map { name, font in
                 (name, CADTextStyle(name: name, fontFile: font))
             }),
+            leaderStyles: ["Standard": .standard],
             linetypePatterns: linetypePatterns,
             unit: .millimeter)
         try exportToDXF(views: [view], filePath: filePath, dxfVersion: dxfVersion)
@@ -250,6 +255,106 @@ public enum DXFWriterBridge {
 
             for entity in exportEntities {
                 let layerName = layerNameByID[entity.layerID] ?? "0"
+
+                if let box = entity.leaderData, dxfVersion.rawValue >= "AC1021" {
+                    let data = box.value
+                    let style = data.styleOverrides
+                        ?? view.leaderStyles.first(where: { $0.key.caseInsensitiveCompare(data.styleName) == .orderedSame })?.value
+                        ?? .standard
+                    let textDirection = transformedVector(
+                        Vector3(x: cos(data.contentRotation), y: sin(data.contentRotation), z: 0),
+                        by: entity.transform)
+                    let entityScale = max(abs(entity.transform.scale.x), 1e-9)
+
+                    if data.isLegacyLeader, data.branches.count == 1,
+                       let branch = data.branches.first, branch.vertices.count >= 2 {
+                        let leader = DXFLeaderEntity()
+                        leader.layer = layerName
+                        leader.space = isPaperSpace ? 1 : 0
+                        leader.style = "STANDARD"
+                        leader.arrow = style.arrowEnabled ? 1 : 0
+                        leader.leaderType = style.pathType == .spline ? 1 : 0
+                        leader.flag = data.contentType == .block ? 2 : (data.contentType == .none ? 3 : 0)
+                        leader.hookLine = style.landingEnabled ? 1 : 0
+                        leader.hookFlag = data.contentPosition.x < (branch.vertices.last?.x ?? data.contentPosition.x) ? 1 : 0
+                        leader.textHeight = style.textHeight * entityScale
+                        leader.textWidth = data.textWidth ?? 0
+                        leader.vertices = branch.vertices.map { toDXF(entity.transform.transformPoint($0)) }
+                        leader.vertNum = leader.vertices.count
+                        leader.horizDir = toDXFVector(textDirection.normalized)
+                        applyEntityStyle(entity.xdata, to: leader)
+
+                        var annotation: DXFEntity?
+                        switch data.contentType {
+                        case .none:
+                            break
+                        case .mtext:
+                            let text = DXFMTextEntity()
+                            text.layer = layerName
+                            text.space = isPaperSpace ? 1 : 0
+                            text.basePoint = toDXF(entity.transform.transformPoint(data.contentPosition))
+                            text.height = style.textHeight * entityScale
+                            text.widthScale = data.textWidth ?? 0
+                            text.angle_p = -atan2(textDirection.y, textDirection.x) * 180 / .pi
+                            text.text = data.text
+                            text.style = style.textStyleName
+                            text.textGen = 1
+                            applyEntityStyle(entity.xdata, to: text)
+                            annotation = text
+                        case .block:
+                            if let blockName = data.blockName {
+                                let insert = DXFInsertEntity()
+                                insert.layer = layerName
+                                insert.space = isPaperSpace ? 1 : 0
+                                insert.name = blockName
+                                insert.basePoint = toDXF(entity.transform.transformPoint(data.contentPosition))
+                                insert.xScale = style.blockScale * entityScale
+                                insert.yScale = style.blockScale * entityScale
+                                insert.zScale = style.blockScale * entityScale
+                                insert.angle = -atan2(textDirection.y, textDirection.x) + style.blockRotation
+                                applyEntityStyle(entity.xdata, to: insert)
+                                annotation = insert
+                            }
+                        }
+                        leader.annotation = annotation
+                        writer.addEntity(leader, ownerBlockName: ownerBlockName)
+                        if let annotation {
+                            writer.addEntity(annotation, ownerBlockName: ownerBlockName)
+                        }
+                        continue
+                    }
+
+                    let ml = DXFMLeaderEntity()
+                    ml.layer = layerName
+                    ml.space = isPaperSpace ? 1 : 0
+                    ml.contentScale = 1
+                    ml.contentType = data.contentType == .block ? 1 : (data.contentType == .none ? 0 : 2)
+                    ml.pathType = style.pathType == .spline ? 2 : (style.pathType == .none ? 0 : 1)
+                    ml.text = data.text
+                    ml.textPosition = toDXF(entity.transform.transformPoint(data.contentPosition))
+                    ml.textDirection = toDXFVector(textDirection.normalized)
+                    ml.textRotation = -atan2(textDirection.y, textDirection.x)
+                    ml.styleName = style.name
+                    ml.textHeight = style.textHeight * entityScale
+                    ml.textWidth = data.textWidth ?? 0
+                    ml.textStyleName = style.textStyleName
+                    ml.textFrameEnabled = style.textFrameEnabled
+                    ml.maxLeaderPoints = style.maxLeaderPoints
+                    ml.blockScale = style.blockScale
+                    ml.blockRotation = style.blockRotation
+                    ml.arrowSize = style.arrowEnabled ? style.arrowSize * entityScale : 0
+                    ml.landingGap = style.contentGap
+                    ml.doglegLength = style.doglegLength
+                    ml.landingEnabled = style.landingEnabled
+                    ml.doglegEnabled = style.doglegEnabled
+                    ml.blockName = data.blockName ?? ""
+                    ml.branches = data.branches.map { branch in
+                        branch.vertices.map { toDXF(entity.transform.transformPoint($0)) }
+                    }
+                    applyEntityStyle(entity.xdata, to: ml)
+                    writer.addEntity(ml, ownerBlockName: ownerBlockName)
+                    continue
+                }
 
                 if let blockID = entity.blockID,
                    let blockName = blockNameByID[blockID] {
@@ -599,6 +704,7 @@ public enum DXFWriterBridge {
             blockID: entity.blockID,
             geometry: entity.localGeometry,
             arrayData: entity.arrayData,
+            leaderData: entity.leaderData,
             xdata: metadata)
     }
 

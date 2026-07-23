@@ -33,19 +33,25 @@ public struct DXFImportResult: Sendable {
         Dictionary(textStyles.values.map { ($0.name, $0.fontFile) }, uniquingKeysWith: { first, _ in first })
     }
     public let dimensionStyles: [String: CADDimensionStyle]
+    public let leaderStyles: [String: CADLeaderStyle]
     public let views: [DXFDrawingView]
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
                 textStyles: [String: CADTextStyle], linetypePatterns: [String: [Double]],
-                dimensionStyles: [String: CADDimensionStyle], views: [DXFDrawingView]) {
+                dimensionStyles: [String: CADDimensionStyle],
+                leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+                views: [DXFDrawingView]) {
         self.layers = layers; self.blocks = blocks; self.entities = entities
         self.textStyles = textStyles; self.linetypePatterns = linetypePatterns
         self.dimensionStyles = dimensionStyles
+        self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.views = views
     }
 
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
                 textStyleFonts: [String: String], linetypePatterns: [String: [Double]],
-                dimensionStyles: [String: CADDimensionStyle], views: [DXFDrawingView]) {
+                dimensionStyles: [String: CADDimensionStyle],
+                leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+                views: [DXFDrawingView]) {
         let styles = Dictionary(uniqueKeysWithValues: textStyleFonts.map { name, font in
             (name, CADTextStyle(name: name, fontFile: font).normalized)
         })
@@ -56,6 +62,7 @@ public struct DXFImportResult: Sendable {
             textStyles: styles.isEmpty ? ["Standard": .standard] : styles,
             linetypePatterns: linetypePatterns,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
             views: views)
     }
 }
@@ -264,7 +271,7 @@ public enum DXFImporter {
         // Guard against pathological data
         guard entityCount < 10_000_000 else {
             print("[DXFImporter] ERROR: \(entityCount) entities exceeds safety limit")
-            return DXFImportResult(layers: [], blocks: [], entities: [], textStyles: ["Standard": .standard], linetypePatterns: [:], dimensionStyles: [:], views: [])
+            return DXFImportResult(layers: [], blocks: [], entities: [], textStyles: ["Standard": .standard], linetypePatterns: [:], dimensionStyles: [:], leaderStyles: ["Standard": .standard], views: [])
         }
 
         let globalLineTypeScale = reader.header.ltScale > 0 ? reader.header.ltScale : 1.0
@@ -343,6 +350,32 @@ public enum DXFImporter {
             reader.dimstyles,
             blockNameByHandle: blockNameByHandle,
             textStyleNameByHandle: textStyleNameByHandle)
+        var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
+        var leaderStyleByHandle: [UInt32: CADLeaderStyle] = [:]
+        for entry in reader.mleaderStyles {
+            let pathType: CADLeaderPathType = entry.pathType == 2
+                ? .spline
+                : (entry.pathType == 0 ? .none : .straight)
+            let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedName = name.isEmpty ? "Standard" : name
+            let style = CADLeaderStyle(
+                name: resolvedName,
+                pathType: pathType,
+                arrowEnabled: entry.arrowSize > 0,
+                arrowSize: max(entry.arrowSize, 0),
+                landingEnabled: entry.landingEnabled,
+                doglegEnabled: entry.doglegEnabled,
+                doglegLength: max(entry.doglegLength, 0),
+                contentGap: max(entry.landingGap, 0),
+                textHeight: max(entry.textHeight, 0.0001),
+                textStyleName: textStyleNameByHandle[entry.textStyleHandle] ?? "Standard",
+                textFrameEnabled: entry.textFrameEnabled,
+                maxLeaderPoints: entry.maxLeaderPoints,
+                blockScale: max(entry.blockScale, 0.0001),
+                blockRotation: entry.blockRotation)
+            leaderStyles[resolvedName] = style
+            if entry.handle != 0 { leaderStyleByHandle[entry.handle] = style }
+        }
 
         var blockGeometryCache: [String: [StyledPrimitive]] = [:]
 
@@ -502,9 +535,128 @@ public enum DXFImporter {
             var converted: [CADEntity] = []
             converted.reserveCapacity(orderedEntities.count)
             var seenArrayGroups = Set<UUID>()
+            let attachedLeaderAnnotations = Set(orderedEntities.compactMap { entity -> UInt32? in
+                guard let leader = entity as? DXFLeaderEntity, leader.annotHandle != 0 else { return nil }
+                return leader.annotHandle
+            })
 
             for (drawOrder, entity) in orderedEntities.enumerated() {
                 guard Self.shouldRenderAttributeEntity(entity) else { continue }
+                if attachedLeaderAnnotations.contains(entity.handle) { continue }
+
+                if let leader = entity as? DXFLeaderEntity, leader.vertices.count >= 2 {
+                    let associated = leader.annotHandle == 0 ? nil : reader.entities.first { $0.handle == leader.annotHandle }
+                    let textEntity = associated as? DXFTextEntity
+                    let insertEntity = associated as? DXFInsertEntity
+                    let contentPosition = textEntity.map { Vector3(x: $0.basePoint.x, y: -$0.basePoint.y, z: $0.basePoint.z) }
+                        ?? insertEntity.map { Vector3(x: $0.basePoint.x, y: -$0.basePoint.y, z: $0.basePoint.z) }
+                        ?? leader.vertices.last.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) }
+                        ?? .zero
+                    let style = CADLeaderStyle(
+                        name: leader.style.isEmpty ? "Standard" : leader.style,
+                        pathType: leader.leaderType == 1 ? .spline : .straight,
+                        arrowEnabled: leader.arrow != 0,
+                        arrowSize: max(leader.textHeight, 2.5),
+                        landingEnabled: leader.hookLine != 0,
+                        doglegEnabled: leader.hookLine != 0,
+                        doglegLength: max(leader.textHeight * 2, 2.5),
+                        contentGap: max(leader.textHeight * 0.5, 0.5),
+                        textHeight: textEntity?.height ?? max(leader.textHeight, 2.5),
+                        textStyleName: textEntity?.style ?? "Standard",
+                        blockScale: max(insertEntity?.xScale ?? 1, 0.0001),
+                        blockRotation: insertEntity?.angle ?? 0)
+                    let contentType: CADLeaderContentType = insertEntity == nil
+                        ? (textEntity == nil ? .none : .mtext)
+                        : .block
+                    let data = CADLeaderData(
+                        styleName: style.name,
+                        branches: [CADLeaderBranch(vertices: leader.vertices.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) })],
+                        contentType: contentType,
+                        text: textEntity.map { DXFEntityConverter.cleanMTextFormatting($0.text) } ?? "",
+                        blockName: insertEntity?.name,
+                        contentPosition: contentPosition,
+                        contentRotation: textEntity.map { -$0.angle_p * .pi / 180 }
+                            ?? insertEntity.map { -$0.angle }
+                            ?? 0,
+                        textWidth: textEntity?.secPoint.x ?? (leader.textWidth > 0 ? leader.textWidth : nil),
+                        isLegacyLeader: true,
+                        styleOverrides: style)
+                    let geometry = CADLeaderGeometry.build(
+                        data: data,
+                        style: style,
+                        blockResolver: { name in blockByID.values.first { $0.name.caseInsensitiveCompare(name) == .orderedSame } })
+                    var cadEnt = CADEntity(
+                        handle: UUID(),
+                        layerID: layerID(for: entity),
+                        localGeometry: geometry,
+                        leaderData: CADLeaderDataBox(data),
+                        transform: .identity,
+                        xdata: Self.entityStyleXData(from: entity, globalLineTypeScale: globalLineTypeScale),
+                        drawOrder: drawOrder)
+                    cadEnt.drawOrder = drawOrder
+                    converted.append(cadEnt)
+                    continue
+                }
+
+                if let leader = entity as? DXFMLeaderEntity, !leader.branches.isEmpty {
+                    let importedStyle = reader.mleaderStyles.first { $0.handle == leader.styleHandle }
+                    let namedStyle = leaderStyleByHandle[leader.styleHandle]
+                    let pathValue = importedStyle?.pathType ?? leader.pathType
+                    let pathType: CADLeaderPathType = pathValue == 2 ? .spline : (pathValue == 0 ? .none : .straight)
+                    let textStyleName = importedStyle.flatMap { style in
+                        reader.textstyles.first { $0.handle == style.textStyleHandle }?.name
+                    } ?? "Standard"
+                    let fallbackStyle = CADLeaderStyle(
+                        name: importedStyle?.name ?? leader.styleName,
+                        pathType: pathType,
+                        arrowEnabled: (importedStyle?.arrowSize ?? leader.arrowSize) > 0,
+                        arrowSize: max(importedStyle?.arrowSize ?? leader.arrowSize, 0),
+                        landingEnabled: importedStyle?.landingEnabled ?? leader.landingEnabled,
+                        doglegEnabled: importedStyle?.doglegEnabled ?? leader.doglegEnabled,
+                        doglegLength: max(importedStyle?.doglegLength ?? leader.doglegLength, 0),
+                        contentGap: max(importedStyle?.landingGap ?? leader.landingGap, 0),
+                        textHeight: max(importedStyle?.textHeight ?? leader.textHeight, 0.0001),
+                        textStyleName: textStyleName,
+                        textFrameEnabled: importedStyle?.textFrameEnabled ?? false,
+                        maxLeaderPoints: importedStyle?.maxLeaderPoints ?? 2,
+                        blockScale: max(importedStyle?.blockScale ?? 1, 0.0001),
+                        blockRotation: importedStyle?.blockRotation ?? 0)
+                    let style = namedStyle ?? fallbackStyle
+                    let blockNameFromHandle = leader.blockContentHandle == 0
+                        ? nil
+                        : blockNameByHandle[leader.blockContentHandle]
+                    let blockName = blockNameFromHandle ?? (leader.blockName.isEmpty ? nil : leader.blockName)
+                    let contentType: CADLeaderContentType = blockName == nil
+                        ? (leader.text.isEmpty ? .none : .mtext)
+                        : .block
+                    let data = CADLeaderData(
+                        styleName: style.name,
+                        branches: leader.branches.map { branch in
+                            CADLeaderBranch(vertices: branch.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) })
+                        },
+                        contentType: contentType,
+                        text: DXFEntityConverter.cleanMTextFormatting(leader.text),
+                        blockName: blockName,
+                        contentPosition: Vector3(x: leader.textPosition.x, y: -leader.textPosition.y, z: leader.textPosition.z),
+                        contentRotation: -leader.textRotation,
+                        textWidth: leader.textWidth > 0 ? leader.textWidth : nil,
+                        styleOverrides: namedStyle == nil ? style : nil)
+                    let geometry = CADLeaderGeometry.build(
+                        data: data,
+                        style: style,
+                        blockResolver: { name in blockByID.values.first { $0.name.caseInsensitiveCompare(name) == .orderedSame } })
+                    var cadEnt = CADEntity(
+                        handle: UUID(),
+                        layerID: layerID(for: entity),
+                        localGeometry: geometry,
+                        leaderData: CADLeaderDataBox(data),
+                        transform: .identity,
+                        xdata: Self.entityStyleXData(from: entity, globalLineTypeScale: globalLineTypeScale),
+                        drawOrder: drawOrder)
+                    cadEnt.drawOrder = drawOrder
+                    converted.append(cadEnt)
+                    continue
+                }
 
                 if let insert = entity as? DXFInsertEntity,
                    let blockID = blockNameToID[insert.name],
@@ -827,6 +979,7 @@ public enum DXFImporter {
                             blockID: modelEntity.blockID,
                             localGeometry: modelEntity.localGeometry,
                             dimensionMetadata: modelEntity.dimensionMetadata,
+                            leaderData: modelEntity.leaderData,
                             arrayData: modelEntity.arrayData,
                             transform: projection.multiplying(by: modelEntity.transform),
                             xdata: viewport.projectedXData(modelEntity.xdata),
@@ -850,6 +1003,7 @@ public enum DXFImporter {
                             blockID: modelEntity.blockID,
                             localGeometry: modelEntity.localGeometry,
                             dimensionMetadata: modelEntity.dimensionMetadata,
+                            leaderData: modelEntity.leaderData,
                             arrayData: modelEntity.arrayData,
                             transform: projection.multiplying(by: modelEntity.transform),
                             xdata: syntheticViewportXData(modelEntity.xdata, projection: projection),
@@ -875,6 +1029,7 @@ public enum DXFImporter {
             textStyles: textStyles,
             linetypePatterns: linetypePatterns,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
             views: views)
     }
 

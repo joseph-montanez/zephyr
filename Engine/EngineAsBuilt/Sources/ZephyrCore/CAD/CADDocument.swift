@@ -34,6 +34,8 @@ public struct CADDocumentSnapshot: Sendable {
         Dictionary(textStyles.values.map { ($0.name, $0.fontFile) }, uniquingKeysWith: { first, _ in first })
     }
     public let dimensionStyles: [String: CADDimensionStyle]
+    public let leaderStyles: [String: CADLeaderStyle]
+    public let currentLeaderStyleName: String
     public let linetypePatterns: [String: [Double]]
     /// Names of image assets currently referenced by entities (not the raw Data blobs).
     /// The actual `imageStore` lives on `CADDocument` and persists across undo/redo.
@@ -49,6 +51,8 @@ public struct CADDocumentSnapshot: Sendable {
         unit: CADUnit,
         textStyles: [String: CADTextStyle],
         dimensionStyles: [String: CADDimensionStyle] = [:],
+        leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+        currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         imageAssetNames: Set<String> = []
     ) {
@@ -61,6 +65,8 @@ public struct CADDocumentSnapshot: Sendable {
         self.unit = unit
         self.textStyles = textStyles
         self.dimensionStyles = dimensionStyles
+        self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
+        self.currentLeaderStyleName = currentLeaderStyleName
         self.linetypePatterns = linetypePatterns
         self.imageAssetNames = imageAssetNames
     }
@@ -75,6 +81,8 @@ public struct CADDocumentSnapshot: Sendable {
         unit: CADUnit,
         textStyleFonts: [String: String],
         dimensionStyles: [String: CADDimensionStyle] = [:],
+        leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+        currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         imageAssetNames: Set<String> = []
     ) {
@@ -91,6 +99,8 @@ public struct CADDocumentSnapshot: Sendable {
             unit: unit,
             textStyles: styles.isEmpty ? ["Standard": .standard] : styles,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
+            currentLeaderStyleName: currentLeaderStyleName,
             linetypePatterns: linetypePatterns,
             imageAssetNames: imageAssetNames)
     }
@@ -272,6 +282,10 @@ public final class CADDocument {
     
     /// Map of dimension style name -> CADDimensionStyle
     public var dimensionStyles: [String: CADDimensionStyle] = [:]
+
+    /// Named multileader styles and the active style used by new leaders.
+    public var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
+    public var currentLeaderStyleName: String = "Standard"
 
     /// DXF linetype dash pattern definitions (e.g. "DASHED" -> [10.0, 5.0]).
     /// Key is the uppercased linetype name. Saved/loaded in EAB for accurate round-trip.
@@ -768,6 +782,7 @@ public final class CADDocument {
                 blockID: entity.blockID.flatMap { blockRemap[$0] ?? $0 },
                 localGeometry: entity.localGeometry,
                 dimensionMetadata: entity.dimensionMetadata,
+                leaderData: entity.leaderData,
                 arrayData: entity.arrayData,
                 transform: entity.transform,
                 xdata: entity.xdata,
@@ -2168,6 +2183,8 @@ public final class CADDocument {
         unit: CADUnit = .millimeter,
         textStyles: [String: CADTextStyle] = ["Standard": .standard],
         dimensionStyles: [String: CADDimensionStyle] = [:],
+        leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+        currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         activeLayerID: UUID? = nil,
         imageStore: [String: CADImageAsset] = [:]
@@ -2175,6 +2192,8 @@ public final class CADDocument {
         self.unit = unit
         self.textStyles = textStyles.isEmpty ? ["Standard": .standard] : textStyles
         self.dimensionStyles = dimensionStyles
+        self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
+        self.currentLeaderStyleName = self.leaderStyles.keys.first(where: { $0.caseInsensitiveCompare(currentLeaderStyleName) == .orderedSame }) ?? "Standard"
         self.linetypePatterns = linetypePatterns
         self.imageStore = imageStore
         for layer in layers { layerTable[layer.handle] = layer }
@@ -2206,6 +2225,8 @@ public final class CADDocument {
         unit: CADUnit = .millimeter,
         textStyleFonts: [String: String],
         dimensionStyles: [String: CADDimensionStyle] = [:],
+        leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+        currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         activeLayerID: UUID? = nil,
         imageStore: [String: CADImageAsset] = [:]
@@ -2222,6 +2243,8 @@ public final class CADDocument {
             unit: unit,
             textStyles: styles.isEmpty ? ["Standard": .standard] : styles,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
+            currentLeaderStyleName: currentLeaderStyleName,
             linetypePatterns: linetypePatterns,
             activeLayerID: activeLayerID,
             imageStore: imageStore)
@@ -2239,7 +2262,8 @@ public final class CADDocument {
             return CADDocumentSnapshot(
                 layers: [:], blocks: [:], entities: [:], constraints: [:],
                 solvedTransforms: [:], activeLayerID: nil, unit: unit,
-                textStyles: ["Standard": .standard], dimensionStyles: [:], linetypePatterns: [:],
+                textStyles: ["Standard": .standard], dimensionStyles: [:],
+                leaderStyles: ["Standard": .standard], currentLeaderStyleName: "Standard", linetypePatterns: [:],
                 imageAssetNames: [])
         }
         guard layerCount < 100_000 else {
@@ -2247,7 +2271,8 @@ public final class CADDocument {
             return CADDocumentSnapshot(
                 layers: [:], blocks: [:], entities: [:], constraints: [:],
                 solvedTransforms: [:], activeLayerID: nil, unit: unit,
-                textStyles: ["Standard": .standard], dimensionStyles: [:], linetypePatterns: [:],
+                textStyles: ["Standard": .standard], dimensionStyles: [:],
+                leaderStyles: ["Standard": .standard], currentLeaderStyleName: "Standard", linetypePatterns: [:],
                 imageAssetNames: [])
         }
 
@@ -2276,6 +2301,8 @@ public final class CADDocument {
             activeLayerID: activeLayerID, unit: unit,
             textStyles: textStyles,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
+            currentLeaderStyleName: currentLeaderStyleName,
             linetypePatterns: linetypePatterns,
             imageAssetNames: names
         )
@@ -2311,6 +2338,8 @@ public final class CADDocument {
         unit = snapshot.unit
         textStyles = snapshot.textStyles
         dimensionStyles = snapshot.dimensionStyles
+        leaderStyles = snapshot.leaderStyles
+        currentLeaderStyleName = snapshot.currentLeaderStyleName
         linetypePatterns = snapshot.linetypePatterns
         // Prune image assets no longer referenced by any entity after restore
         pruneUnreferencedImageAssets()

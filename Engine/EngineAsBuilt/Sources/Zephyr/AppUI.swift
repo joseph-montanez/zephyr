@@ -150,6 +150,9 @@ struct AppUI {
         if engine.ui.styleManagerActive {
             StyleManagerUI.render(engine: engine, dw: dw, dh: dh)
         }
+        if engine.ui.leaderStyleManagerActive {
+            LeaderStyleManagerUI.render(engine: engine, dw: dw, dh: dh)
+        }
 
         // 9b. Text editor modal dialog (when creating/editing text).
         if engine.textManager.isEditorActive {

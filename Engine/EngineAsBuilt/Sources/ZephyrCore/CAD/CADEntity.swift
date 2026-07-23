@@ -807,6 +807,9 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
 
     public var dimensionMetadata: CADDimensionMetadataBox?
 
+    /// Native leader or multileader metadata. Geometry is regenerated from this payload.
+    public var leaderData: CADLeaderDataBox?
+
     /// Associative rectangular, polar, or path array parameters.
     public var arrayData: CADArrayData?
 
@@ -903,6 +906,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
                 blockID: UUID? = nil,
                 localGeometry: [CADPrimitive]? = nil,
                 dimensionMetadata: CADDimensionMetadataBox? = nil,
+                leaderData: CADLeaderDataBox? = nil,
                 arrayData: CADArrayData? = nil,
                 transform: Transform3D = .identity,
                 xdata: [String: XDataValue] = [:],
@@ -914,6 +918,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
         self.blockID = blockID
         self.localGeometry = localGeometry
         self.dimensionMetadata = dimensionMetadata
+        self.leaderData = leaderData
         self.arrayData = arrayData
         self.transform = transform
         self.xdata = xdata

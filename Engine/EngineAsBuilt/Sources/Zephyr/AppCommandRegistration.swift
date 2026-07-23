@@ -182,6 +182,41 @@ struct AppCommandRegistration {
             factory: { DrawPaletteCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "LEADER",
+            aliases: ["LEAD"],
+            factory: { LeaderCreateCommand(mode: .leader) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "QLEADER",
+            aliases: ["LE"],
+            factory: { LeaderCreateCommand(mode: .qleader) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADER",
+            aliases: ["MLD"],
+            factory: { LeaderCreateCommand(mode: .mleader) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADEREDIT",
+            aliases: ["MLE"],
+            factory: { MLeaderEditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADERALIGN",
+            aliases: ["MLA"],
+            factory: { MLeaderAlignCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADERCOLLECT",
+            aliases: ["MLC"],
+            factory: { MLeaderCollectCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADERSTYLE",
+            aliases: ["MLS"],
+            factory: { MLeaderStyleCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "TEXT",
             aliases: ["T", "DTEXT", "MTEXT"],
             factory: { TextCommand() }

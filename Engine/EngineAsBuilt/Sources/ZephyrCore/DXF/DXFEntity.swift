@@ -137,6 +137,7 @@ public enum DXFEType: String, Sendable {
     case iMAGE         = "IMAGE"
     case iNSERT        = "INSERT"
     case lEADER        = "LEADER"
+    case mLEADER       = "MULTILEADER"
     case lINE          = "LINE"
     case lWPOLYLINE    = "LWPOLYLINE"
     case mTEXT         = "MTEXT"
@@ -942,6 +943,7 @@ public class DXFLeaderEntity: DXFEntity {
     public var vertNum: Int            // 76
     public var colorUse: Int           // 77
     public var annotHandle: UInt32     // 340
+    public var annotation: DXFEntity?
     public var extrusionPoint: Vector3 // 210,220,230
     public var horizDir: Vector3       // 211,221,231
     public var offsetBlock: Vector3    // 212,222,232
@@ -960,10 +962,64 @@ public class DXFLeaderEntity: DXFEntity {
         self.vertNum = 0
         self.colorUse = 0
         self.annotHandle = 0
+        self.annotation = nil
         self.extrusionPoint = Vector3(x: 0, y: 0, z: 1)
         self.horizDir = .zero
         self.offsetBlock = .zero
         self.offsetText = .zero
+        super.init(eType: eType)
+    }
+}
+
+// MARK: - Multileader
+
+public struct DXFMLeaderStyleEntry: Sendable {
+    public var handle: UInt32 = 0
+    public var name: String = "Standard"
+    public var pathType: Int = 1
+    public var contentType: Int = 2
+    public var maxLeaderPoints: Int = 2
+    public var arrowSize: Double = 2.5
+    public var landingGap: Double = 1.25
+    public var doglegLength: Double = 8
+    public var textHeight: Double = 2.5
+    public var textStyleHandle: UInt32 = 0
+    public var landingEnabled: Bool = true
+    public var doglegEnabled: Bool = true
+    public var textFrameEnabled: Bool = false
+    public var blockScale: Double = 1
+    public var blockRotation: Double = 0
+
+    public init() {}
+}
+
+public class DXFMLeaderEntity: DXFEntity {
+    public var styleHandle: UInt32 = 0
+    public var styleName: String = "Standard"
+    public var blockContentHandle: UInt32 = 0
+    public var contentScale: Double = 1
+    public var contentType: Int = 2
+    public var pathType: Int = 1
+    public var text: String = ""
+    public var textPosition: Vector3 = .zero
+    public var textDirection: Vector3 = Vector3(x: 1, y: 0, z: 0)
+    public var textRotation: Double = 0
+    public var textHeight: Double = 2.5
+    public var textWidth: Double = 0
+    public var textStyleName: String = "Standard"
+    public var textFrameEnabled: Bool = false
+    public var maxLeaderPoints: Int = 2
+    public var blockScale: Double = 1
+    public var blockRotation: Double = 0
+    public var arrowSize: Double = 2.5
+    public var landingGap: Double = 1.25
+    public var doglegLength: Double = 8
+    public var landingEnabled: Bool = true
+    public var doglegEnabled: Bool = true
+    public var blockName: String = ""
+    public var branches: [[Vector3]] = []
+
+    public override init(eType: DXFEType = .mLEADER) {
         super.init(eType: eType)
     }
 }

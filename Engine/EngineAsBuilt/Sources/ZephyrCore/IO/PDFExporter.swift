@@ -377,6 +377,7 @@ public enum PDFExporter {
                         blockID: entity.blockID,
                         localGeometry: entity.localGeometry,
                         dimensionMetadata: entity.dimensionMetadata,
+                        leaderData: entity.leaderData,
                         transform: entity.transform.multiplying(by: instance.transform),
                         xdata: entity.xdata,
                         drawOrder: entity.drawOrder,

@@ -24,7 +24,8 @@ public let EABArchiveMagic: UInt32 = 0x41424145  // "EABA" in little-endian
 /// Current file format version.
 /// Version 13 persists full text style properties.
 /// Version 14 persists associative array parameters and overrides.
-public let EABVersion: UInt32 = 14
+/// Version 15 persists native leader metadata and named multileader styles.
+public let EABVersion: UInt32 = 15
 
 /// Section type identifiers in the section table.
 public enum EABSectionType: UInt32, Sendable {
@@ -42,6 +43,7 @@ public enum EABSectionType: UInt32, Sendable {
     case lineTypes    = 12
     case images       = 13
     case dimensionStyles = 14
+    case leaderStyles = 15
 }
 
 /// Compression mode for a data section.
