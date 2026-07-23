@@ -104,10 +104,25 @@ public struct FormattedParagraph: Codable, Sendable, Hashable {
     /// 0 = inherit entity alignment, 1 = center, 2 = right,
     /// 3 = justified, 4 = distributed, 5 = explicit left
     public var alignment: Int
+    public var firstLineIndent: Double?
+    public var leftIndent: Double?
+    public var rightIndent: Double?
+    public var tabStops: [Double]?
     public var runs: [FormattedTextRun]
 
-    public init(alignment: Int = 0, runs: [FormattedTextRun] = []) {
+    public init(
+        alignment: Int = 0,
+        firstLineIndent: Double? = nil,
+        leftIndent: Double? = nil,
+        rightIndent: Double? = nil,
+        tabStops: [Double]? = nil,
+        runs: [FormattedTextRun] = []
+    ) {
         self.alignment = alignment
+        self.firstLineIndent = firstLineIndent
+        self.leftIndent = leftIndent
+        self.rightIndent = rightIndent
+        self.tabStops = tabStops
         self.runs = runs
     }
 
@@ -247,13 +262,34 @@ public enum MTEXTFormatter {
             if pIdx > 0 {
                 out += "\\P"
             }
+            var paragraphProperties: [String] = []
+            if let indent = paragraph.firstLineIndent {
+                paragraphProperties.append("i\(indent)")
+            }
+            if let indent = paragraph.leftIndent {
+                paragraphProperties.append("l\(indent)")
+            }
+            if let indent = paragraph.rightIndent {
+                paragraphProperties.append("r\(indent)")
+            }
+            if let stops = paragraph.tabStops {
+                if stops.isEmpty {
+                    paragraphProperties.append("tz")
+                } else {
+                    paragraphProperties.append(
+                        "t" + stops.map { String($0) }.joined(separator: ","))
+                }
+            }
             switch paragraph.alignment {
-            case 1: out += "\\pxqc;"
-            case 2: out += "\\pxqr;"
-            case 3: out += "\\pxqj;"
-            case 4: out += "\\pxqd;"
-            case 5: out += "\\pxql;"
+            case 1: paragraphProperties.append("qc")
+            case 2: paragraphProperties.append("qr")
+            case 3: paragraphProperties.append("qj")
+            case 4: paragraphProperties.append("qd")
+            case 5: paragraphProperties.append("ql")
             default: break
+            }
+            if !paragraphProperties.isEmpty {
+                out += "\\px" + paragraphProperties.joined(separator: ",") + ";"
             }
             for run in paragraph.runs {
                 if let stack = run.stack {
@@ -359,6 +395,10 @@ extension MTEXTFormatter {
         /// Result accumulator.
         var paragraphs: [FormattedParagraph] = [FormattedParagraph()]
         var currentAlignment: Int = 0
+        var currentFirstLineIndent: Double? = nil
+        var currentLeftIndent: Double? = nil
+        var currentRightIndent: Double? = nil
+        var currentTabStops: [Double]? = nil
         var currentRuns: [FormattedTextRun] = []
 
         /// Formatting stack for `{...}` groups.
@@ -402,6 +442,23 @@ extension MTEXTFormatter {
                     flushText()
                     pos += 1
                     parseControlCode()
+                } else if c == "^", pos + 1 < chars.count {
+                    let next = chars[pos + 1]
+                    switch next {
+                    case "I", "i":
+                        textBuf.append("\t")
+                        pos += 2
+                    case "J", "j", "M", "m":
+                        flushText()
+                        newParagraph()
+                        pos += 2
+                    case "^":
+                        textBuf.append("^")
+                        pos += 2
+                    default:
+                        textBuf.append(c)
+                        pos += 1
+                    }
                 } else if c == "%" {
                     // %% special characters
                     if pos + 2 < chars.count && chars[pos + 1] == "%" {
@@ -453,6 +510,10 @@ extension MTEXTFormatter {
             }
             paragraphs[paragraphs.count - 1] = FormattedParagraph(
                 alignment: currentAlignment,
+                firstLineIndent: currentFirstLineIndent,
+                leftIndent: currentLeftIndent,
+                rightIndent: currentRightIndent,
+                tabStops: currentTabStops,
                 runs: currentRuns
             )
             currentRuns = []
@@ -460,7 +521,12 @@ extension MTEXTFormatter {
 
         private mutating func newParagraph() {
             commitParagraph()
-            paragraphs.append(FormattedParagraph(alignment: currentAlignment))
+            paragraphs.append(FormattedParagraph(
+                alignment: currentAlignment,
+                firstLineIndent: currentFirstLineIndent,
+                leftIndent: currentLeftIndent,
+                rightIndent: currentRightIndent,
+                tabStops: currentTabStops))
         }
 
         // MARK: - Control Code Parsing
@@ -547,19 +613,28 @@ extension MTEXTFormatter {
                 pos += 1
             }
 
-            let values = Array(spec.lowercased())
-            var index = 0
-            while index < values.count {
-                switch values[index] {
-                case "x":
-                    currentAlignment = 0
-                    index += 1
-                case "q":
-                    guard index + 1 < values.count else {
-                        index += 1
-                        continue
+            var tabStops = currentTabStops
+            var parsingTabStops = false
+            for rawPart in spec.split(separator: ",", omittingEmptySubsequences: true) {
+                var part = String(rawPart).lowercased()
+                while part.first == "x" {
+                    part.removeFirst()
+                }
+                guard let key = part.first else { continue }
+                let value = String(part.dropFirst())
+
+                if parsingTabStops, let number = Double(part) {
+                    if tabStops == nil || tabStops?.isEmpty == true {
+                        tabStops = []
                     }
-                    switch values[index + 1] {
+                    tabStops?.append(number)
+                    continue
+                }
+                parsingTabStops = false
+
+                switch key {
+                case "q":
+                    switch value.first {
                     case "c": currentAlignment = 1
                     case "r": currentAlignment = 2
                     case "j": currentAlignment = 3
@@ -567,11 +642,30 @@ extension MTEXTFormatter {
                     case "l": currentAlignment = 5
                     default: break
                     }
-                    index += 2
+                case "i":
+                    if let number = Double(value) {
+                        currentFirstLineIndent = number
+                    }
+                case "l":
+                    if let number = Double(value) {
+                        currentLeftIndent = number
+                    }
+                case "r":
+                    if let number = Double(value) {
+                        currentRightIndent = number
+                    }
+                case "t":
+                    if value == "z" {
+                        tabStops = []
+                    } else if let number = Double(value) {
+                        tabStops = [number]
+                        parsingTabStops = true
+                    }
                 default:
-                    index += 1
+                    break
                 }
             }
+            currentTabStops = tabStops
         }
 
         // MARK: - Font Spec: \fFontName|b0|i0|c0|p34;
@@ -627,7 +721,7 @@ extension MTEXTFormatter {
             }
             if let val = Double(numStr) {
                 if isRelative {
-                    state.height = defaultHeight * val
+                    state.height *= val
                 } else {
                     state.height = val
                 }

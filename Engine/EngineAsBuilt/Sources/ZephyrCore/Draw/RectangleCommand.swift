@@ -66,6 +66,10 @@ public final class RectangleCommand: FeatureCommand {
     public func handleKeyDown(
         scancode: SDL_Scancode, engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
+        if scancode == SDL_SCANCODE_RETURN || scancode == SDL_SCANCODE_KP_ENTER {
+            return handleDimensionEnter(engine: engine, processor: processor)
+        }
+
         let dynResult = input.handleKey(scancode)
         switch dynResult {
         case .ignored:
@@ -82,8 +86,6 @@ public final class RectangleCommand: FeatureCommand {
         }
 
         switch scancode {
-        case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER:
-            return handleDimensionEnter(engine: engine, processor: processor)
         case SDL_SCANCODE_ESCAPE:
             return .finished
         default:

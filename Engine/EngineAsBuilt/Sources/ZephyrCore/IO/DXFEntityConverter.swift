@@ -1513,6 +1513,24 @@ public enum DXFEntityConverter {
             let nextI = text.index(after: i)
             guard nextI < text.endIndex else { clean.append(c); break }
             let next = text[nextI]
+            if c == "^" {
+                switch next {
+                case "I", "i":
+                    clean.append("\t")
+                    i = text.index(after: nextI)
+                    continue
+                case "J", "j", "M", "m":
+                    clean.append("\n")
+                    i = text.index(after: nextI)
+                    continue
+                case "^":
+                    clean.append("^")
+                    i = text.index(after: nextI)
+                    continue
+                default:
+                    break
+                }
+            }
             if c == "\\" || c == "¥" {
                 switch next {
                 case "P": clean.append("\n"); i = text.index(after: nextI)
