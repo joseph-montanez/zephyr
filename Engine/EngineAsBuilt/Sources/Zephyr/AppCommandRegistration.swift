@@ -207,8 +207,17 @@ struct AppCommandRegistration {
             factory: { DataTableCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "MEASURE",
+            factory: { MeasureDivideCommand(operation: .measure) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIVIDE",
+            aliases: ["DIV"],
+            factory: { MeasureDivideCommand(operation: .divide) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "MEASUREGEOM",
-            aliases: ["MEASURE", "MEA", "MG"],
+            aliases: ["MEASUREGEOMETRY", "MEA", "MG"],
             factory: { MeasureGeomTool() }
         )
 
