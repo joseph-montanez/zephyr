@@ -986,6 +986,7 @@ public struct DXFMLeaderStyleEntry: Sendable {
     public var textStyleHandle: UInt32 = 0
     public var arrowheadHandle: UInt32 = 0
     public var arrowheadName: String = ""
+    public var blockContentHandle: UInt32 = 0
     public var leftAttachment: Int = 1
     public var rightAttachment: Int = 1
     public var textAngleType: Int = 0

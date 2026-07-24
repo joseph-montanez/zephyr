@@ -207,6 +207,171 @@ public struct CADLeaderBlockAttribute: Sendable, Hashable, Codable {
     }
 }
 
+public enum CADLeaderBlockPrimitive: Sendable, Hashable, Codable {
+    case point(position: Vector3, color: ColorRGBA?)
+    case line(start: Vector3, end: Vector3, color: ColorRGBA?)
+    case polygon(points: [Vector3], color: ColorRGBA?)
+    case polyline(points: [Vector3], isClosed: Bool, color: ColorRGBA?)
+    case fillPolygon(points: [Vector3], color: ColorRGBA?)
+    case fillComplexPolygon(outer: [Vector3], holes: [[Vector3]], color: ColorRGBA?)
+    case circle(center: Vector3, radius: Double, color: ColorRGBA?)
+    case arc(center: Vector3, radius: Double, startAngle: Double, endAngle: Double, color: ColorRGBA?)
+    case spline(controlPoints: [Vector3], knots: [Double], degree: Int, weights: [Double]?, color: ColorRGBA?)
+    case text(
+        position: Vector3,
+        text: String,
+        height: Double,
+        rotation: Double,
+        style: String?,
+        alignH: Int,
+        alignV: Int,
+        mtextWidth: Double?,
+        color: ColorRGBA?
+    )
+    case ellipse(center: Vector3, majorAxis: Vector3, minorRatio: Double, color: ColorRGBA?)
+
+    public init?(primitive: CADPrimitive) {
+        switch primitive {
+        case .point(let position, let color):
+            self = .point(position: position, color: color)
+        case .line(let start, let end, let color):
+            self = .line(start: start, end: end, color: color)
+        case .rect(let origin, let size, let color):
+            self = .polygon(points: Self.rectanglePoints(origin: origin, size: size), color: color)
+        case .fillRect(let origin, let size, let color):
+            self = .fillPolygon(points: Self.rectanglePoints(origin: origin, size: size), color: color)
+        case .polygon(let points, let color):
+            self = .polygon(points: points, color: color)
+        case .polyline(let path, let color):
+            var points = path.tessellatedPoints()
+            if path.isClosed,
+               points.count > 1,
+               points[0].distance(to: points[points.count - 1]) <= 1e-9 {
+                points.removeLast()
+            }
+            self = .polyline(points: points, isClosed: path.isClosed, color: color)
+        case .fillPolygon(let points, let color):
+            self = .fillPolygon(points: points, color: color)
+        case .fillComplexPolygon(let outer, let holes, let color):
+            self = .fillComplexPolygon(outer: outer, holes: holes, color: color)
+        case .circle(let center, let radius, let color):
+            self = .circle(center: center, radius: radius, color: color)
+        case .arc(let center, let radius, let startAngle, let endAngle, let color):
+            self = .arc(
+                center: center,
+                radius: radius,
+                startAngle: startAngle,
+                endAngle: endAngle,
+                color: color)
+        case .spline(let controlPoints, let knots, let degree, let weights, let color):
+            self = .spline(
+                controlPoints: controlPoints,
+                knots: knots,
+                degree: degree,
+                weights: weights,
+                color: color)
+        case .text(
+            let position,
+            let text,
+            let height,
+            let rotation,
+            let style,
+            let alignH,
+            let alignV,
+            let mtextWidth,
+            let color):
+            self = .text(
+                position: position,
+                text: text,
+                height: height,
+                rotation: rotation,
+                style: style,
+                alignH: alignH,
+                alignV: alignV,
+                mtextWidth: mtextWidth,
+                color: color)
+        case .ellipse(let center, let majorAxis, let minorRatio, let color):
+            self = .ellipse(
+                center: center,
+                majorAxis: majorAxis,
+                minorRatio: minorRatio,
+                color: color)
+        case .gradient, .hatch, .hatchPath, .ray, .image, .table:
+            return nil
+        }
+    }
+
+    public var primitive: CADPrimitive {
+        switch self {
+        case .point(let position, let color):
+            return .point(position: position, color: color)
+        case .line(let start, let end, let color):
+            return .line(start: start, end: end, color: color)
+        case .polygon(let points, let color):
+            return .polygon(points: points, color: color)
+        case .polyline(let points, let isClosed, let color):
+            return .polyline(
+                path: CADPolyline(points: points, isClosed: isClosed),
+                color: color)
+        case .fillPolygon(let points, let color):
+            return .fillPolygon(points: points, color: color)
+        case .fillComplexPolygon(let outer, let holes, let color):
+            return .fillComplexPolygon(outer: outer, holes: holes, color: color)
+        case .circle(let center, let radius, let color):
+            return .circle(center: center, radius: radius, color: color)
+        case .arc(let center, let radius, let startAngle, let endAngle, let color):
+            return .arc(
+                center: center,
+                radius: radius,
+                startAngle: startAngle,
+                endAngle: endAngle,
+                color: color)
+        case .spline(let controlPoints, let knots, let degree, let weights, let color):
+            return .spline(
+                controlPoints: controlPoints,
+                knots: knots,
+                degree: degree,
+                weights: weights,
+                color: color)
+        case .text(
+            let position,
+            let text,
+            let height,
+            let rotation,
+            let style,
+            let alignH,
+            let alignV,
+            let mtextWidth,
+            let color):
+            return .text(
+                position: position,
+                text: text,
+                height: height,
+                rotation: rotation,
+                style: style,
+                alignH: alignH,
+                alignV: alignV,
+                mtextWidth: mtextWidth,
+                color: color)
+        case .ellipse(let center, let majorAxis, let minorRatio, let color):
+            return .ellipse(
+                center: center,
+                majorAxis: majorAxis,
+                minorRatio: minorRatio,
+                color: color)
+        }
+    }
+
+    private static func rectanglePoints(origin: Vector3, size: Vector3) -> [Vector3] {
+        [
+            origin,
+            Vector3(x: origin.x + size.x, y: origin.y, z: origin.z),
+            Vector3(x: origin.x + size.x, y: origin.y + size.y, z: origin.z),
+            Vector3(x: origin.x, y: origin.y + size.y, z: origin.z)
+        ]
+    }
+}
+
 public struct CADLeaderData: Sendable, Hashable, Codable {
     public var styleName: String
     public var branches: [CADLeaderBranch]
@@ -225,6 +390,7 @@ public struct CADLeaderData: Sendable, Hashable, Codable {
     public var textAttachment: CADLeaderTextAttachment?
     public var textFlowDirection: Int?
     public var blockAttributes: [CADLeaderBlockAttribute]?
+    public var blockContentPrimitives: [CADLeaderBlockPrimitive]?
     public var isLegacyLeader: Bool
     public var styleOverrides: CADLeaderStyle?
 
@@ -246,6 +412,7 @@ public struct CADLeaderData: Sendable, Hashable, Codable {
         textAttachment: CADLeaderTextAttachment? = nil,
         textFlowDirection: Int? = nil,
         blockAttributes: [CADLeaderBlockAttribute]? = nil,
+        blockContentPrimitives: [CADLeaderBlockPrimitive]? = nil,
         isLegacyLeader: Bool = false,
         styleOverrides: CADLeaderStyle? = nil
     ) {
@@ -266,6 +433,7 @@ public struct CADLeaderData: Sendable, Hashable, Codable {
         self.textAttachment = textAttachment
         self.textFlowDirection = textFlowDirection
         self.blockAttributes = blockAttributes
+        self.blockContentPrimitives = blockContentPrimitives
         self.isLegacyLeader = isLegacyLeader
         self.styleOverrides = styleOverrides
     }
@@ -512,7 +680,7 @@ public enum CADLeaderGeometry {
     ) -> Double {
         switch arrowhead {
         case .closedFilled, .closedBlank, .dot, .dotBlank, .boxFilled, .boxBlank:
-            return size * 0.82
+            return size
         case .none, .open, .architecturalTick, .oblique, .originIndicator, .custom:
             return 0
         }
@@ -530,20 +698,23 @@ public enum CADLeaderGeometry {
         guard arrowhead != .none, size > 1e-9, direction.magnitudeSquared > 1e-18 else { return }
         let perpendicular = Vector3(x: -direction.y, y: direction.x, z: 0)
         let base = tip + direction * size
-        let halfWidth = size * 0.38
-        let left = base + perpendicular * halfWidth
-        let right = base - perpendicular * halfWidth
+        let closedHalfWidth = size * 0.1875
+        let closedLeft = base + perpendicular * closedHalfWidth
+        let closedRight = base - perpendicular * closedHalfWidth
+        let openHalfWidth = size * 0.2679491924311227
+        let openLeft = base + perpendicular * openHalfWidth
+        let openRight = base - perpendicular * openHalfWidth
 
         switch arrowhead {
         case .none:
             break
         case .closedFilled:
-            primitives.append(.fillPolygon(points: [tip, left, right]))
+            primitives.append(.fillPolygon(points: [tip, closedLeft, closedRight]))
         case .closedBlank:
-            primitives.append(.polygon(points: [tip, left, right]))
+            primitives.append(.polygon(points: [tip, closedLeft, closedRight]))
         case .open:
-            primitives.append(.line(start: tip, end: left))
-            primitives.append(.line(start: tip, end: right))
+            primitives.append(.line(start: tip, end: openLeft))
+            primitives.append(.line(start: tip, end: openRight))
         case .dot:
             primitives.append(.circle(center: tip + direction * size * 0.5, radius: size * 0.5))
             let segments = 20
@@ -583,7 +754,7 @@ public enum CADLeaderGeometry {
         case .custom:
             guard let blockName,
                   let block = blockResolver(blockName) else {
-                primitives.append(.fillPolygon(points: [tip, left, right]))
+                primitives.append(.fillPolygon(points: [tip, closedLeft, closedRight]))
                 return
             }
             let bounds = block.localBoundingBox
@@ -706,7 +877,14 @@ public enum CADLeaderGeometry {
             if names.isEmpty, let name = data.blockName { names = [name] }
             var offset = 0.0
             for name in names {
-                guard let block = blockResolver(name) else { continue }
+                let isPrimaryBlock = name.caseInsensitiveCompare(data.blockName ?? "") == .orderedSame
+                let resolvedBlock = blockResolver(name)
+                var blockGeometry = resolvedBlock?.geometry ?? []
+                if blockGeometry.isEmpty, isPrimaryBlock, let snapshot = data.blockContentPrimitives {
+                    blockGeometry = snapshot.map(\.primitive)
+                }
+                guard !blockGeometry.isEmpty else { continue }
+
                 let scale = style.blockScale
                 let transform = Transform3D.translated(by: Vector3(
                     x: data.contentPosition.x + offset,
@@ -714,9 +892,8 @@ public enum CADLeaderGeometry {
                     z: data.contentPosition.z))
                     .multiplying(by: Transform3D.rotated(by: style.blockRotation + data.contentRotation))
                     .multiplying(by: Transform3D.scaled(by: Vector3(x: scale, y: scale, z: scale)))
-                primitives.append(contentsOf: CADGeometryMath.transformPrimitives(block.geometry, by: transform))
-                if name.caseInsensitiveCompare(data.blockName ?? "") == .orderedSame,
-                   let attributes = data.blockAttributes {
+                primitives.append(contentsOf: CADGeometryMath.transformPrimitives(blockGeometry, by: transform))
+                if isPrimaryBlock, let attributes = data.blockAttributes {
                     let attributePrimitives = attributes.compactMap { attribute -> CADPrimitive? in
                         guard !attribute.text.isEmpty else { return nil }
                         return .text(
@@ -733,7 +910,10 @@ public enum CADLeaderGeometry {
                         attributePrimitives,
                         by: transform))
                 }
-                let width = max(block.localBoundingBox.max.x - block.localBoundingBox.min.x, style.textHeight)
+                let bounds = resolvedBlock?.localBoundingBox
+                    ?? CADEntity.computeLocalBoundingBox(blockID: nil, localGeometry: blockGeometry)
+                    ?? BoundingBox3D()
+                let width = max(bounds.max.x - bounds.min.x, style.textHeight)
                 offset += width * scale + style.contentGap
             }
         }

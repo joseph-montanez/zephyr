@@ -2243,6 +2243,7 @@ extension DXFReader {
             case 291: style.doglegEnabled = i(value) != 0
             case 292: style.textFrameEnabled = i(value) != 0
             case 342: style.textStyleHandle = parseHandle(value)
+            case 343: style.blockContentHandle = parseHandle(value)
             default: break
             }
         }

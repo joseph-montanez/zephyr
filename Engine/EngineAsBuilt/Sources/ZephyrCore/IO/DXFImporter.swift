@@ -69,6 +69,10 @@ public struct DXFImportResult: Sendable {
 
 public enum DXFImporter {
 
+    private static func normalizedLeaderBlockKey(_ name: String) -> String {
+        name.uppercased().filter { $0.isLetter || $0.isNumber }
+    }
+
     private static func leaderArrowhead(blockName: String?) -> CADLeaderArrowhead {
         guard let blockName else { return .closedFilled }
         let key = blockName
@@ -536,6 +540,19 @@ public enum DXFImporter {
             blockByID[handle] = cadBlock
         }
 
+        let leaderBlockByKey = Dictionary(
+            blocks.map { (Self.normalizedLeaderBlockKey($0.name), $0) },
+            uniquingKeysWith: { first, _ in first })
+
+        func resolveLeaderBlock(named name: String) -> CADBlock? {
+            if let exact = blocks.first(where: {
+                $0.name.caseInsensitiveCompare(name) == .orderedSame
+            }) {
+                return exact
+            }
+            return leaderBlockByKey[Self.normalizedLeaderBlockKey(name)]
+        }
+
         let sortEntsFlags: Int = {
             if let value = reader.header.headerVars["$SORTENTS"] as? Int { return value }
             if let value = reader.header.headerVars["$SORTENTS"] as? Int32 { return Int(value) }
@@ -650,7 +667,7 @@ public enum DXFImporter {
                     let geometry = CADLeaderGeometry.build(
                         data: data,
                         style: style,
-                        blockResolver: { name in blockByID.values.first { $0.name.caseInsensitiveCompare(name) == .orderedSame } })
+                        blockResolver: { resolveLeaderBlock(named: $0) })
                     var cadEnt = CADEntity(
                         handle: UUID(),
                         layerID: layerID(for: entity),
@@ -738,10 +755,18 @@ public enum DXFImporter {
                         maxLeaderPoints: templateStyle.maxLeaderPoints,
                         blockScale: max(leader.blockScale, 0.0001),
                         blockRotation: leader.blockRotation)
-                    let blockNameFromHandle = leader.blockContentHandle == 0
+                    let blockContentHandle = leader.blockContentHandle != 0
+                        ? leader.blockContentHandle
+                        : (importedStyle?.blockContentHandle ?? 0)
+                    let blockNameFromHandle = blockContentHandle == 0
                         ? nil
-                        : blockNameByHandle[leader.blockContentHandle]
-                    let blockName = blockNameFromHandle ?? (leader.blockName.isEmpty ? nil : leader.blockName)
+                        : blockNameByHandle[blockContentHandle]
+                    let requestedBlockName = blockNameFromHandle
+                        ?? (leader.blockName.isEmpty ? nil : leader.blockName)
+                    let resolvedContentBlock = requestedBlockName.flatMap {
+                        resolveLeaderBlock(named: $0)
+                    }
+                    let blockName = resolvedContentBlock?.name ?? requestedBlockName
                     let contentType: CADLeaderContentType
                     switch leader.contentType {
                     case 0:
@@ -776,6 +801,13 @@ public enum DXFImporter {
                                 width: override.width)
                         }
                         return values.isEmpty ? nil : values
+                    }()
+                    let blockContentPrimitives: [CADLeaderBlockPrimitive]? = {
+                        guard let block = resolvedContentBlock else { return nil }
+                        let snapshot = block.geometry.compactMap {
+                            CADLeaderBlockPrimitive(primitive: $0)
+                        }
+                        return snapshot.isEmpty ? nil : snapshot
                     }()
                     let data = CADLeaderData(
                         styleName: effectiveStyle.name,
@@ -818,11 +850,12 @@ public enum DXFImporter {
                         textAttachment: Self.leaderTextAttachment(leader.textAttachment),
                         textFlowDirection: leader.textFlowDirection,
                         blockAttributes: blockAttributes,
+                        blockContentPrimitives: blockContentPrimitives,
                         styleOverrides: effectiveStyle)
                     let geometry = CADLeaderGeometry.build(
                         data: data,
                         style: effectiveStyle,
-                        blockResolver: { name in blockByID.values.first { $0.name.caseInsensitiveCompare(name) == .orderedSame } })
+                        blockResolver: { resolveLeaderBlock(named: $0) })
                     var cadEnt = CADEntity(
                         handle: UUID(),
                         layerID: layerID(for: entity),
