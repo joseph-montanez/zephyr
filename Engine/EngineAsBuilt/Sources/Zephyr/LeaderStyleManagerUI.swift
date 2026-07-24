@@ -80,17 +80,114 @@ struct LeaderStyleManagerUI {
             }
 
             _ = ImGuiCheckbox("Arrowhead", &draft.arrowEnabled)
+            let arrowhead = draft.arrowhead ?? .closedFilled
+            ImGuiSetNextItemWidth(190)
+            if ImGuiBeginCombo("Arrow type", arrowheadLabel(arrowhead), 0) {
+                for value in CADLeaderArrowhead.allCases {
+                    let selected = value == arrowhead
+                    if ImGuiSelectable(arrowheadLabel(value), selected, 0, ImVec2(x: 0, y: 0)) {
+                        draft.arrowhead = value
+                        draft.arrowEnabled = value != .none
+                        if value != .custom { draft.arrowBlockName = nil }
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            if draft.arrowhead == .custom {
+                let current = draft.arrowBlockName ?? "Select block"
+                ImGuiSetNextItemWidth(190)
+                if ImGuiBeginCombo("Arrow block", current, 0) {
+                    for block in engine.document.allBlocks.filter({ !$0.name.isEmpty }).sorted(by: { $0.name < $1.name }) {
+                        let selected = block.name.caseInsensitiveCompare(draft.arrowBlockName ?? "") == .orderedSame
+                        if ImGuiSelectable(block.name, selected, 0, ImVec2(x: 0, y: 0)) {
+                            draft.arrowBlockName = block.name
+                        }
+                        if selected { ImGuiSetItemDefaultFocus() }
+                    }
+                    ImGuiEndCombo()
+                }
+            }
             dragDouble("Arrow size", value: &draft.arrowSize, speed: 0.1, minimum: 0)
             _ = ImGuiCheckbox("Landing", &draft.landingEnabled)
             _ = ImGuiCheckbox("Dogleg", &draft.doglegEnabled)
             dragDouble("Dogleg length", value: &draft.doglegLength, speed: 0.1, minimum: 0)
             dragDouble("Content gap", value: &draft.contentGap, speed: 0.05, minimum: 0)
+            var extendToText = draft.extendLeaderToText ?? false
+            if ImGuiCheckbox("Extend leader to text", &extendToText) {
+                draft.extendLeaderToText = extendToText
+            }
 
             igSpacing()
             ImGuiTextV("Content")
             igSeparator()
             dragDouble("Text height", value: &draft.textHeight, speed: 0.1, minimum: 0.0001)
             inputText("Text style", value: &draft.textStyleName)
+            let alignment = draft.textAlignment ?? .left
+            ImGuiSetNextItemWidth(190)
+            if ImGuiBeginCombo("Text alignment", textAlignmentLabel(alignment), 0) {
+                for value in CADLeaderTextAlignment.allCases {
+                    let selected = value == alignment
+                    if ImGuiSelectable(textAlignmentLabel(value), selected, 0, ImVec2(x: 0, y: 0)) {
+                        draft.textAlignment = value
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            let leftAttachment = draft.leftAttachment ?? .middleOfTop
+            ImGuiSetNextItemWidth(190)
+            if ImGuiBeginCombo("Left attachment", attachmentLabel(leftAttachment), 0) {
+                for value in CADLeaderTextAttachment.allCases {
+                    let selected = value == leftAttachment
+                    if ImGuiSelectable(attachmentLabel(value), selected, 0, ImVec2(x: 0, y: 0)) {
+                        draft.leftAttachment = value
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            let rightAttachment = draft.rightAttachment ?? .middleOfTop
+            ImGuiSetNextItemWidth(190)
+            if ImGuiBeginCombo("Right attachment", attachmentLabel(rightAttachment), 0) {
+                for value in CADLeaderTextAttachment.allCases {
+                    let selected = value == rightAttachment
+                    if ImGuiSelectable(attachmentLabel(value), selected, 0, ImVec2(x: 0, y: 0)) {
+                        draft.rightAttachment = value
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            let angleType = draft.textAngleType ?? .insertAngle
+            ImGuiSetNextItemWidth(190)
+            if ImGuiBeginCombo("Text angle", textAngleLabel(angleType), 0) {
+                for value in CADLeaderTextAngleType.allCases {
+                    let selected = value == angleType
+                    if ImGuiSelectable(textAngleLabel(value), selected, 0, ImVec2(x: 0, y: 0)) {
+                        draft.textAngleType = value
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            let direction = draft.textAttachmentDirection ?? .horizontal
+            ImGuiSetNextItemWidth(190)
+            if ImGuiBeginCombo("Attachment direction", direction == .horizontal ? "Horizontal" : "Vertical", 0) {
+                for value in CADLeaderTextAttachmentDirection.allCases {
+                    let selected = value == direction
+                    let label = value == .horizontal ? "Horizontal" : "Vertical"
+                    if ImGuiSelectable(label, selected, 0, ImVec2(x: 0, y: 0)) {
+                        draft.textAttachmentDirection = value
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            var alwaysLeft = draft.alwaysLeftJustify ?? false
+            if ImGuiCheckbox("Always left justify", &alwaysLeft) {
+                draft.alwaysLeftJustify = alwaysLeft
+            }
             _ = ImGuiCheckbox("Text frame", &draft.textFrameEnabled)
 
             var points = Int32(draft.maxLeaderPoints)
@@ -186,6 +283,55 @@ struct LeaderStyleManagerUI {
         var index = 1
         while document.leaderStyle(named: "LeaderStyle\(index)") != nil { index += 1 }
         return "LeaderStyle\(index)"
+    }
+
+    private static func arrowheadLabel(_ value: CADLeaderArrowhead) -> String {
+        switch value {
+        case .none: return "None"
+        case .closedFilled: return "Closed filled"
+        case .closedBlank: return "Closed blank"
+        case .open: return "Open"
+        case .dot: return "Dot"
+        case .dotBlank: return "Dot blank"
+        case .architecturalTick: return "Architectural tick"
+        case .oblique: return "Oblique"
+        case .originIndicator: return "Origin indicator"
+        case .boxFilled: return "Box filled"
+        case .boxBlank: return "Box blank"
+        case .custom: return "Custom block"
+        }
+    }
+
+    private static func textAlignmentLabel(_ value: CADLeaderTextAlignment) -> String {
+        switch value {
+        case .left: return "Left"
+        case .center: return "Center"
+        case .right: return "Right"
+        }
+    }
+
+    private static func textAngleLabel(_ value: CADLeaderTextAngleType) -> String {
+        switch value {
+        case .insertAngle: return "Insert angle"
+        case .horizontal: return "Horizontal"
+        case .alwaysRightReading: return "Always right-reading"
+        }
+    }
+
+    private static func attachmentLabel(_ value: CADLeaderTextAttachment) -> String {
+        switch value {
+        case .topOfTop: return "Top of top line"
+        case .middleOfTop: return "Middle of top line"
+        case .middle: return "Middle"
+        case .middleOfBottom: return "Middle of bottom line"
+        case .bottomOfBottom: return "Bottom of bottom line"
+        case .bottomLine: return "Bottom line"
+        case .bottomOfTopLine: return "Bottom of top line"
+        case .bottomOfTop: return "Bottom of top"
+        case .allLine: return "All lines"
+        case .center: return "Center"
+        case .linedCenter: return "Underline/overline center"
+        }
     }
 
     private static func pathLabel(_ value: CADLeaderPathType) -> String {

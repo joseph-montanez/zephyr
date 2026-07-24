@@ -69,6 +69,45 @@ public struct DXFImportResult: Sendable {
 
 public enum DXFImporter {
 
+    private static func leaderArrowhead(blockName: String?) -> CADLeaderArrowhead {
+        guard let blockName else { return .closedFilled }
+        let key = blockName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .replacingOccurrences(of: " ", with: "")
+        if key.isEmpty { return .closedFilled }
+        switch key {
+        case "_NONE", "NONE": return .none
+        case "_CLOSEDFILLED", "CLOSEDFILLED", "_CLOSED", "CLOSED": return .closedFilled
+        case "_CLOSEDBLANK", "CLOSEDBLANK": return .closedBlank
+        case "_OPEN", "OPEN", "_OPEN30", "OPEN30", "_OPEN90", "OPEN90": return .open
+        case "_DOT", "DOT", "_SMALL", "SMALL": return .dot
+        case "_DOTBLANK", "DOTBLANK", "_SMALLBLANK", "SMALLBLANK": return .dotBlank
+        case "_ARCHTICK", "ARCHTICK", "_ARCHITECTURALTICK", "ARCHITECTURALTICK": return .architecturalTick
+        case "_OBLIQUE", "OBLIQUE": return .oblique
+        case "_ORIGIN", "ORIGIN", "_ORIGIN2", "ORIGIN2": return .originIndicator
+        case "_BOXFILLED", "BOXFILLED", "_BOX", "BOX": return .boxFilled
+        case "_BOXBLANK", "BOXBLANK": return .boxBlank
+        default: return .custom
+        }
+    }
+
+    private static func leaderTextAttachment(_ rawValue: Int) -> CADLeaderTextAttachment? {
+        CADLeaderTextAttachment(rawValue: rawValue)
+    }
+
+    private static func leaderTextAlignment(_ rawValue: Int) -> CADLeaderTextAlignment {
+        CADLeaderTextAlignment(rawValue: rawValue) ?? .left
+    }
+
+    private static func leaderTextAngleType(_ rawValue: Int) -> CADLeaderTextAngleType {
+        CADLeaderTextAngleType(rawValue: rawValue) ?? .insertAngle
+    }
+
+    private static func leaderAttachmentDirection(_ rawValue: Int) -> CADLeaderTextAttachmentDirection {
+        CADLeaderTextAttachmentDirection(rawValue: rawValue) ?? .horizontal
+    }
+
     private struct StyledPrimitive {
         var primitive: CADPrimitive
         var style: CADPrimitiveStyle?
@@ -342,6 +381,19 @@ public enum DXFImporter {
             blockNameByHandle[record.handle] = record.name
             blockHandleByName[record.name.uppercased()] = record.handle
         }
+        for block in reader.blocks where block.parentHandle != 0 && !block.name.isEmpty {
+            blockNameByHandle[block.parentHandle] = block.name
+            blockHandleByName[block.name.uppercased()] = block.parentHandle
+        }
+        var blockAttributeDefinitionByHandle: [UInt32: DXFTextEntity] = [:]
+        for block in reader.blocks {
+            for entity in block.entities {
+                guard let attribute = entity as? DXFTextEntity,
+                      attribute.eType == .aTTDEF,
+                      attribute.handle != 0 else { continue }
+                blockAttributeDefinitionByHandle[attribute.handle] = attribute
+            }
+        }
         var textStyleNameByHandle: [UInt32: String] = [:]
         for textStyle in reader.textstyles where textStyle.handle != 0 && !textStyle.name.isEmpty {
             textStyleNameByHandle[textStyle.handle] = textStyle.name
@@ -358,11 +410,17 @@ public enum DXFImporter {
                 : (entry.pathType == 0 ? .none : .straight)
             let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolvedName = name.isEmpty ? "Standard" : name
+            let arrowBlockName = entry.arrowheadHandle == 0
+                ? nil
+                : blockNameByHandle[entry.arrowheadHandle]
+            let arrowhead = Self.leaderArrowhead(blockName: arrowBlockName)
             let style = CADLeaderStyle(
                 name: resolvedName,
                 pathType: pathType,
-                arrowEnabled: entry.arrowSize > 0,
+                arrowEnabled: entry.arrowSize > 0 && arrowhead != .none,
                 arrowSize: max(entry.arrowSize, 0),
+                arrowhead: arrowhead,
+                arrowBlockName: arrowhead == .custom ? arrowBlockName : nil,
                 landingEnabled: entry.landingEnabled,
                 doglegEnabled: entry.doglegEnabled,
                 doglegLength: max(entry.doglegLength, 0),
@@ -370,6 +428,14 @@ public enum DXFImporter {
                 textHeight: max(entry.textHeight, 0.0001),
                 textStyleName: textStyleNameByHandle[entry.textStyleHandle] ?? "Standard",
                 textFrameEnabled: entry.textFrameEnabled,
+                textAlignment: Self.leaderTextAlignment(entry.textAlignment),
+                textAngleType: Self.leaderTextAngleType(entry.textAngleType),
+                textAttachmentDirection: Self.leaderAttachmentDirection(entry.attachmentDirection),
+                leftAttachment: Self.leaderTextAttachment(entry.leftAttachment),
+                rightAttachment: Self.leaderTextAttachment(entry.rightAttachment),
+                topAttachment: Self.leaderTextAttachment(entry.topAttachment),
+                bottomAttachment: Self.leaderTextAttachment(entry.bottomAttachment),
+                alwaysLeftJustify: entry.alwaysLeftJustify,
                 maxLeaderPoints: entry.maxLeaderPoints,
                 blockScale: max(entry.blockScale, 0.0001),
                 blockRotation: entry.blockRotation)
@@ -601,49 +667,161 @@ public enum DXFImporter {
                 if let leader = entity as? DXFMLeaderEntity, !leader.branches.isEmpty {
                     let importedStyle = reader.mleaderStyles.first { $0.handle == leader.styleHandle }
                     let namedStyle = leaderStyleByHandle[leader.styleHandle]
-                    let pathValue = importedStyle?.pathType ?? leader.pathType
-                    let pathType: CADLeaderPathType = pathValue == 2 ? .spline : (pathValue == 0 ? .none : .straight)
-                    let textStyleName = importedStyle.flatMap { style in
-                        reader.textstyles.first { $0.handle == style.textStyleHandle }?.name
-                    } ?? "Standard"
-                    let fallbackStyle = CADLeaderStyle(
+                    let importedArrowBlockName = importedStyle.flatMap {
+                        $0.arrowheadHandle == 0 ? nil : blockNameByHandle[$0.arrowheadHandle]
+                    }
+                    let importedArrowhead = Self.leaderArrowhead(blockName: importedArrowBlockName)
+                    let templateStyle = namedStyle ?? CADLeaderStyle(
                         name: importedStyle?.name ?? leader.styleName,
-                        pathType: pathType,
-                        arrowEnabled: (importedStyle?.arrowSize ?? leader.arrowSize) > 0,
+                        pathType: leader.pathType == 2 ? .spline : (leader.pathType == 0 ? .none : .straight),
+                        arrowEnabled: (importedStyle?.arrowSize ?? leader.arrowSize) > 0 && importedArrowhead != .none,
                         arrowSize: max(importedStyle?.arrowSize ?? leader.arrowSize, 0),
+                        arrowhead: importedArrowhead,
+                        arrowBlockName: importedArrowhead == .custom ? importedArrowBlockName : nil,
                         landingEnabled: importedStyle?.landingEnabled ?? leader.landingEnabled,
                         doglegEnabled: importedStyle?.doglegEnabled ?? leader.doglegEnabled,
                         doglegLength: max(importedStyle?.doglegLength ?? leader.doglegLength, 0),
                         contentGap: max(importedStyle?.landingGap ?? leader.landingGap, 0),
                         textHeight: max(importedStyle?.textHeight ?? leader.textHeight, 0.0001),
-                        textStyleName: textStyleName,
-                        textFrameEnabled: importedStyle?.textFrameEnabled ?? false,
+                        textStyleName: importedStyle.flatMap { textStyleNameByHandle[$0.textStyleHandle] } ?? "Standard",
+                        textFrameEnabled: importedStyle?.textFrameEnabled ?? leader.textFrameEnabled,
+                        textAlignment: Self.leaderTextAlignment(importedStyle?.textAlignment ?? leader.textAlignment),
+                        textAngleType: Self.leaderTextAngleType(importedStyle?.textAngleType ?? leader.textAngleType),
+                        textAttachmentDirection: Self.leaderAttachmentDirection(importedStyle?.attachmentDirection ?? leader.attachmentDirection),
+                        leftAttachment: Self.leaderTextAttachment(importedStyle?.leftAttachment ?? leader.leftAttachment),
+                        rightAttachment: Self.leaderTextAttachment(importedStyle?.rightAttachment ?? leader.rightAttachment),
+                        topAttachment: Self.leaderTextAttachment(importedStyle?.topAttachment ?? leader.topAttachment),
+                        bottomAttachment: Self.leaderTextAttachment(importedStyle?.bottomAttachment ?? leader.bottomAttachment),
+                        alwaysLeftJustify: importedStyle?.alwaysLeftJustify ?? false,
                         maxLeaderPoints: importedStyle?.maxLeaderPoints ?? 2,
-                        blockScale: max(importedStyle?.blockScale ?? 1, 0.0001),
-                        blockRotation: importedStyle?.blockRotation ?? 0)
-                    let style = namedStyle ?? fallbackStyle
+                        blockScale: max(importedStyle?.blockScale ?? leader.blockScale, 0.0001),
+                        blockRotation: importedStyle?.blockRotation ?? leader.blockRotation)
+                    let contextScale = leader.hasContextScale ? max(leader.contentScale, 1e-9) : 1
+                    let firstBranchDoglegLength = leader.branches.compactMap(\.doglegLength).first
+                    let entityArrowBlockName = leader.arrowheadHandle == 0
+                        ? templateStyle.arrowBlockName
+                        : blockNameByHandle[leader.arrowheadHandle]
+                    let entityArrowhead = leader.arrowheadHandle == 0
+                        ? (templateStyle.arrowhead ?? .closedFilled)
+                        : Self.leaderArrowhead(blockName: entityArrowBlockName)
+                    let effectiveStyle = CADLeaderStyle(
+                        name: templateStyle.name,
+                        pathType: leader.pathType == 2 ? .spline : (leader.pathType == 0 ? .none : .straight),
+                        arrowEnabled: (leader.hasContextArrowSize ? leader.arrowSize : templateStyle.arrowSize) > 0
+                            && entityArrowhead != .none,
+                        arrowSize: max(
+                            leader.hasContextArrowSize ? leader.arrowSize : templateStyle.arrowSize * contextScale,
+                            0),
+                        arrowhead: entityArrowhead,
+                        arrowBlockName: entityArrowhead == .custom ? entityArrowBlockName : nil,
+                        landingEnabled: leader.landingEnabled,
+                        doglegEnabled: leader.doglegEnabled,
+                        doglegLength: max(
+                            firstBranchDoglegLength ?? templateStyle.doglegLength * contextScale,
+                            0),
+                        contentGap: max(
+                            leader.hasContextLandingGap ? leader.landingGap : templateStyle.contentGap * contextScale,
+                            0),
+                        textHeight: max(
+                            leader.hasContextTextHeight ? leader.textHeight : templateStyle.textHeight * contextScale,
+                            0.0001),
+                        textStyleName: textStyleNameByHandle[leader.textStyleHandle] ?? templateStyle.textStyleName,
+                        textFrameEnabled: leader.textFrameEnabled || templateStyle.textFrameEnabled,
+                        textAlignment: Self.leaderTextAlignment(leader.textAlignment),
+                        textAngleType: Self.leaderTextAngleType(leader.textAngleType),
+                        textAttachmentDirection: Self.leaderAttachmentDirection(leader.attachmentDirection),
+                        leftAttachment: Self.leaderTextAttachment(leader.leftAttachment),
+                        rightAttachment: Self.leaderTextAttachment(leader.rightAttachment),
+                        topAttachment: Self.leaderTextAttachment(leader.topAttachment),
+                        bottomAttachment: Self.leaderTextAttachment(leader.bottomAttachment),
+                        alwaysLeftJustify: templateStyle.alwaysLeftJustify,
+                        maxLeaderPoints: templateStyle.maxLeaderPoints,
+                        blockScale: max(leader.blockScale, 0.0001),
+                        blockRotation: leader.blockRotation)
                     let blockNameFromHandle = leader.blockContentHandle == 0
                         ? nil
                         : blockNameByHandle[leader.blockContentHandle]
                     let blockName = blockNameFromHandle ?? (leader.blockName.isEmpty ? nil : leader.blockName)
-                    let contentType: CADLeaderContentType = blockName == nil
-                        ? (leader.text.isEmpty ? .none : .mtext)
-                        : .block
+                    let contentType: CADLeaderContentType
+                    switch leader.contentType {
+                    case 0:
+                        contentType = leader.text.isEmpty && blockName == nil ? .none : (blockName == nil ? .mtext : .block)
+                    case 1:
+                        contentType = blockName == nil ? .none : .block
+                    default:
+                        contentType = leader.text.isEmpty ? .none : .mtext
+                    }
+                    let blockAttributes: [CADLeaderBlockAttribute]? = {
+                        guard contentType == .block, !leader.blockAttributes.isEmpty else { return nil }
+                        let values = leader.blockAttributes.compactMap { override -> CADLeaderBlockAttribute? in
+                            guard let definition = blockAttributeDefinitionByHandle[override.definitionHandle] else {
+                                return nil
+                            }
+                            let useSecondPoint = definition.alignH != 0 || definition.alignV != 0
+                            let sourcePosition = useSecondPoint ? definition.secPoint : definition.basePoint
+                            return CADLeaderBlockAttribute(
+                                definitionHandle: override.definitionHandle,
+                                tag: definition.attributeTag,
+                                text: override.text,
+                                position: Vector3(
+                                    x: sourcePosition.x,
+                                    y: -sourcePosition.y,
+                                    z: sourcePosition.z),
+                                height: definition.height > 0 ? definition.height : effectiveStyle.textHeight,
+                                rotation: -definition.angle_p * .pi / 180,
+                                styleName: definition.style,
+                                alignH: definition.alignH,
+                                alignV: definition.alignV,
+                                index: override.index,
+                                width: override.width)
+                        }
+                        return values.isEmpty ? nil : values
+                    }()
                     let data = CADLeaderData(
-                        styleName: style.name,
+                        styleName: effectiveStyle.name,
                         branches: leader.branches.map { branch in
-                            CADLeaderBranch(vertices: branch.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) })
+                            let branchArrowBlockName = branch.arrowheadHandle == 0
+                                ? nil
+                                : blockNameByHandle[branch.arrowheadHandle]
+                            let branchArrowhead = branch.arrowheadHandle == 0
+                                ? nil
+                                : Self.leaderArrowhead(blockName: branchArrowBlockName)
+                            return CADLeaderBranch(
+                                vertices: branch.vertices.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) },
+                                doglegDirection: branch.doglegDirection.map {
+                                    Vector3(x: $0.x, y: -$0.y, z: $0.z)
+                                },
+                                doglegLength: branch.doglegLength,
+                                leaderLineIndex: branch.leaderLineIndex,
+                                arrowhead: branchArrowhead,
+                                arrowBlockName: branchArrowhead == .custom ? branchArrowBlockName : nil)
                         },
                         contentType: contentType,
                         text: DXFEntityConverter.cleanMTextFormatting(leader.text),
+                        sourceText: leader.text,
                         blockName: blockName,
-                        contentPosition: Vector3(x: leader.textPosition.x, y: -leader.textPosition.y, z: leader.textPosition.z),
+                        contentPosition: Vector3(
+                            x: leader.textPosition.x,
+                            y: -leader.textPosition.y,
+                            z: leader.textPosition.z),
+                        contentBasePosition: leader.contentBasePosition.map {
+                            Vector3(x: $0.x, y: -$0.y, z: $0.z)
+                        },
                         contentRotation: -leader.textRotation,
                         textWidth: leader.textWidth > 0 ? leader.textWidth : nil,
-                        styleOverrides: namedStyle == nil ? style : nil)
+                        textDirection: Vector3(
+                            x: leader.textDirection.x,
+                            y: -leader.textDirection.y,
+                            z: leader.textDirection.z),
+                        textDirectionNegative: leader.textDirectionNegative,
+                        textAttachmentPoint: leader.textAttachmentPoint,
+                        textAttachment: Self.leaderTextAttachment(leader.textAttachment),
+                        textFlowDirection: leader.textFlowDirection,
+                        blockAttributes: blockAttributes,
+                        styleOverrides: effectiveStyle)
                     let geometry = CADLeaderGeometry.build(
                         data: data,
-                        style: style,
+                        style: effectiveStyle,
                         blockResolver: { name in blockByID.values.first { $0.name.caseInsensitiveCompare(name) == .orderedSame } })
                     var cadEnt = CADEntity(
                         handle: UUID(),

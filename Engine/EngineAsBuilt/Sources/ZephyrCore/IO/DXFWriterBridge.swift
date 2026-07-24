@@ -3,6 +3,81 @@ import Foundation
 /// Converts Zephyr CAD types to DXF format using pure Swift DXFWriter.
 public enum DXFWriterBridge {
 
+    private static func dxfLeaderArrowBlockName(
+        arrowhead: CADLeaderArrowhead,
+        customName: String?
+    ) -> String {
+        switch arrowhead {
+        case .none: return "_None"
+        case .closedFilled: return ""
+        case .closedBlank: return "_ClosedBlank"
+        case .open: return "_Open"
+        case .dot: return "_Dot"
+        case .dotBlank: return "_DotBlank"
+        case .architecturalTick: return "_ArchTick"
+        case .oblique: return "_Oblique"
+        case .originIndicator: return "_Origin"
+        case .boxFilled: return "_BoxFilled"
+        case .boxBlank: return "_BoxBlank"
+        case .custom: return customName ?? ""
+        }
+    }
+
+
+    private static func builtInLeaderArrowBlock(named name: String) -> CADBlock? {
+        let point = Vector3.zero
+        let upper = Vector3(x: 1, y: 0.38, z: 0)
+        let lower = Vector3(x: 1, y: -0.38, z: 0)
+        let geometry: [CADPrimitive]
+        switch name.uppercased() {
+        case "_NONE":
+            geometry = []
+        case "_CLOSEDBLANK":
+            geometry = [.polygon(points: [point, upper, lower])]
+        case "_OPEN":
+            geometry = [
+                .line(start: point, end: upper),
+                .line(start: point, end: lower)
+            ]
+        case "_DOT":
+            geometry = [
+                .circle(center: Vector3(x: 0.5, y: 0, z: 0), radius: 0.5),
+                .fillPolygon(points: (0..<20).map { index in
+                    let angle = Double(index) * 2 * Double.pi / 20
+                    return Vector3(x: 0.5 + cos(angle) * 0.5, y: sin(angle) * 0.5, z: 0)
+                })
+            ]
+        case "_DOTBLANK":
+            geometry = [.circle(center: Vector3(x: 0.5, y: 0, z: 0), radius: 0.5)]
+        case "_ARCHTICK", "_OBLIQUE":
+            geometry = [.line(
+                start: Vector3(x: -0.15, y: -0.55, z: 0),
+                end: Vector3(x: 0.85, y: 0.55, z: 0))]
+        case "_ORIGIN":
+            geometry = [
+                .circle(center: Vector3(x: 0.5, y: 0, z: 0), radius: 0.45),
+                .line(start: Vector3(x: 0.5, y: -0.45, z: 0), end: Vector3(x: 0.5, y: 0.45, z: 0))
+            ]
+        case "_BOXFILLED":
+            geometry = [.fillPolygon(points: [
+                Vector3(x: 0.08, y: -0.42, z: 0),
+                Vector3(x: 0.92, y: -0.42, z: 0),
+                Vector3(x: 0.92, y: 0.42, z: 0),
+                Vector3(x: 0.08, y: 0.42, z: 0)
+            ])]
+        case "_BOXBLANK":
+            geometry = [.polygon(points: [
+                Vector3(x: 0.08, y: -0.42, z: 0),
+                Vector3(x: 0.92, y: -0.42, z: 0),
+                Vector3(x: 0.92, y: 0.42, z: 0),
+                Vector3(x: 0.08, y: 0.42, z: 0)
+            ])]
+        default:
+            return nil
+        }
+        return CADBlock(name: name, geometry: geometry, dxfFlags: 1)
+    }
+
     public static let defaultExportVersion: DXFVersion = .defaultExport
 
     private struct ExportViewData {
@@ -114,6 +189,40 @@ public enum DXFWriterBridge {
         var orderedViews = [modelView]
         for view in sourceViews where view.kind == .sheet {
             orderedViews.append(view)
+        }
+
+        var requestedArrowBlocks = Set<String>()
+        for view in orderedViews {
+            for style in view.leaderStyles.values {
+                let name = Self.dxfLeaderArrowBlockName(
+                    arrowhead: style.arrowEnabled ? (style.arrowhead ?? .closedFilled) : .none,
+                    customName: style.arrowBlockName)
+                if !name.isEmpty { requestedArrowBlocks.insert(name) }
+            }
+            for entity in view.entities {
+                guard let data = entity.leaderData?.value else { continue }
+                if let style = data.styleOverrides {
+                    let name = Self.dxfLeaderArrowBlockName(
+                        arrowhead: style.arrowEnabled ? (style.arrowhead ?? .closedFilled) : .none,
+                        customName: style.arrowBlockName)
+                    if !name.isEmpty { requestedArrowBlocks.insert(name) }
+                }
+                for branch in data.branches {
+                    guard let arrowhead = branch.arrowhead else { continue }
+                    let name = Self.dxfLeaderArrowBlockName(
+                        arrowhead: arrowhead,
+                        customName: branch.arrowBlockName)
+                    if !name.isEmpty { requestedArrowBlocks.insert(name) }
+                }
+            }
+        }
+        if !requestedArrowBlocks.isEmpty {
+            let existing = Set(orderedViews.flatMap(\.blocks).map { $0.name.uppercased() })
+            let generated = requestedArrowBlocks.compactMap { name -> CADBlock? in
+                guard !existing.contains(name.uppercased()) else { return nil }
+                return Self.builtInLeaderArrowBlock(named: name)
+            }
+            if !generated.isEmpty { orderedViews[0].blocks.append(contentsOf: generated) }
         }
 
         let writer = DXFWriter()
@@ -261,9 +370,11 @@ public enum DXFWriterBridge {
                     let style = data.styleOverrides
                         ?? view.leaderStyles.first(where: { $0.key.caseInsensitiveCompare(data.styleName) == .orderedSame })?.value
                         ?? .standard
-                    let textDirection = transformedVector(
-                        Vector3(x: cos(data.contentRotation), y: sin(data.contentRotation), z: 0),
-                        by: entity.transform)
+                    let localTextDirection = data.textDirection?.normalized ?? Vector3(
+                        x: cos(data.contentRotation),
+                        y: sin(data.contentRotation),
+                        z: 0)
+                    let textDirection = transformedVector(localTextDirection, by: entity.transform)
                     let entityScale = max(abs(entity.transform.scale.x), 1e-9)
 
                     if data.isLegacyLeader, data.branches.count == 1,
@@ -330,26 +441,97 @@ public enum DXFWriterBridge {
                     ml.contentScale = 1
                     ml.contentType = data.contentType == .block ? 1 : (data.contentType == .none ? 0 : 2)
                     ml.pathType = style.pathType == .spline ? 2 : (style.pathType == .none ? 0 : 1)
-                    ml.text = data.text
+                    ml.text = data.sourceText ?? data.text
                     ml.textPosition = toDXF(entity.transform.transformPoint(data.contentPosition))
+                    let localContentBase: Vector3 = data.contentBasePosition ?? {
+                        guard let branch = data.branches.first,
+                              let last = branch.vertices.last else {
+                            return data.contentPosition
+                        }
+                        var direction = branch.doglegDirection?.normalized ?? Vector3(
+                            x: data.contentPosition.x >= last.x ? 1 : -1,
+                            y: 0,
+                            z: 0)
+                        if direction.magnitudeSquared <= 1e-18 {
+                            direction = Vector3(x: 1, y: 0, z: 0)
+                        }
+                        return Vector3(
+                            x: data.contentPosition.x - direction.x * style.contentGap,
+                            y: data.contentPosition.y - direction.y * style.contentGap,
+                            z: data.contentPosition.z)
+                    }()
+                    ml.contentBasePosition = toDXF(entity.transform.transformPoint(localContentBase))
                     ml.textDirection = toDXFVector(textDirection.normalized)
                     ml.textRotation = -atan2(textDirection.y, textDirection.x)
+                    ml.textAttachment = data.textAttachment?.rawValue
+                        ?? style.leftAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.middleOfTop.rawValue
+                    ml.textFlowDirection = data.textFlowDirection ?? 5
+                    ml.textDirectionNegative = data.textDirectionNegative ?? false
+                    ml.textAttachmentPoint = data.textAttachmentPoint ?? 1
+                    ml.leftAttachment = style.leftAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.middleOfTop.rawValue
+                    ml.rightAttachment = style.rightAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.middleOfTop.rawValue
+                    ml.textAngleType = style.textAngleType?.rawValue
+                        ?? CADLeaderTextAngleType.insertAngle.rawValue
+                    ml.textAlignment = style.textAlignment?.rawValue
+                        ?? CADLeaderTextAlignment.left.rawValue
+                    ml.alwaysLeftJustify = style.alwaysLeftJustify ?? false
+                    ml.attachmentDirection = style.textAttachmentDirection?.rawValue
+                        ?? CADLeaderTextAttachmentDirection.horizontal.rawValue
+                    ml.bottomAttachment = style.bottomAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.center.rawValue
+                    ml.topAttachment = style.topAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.center.rawValue
                     ml.styleName = style.name
                     ml.textHeight = style.textHeight * entityScale
-                    ml.textWidth = data.textWidth ?? 0
+                    ml.hasContextTextHeight = true
+                    ml.textWidth = (data.textWidth ?? 0) * entityScale
                     ml.textStyleName = style.textStyleName
                     ml.textFrameEnabled = style.textFrameEnabled
                     ml.maxLeaderPoints = style.maxLeaderPoints
-                    ml.blockScale = style.blockScale
+                    ml.blockScale = style.blockScale * entityScale
                     ml.blockRotation = style.blockRotation
+                    let arrowhead = style.arrowEnabled
+                        ? (style.arrowhead ?? .closedFilled)
+                        : .none
                     ml.arrowSize = style.arrowEnabled ? style.arrowSize * entityScale : 0
-                    ml.landingGap = style.contentGap
-                    ml.doglegLength = style.doglegLength
+                    ml.arrowheadName = Self.dxfLeaderArrowBlockName(
+                        arrowhead: arrowhead,
+                        customName: style.arrowBlockName)
+                    ml.hasContextArrowSize = true
+                    ml.landingGap = style.contentGap * entityScale
+                    ml.hasContextLandingGap = true
+                    ml.doglegLength = style.doglegLength * entityScale
                     ml.landingEnabled = style.landingEnabled
                     ml.doglegEnabled = style.doglegEnabled
                     ml.blockName = data.blockName ?? ""
-                    ml.branches = data.branches.map { branch in
-                        branch.vertices.map { toDXF(entity.transform.transformPoint($0)) }
+                    ml.blockAttributes = data.blockAttributes?.map { attribute in
+                        DXFMLeaderBlockAttribute(
+                            definitionHandle: attribute.definitionHandle ?? 0,
+                            tag: attribute.tag,
+                            index: attribute.index,
+                            width: attribute.width,
+                            text: attribute.text)
+                    } ?? []
+                    ml.branches = data.branches.enumerated().map { index, branch in
+                        let branchArrowhead = branch.arrowhead
+                        let branchArrowName = branchArrowhead.map {
+                            Self.dxfLeaderArrowBlockName(
+                                arrowhead: $0,
+                                customName: branch.arrowBlockName)
+                        } ?? ""
+                        return DXFMLeaderBranch(
+                            vertices: branch.vertices.map {
+                                toDXF(entity.transform.transformPoint($0))
+                            },
+                            doglegDirection: branch.doglegDirection.map {
+                                toDXFVector(transformedVector($0, by: entity.transform).normalized)
+                            },
+                            doglegLength: (branch.doglegLength ?? style.doglegLength) * entityScale,
+                            leaderLineIndex: branch.leaderLineIndex ?? index,
+                            arrowheadName: branchArrowName)
                     }
                     applyEntityStyle(entity.xdata, to: ml)
                     writer.addEntity(ml, ownerBlockName: ownerBlockName)

@@ -1215,80 +1215,318 @@ extension DXFReader {
     func parseMLeader(_ pairs: [(Int, String)]) -> DXFMLeaderEntity {
         let e = DXFMLeaderEntity()
         applyCommon(pairs, to: e)
+
         var inContext = false
         var inLeader = false
         var inLeaderLine = false
-        var currentBranch: [Vector3] = []
+        var contextBase = Vector3.zero
+        var hasContextBase = false
+        var blockPosition = Vector3.zero
+        var hasBlockPosition = false
+        var leaderLastPoint = Vector3.zero
+        var hasLeaderLastPoint = false
+        var doglegDirection = Vector3.zero
+        var hasDoglegDirection = false
+        var branchDoglegLength: Double?
+        var currentLineVertices: [Vector3] = []
+        var currentLineIndex: Int?
+        var currentArrowOverrideIndex: Int?
+        var inMLeaderData = false
+        var pendingBlockAttributeHandle: UInt32?
+        var pendingBlockAttributeIndex = 0
+        var pendingBlockAttributeWidth = 0.0
 
-        func flushBranch() {
-            if currentBranch.count >= 2 { e.branches.append(currentBranch) }
-            currentBranch.removeAll(keepingCapacity: true)
+        func nearlySame(_ lhs: Vector3, _ rhs: Vector3) -> Bool {
+            (lhs - rhs).magnitudeSquared <= 1e-18
+        }
+
+        func flushLeaderLine() {
+            guard !currentLineVertices.isEmpty else { return }
+            var vertices = currentLineVertices
+            if hasLeaderLastPoint,
+               !vertices.contains(where: { nearlySame($0, leaderLastPoint) }) {
+                vertices.append(leaderLastPoint)
+            }
+            if vertices.count >= 2 {
+                e.branches.append(DXFMLeaderBranch(
+                    vertices: vertices,
+                    doglegDirection: hasDoglegDirection ? doglegDirection : nil,
+                    doglegLength: branchDoglegLength,
+                    leaderLineIndex: currentLineIndex))
+            }
+            currentLineVertices.removeAll(keepingCapacity: true)
+            currentLineIndex = nil
+        }
+
+        func resetLeaderNode() {
+            leaderLastPoint = .zero
+            hasLeaderLastPoint = false
+            doglegDirection = .zero
+            hasDoglegDirection = false
+            branchDoglegLength = nil
         }
 
         for (c, raw) in pairs {
             let marker = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            if c == 300, marker.contains("CONTEXT_DATA{") { inContext = true; continue }
-            if c == 301, marker == "}" { inContext = false; continue }
-            if c == 302, marker.contains("LEADER{") { flushBranch(); inLeader = true; continue }
-            if c == 303, marker == "}" { flushBranch(); inLeader = false; inLeaderLine = false; continue }
-            if c == 304, marker.contains("LEADER_LINE{") { inLeaderLine = true; continue }
-            if c == 305, marker == "}" { inLeaderLine = false; continue }
+
+            if c == 100, marker == "ACDBMLEADER" {
+                inMLeaderData = true
+                continue
+            }
+            if c == 300, marker.contains("CONTEXT_DATA{") {
+                inContext = true
+                continue
+            }
+            if c == 302, marker.contains("LEADER{") {
+                flushLeaderLine()
+                resetLeaderNode()
+                inLeader = true
+                inLeaderLine = false
+                continue
+            }
+            if c == 304, marker.contains("LEADER_LINE{") {
+                flushLeaderLine()
+                currentLineVertices.removeAll(keepingCapacity: true)
+                inLeaderLine = true
+                continue
+            }
+            if c == 305, marker == "}" {
+                flushLeaderLine()
+                inLeaderLine = false
+                continue
+            }
+            if c == 303, marker == "}" {
+                flushLeaderLine()
+                inLeader = false
+                inLeaderLine = false
+                resetLeaderNode()
+                continue
+            }
+            if c == 301, marker == "}" {
+                flushLeaderLine()
+                inContext = false
+                inLeader = false
+                inLeaderLine = false
+                continue
+            }
 
             if inLeaderLine {
                 switch c {
-                case 10: currentBranch.append(Vector3(x: d(raw), y: 0, z: 0))
-                case 20: if !currentBranch.isEmpty { currentBranch[currentBranch.count - 1].y = d(raw) }
-                case 30: if !currentBranch.isEmpty { currentBranch[currentBranch.count - 1].z = d(raw) }
-                default: break
+                case 10:
+                    currentLineVertices.append(Vector3(x: d(raw), y: 0, z: 0))
+                case 20:
+                    if !currentLineVertices.isEmpty {
+                        currentLineVertices[currentLineVertices.count - 1].y = d(raw)
+                    }
+                case 30:
+                    if !currentLineVertices.isEmpty {
+                        currentLineVertices[currentLineVertices.count - 1].z = d(raw)
+                    }
+                case 91:
+                    currentLineIndex = i(raw)
+                default:
+                    break
                 }
                 continue
             }
 
             if inLeader {
                 switch c {
-                case 40: e.doglegLength = d(raw)
-                case 290: e.landingEnabled = i(raw) != 0
-                case 291: e.doglegEnabled = i(raw) != 0
-                default: break
+                case 10:
+                    leaderLastPoint.x = d(raw)
+                    hasLeaderLastPoint = true
+                case 20:
+                    leaderLastPoint.y = d(raw)
+                    hasLeaderLastPoint = true
+                case 30:
+                    leaderLastPoint.z = d(raw)
+                    hasLeaderLastPoint = true
+                case 11:
+                    doglegDirection.x = d(raw)
+                    hasDoglegDirection = true
+                case 21:
+                    doglegDirection.y = d(raw)
+                    hasDoglegDirection = true
+                case 31:
+                    doglegDirection.z = d(raw)
+                    hasDoglegDirection = true
+                case 40:
+                    branchDoglegLength = d(raw)
+                    e.doglegLength = d(raw)
+                case 290:
+                    e.landingEnabled = i(raw) != 0
+                case 291:
+                    e.doglegEnabled = i(raw) != 0
+                default:
+                    break
                 }
                 continue
             }
 
             if inContext {
                 switch c {
-                case 40: e.contentScale = d(raw)
-                case 41: e.textHeight = d(raw)
-                case 42: e.textRotation = d(raw)
-                case 43: e.textWidth = d(raw)
-                case 140: e.arrowSize = d(raw)
-                case 145: e.landingGap = d(raw)
-                case 12: e.textPosition.x = d(raw)
-                case 22: e.textPosition.y = d(raw)
-                case 32: e.textPosition.z = d(raw)
-                case 13: e.textDirection.x = d(raw)
-                case 23: e.textDirection.y = d(raw)
-                case 33: e.textDirection.z = d(raw)
-                case 304: e.text += decode(raw)
-                default: break
+                case 40:
+                    e.contentScale = d(raw)
+                    e.hasContextScale = true
+                case 10:
+                    contextBase.x = d(raw)
+                    hasContextBase = true
+                case 20:
+                    contextBase.y = d(raw)
+                    hasContextBase = true
+                case 30:
+                    contextBase.z = d(raw)
+                    hasContextBase = true
+                case 41:
+                    e.textHeight = d(raw)
+                    e.hasContextTextHeight = true
+                case 42:
+                    e.textRotation = d(raw)
+                case 43:
+                    e.textWidth = d(raw)
+                case 140:
+                    e.arrowSize = d(raw)
+                    e.hasContextArrowSize = true
+                case 145:
+                    e.landingGap = d(raw)
+                    e.hasContextLandingGap = true
+                case 171:
+                    e.textAttachment = i(raw)
+                case 172:
+                    e.textFlowDirection = i(raw)
+                case 290:
+                    if i(raw) == 0, e.text.isEmpty { e.contentType = 0 }
+                case 304:
+                    e.text += decode(raw)
+                case 340:
+                    e.textStyleHandle = parseHandle(raw)
+                case 12:
+                    e.textPosition.x = d(raw)
+                case 22:
+                    e.textPosition.y = d(raw)
+                case 32:
+                    e.textPosition.z = d(raw)
+                case 13:
+                    e.textDirection.x = d(raw)
+                case 23:
+                    e.textDirection.y = d(raw)
+                case 33:
+                    e.textDirection.z = d(raw)
+                case 296:
+                    if i(raw) != 0 { e.contentType = 1 }
+                case 341:
+                    e.blockContentHandle = parseHandle(raw)
+                case 15:
+                    blockPosition.x = d(raw)
+                    hasBlockPosition = true
+                case 25:
+                    blockPosition.y = d(raw)
+                    hasBlockPosition = true
+                case 35:
+                    blockPosition.z = d(raw)
+                    hasBlockPosition = true
+                case 16:
+                    e.blockScale = d(raw)
+                case 46:
+                    e.blockRotation = d(raw)
+                default:
+                    break
                 }
                 continue
             }
 
+            guard inMLeaderData else { continue }
+
             switch c {
-            case 170: e.pathType = i(raw)
-            case 172: e.contentType = i(raw)
-            case 290: e.landingEnabled = i(raw) != 0
-            case 291: e.doglegEnabled = i(raw) != 0
-            case 40: e.contentScale = d(raw)
-            case 41: e.doglegLength = d(raw)
-            case 42: e.arrowSize = d(raw)
-            case 45: e.landingGap = d(raw)
-            case 340: e.styleHandle = parseHandle(raw)
-            case 341: e.blockContentHandle = parseHandle(raw)
-            default: break
+            case 170:
+                e.pathType = i(raw)
+            case 172:
+                e.contentType = i(raw)
+            case 290:
+                e.landingEnabled = i(raw) != 0
+            case 291:
+                e.doglegEnabled = i(raw) != 0
+            case 292:
+                e.textFrameEnabled = i(raw) != 0
+            case 41:
+                e.doglegLength = d(raw)
+            case 42:
+                if !e.hasContextArrowSize { e.arrowSize = d(raw) }
+            case 43:
+                e.blockRotation = d(raw)
+            case 45:
+                if !e.hasContextScale { e.contentScale = d(raw) }
+            case 340:
+                e.styleHandle = parseHandle(raw)
+            case 342:
+                e.arrowheadHandle = parseHandle(raw)
+            case 343:
+                if e.textStyleHandle == 0 { e.textStyleHandle = parseHandle(raw) }
+            case 344:
+                if e.blockContentHandle == 0 { e.blockContentHandle = parseHandle(raw) }
+            case 173:
+                e.leftAttachment = i(raw)
+            case 95:
+                e.rightAttachment = i(raw)
+            case 174:
+                e.textAngleType = i(raw)
+            case 175:
+                e.textAlignment = i(raw)
+            case 294:
+                e.textDirectionNegative = i(raw) != 0
+            case 178:
+                e.textAlignInIPE = i(raw)
+            case 179:
+                e.textAttachmentPoint = i(raw)
+            case 271:
+                e.attachmentDirection = i(raw)
+            case 272:
+                e.bottomAttachment = i(raw)
+            case 273:
+                e.topAttachment = i(raw)
+            case 94:
+                currentArrowOverrideIndex = i(raw)
+            case 345:
+                if let index = currentArrowOverrideIndex {
+                    e.arrowheadOverrides[index] = parseHandle(raw)
+                    currentArrowOverrideIndex = nil
+                }
+            case 330:
+                pendingBlockAttributeHandle = parseHandle(raw)
+                pendingBlockAttributeIndex = 0
+                pendingBlockAttributeWidth = 0
+            case 177:
+                if pendingBlockAttributeHandle != nil {
+                    pendingBlockAttributeIndex = i(raw)
+                }
+            case 44:
+                if pendingBlockAttributeHandle != nil {
+                    pendingBlockAttributeWidth = d(raw)
+                }
+            case 302:
+                if let definitionHandle = pendingBlockAttributeHandle {
+                    e.blockAttributes.append(DXFMLeaderBlockAttribute(
+                        definitionHandle: definitionHandle,
+                        index: pendingBlockAttributeIndex,
+                        width: pendingBlockAttributeWidth,
+                        text: decode(raw)))
+                    pendingBlockAttributeHandle = nil
+                    pendingBlockAttributeIndex = 0
+                    pendingBlockAttributeWidth = 0
+                }
+            default:
+                break
             }
         }
-        flushBranch()
+
+        flushLeaderLine()
+        if hasContextBase { e.contentBasePosition = contextBase }
+        if e.contentType == 1, hasBlockPosition { e.textPosition = blockPosition }
+        for index in e.branches.indices {
+            guard let leaderLineIndex = e.branches[index].leaderLineIndex,
+                  let handle = e.arrowheadOverrides[leaderLineIndex] else { continue }
+            e.branches[index].arrowheadHandle = handle
+        }
         return e
     }
 
@@ -1986,10 +2224,19 @@ extension DXFReader {
             case 90: style.maxLeaderPoints = max(2, i(value))
             case 170: style.contentType = i(value)
             case 173: style.pathType = i(value)
-            case 42, 46: style.landingGap = d(value)
+            case 42: style.landingGap = d(value)
             case 43: style.doglegLength = d(value)
             case 44: style.arrowSize = d(value)
             case 45: style.textHeight = d(value)
+            case 341: style.arrowheadHandle = parseHandle(value)
+            case 174: style.leftAttachment = i(value)
+            case 175: style.textAngleType = i(value)
+            case 176: style.textAlignment = i(value)
+            case 178: style.rightAttachment = i(value)
+            case 297: style.alwaysLeftJustify = i(value) != 0
+            case 271: style.attachmentDirection = i(value)
+            case 272: style.bottomAttachment = i(value)
+            case 273: style.topAttachment = i(value)
             case 47: style.blockScale = d(value)
             case 141: style.blockRotation = d(value)
             case 290: style.landingEnabled = i(value) != 0

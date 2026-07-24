@@ -720,6 +720,9 @@ public final class EngineLoopController {
                 case .content:
                     let delta = localPoint - leaderData.contentPosition
                     leaderData.contentPosition = localPoint
+                    if let base = leaderData.contentBasePosition {
+                        leaderData.contentBasePosition = base + delta
+                    }
                     for branchIndex in leaderData.branches.indices {
                         guard let lastIndex = leaderData.branches[branchIndex].vertices.indices.last else {
                             continue

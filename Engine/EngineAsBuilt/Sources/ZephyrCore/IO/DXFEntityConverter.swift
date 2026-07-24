@@ -1489,19 +1489,48 @@ public enum DXFEntityConverter {
             pathType: ml.pathType == 2 ? .spline : (ml.pathType == 0 ? .none : .straight),
             arrowEnabled: ml.arrowSize > 0,
             arrowSize: ml.arrowSize,
+            arrowhead: .closedFilled,
             landingEnabled: ml.landingEnabled,
             doglegEnabled: ml.doglegEnabled,
-            doglegLength: ml.doglegLength,
+            doglegLength: ml.branches.compactMap(\.doglegLength).first ?? ml.doglegLength,
             contentGap: ml.landingGap,
-            textHeight: ml.textHeight)
+            textHeight: ml.textHeight,
+            textStyleName: ml.textStyleName,
+            textFrameEnabled: ml.textFrameEnabled,
+            textAlignment: CADLeaderTextAlignment(rawValue: ml.textAlignment) ?? .left,
+            textAngleType: CADLeaderTextAngleType(rawValue: ml.textAngleType) ?? .insertAngle,
+            textAttachmentDirection: CADLeaderTextAttachmentDirection(rawValue: ml.attachmentDirection) ?? .horizontal,
+            leftAttachment: CADLeaderTextAttachment(rawValue: ml.leftAttachment),
+            rightAttachment: CADLeaderTextAttachment(rawValue: ml.rightAttachment),
+            topAttachment: CADLeaderTextAttachment(rawValue: ml.topAttachment),
+            bottomAttachment: CADLeaderTextAttachment(rawValue: ml.bottomAttachment))
+        let contentType: CADLeaderContentType
+        switch ml.contentType {
+        case 0: contentType = ml.text.isEmpty ? .none : .mtext
+        case 1: contentType = .block
+        default: contentType = ml.text.isEmpty ? .none : .mtext
+        }
         let data = CADLeaderData(
-            branches: ml.branches.map { CADLeaderBranch(vertices: $0.map(yflip)) },
-            contentType: ml.contentType == 1 ? .block : (ml.text.isEmpty ? .none : .mtext),
+            branches: ml.branches.map { branch in
+                CADLeaderBranch(
+                    vertices: branch.vertices.map(yflip),
+                    doglegDirection: branch.doglegDirection.map(yflip),
+                    doglegLength: branch.doglegLength,
+                    leaderLineIndex: branch.leaderLineIndex)
+            },
+            contentType: contentType,
             text: cleanMTextFormatting(ml.text),
+            sourceText: ml.text,
             blockName: ml.blockName.isEmpty ? nil : ml.blockName,
             contentPosition: yflip(ml.textPosition),
+            contentBasePosition: ml.contentBasePosition.map(yflip),
             contentRotation: -ml.textRotation,
             textWidth: ml.textWidth > 0 ? ml.textWidth : nil,
+            textDirection: yflip(ml.textDirection),
+            textDirectionNegative: ml.textDirectionNegative,
+            textAttachmentPoint: ml.textAttachmentPoint,
+            textAttachment: CADLeaderTextAttachment(rawValue: ml.textAttachment),
+            textFlowDirection: ml.textFlowDirection,
             styleOverrides: style)
         return CADLeaderGeometry.build(data: data, style: style, blockResolver: { _ in nil }).map {
             applyingColor(color, to: $0)

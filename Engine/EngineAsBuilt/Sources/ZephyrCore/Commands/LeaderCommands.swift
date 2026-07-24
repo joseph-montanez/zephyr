@@ -672,7 +672,11 @@ public final class MLeaderEditCommand: FeatureCommand {
 
         case .moveContent:
             return update(engine: engine, processor: processor) { data, _ in
+                let delta = point - data.contentPosition
                 data.contentPosition = point
+                if let base = data.contentBasePosition {
+                    data.contentBasePosition = base + delta
+                }
             }
 
         case .option, .editContent, .done:
@@ -723,6 +727,7 @@ public final class MLeaderEditCommand: FeatureCommand {
             return update(engine: engine, processor: processor) { data, _ in
                 data.contentType = .mtext
                 data.text = value
+                data.sourceText = nil
                 data.blockName = nil
                 data.collectedBlockNames = []
             }
@@ -805,7 +810,12 @@ public final class MLeaderAlignCommand: FeatureCommand {
         for (index, handle) in orderedHandles.enumerated() {
             guard var entity = engine.document.entity(for: handle), var data = entity.leaderData?.value else { continue }
             let t = Double(index) / Double(max(orderedHandles.count - 1, 1))
-            data.contentPosition = start + delta * t
+            let newPosition = start + delta * t
+            let contentDelta = newPosition - data.contentPosition
+            data.contentPosition = newPosition
+            if let base = data.contentBasePosition {
+                data.contentBasePosition = base + contentDelta
+            }
             entity.leaderData = CADLeaderDataBox(data)
             engine.document.updateEntityLive(engine.document.regeneratedLeaderEntity(entity))
         }

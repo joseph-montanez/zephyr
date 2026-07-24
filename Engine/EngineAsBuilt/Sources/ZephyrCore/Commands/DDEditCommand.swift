@@ -250,9 +250,8 @@ public final class DDEditCommand: FeatureCommand {
             ?? engine.document.leaderStyle(named: data.styleName)
             ?? .standard
         let textStyle = engine.document.textStyle(named: style.textStyleName) ?? .standard
-        let rightToLeft = data.branches.first?.vertices.last.map {
-            data.contentPosition.x < $0.x
-        } ?? false
+        let alignH = CADLeaderGeometry.resolvedTextHorizontalAlignment(data: data, style: style)
+        let alignV = CADLeaderGeometry.resolvedTextVerticalAlignment(data: data, style: style)
 
         engine.textManager.editorState = TextEditorState(
             text: data.text,
@@ -260,8 +259,8 @@ public final class DDEditCommand: FeatureCommand {
             fontName: textStyle.fontFile,
             height: style.textHeight,
             rotation: data.contentRotation,
-            alignH: rightToLeft ? 2 : 0,
-            alignV: 2,
+            alignH: alignH,
+            alignV: alignV,
             mtextWidth: data.textWidth ?? 0,
             targetHandle: handle)
         engine.textManager.isEditorActive = true
@@ -380,7 +379,9 @@ public final class DDEditCommand: FeatureCommand {
 
         data.contentType = .mtext
         data.text = editorState.text
+        data.sourceText = nil
         data.contentRotation = editorState.rotation
+        style.textAlignment = CADLeaderTextAlignment(rawValue: editorState.alignH) ?? .left
         data.textWidth = editorState.mtextWidth > 0 ? editorState.mtextWidth : nil
         data.styleOverrides = style
 
