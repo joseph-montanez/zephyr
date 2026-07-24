@@ -144,6 +144,30 @@ public final class CADLeaderDataBox: Sendable, Hashable, Codable {
     }
 }
 
+public enum CADLeaderGripTarget: Sendable, Hashable {
+    case content
+    case vertex(branchIndex: Int, vertexIndex: Int)
+}
+
+public enum CADLeaderGripIndex {
+    public static let content = 2000
+    private static let branchBase = 3000
+    private static let branchStride = 4096
+
+    public static func vertex(branchIndex: Int, vertexIndex: Int) -> Int {
+        branchBase + branchIndex * branchStride + vertexIndex
+    }
+
+    public static func target(for index: Int) -> CADLeaderGripTarget? {
+        if index == content { return .content }
+        guard index >= branchBase else { return nil }
+        let offset = index - branchBase
+        return .vertex(
+            branchIndex: offset / branchStride,
+            vertexIndex: offset % branchStride)
+    }
+}
+
 public enum CADLeaderGeometry {
     public static func build(
         data: CADLeaderData,
@@ -213,6 +237,68 @@ public enum CADLeaderGeometry {
                                   z: data.contentPosition.z)
         if doglegEnd.distance(to: contentEdge) > 1e-9 {
             primitives.append(.line(start: doglegEnd, end: contentEdge))
+        }
+    }
+
+    public static func contentHitTest(
+        data: CADLeaderData,
+        style: CADLeaderStyle,
+        localPoint: Vector3,
+        tolerance: Double,
+        blockResolver: (String) -> CADBlock?
+    ) -> Bool {
+        switch data.contentType {
+        case .none:
+            return false
+
+        case .mtext:
+            let rightToLeft = data.branches.first?.vertices.last.map {
+                data.contentPosition.x < $0.x
+            } ?? false
+            let alignH = rightToLeft ? 2 : 0
+            let bounds = CADEntity.estimateTextLocalBounds(
+                text: data.text,
+                height: style.textHeight,
+                alignH: alignH,
+                alignV: 2,
+                mtextWidth: data.textWidth)
+            let dx = localPoint.x - data.contentPosition.x
+            let dy = localPoint.y - data.contentPosition.y
+            let c = cos(-data.contentRotation)
+            let s = sin(-data.contentRotation)
+            let x = dx * c - dy * s
+            let y = dx * s + dy * c
+            return x >= bounds.minX - tolerance
+                && x <= bounds.maxX + tolerance
+                && y >= bounds.minY - tolerance
+                && y <= bounds.maxY + tolerance
+
+        case .block:
+            let names = data.collectedBlockNames.isEmpty
+                ? data.blockName.map { [$0] } ?? []
+                : data.collectedBlockNames
+            guard !names.isEmpty else { return false }
+            let dx = localPoint.x - data.contentPosition.x
+            let dy = localPoint.y - data.contentPosition.y
+            let rotation = -(style.blockRotation + data.contentRotation)
+            let c = cos(rotation)
+            let s = sin(rotation)
+            var localX = (dx * c - dy * s) / max(style.blockScale, 0.0001)
+            let localY = (dx * s + dy * c) / max(style.blockScale, 0.0001)
+            let localTolerance = tolerance / max(style.blockScale, 0.0001)
+            for name in names {
+                guard let block = blockResolver(name) else { continue }
+                let bounds = block.localBoundingBox
+                if localX >= bounds.min.x - localTolerance
+                    && localX <= bounds.max.x + localTolerance
+                    && localY >= bounds.min.y - localTolerance
+                    && localY <= bounds.max.y + localTolerance {
+                    return true
+                }
+                localX -= max(bounds.max.x - bounds.min.x, style.textHeight)
+                    + style.contentGap / max(style.blockScale, 0.0001)
+            }
+            return false
         }
     }
 

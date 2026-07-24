@@ -202,16 +202,45 @@ internal final class EngineInputHandler {
             return
         }
 
-        // Escape-to-close the command line / layer-move popup works even
-        // when ImGui has keyboard capture.
-        if e.key.scancode == SDL_SCANCODE_ESCAPE {
+        let scancode = e.key.scancode
+        var routedEnterToFeatureCommand = false
+
+        if scancode == SDL_SCANCODE_ESCAPE {
             if engine.ui.layerMoveActive {
                 engine.ui.layerMoveActive = false
                 engine.ui.layerMoveBuffer = ""
                 engine.ui.layerMoveMatches = []
-            } else if engine.commandProcessor.commandLineActive {
+                return
+            }
+            if engine.commandProcessor.activeFeatureCommand != nil {
                 engine.commandProcessor.commandLineActive = false
                 engine.commandProcessor.commandBuffer = ""
+                engine.commandProcessor.finishFeatureCommand(engine: engine)
+                return
+            }
+            if engine.commandProcessor.commandLineActive {
+                engine.commandProcessor.commandLineActive = false
+                engine.commandProcessor.commandBuffer = ""
+                return
+            }
+        }
+
+        if (scancode == SDL_SCANCODE_RETURN || scancode == SDL_SCANCODE_KP_ENTER),
+           !engine.commandProcessor.commandLineActive,
+           let featureCmd = engine.commandProcessor.activeFeatureCommand {
+            routedEnterToFeatureCommand = true
+            let result = featureCmd.handleKeyDown(
+                scancode: scancode,
+                engine: engine,
+                processor: engine.commandProcessor)
+            switch result {
+            case .finished:
+                engine.commandProcessor.finishFeatureCommand(engine: engine)
+                return
+            case .handled:
+                return
+            case .continue:
+                break
             }
         }
 
@@ -291,9 +320,10 @@ internal final class EngineInputHandler {
                 // ── Bare key handling (no Ctrl/Cmd held) ──
                 // When a feature command is active, route ALL keys to it first.
                 // If it returns .handled or .finished, stop — don't run global behavior.
-                if let featureCmd = engine.commandProcessor.activeFeatureCommand {
+                if !routedEnterToFeatureCommand,
+                   let featureCmd = engine.commandProcessor.activeFeatureCommand {
                     let result = featureCmd.handleKeyDown(
-                        scancode: e.key.scancode, engine: engine,
+                        scancode: scancode, engine: engine,
                         processor: engine.commandProcessor)
                     switch result {
                     case .finished:

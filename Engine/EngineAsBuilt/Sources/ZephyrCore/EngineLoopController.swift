@@ -249,6 +249,10 @@ public final class EngineLoopController {
             simplifyComplexBlocks: engine.simplifyComplexBlocks)
 
         if let handle = hitHandle {
+            let hitEntity = engine.document.entity(for: handle)
+            let leaderContentHit = hitEntity.map {
+                isLeaderContentHit(entity: $0, worldX: wx, worldY: wy)
+            } ?? false
             let now = SDL_GetTicks()
             let dx = abs(x - interaction.lastClickScreenX)
             let dy = abs(y - interaction.lastClickScreenY)
@@ -312,7 +316,20 @@ public final class EngineLoopController {
             }
 
             if isDoubleClick {
-                if let entity = engine.document.entity(for: handle),
+                if let entity = hitEntity,
+                   let leaderData = entity.leaderData?.value {
+                    interaction.lastClickTime = 0
+                    interaction.lastClickedHandle = nil
+                    if leaderContentHit && leaderData.contentType == .mtext {
+                        engine.cadSelection.selectLeaderContent(handle)
+                        engine.commandProcessor.executeCommand("DDEDIT")
+                    } else {
+                        engine.cadSelection.select(handle)
+                        engine.ui.showPropertiesPanel = true
+                    }
+                    return
+                }
+                if let entity = hitEntity,
                    let blockID = entity.blockID {
                     // Skip internal table display blocks (*T blocks)
                     if let block = engine.document.block(for: blockID),
@@ -353,10 +370,9 @@ public final class EngineLoopController {
 
             if shiftHeld {
                 engine.cadSelection.removeFromSelection(handle)
+            } else if hitEntity?.leaderData != nil && leaderContentHit {
+                engine.cadSelection.selectLeaderContent(handle)
             } else {
-                // Always update lastSelectedHandle via addToSelection so
-                // the Properties panel reflects the most recently clicked entity.
-                // Set.insert is idempotent — already-selected handles are unaffected.
                 engine.cadSelection.addToSelection(handle)
             }
             return
@@ -391,9 +407,10 @@ public final class EngineLoopController {
             let moved = interaction.dragTotalWorldX != 0 || interaction.dragTotalWorldY != 0
             switch interaction.gripType {
             case .vertex(let entityHandle, let index):
-                // Dimension grips (indices 1000-1002): skip vertex-direct-edit;
-                // geometry was already updated live via block regeneration.
-                if index < 1000 {
+                if CADLeaderGripIndex.target(for: index) != nil {
+                    engine.document.invalidateEntityGrid()
+                    engine.geometryManager.buildSpatialGridIfNeeded()
+                } else if index < 1000 {
                     engine.cadBridge.vertexEditor.endVertexDirectEdit(
                         handle: entityHandle, vertexIndex: index)
                     engine.document.invalidateEntityGrid()
@@ -692,6 +709,41 @@ public final class EngineLoopController {
                 return
             }
 
+            if case .vertex(let entityHandle, let index) = interaction.gripType,
+               let leaderTarget = CADLeaderGripIndex.target(for: index),
+               let entity = engine.document.entity(for: entityHandle),
+               var leaderData = entity.leaderData?.value {
+                let worldPoint = Vector3(x: snapWX, y: snapWY, z: 0)
+                let localPoint = entity.transform.inverse().transformPoint(worldPoint)
+
+                switch leaderTarget {
+                case .content:
+                    let delta = localPoint - leaderData.contentPosition
+                    leaderData.contentPosition = localPoint
+                    for branchIndex in leaderData.branches.indices {
+                        guard let lastIndex = leaderData.branches[branchIndex].vertices.indices.last else {
+                            continue
+                        }
+                        leaderData.branches[branchIndex].vertices[lastIndex] =
+                            leaderData.branches[branchIndex].vertices[lastIndex] + delta
+                    }
+
+                case .vertex(let branchIndex, let vertexIndex):
+                    guard leaderData.branches.indices.contains(branchIndex),
+                          leaderData.branches[branchIndex].vertices.indices.contains(vertexIndex) else {
+                        return
+                    }
+                    leaderData.branches[branchIndex].vertices[vertexIndex] = localPoint
+                }
+
+                var updatedEntity = entity
+                updatedEntity.leaderData = CADLeaderDataBox(leaderData)
+                updatedEntity = engine.document.regeneratedLeaderEntity(updatedEntity)
+                engine.document.updateEntityLive(updatedEntity)
+                interaction.gripAppliedWorldPosition = worldPoint
+                return
+            }
+
             if applyRectangularArrayGripDrag(worldX: snapWX, worldY: snapWY) {
                 return
             }
@@ -789,6 +841,32 @@ public final class EngineLoopController {
         if let featureCmd = engine.commandProcessor.activeFeatureCommand {
             featureCmd.handleMouseMotion(worldX: snapWX, worldY: snapWY, engine: engine, processor: engine.commandProcessor)
         }
+    }
+
+    private func isLeaderContentHit(
+        entity: CADEntity,
+        worldX: Double,
+        worldY: Double
+    ) -> Bool {
+        guard let data = entity.leaderData?.value else { return false }
+        let style = data.styleOverrides
+            ?? engine.document.leaderStyle(named: data.styleName)
+            ?? .standard
+        let localPoint = entity.transform.inverse().transformPoint(
+            Vector3(x: worldX, y: worldY, z: 0))
+        let scale = entity.transform.scale
+        let localTolerance = (8.0 / max(engine.camera.zoom, 0.001))
+            / max(abs(scale.x), abs(scale.y), 0.001)
+        return CADLeaderGeometry.contentHitTest(
+            data: data,
+            style: style,
+            localPoint: localPoint,
+            tolerance: localTolerance,
+            blockResolver: { name in
+                engine.document.allBlocks.first {
+                    $0.name.caseInsensitiveCompare(name) == .orderedSame
+                }
+            })
     }
 
     private func beginTableBoundaryDragIfNeeded(worldX: Double, worldY: Double) -> Bool {

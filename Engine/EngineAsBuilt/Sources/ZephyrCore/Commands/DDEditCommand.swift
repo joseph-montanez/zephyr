@@ -27,6 +27,7 @@ public final class DDEditCommand: FeatureCommand {
     private var state: State = .findingTarget
     private var targetHandle: UUID? = nil
     private var isEditingDimension: Bool = false
+    private var isEditingLeader: Bool = false
 
     public init() {}
 
@@ -35,10 +36,19 @@ public final class DDEditCommand: FeatureCommand {
         // Check if there's already a dimension entity or text entity selected.
         if let handle = engine.cadSelection.lastSelectedHandle,
            let entity = engine.document.entity(for: handle) {
+            if let leader = entity.leaderData?.value,
+               leader.contentType == .mtext {
+                targetHandle = handle
+                isEditingDimension = false
+                isEditingLeader = true
+                openLeaderEditor(for: handle, engine: engine, processor: processor)
+                return
+            }
             if entity.xdata["dxf.text"] != nil {
                 print("[DDEDIT] Found selected text entity: \(handle)")
                 targetHandle = handle
                 isEditingDimension = false
+                isEditingLeader = false
                 openEditor(for: handle, engine: engine, processor: processor)
                 return
             }
@@ -46,6 +56,7 @@ public final class DDEditCommand: FeatureCommand {
                 print("[DDEDIT] Found selected dimension entity: \(handle)")
                 targetHandle = handle
                 isEditingDimension = true
+                isEditingLeader = false
                 openDimensionEditor(for: handle, engine: engine, processor: processor)
                 return
             }
@@ -80,15 +91,25 @@ public final class DDEditCommand: FeatureCommand {
             )
             if let handle = hitHandle,
                let entity = engine.document.entity(for: handle) {
+                if let leader = entity.leaderData?.value,
+                   leader.contentType == .mtext {
+                    targetHandle = handle
+                    isEditingDimension = false
+                    isEditingLeader = true
+                    openLeaderEditor(for: handle, engine: engine, processor: processor)
+                    return .continue
+                }
                 if entity.xdata["dxf.text"] != nil {
                     targetHandle = handle
                     isEditingDimension = false
+                    isEditingLeader = false
                     openEditor(for: handle, engine: engine, processor: processor)
                     return .continue
                 }
                 if entity.dimensionMetadata != nil {
                     targetHandle = handle
                     isEditingDimension = true
+                    isEditingLeader = false
                     openDimensionEditor(for: handle, engine: engine, processor: processor)
                     return .continue
                 }
@@ -213,6 +234,42 @@ public final class DDEditCommand: FeatureCommand {
         processor.commandPrompt = "Editing text. Modify and click OK."
     }
 
+    private func openLeaderEditor(
+        for handle: UUID,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) {
+        guard let entity = engine.document.entity(for: handle),
+              let data = entity.leaderData?.value else {
+            processor.commandPrompt = "Entity no longer exists."
+            state = .finished
+            return
+        }
+
+        let style = data.styleOverrides
+            ?? engine.document.leaderStyle(named: data.styleName)
+            ?? .standard
+        let textStyle = engine.document.textStyle(named: style.textStyleName) ?? .standard
+        let rightToLeft = data.branches.first?.vertices.last.map {
+            data.contentPosition.x < $0.x
+        } ?? false
+
+        engine.textManager.editorState = TextEditorState(
+            text: data.text,
+            styleName: textStyle.name,
+            fontName: textStyle.fontFile,
+            height: style.textHeight,
+            rotation: data.contentRotation,
+            alignH: rightToLeft ? 2 : 0,
+            alignV: 2,
+            mtextWidth: data.textWidth ?? 0,
+            targetHandle: handle)
+        engine.textManager.isEditorActive = true
+        engine.textManager.editorResult = .active
+        state = .editorOpen
+        processor.commandPrompt = "Editing leader text. Modify and click OK."
+    }
+
     private func openDimensionEditor(
         for handle: UUID,
         engine: PhrostEngine,
@@ -294,11 +351,46 @@ public final class DDEditCommand: FeatureCommand {
             return
         }
 
-        if isEditingDimension {
+        if isEditingLeader {
+            applyLeaderEdits(
+                from: editorState,
+                entity: entity,
+                engine: engine,
+                processor: processor)
+        } else if isEditingDimension {
             applyDimensionEdits(from: editorState, entity: entity, engine: engine, processor: processor)
         } else {
             applyTextEdits(from: editorState, engine: engine, processor: processor)
         }
+    }
+
+    private func applyLeaderEdits(
+        from editorState: TextEditorState,
+        entity: CADEntity,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) {
+        guard var data = entity.leaderData?.value else { return }
+
+        var style = data.styleOverrides
+            ?? engine.document.leaderStyle(named: data.styleName)
+            ?? .standard
+        style.textStyleName = engine.document.resolvedTextStyleName(editorState.styleName)
+        style.textHeight = max(editorState.height, 0.0001)
+
+        data.contentType = .mtext
+        data.text = editorState.text
+        data.contentRotation = editorState.rotation
+        data.textWidth = editorState.mtextWidth > 0 ? editorState.mtextWidth : nil
+        data.styleOverrides = style
+
+        var updatedEntity = entity
+        updatedEntity.leaderData = CADLeaderDataBox(data)
+        updatedEntity = engine.document.regeneratedLeaderEntity(updatedEntity)
+        engine.document.updateEntity(updatedEntity)
+        engine.cadSelection.selectLeaderContent(entity.handle)
+        engine.tabManager.markActiveDirty()
+        processor.commandPrompt = "Leader text updated."
     }
 
     private func applyDimensionEdits(

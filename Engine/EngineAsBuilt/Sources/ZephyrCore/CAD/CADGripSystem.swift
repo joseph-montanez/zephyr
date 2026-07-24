@@ -26,12 +26,14 @@ public enum CADGripSystem {
         document: CADDocument,
         cam: CameraTransform,
         simplifyComplexBlocks: Bool = true,
-        selectedHandles: Set<UUID>? = nil
+        selectedHandles: Set<UUID>? = nil,
+        selectedLeaderContentHandle: UUID? = nil
     ) -> CADSelectionManager.CadGripInfo? {
         let grips = getAllGrips(
             document: document, cam: cam,
             simplifyComplexBlocks: simplifyComplexBlocks,
-            selectedHandles: selectedHandles)
+            selectedHandles: selectedHandles,
+            selectedLeaderContentHandle: selectedLeaderContentHandle)
         let threshold: Float = 10.0
         var bestDist: Float = threshold * 2
         var best: CADSelectionManager.CadGripInfo? = nil
@@ -56,7 +58,8 @@ public enum CADGripSystem {
         document: CADDocument,
         cam: CameraTransform,
         simplifyComplexBlocks: Bool = true,
-        selectedHandles: Set<UUID>? = nil
+        selectedHandles: Set<UUID>? = nil,
+        selectedLeaderContentHandle: UUID? = nil
     ) -> [CADSelectionManager.CadGripInfo] {
         let handles = selectedHandles ?? []
         guard !handles.isEmpty else { return [] }
@@ -66,6 +69,16 @@ public enum CADGripSystem {
         for handle in handles {
             guard let entity = document.entity(for: handle) else { continue }
             guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+
+            if let leaderData = entity.leaderData?.value {
+                results.append(contentsOf: leaderGrips(
+                    for: handle,
+                    data: leaderData,
+                    entity: entity,
+                    cam: cam,
+                    contentOnly: selectedLeaderContentHandle == handle))
+                continue
+            }
 
             if let array = entity.arrayData, array.kind == .rectangular {
                 results.append(contentsOf: rectangularArrayGrips(
@@ -456,6 +469,52 @@ public enum CADGripSystem {
     /// individual block primitive grips. This gives the user grips at the
     /// meaningful control points: text position, dimension line position,
     /// and extension line origins.
+    private static func leaderGrips(
+        for handle: UUID,
+        data: CADLeaderData,
+        entity: CADEntity,
+        cam: CameraTransform,
+        contentOnly: Bool
+    ) -> [CADSelectionManager.CadGripInfo] {
+        var results: [CADSelectionManager.CadGripInfo] = []
+
+        if !contentOnly {
+            for (branchIndex, branch) in data.branches.enumerated() {
+                for (vertexIndex, localPoint) in branch.vertices.enumerated() {
+                    let worldPoint = entity.transform.transformPoint(localPoint)
+                    let screen = EngineCameraManager.worldToScreen(
+                        worldX: worldPoint.x,
+                        worldY: worldPoint.y,
+                        cam: cam)
+                    results.append(CADSelectionManager.CadGripInfo(
+                        handle: handle,
+                        grip: .vertex(
+                            entity: handle,
+                            index: CADLeaderGripIndex.vertex(
+                                branchIndex: branchIndex,
+                                vertexIndex: vertexIndex)),
+                        screenPos: screen,
+                        worldPos: worldPoint))
+                }
+            }
+        }
+
+        if contentOnly, data.contentType != .none {
+            let worldPoint = entity.transform.transformPoint(data.contentPosition)
+            let screen = EngineCameraManager.worldToScreen(
+                worldX: worldPoint.x,
+                worldY: worldPoint.y,
+                cam: cam)
+            results.append(CADSelectionManager.CadGripInfo(
+                handle: handle,
+                grip: .vertex(entity: handle, index: CADLeaderGripIndex.content),
+                screenPos: screen,
+                worldPos: worldPoint))
+        }
+
+        return results
+    }
+
     private static func dimensionGrips(
         for handle: UUID,
         metadata: CADDimensionMetadata,

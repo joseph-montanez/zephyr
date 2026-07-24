@@ -46,6 +46,7 @@ public final class CADSelectionManager {
     /// rect-select or selectAll). Used by the properties panel to determine
     /// which entity's properties to show.
     public internal(set) var lastSelectedHandle: UUID? = nil
+    public internal(set) var selectedLeaderContentHandle: UUID? = nil
     /// Incremented on every selection change. Used by the render loop
     /// to invalidate the cached grip geometry.
     public internal(set) var _selectionGeneration: Int = 0
@@ -58,8 +59,17 @@ public final class CADSelectionManager {
 
     public func select(_ handle: UUID?) {
         selectedHandles.removeAll()
+        selectedLeaderContentHandle = nil
         if let h = handle { selectedHandles.insert(h); lastSelectedHandle = h }
         else { lastSelectedHandle = nil }
+        _markSelectionChanged()
+    }
+
+    public func selectLeaderContent(_ handle: UUID) {
+        selectedHandles.removeAll()
+        selectedHandles.insert(handle)
+        lastSelectedHandle = handle
+        selectedLeaderContentHandle = handle
         _markSelectionChanged()
     }
 
@@ -68,9 +78,11 @@ public final class CADSelectionManager {
         if selectedHandles.contains(h) {
             selectedHandles.remove(h)
             if lastSelectedHandle == h { lastSelectedHandle = nil }
+            if selectedLeaderContentHandle == h { selectedLeaderContentHandle = nil }
         } else {
             selectedHandles.insert(h)
             lastSelectedHandle = h
+            selectedLeaderContentHandle = nil
         }
         _markSelectionChanged()
     }
@@ -79,6 +91,7 @@ public final class CADSelectionManager {
     public func addToSelection(_ handle: UUID) {
         selectedHandles.insert(handle)
         lastSelectedHandle = handle
+        selectedLeaderContentHandle = nil
         _markSelectionChanged()
     }
 
@@ -86,6 +99,7 @@ public final class CADSelectionManager {
     public func removeFromSelection(_ handle: UUID) {
         selectedHandles.remove(handle)
         if lastSelectedHandle == handle { lastSelectedHandle = nil }
+        if selectedLeaderContentHandle == handle { selectedLeaderContentHandle = nil }
         _markSelectionChanged()
     }
 
@@ -94,6 +108,7 @@ public final class CADSelectionManager {
     public func clearSelection() {
         selectedHandles.removeAll()
         lastSelectedHandle = nil
+        selectedLeaderContentHandle = nil
         _markSelectionChanged()
     }
 
@@ -104,6 +119,7 @@ public final class CADSelectionManager {
     public func selectAll(in document: CADDocument) {
         selectedHandles.removeAll()
         lastSelectedHandle = nil
+        selectedLeaderContentHandle = nil
         for entity in document.entitiesView {
             guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
             selectedHandles.insert(entity.handle)
@@ -195,6 +211,7 @@ public final class CADSelectionManager {
         mode: RectSelectMode,
         style: RectSelectStyle
     ) {
+        selectedLeaderContentHandle = nil
         if mode == .replace {
             selectedHandles.removeAll()
             lastSelectedHandle = nil
@@ -257,6 +274,7 @@ public final class CADSelectionManager {
     public func deleteSelected(in document: CADDocument) {
         document.removeEntities(handles: selectedHandles)
         selectedHandles.removeAll()
+        selectedLeaderContentHandle = nil
         _markSelectionChanged()
     }
 
@@ -300,7 +318,8 @@ public final class CADSelectionManager {
             screenX: screenX, screenY: screenY,
             document: document, cam: cam,
             simplifyComplexBlocks: simplifyComplexBlocks,
-            selectedHandles: self.selectedHandles)
+            selectedHandles: self.selectedHandles,
+            selectedLeaderContentHandle: selectedLeaderContentHandle)
     }
 
     /// Returns world-space vertex arrays for an entity's geometry (for hover
@@ -321,7 +340,8 @@ public final class CADSelectionManager {
         return CADGripSystem.getAllGrips(
             document: document, cam: cam,
             simplifyComplexBlocks: simplifyComplexBlocks,
-            selectedHandles: selectedHandles)
+            selectedHandles: selectedHandles,
+            selectedLeaderContentHandle: selectedLeaderContentHandle)
     }
 
     /// Same as `getAllGrips` but uses pre-computed world-space points.

@@ -139,10 +139,13 @@ struct PropertiesPanelUI {
                     engine.cadSelection.clearSelection()
                 }
             }
-            // Show "Edit Text" button for text entities
-            if entity.xdata["dxf.text"] != nil {
+            if entity.xdata["dxf.text"] != nil
+                || entity.leaderData?.value.contentType == .mtext {
                 ImGuiSameLine(0, 8)
                 if igSmallButton("Edit Text") {
+                    if entity.leaderData != nil {
+                        engine.cadSelection.selectLeaderContent(entity.handle)
+                    }
                     engine.commandProcessor.executeCommand("DDEDIT")
                 }
             }
@@ -300,6 +303,10 @@ struct PropertiesPanelUI {
             igSeparator()
         }
 
+
+        if entity.leaderData != nil {
+            renderLeaderSection(entity: entity, engine: engine)
+        }
 
         // Section 5.5: Dimension Properties
         if let dimBox = entity.dimensionMetadata {
@@ -523,6 +530,153 @@ struct PropertiesPanelUI {
                 igSeparator()
             }
         }
+    }
+
+    private static func renderLeaderSection(
+        entity: CADEntity,
+        engine: PhrostEngine
+    ) {
+        guard let box = entity.leaderData,
+              ImGuiCollapsingHeader(
+                "Leader Properties",
+                Int32(ImGuiTreeNodeFlags_DefaultOpen.rawValue)) else { return }
+
+        var data = box.value
+        var style = data.styleOverrides
+            ?? engine.document.leaderStyle(named: data.styleName)
+            ?? .standard
+        var changed = false
+
+        ImGuiTextV("Style: \(data.styleName)")
+        switch data.contentType {
+        case .none: ImGuiTextV("Content: None")
+        case .mtext: ImGuiTextV("Content: MText")
+        case .block: ImGuiTextV("Content: Block")
+        }
+
+        if data.contentType == .mtext && ImGuiButton("Edit Leader Text", ImVec2(x: 0, y: 0)) {
+            engine.cadSelection.selectLeaderContent(entity.handle)
+            engine.commandProcessor.executeCommand("DDEDIT")
+        }
+
+        let pathLabel: String
+        switch style.pathType {
+        case .straight: pathLabel = "Straight"
+        case .spline: pathLabel = "Spline"
+        case .none: pathLabel = "None"
+        }
+        if ImGuiBeginCombo("Leader line", pathLabel, 0) {
+            let choices: [(CADLeaderPathType, String)] = [
+                (.straight, "Straight"),
+                (.spline, "Spline"),
+                (.none, "None")
+            ]
+            for choice in choices {
+                let selected = choice.0 == style.pathType
+                if ImGuiSelectable(choice.1, selected, 0, ImVec2(x: 0, y: 0)) {
+                    style.pathType = choice.0
+                    changed = true
+                }
+                if selected { ImGuiSetItemDefaultFocus() }
+            }
+            ImGuiEndCombo()
+        }
+
+        var arrowEnabled = style.arrowEnabled
+        if ImGuiCheckbox("Arrowhead enabled", &arrowEnabled) {
+            style.arrowEnabled = arrowEnabled
+            changed = true
+        }
+        var arrowSize = Float(style.arrowSize)
+        if ImGuiInputFloat("Arrow size", &arrowSize, 0.1, 1.0, "%.3f", 0) {
+            style.arrowSize = Double(max(0, arrowSize))
+            changed = true
+        }
+
+        var landingEnabled = style.landingEnabled
+        if ImGuiCheckbox("Landing enabled", &landingEnabled) {
+            style.landingEnabled = landingEnabled
+            changed = true
+        }
+        var doglegEnabled = style.doglegEnabled
+        if ImGuiCheckbox("Dogleg enabled", &doglegEnabled) {
+            style.doglegEnabled = doglegEnabled
+            changed = true
+        }
+        var doglegLength = Float(style.doglegLength)
+        if ImGuiInputFloat("Dogleg length", &doglegLength, 0.1, 1.0, "%.3f", 0) {
+            style.doglegLength = Double(max(0, doglegLength))
+            changed = true
+        }
+        let previousContentGap = style.contentGap
+        var contentGap = Float(style.contentGap)
+        if ImGuiInputFloat("Content gap", &contentGap, 0.1, 1.0, "%.3f", 0) {
+            style.contentGap = Double(max(0, contentGap))
+            changed = true
+        }
+
+        if data.contentType == .mtext {
+            var textHeight = Float(style.textHeight)
+            if ImGuiInputFloat("Text height", &textHeight, 0.1, 1.0, "%.3f", 0) {
+                style.textHeight = Double(max(0.0001, textHeight))
+                changed = true
+            }
+            if ImGuiBeginCombo("Text style", style.textStyleName, 0) {
+                for textStyle in engine.document.textStyles.values.sorted(by: { $0.name < $1.name }) {
+                    let selected = textStyle.name.caseInsensitiveCompare(style.textStyleName) == .orderedSame
+                    if ImGuiSelectable(textStyle.name, selected, 0, ImVec2(x: 0, y: 0)) {
+                        style.textStyleName = textStyle.name
+                        changed = true
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            var frameEnabled = style.textFrameEnabled
+            if ImGuiCheckbox("Text frame", &frameEnabled) {
+                style.textFrameEnabled = frameEnabled
+                changed = true
+            }
+            var rotationDegrees = Float(data.contentRotation * 180.0 / .pi)
+            if ImGuiInputFloat("Text rotation", &rotationDegrees, 1, 15, "%.1f deg", 0) {
+                data.contentRotation = Double(rotationDegrees) * .pi / 180.0
+                changed = true
+            }
+        }
+
+        if changed {
+            let gapDelta = style.contentGap - previousContentGap
+            if data.contentType != .none,
+               abs(gapDelta) > 1e-9,
+               let direction = leaderContentDirection(data: data) {
+                data.contentPosition = data.contentPosition + direction * gapDelta
+            }
+            data.styleOverrides = style
+            var updatedEntity = entity
+            updatedEntity.leaderData = CADLeaderDataBox(data)
+            updatedEntity = engine.document.regeneratedLeaderEntity(updatedEntity)
+            engine.document.updateEntity(updatedEntity)
+            engine.tabManager.markActiveDirty()
+        }
+        igSeparator()
+    }
+
+
+    private static func leaderContentDirection(data: CADLeaderData) -> Vector3? {
+        guard let branch = data.branches.first,
+              let last = branch.vertices.last else { return nil }
+
+        if let doglegDirection = branch.doglegDirection?.normalized,
+           doglegDirection.magnitudeSquared > 1e-18 {
+            return doglegDirection
+        }
+
+        let towardContent = (data.contentPosition - last).normalized
+        if towardContent.magnitudeSquared > 1e-18 {
+            return towardContent
+        }
+
+        return Vector3(x: 1, y: 0, z: 0)
     }
 
     // MARK: - Hatch / Gradient properties

@@ -22,6 +22,33 @@ import SwiftSDL
 // =========================================================================
 
 /// Result returned by `FeatureCommand` event handlers.
+public struct FeatureCommandTextOption: Sendable, Hashable {
+    public let value: String
+    public let title: String
+    public let aliases: [String]
+    public let description: String
+
+    public init(
+        value: String,
+        title: String,
+        aliases: [String] = [],
+        description: String = ""
+    ) {
+        self.value = value
+        self.title = title
+        self.aliases = aliases
+        self.description = description
+    }
+
+    public func matches(_ input: String) -> Bool {
+        let query = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return true }
+        return title.lowercased().hasPrefix(query)
+            || value.lowercased().hasPrefix(query)
+            || aliases.contains { $0.lowercased().hasPrefix(query) }
+    }
+}
+
 public enum CommandResult {
     /// Command is still active, waiting for more input.
     /// The event was NOT consumed — the engine should fall through to its default behavior.
@@ -76,6 +103,10 @@ public protocol FeatureCommand: AnyObject {
     /// Returns `.finished` if the command consumed the text and is done;
     /// `.continue` if the text was consumed but the command is still active.
     func handleCommandText(_ text: String, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult
+
+    /// Context-sensitive command-line options shown while this feature command
+    /// owns the input field.
+    func commandTextOptions(for input: String) -> [FeatureCommandTextOption]
 }
 
 public extension FeatureCommand {
@@ -91,6 +122,8 @@ public extension FeatureCommand {
 
     /// Default: ignore command-line text.
     func handleCommandText(_ text: String, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult { .continue }
+
+    func commandTextOptions(for input: String) -> [FeatureCommandTextOption] { [] }
 }
 
 // =========================================================================
@@ -416,6 +449,19 @@ public final class CADCommandProcessor {
         cmd.cancel(engine: engine, processor: self)
         activeFeatureCommand = nil
         commandPrompt = nil
+    }
+
+    @discardableResult
+    public func submitTextToActiveFeatureCommand(
+        _ text: String,
+        engine: PhrostEngine
+    ) -> Bool {
+        guard let command = activeFeatureCommand else { return false }
+        let result = command.handleCommandText(text, engine: engine, processor: self)
+        if result == .finished, activeFeatureCommand != nil {
+            finishFeatureCommand(engine: engine)
+        }
+        return true
     }
 
     // MARK: - Command Execution

@@ -12,14 +12,53 @@ public final class LeaderCreateCommand: FeatureCommand {
 
     private enum State {
         case points
+        case contentOptions
         case blockName
+        case copyContent
+        case mtextEditor
+        case toleranceDialog
         case done
     }
+
+    private static let contentOptions = [
+        FeatureCommandTextOption(
+            value: "Mtext",
+            title: "Mtext",
+            aliases: ["M"],
+            description: "Open the multiline text editor"),
+        FeatureCommandTextOption(
+            value: "Block",
+            title: "Block",
+            aliases: ["B"],
+            description: "Attach a block to the leader"),
+        FeatureCommandTextOption(
+            value: "None",
+            title: "None",
+            aliases: ["N"],
+            description: "Finish with no annotation content"),
+        FeatureCommandTextOption(
+            value: "Tolerance",
+            title: "Tolerance",
+            aliases: ["T"],
+            description: "Create a geometric tolerance annotation"),
+        FeatureCommandTextOption(
+            value: "Copy",
+            title: "Copy",
+            aliases: ["C"],
+            description: "Copy multiline text from an existing annotation")
+    ]
 
     private let mode: Mode
     private var state: State = .points
     private var points: [Vector3] = []
+    private var annotationLines: [String] = []
     private var mouse = Vector3.zero
+    private var tolerancePopupOpened = false
+    private var toleranceSymbol = ""
+    private var toleranceValue = ""
+    private var toleranceDatum1 = ""
+    private var toleranceDatum2 = ""
+    private var toleranceDatum3 = ""
 
     public init(mode: Mode) {
         self.mode = mode
@@ -27,13 +66,21 @@ public final class LeaderCreateCommand: FeatureCommand {
 
     public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
         points.removeAll()
+        annotationLines.removeAll()
         state = .points
+        tolerancePopupOpened = false
         processor.commandPrompt = "Specify leader arrowhead location:"
     }
 
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
         points.removeAll()
+        annotationLines.removeAll()
         state = .done
+        tolerancePopupOpened = false
+        engine.textManager.isEditorActive = false
+        engine.textManager.editorResult = .active
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
         processor.commandPrompt = nil
     }
 
@@ -43,19 +90,46 @@ public final class LeaderCreateCommand: FeatureCommand {
         engine: PhrostEngine,
         processor: CADCommandProcessor
     ) -> CommandResult {
-        guard state == .points else { return .handled }
-        points.append(Vector3(x: worldX, y: worldY, z: 0))
-        if points.count == 1 {
-            processor.commandPrompt = "Specify leader landing location:"
-        } else {
-            let style = currentStyle(engine)
-            if points.count >= style.maxLeaderPoints {
-                processor.commandPrompt = "Enter annotation text or [Block/None]:"
+        let point = Vector3(x: worldX, y: worldY, z: 0)
+
+        switch state {
+        case .points:
+            points.append(point)
+            if points.count == 1 {
+                processor.commandPrompt = "Specify next leader point:"
             } else {
-                processor.commandPrompt = "Specify next point or enter annotation text [Block/None]:"
+                let style = currentStyle(engine)
+                if mode != .leader && points.count >= style.maxLeaderPoints {
+                    beginContentOptions(processor: processor, resetLines: true)
+                } else {
+                    processor.commandPrompt = "Specify next leader point or press Enter for annotation:"
+                }
             }
+            return .handled
+
+        case .copyContent:
+            let threshold = 10.0 / max(engine.camera.zoom, 0.001)
+            guard let handle = engine.cadSelection.hitTest(
+                worldX: worldX,
+                worldY: worldY,
+                document: engine.document,
+                threshold: threshold
+            ), let entity = engine.document.entity(for: handle),
+               let copiedText = annotationText(from: entity),
+               !copiedText.isEmpty else {
+                processor.commandPrompt = "Select multiline text or an MText leader annotation:"
+                return .handled
+            }
+            return create(
+                contentType: .mtext,
+                text: copiedText,
+                blockName: nil,
+                engine: engine,
+                processor: processor)
+
+        case .contentOptions, .blockName, .mtextEditor, .toleranceDialog, .done:
+            return .handled
         }
-        return .handled
     }
 
     public func handleMouseMotion(
@@ -72,11 +146,30 @@ public final class LeaderCreateCommand: FeatureCommand {
         engine: PhrostEngine,
         processor: CADCommandProcessor
     ) -> CommandResult {
-        if (scancode == SDL_SCANCODE_RETURN || scancode == SDL_SCANCODE_KP_ENTER), points.count >= 2 {
-            processor.commandPrompt = "Enter annotation text or [Block/None]:"
-            return .handled
+        switch scancode {
+        case SDL_SCANCODE_ESCAPE:
+            return .finished
+
+        case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER:
+            switch state {
+            case .points:
+                guard points.count >= 2 else {
+                    processor.commandPrompt = "Specify at least two leader points."
+                    return .handled
+                }
+                beginContentOptions(processor: processor, resetLines: true)
+                return .handled
+
+            case .contentOptions:
+                return finishAnnotation(engine: engine, processor: processor)
+
+            default:
+                return .handled
+            }
+
+        default:
+            return .continue
         }
-        return .continue
     }
 
     public func handleCommandText(
@@ -85,33 +178,58 @@ public final class LeaderCreateCommand: FeatureCommand {
         processor: CADCommandProcessor
     ) -> CommandResult {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+
         switch state {
         case .points:
             guard points.count >= 2 else {
                 processor.commandPrompt = "Specify at least two leader points."
                 return .handled
             }
-            if value.caseInsensitiveCompare("BLOCK") == .orderedSame || value.caseInsensitiveCompare("B") == .orderedSame {
-                state = .blockName
-                processor.commandPrompt = "Enter block name:"
-                return .handled
-            }
-            if value.caseInsensitiveCompare("NONE") == .orderedSame || value.caseInsensitiveCompare("N") == .orderedSame {
-                return create(contentType: .none, text: "", blockName: nil, engine: engine, processor: processor)
-            }
-            return create(contentType: .mtext, text: value, blockName: nil, engine: engine, processor: processor)
+            beginContentOptions(processor: processor, resetLines: true)
+            if value.isEmpty { return .handled }
+            return handleContentInput(value, engine: engine, processor: processor)
+
+        case .contentOptions:
+            return handleContentInput(value, engine: engine, processor: processor)
 
         case .blockName:
+            guard !value.isEmpty else {
+                openCommandLine(processor: processor, prompt: "Enter block name:")
+                return .handled
+            }
             guard let block = engine.document.allBlocks.first(where: {
                 !$0.isInternalTableDisplayBlock && $0.name.caseInsensitiveCompare(value) == .orderedSame
             }) else {
-                processor.commandPrompt = "Block not found. Enter block name:"
+                openCommandLine(processor: processor, prompt: "Block not found. Enter block name:")
                 return .handled
             }
-            return create(contentType: .block, text: "", blockName: block.name, engine: engine, processor: processor)
+            return create(
+                contentType: .block,
+                text: "",
+                blockName: block.name,
+                engine: engine,
+                processor: processor)
+
+        case .copyContent:
+            processor.commandPrompt = "Select multiline text or an MText leader annotation:"
+            return .handled
+
+        case .mtextEditor, .toleranceDialog:
+            return .handled
 
         case .done:
             return .finished
+        }
+    }
+
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        switch state {
+        case .contentOptions:
+            return Self.contentOptions.filter { $0.matches(input) }
+        case .blockName:
+            return []
+        default:
+            return []
         }
     }
 
@@ -122,13 +240,302 @@ public final class LeaderCreateCommand: FeatureCommand {
         var preview = points
         preview.append(mouse)
         for index in 0..<(preview.count - 1) {
-            let a = EngineCameraManager.worldToScreen(worldX: preview[index].x, worldY: preview[index].y, cam: cam)
-            let b = EngineCameraManager.worldToScreen(worldX: preview[index + 1].x, worldY: preview[index + 1].y, cam: cam)
-            ImDrawListAddLine(drawList, ImVec2(x: a.x, y: a.y), ImVec2(x: b.x, y: b.y), color, 1.5)
+            let a = EngineCameraManager.worldToScreen(
+                worldX: preview[index].x,
+                worldY: preview[index].y,
+                cam: cam)
+            let b = EngineCameraManager.worldToScreen(
+                worldX: preview[index + 1].x,
+                worldY: preview[index + 1].y,
+                cam: cam)
+            ImDrawListAddLine(
+                drawList,
+                ImVec2(x: a.x, y: a.y),
+                ImVec2(x: b.x, y: b.y),
+                color,
+                1.5)
         }
     }
 
-    public func getDrawingSnapPoints() -> [Vector3] { points }
+    public func renderImGui(engine: PhrostEngine) {
+        switch state {
+        case .mtextEditor:
+            finishMTextEditorIfNeeded(engine: engine, processor: engine.commandProcessor)
+        case .toleranceDialog:
+            renderToleranceDialog(engine: engine, processor: engine.commandProcessor)
+        default:
+            break
+        }
+    }
+
+    public func getDrawingSnapPoints() -> [Vector3] {
+        state == .points ? points : []
+    }
+
+    private func handleContentInput(
+        _ value: String,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        switch value.lowercased() {
+        case "":
+            return finishAnnotation(engine: engine, processor: processor)
+
+        case "m", "mtext":
+            beginMTextEditor(
+                prefill: annotationLines.joined(separator: "\n"),
+                engine: engine,
+                processor: processor)
+            return .handled
+
+        case "b", "block":
+            state = .blockName
+            openCommandLine(processor: processor, prompt: "Enter block name:")
+            return .handled
+
+        case "n", "none":
+            return create(
+                contentType: .none,
+                text: "",
+                blockName: nil,
+                engine: engine,
+                processor: processor)
+
+        case "t", "tolerance":
+            beginToleranceDialog(processor: processor)
+            return .handled
+
+        case "c", "copy":
+            state = .copyContent
+            processor.commandLineActive = false
+            processor.commandBuffer = ""
+            processor.commandPrompt = "Select multiline text or an MText leader annotation:"
+            return .handled
+
+        default:
+            annotationLines.append(value)
+            openAnnotationPrompt(processor: processor)
+            return .handled
+        }
+    }
+
+    private func finishAnnotation(
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        let text = annotationLines.joined(separator: "\n")
+        return create(
+            contentType: text.isEmpty ? .none : .mtext,
+            text: text,
+            blockName: nil,
+            engine: engine,
+            processor: processor)
+    }
+
+    private func beginContentOptions(
+        processor: CADCommandProcessor,
+        resetLines: Bool
+    ) {
+        if resetLines { annotationLines.removeAll() }
+        state = .contentOptions
+        openAnnotationPrompt(processor: processor)
+    }
+
+    private func openAnnotationPrompt(processor: CADCommandProcessor) {
+        let prompt = annotationLines.isEmpty
+            ? "Enter first annotation line or [Mtext/Block/None/Tolerance/Copy] <finish>:"
+            : "Enter next annotation line or [Mtext/Block/None/Tolerance/Copy] <finish>:"
+        openCommandLine(processor: processor, prompt: prompt)
+    }
+
+    private func openCommandLine(processor: CADCommandProcessor, prompt: String) {
+        processor.commandPrompt = prompt
+        processor.commandBuffer = ""
+        processor.commandSelectionIndex = 0
+        processor.commandLineActive = true
+    }
+
+    private func beginMTextEditor(
+        prefill: String,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) {
+        let leaderStyle = currentStyle(engine)
+        let textStyle = engine.document.textStyle(named: leaderStyle.textStyleName) ?? .standard
+        engine.textManager.editorState = TextEditorState(
+            text: prefill,
+            styleName: textStyle.name,
+            fontName: textStyle.fontFile,
+            height: leaderStyle.textHeight,
+            rotation: 0,
+            alignH: 0,
+            alignV: 2,
+            mtextWidth: max(leaderStyle.textHeight * 20.0, 1.0))
+        engine.textManager.editorResult = .active
+        engine.textManager.isEditorActive = true
+        state = .mtextEditor
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
+        processor.commandPrompt = "Enter leader annotation in the text editor."
+    }
+
+    private func finishMTextEditorIfNeeded(
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) {
+        guard !engine.textManager.isEditorActive else { return }
+
+        let result = engine.textManager.editorResult
+        engine.textManager.editorResult = .active
+
+        switch result {
+        case .active:
+            return
+
+        case .cancelled:
+            state = .contentOptions
+            openAnnotationPrompt(processor: processor)
+
+        case .confirmed(let editorState):
+            let text = editorState.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                state = .contentOptions
+                openAnnotationPrompt(processor: processor)
+                return
+            }
+
+            var styleOverride = currentStyle(engine)
+            styleOverride.textStyleName = engine.document.resolvedTextStyleName(editorState.styleName)
+            styleOverride.textHeight = max(editorState.height, 0.0001)
+
+            let result = create(
+                contentType: .mtext,
+                text: text,
+                blockName: nil,
+                textWidth: editorState.mtextWidth > 0 ? editorState.mtextWidth : nil,
+                contentRotation: editorState.rotation,
+                styleOverride: styleOverride,
+                engine: engine,
+                processor: processor)
+            if result == .finished {
+                processor.finishFeatureCommand(engine: engine)
+            }
+        }
+    }
+
+    private func beginToleranceDialog(processor: CADCommandProcessor) {
+        state = .toleranceDialog
+        tolerancePopupOpened = false
+        toleranceSymbol = ""
+        toleranceValue = ""
+        toleranceDatum1 = ""
+        toleranceDatum2 = ""
+        toleranceDatum3 = ""
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
+        processor.commandPrompt = "Complete the geometric tolerance dialog."
+    }
+
+    private func renderToleranceDialog(
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) {
+        let popupID = "Geometric Tolerance##LeaderTolerance"
+        if !tolerancePopupOpened {
+            ImGuiOpenPopup(popupID, Int32(ImGuiPopupFlags_None.rawValue))
+            tolerancePopupOpened = true
+        }
+
+        ImGuiSetNextWindowSize(ImVec2(x: 520, y: 0), Int32(ImGuiCond_Appearing.rawValue))
+        var open = true
+        let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)
+            | Int32(ImGuiWindowFlags_AlwaysAutoResize.rawValue)
+        guard ImGuiBeginPopupModal(popupID, &open, flags) else { return }
+        defer { ImGuiEndPopup() }
+
+        if !open {
+            state = .contentOptions
+            openAnnotationPrompt(processor: processor)
+            return
+        }
+
+        ImGuiTextV("Feature control frame")
+        ImGuiSeparator()
+        ImGuiPushItemWidth(-1)
+        inputText("Geometric symbol", value: &toleranceSymbol)
+        inputText("Tolerance", value: &toleranceValue)
+        inputText("Primary datum", value: &toleranceDatum1)
+        inputText("Secondary datum", value: &toleranceDatum2)
+        inputText("Tertiary datum", value: &toleranceDatum3)
+        ImGuiPopItemWidth()
+        ImGuiSpacing()
+        ImGuiSeparator()
+        ImGuiSpacing()
+
+        if ImGuiButton("OK", ImVec2(x: 120, y: 0)) {
+            let text = toleranceText()
+            guard !text.isEmpty else {
+                processor.commandPrompt = "Enter a tolerance value or datum."
+                return
+            }
+            ImGuiCloseCurrentPopup()
+            let result = create(
+                contentType: .mtext,
+                text: text,
+                blockName: nil,
+                engine: engine,
+                processor: processor)
+            if result == .finished {
+                processor.finishFeatureCommand(engine: engine)
+            }
+        }
+
+        ImGuiSameLine(0, 8)
+        if ImGuiButton("Back", ImVec2(x: 120, y: 0)) {
+            ImGuiCloseCurrentPopup()
+            state = .contentOptions
+            openAnnotationPrompt(processor: processor)
+        }
+    }
+
+    private func inputText(_ label: String, value: inout String) {
+        let capacity = 256
+        var buffer = [CChar](repeating: 0, count: capacity)
+        let bytes = value.utf8CString
+        let count = min(bytes.count, capacity - 1)
+        for index in 0..<count {
+            buffer[index] = bytes[index]
+        }
+        if igInputText(label, &buffer, capacity, 0, nil, nil) {
+            let end = buffer.firstIndex(of: 0) ?? buffer.endIndex
+            value = String(decoding: buffer[..<end].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        }
+    }
+
+    private func toleranceText() -> String {
+        [toleranceSymbol, toleranceValue, toleranceDatum1, toleranceDatum2, toleranceDatum3]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " | ")
+    }
+
+    private func annotationText(from entity: CADEntity) -> String? {
+        if let data = entity.leaderData?.value,
+           data.contentType == .mtext,
+           !data.text.isEmpty {
+            return data.text
+        }
+        if case .string(let text) = entity.xdata["dxf.text"], !text.isEmpty {
+            return text
+        }
+        for primitive in entity.localGeometry ?? [] {
+            if case .text(_, let text, _, _, _, _, _, _, _) = primitive,
+               !text.isEmpty {
+                return text
+            }
+        }
+        return nil
+    }
 
     private func currentStyle(_ engine: PhrostEngine) -> CADLeaderStyle {
         engine.document.leaderStyle(named: engine.document.currentLeaderStyleName) ?? .standard
@@ -138,6 +545,9 @@ public final class LeaderCreateCommand: FeatureCommand {
         contentType: CADLeaderContentType,
         text: String,
         blockName: String?,
+        textWidth: Double? = nil,
+        contentRotation: Double = 0,
+        styleOverride: CADLeaderStyle? = nil,
         engine: PhrostEngine,
         processor: CADCommandProcessor
     ) -> CommandResult {
@@ -146,7 +556,7 @@ public final class LeaderCreateCommand: FeatureCommand {
             processor.commandPrompt = "Unable to create leader."
             return .finished
         }
-        let style = currentStyle(engine)
+        let style = styleOverride ?? currentStyle(engine)
         let last = points[points.count - 1]
         let previous = points[points.count - 2]
         let direction = Vector3(x: last.x >= previous.x ? 1 : -1, y: 0, z: 0)
@@ -158,7 +568,10 @@ public final class LeaderCreateCommand: FeatureCommand {
             text: text,
             blockName: blockName,
             contentPosition: contentPosition,
-            isLegacyLeader: mode != .mleader)
+            contentRotation: contentRotation,
+            textWidth: textWidth,
+            isLegacyLeader: mode != .mleader,
+            styleOverrides: styleOverride)
         let geometry = CADLeaderGeometry.build(
             data: data,
             style: style,
@@ -172,10 +585,13 @@ public final class LeaderCreateCommand: FeatureCommand {
         engine.document.addEntity(entity)
         engine.cadSelection.select(entity.handle)
         state = .done
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
         processor.commandPrompt = mode == .mleader ? "Multileader created." : "Leader created."
         return .finished
     }
 }
+
 
 @MainActor
 public final class MLeaderEditCommand: FeatureCommand {

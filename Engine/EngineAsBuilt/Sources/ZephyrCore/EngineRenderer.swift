@@ -433,7 +433,8 @@ public final class EngineRenderer {
             engine._cachedCadGrips = CADGripSystem.getAllGrips(
                 document: engine.document, cam: transform,
                 simplifyComplexBlocks: true,
-                selectedHandles: gripHandles)
+                selectedHandles: gripHandles,
+                selectedLeaderContentHandle: engine.cadSelection.selectedLeaderContentHandle)
             engine.interaction.cachedGripGeneration = engine.camera.renderGeneration
             engine._cachedSelectionGen = engine.cadSelection._selectionGeneration
             engine._cachedApplyGen = engine._appliedGeneration
