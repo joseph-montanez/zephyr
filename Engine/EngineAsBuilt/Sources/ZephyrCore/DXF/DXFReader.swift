@@ -2545,7 +2545,10 @@ extension DXFReader {
             case 210: entity.extrusion.x = d(v); entity.haveExtrusion = true
             case 220: entity.extrusion.y = d(v)
             case 230: entity.extrusion.z = d(v)
-            case 330: entity.parentHandle = parseHandle(v)
+            case 330:
+                if !inAppData, entity.parentHandle == 0 {
+                    entity.parentHandle = parseHandle(v)
+                }
             case 370: entity.lWeight = dxfLineWeightVal(v)
             case 390: entity.plotStyleHandle = parseHandle(v)
             case 420: entity.color24 = i32(v)
