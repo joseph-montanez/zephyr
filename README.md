@@ -29,11 +29,11 @@ On top of that, finding great cross-platform tools that treat macOS and Linux as
 
 | Layer | Technology |
 |---|---|
-| **Language** | Swift (~69k LOC) |
+| **Language** | Swift (~85k LOC) |
 | **GPU (macOS)** | Metal via SDL3 |
 | **GPU (Windows)** | Direct3D 12 via SDL3 |
 | **UI** | ImGui (SDL3 GPU backend) |
-| **DXF I/O** | SwiftDXFrw (native Swift port of libdxfrw) |
+| **DXF I/O** | Swift port of libdxfrw) |
 | **DWG I/O** | ODA CLI bridge (import/export) |
 | **PDF Export** | PDFium (Windows/Linux) · PDFKit (macOS) |
 | **PDF Import** | PDFium (Windows/Linux) · PDFKit (macOS) |
