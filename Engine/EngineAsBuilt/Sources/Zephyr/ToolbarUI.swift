@@ -46,7 +46,26 @@ struct ToolbarUI {
 
             // File operations: Open, Save, Save As
             if igSmallButton("Open..") {
-                engine.fileBrowser.open(filterExtension: "dxf;dwg;eab")
+                NativeFileDialog.showOpenDialog(
+                    window: engine.window,
+                    filters: [
+                        NativeFileDialog.Filter(label: "Drawings", extensions: ["dxf", "dwg", "eab"]),
+                        NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
+                    ],
+                    allowMultiple: true
+                ) { [weak engine] urls in
+                    guard let engine else { return }
+                    for url in urls {
+                        do {
+                            try engine.tabManager.openTab(url: url)
+                        } catch {
+                            print("Failed to open \(url.lastPathComponent): \(error)")
+                        }
+                    }
+                    if !urls.isEmpty {
+                        engine.zoomExtents()
+                    }
+                }
             }
             ImGuiSameLine(0, 4)
             if ImGuiIsItemHovered(0) {
@@ -62,10 +81,10 @@ struct ToolbarUI {
             ImGuiSameLine(0, 4)
 
             if igSmallButton("Save") {
-                // Use async save; fall back to Save As browser if no file URL
+                // Use async save; fall back to native save dialog if no file URL
                 engine.tabManager.startSaveActiveTab()
                 if engine.tabManager.activeFileURL == nil {
-                    engine.saveFileBrowser.open(filterExtension: "dxf;dwg;eab;pdf")
+                    showNativeSaveDialog(engine: engine)
                 }
             }
             if ImGuiIsItemHovered(0) {
@@ -81,7 +100,7 @@ struct ToolbarUI {
             ImGuiSameLine(0, 4)
 
             if igSmallButton("Save As..") {
-                engine.saveFileBrowser.open(filterExtension: "dxf;dwg;eab;pdf")
+                showNativeSaveDialog(engine: engine)
             }
             if ImGuiIsItemHovered(0) {
                 ImGuiBeginTooltip()
@@ -237,6 +256,25 @@ struct ToolbarUI {
         ImGuiEnd()
 
         ImGuiPopStyleVar(2)
+    }
+
+    /// Show the native file-save dialog and, on confirmation, save the active tab.
+    private static func showNativeSaveDialog(engine: PhrostEngine) {
+        let defaultName = engine.tabManager.activeTab?.displayName ?? "untitled"
+        let dxfVersion = engine.tabManager.activeTab?.dxfVersion ?? .r2018
+        NativeFileDialog.showSaveDialog(
+            window: engine.window,
+            filters: [
+                NativeFileDialog.Filter(label: "DXF Drawing", extensions: ["dxf"]),
+                NativeFileDialog.Filter(label: "Zephyr Drawing", extensions: ["eab"]),
+                NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"]),
+                NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
+            ],
+            defaultName: defaultName
+        ) { [weak engine] url in
+            guard let engine, let url else { return }
+            engine.tabManager.startSaveActiveTabAs(url: url, dxfVersion: dxfVersion)
+        }
     }
 
 }

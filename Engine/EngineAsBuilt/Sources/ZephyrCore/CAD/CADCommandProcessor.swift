@@ -529,8 +529,28 @@ public final class CADCommandProcessor {
             engine?.zoomExtents()
             clearCommand()
         case "OPEN":
-            engine?.fileBrowser.open(filterExtension: "dxf;eab")
+            guard let eng = engine else { clearCommand(); return }
             clearCommand()
+            NativeFileDialog.showOpenDialog(
+                window: eng.window,
+                filters: [
+                    NativeFileDialog.Filter(label: "Drawings", extensions: ["dxf", "dwg", "eab"]),
+                    NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
+                ],
+                allowMultiple: true
+            ) { [weak eng] urls in
+                guard let eng else { return }
+                for url in urls {
+                    do {
+                        try eng.tabManager.openTab(url: url)
+                    } catch {
+                        print("Failed to open \(url.lastPathComponent): \(error)")
+                    }
+                }
+                if !urls.isEmpty {
+                    eng.zoomExtents()
+                }
+            }
         case "CLOSE":
             _ = engine?.tabManager.requestCloseActiveTab()
             clearCommand()
@@ -563,32 +583,38 @@ public final class CADCommandProcessor {
             clearCommand()
         case "SAVE", "QSAVE": 
             guard let eng = engine else { clearCommand(); return }
+            clearCommand()
             do {
                 try eng.tabManager.saveActiveTab()
             } catch TabManager.TabError.noFileURL {
-                eng.saveFileBrowser.openSave(
-                    filterExtension: "dxf;dwg;eab;pdf",
-                    defaultName: eng.tabManager.activeTab?.displayName ?? "untitled",
-                    defaultDXFVersion: eng.tabManager.activeTab?.dxfVersion ?? .defaultExport)
+                showNativeSaveDialog(engine: eng)
             } catch {
                 print("Save failed: \(error)")
             }
-            clearCommand()
         case "SAVEAS":
-            engine?.saveFileBrowser.openSave(
-                filterExtension: "dxf;dwg;eab;pdf",
-                defaultName: engine?.tabManager.activeTab?.displayName ?? "untitled",
-                defaultDXFVersion: engine?.tabManager.activeTab?.dxfVersion ?? .defaultExport)
+            guard let eng = engine else { clearCommand(); return }
             clearCommand()
+            showNativeSaveDialog(engine: eng)
         case "PDFEXPORT", "EXPORTPDF":
-            engine?.saveFileBrowser.openSave(
-                filterExtension: "pdf",
-                defaultName: (engine?.tabManager.activeTab?.displayName ?? "untitled")
-                    .replacingOccurrences(of: ".dxf", with: "")
-                    .replacingOccurrences(of: ".dwg", with: "")
-                    .replacingOccurrences(of: ".eab", with: "")
-            )
+            guard let eng = engine else { clearCommand(); return }
             clearCommand()
+            let pdfName = (eng.tabManager.activeTab?.displayName ?? "untitled")
+                .replacingOccurrences(of: ".dxf", with: "")
+                .replacingOccurrences(of: ".dwg", with: "")
+                .replacingOccurrences(of: ".eab", with: "")
+            NativeFileDialog.showSaveDialog(
+                window: eng.window,
+                filters: [
+                    NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"])
+                ],
+                defaultName: pdfName
+            ) { [weak eng] url in
+                guard let eng, let url else { return }
+                eng.tabManager.startSaveActiveTabAs(
+                    url: url,
+                    dxfVersion: eng.tabManager.activeTab?.dxfVersion ?? .r2018
+                )
+            }
         // --- Existing commands ---
         case "M", "MOVE":
             guard let engine = engine else { clearCommand(); return }
@@ -1400,6 +1426,25 @@ public final class CADCommandProcessor {
     }
 
     // MARK: - Command Helpers
+
+    /// Show the native file-save dialog and, on confirmation, save the active tab.
+    private func showNativeSaveDialog(engine eng: PhrostEngine) {
+        let defaultName = eng.tabManager.activeTab?.displayName ?? "untitled"
+        let dxfVersion = eng.tabManager.activeTab?.dxfVersion ?? .r2018
+        NativeFileDialog.showSaveDialog(
+            window: eng.window,
+            filters: [
+                NativeFileDialog.Filter(label: "DXF Drawing", extensions: ["dxf"]),
+                NativeFileDialog.Filter(label: "Zephyr Drawing", extensions: ["eab"]),
+                NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"]),
+                NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
+            ],
+            defaultName: defaultName
+        ) { [weak eng] url in
+            guard let eng, let url else { return }
+            eng.tabManager.startSaveActiveTabAs(url: url, dxfVersion: dxfVersion)
+        }
+    }
 
     private func startCommand(_ name: String, prompt: String) {
         activeCommand = name
