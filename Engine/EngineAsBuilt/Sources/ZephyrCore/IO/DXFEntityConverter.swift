@@ -33,6 +33,8 @@ public enum DXFEntityConverter {
                         startAngle: angles.start, endAngle: angles.end, color: primColor)]
         case .lWPOLYLINE, .pOLYLINE:
             return convertPolyline(e, color: primColor)
+        case .rEGION:
+            return convertRegion(e, color: primColor)
         case .eLLIPSE:
             return convertEllipse(e, color: primColor)
         case .sPLINE:
@@ -88,6 +90,17 @@ public enum DXFEntityConverter {
             return []
         default:
             return []
+        }
+    }
+
+    // MARK: - Region
+
+    private static func convertRegion(_ e: DXFEntity, color: ColorRGBA?) -> [CADPrimitive] {
+        guard let region = e as? DXFRegionEntity else { return [] }
+        return region.boundaryLoops.flatMap { loop in
+            loop.flatMap { boundary in
+                convertEntityToPrimitives(boundary, bylayerColor: color)
+            }
         }
     }
 

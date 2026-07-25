@@ -143,6 +143,7 @@ public enum DXFEType: String, Sendable {
     case mTEXT         = "MTEXT"
     case pOINT         = "POINT"
     case pOLYLINE      = "POLYLINE"
+    case rEGION        = "REGION"
     case rAY           = "RAY"
     case sOLID         = "SOLID"
     case sPLINE        = "SPLINE"
@@ -721,6 +722,19 @@ public class DXFSplineEntity: DXFEntity {
         self.tolControl = 0.0000001
         self.tolFit = 0.0000001
         super.init(eType: eType)
+    }
+}
+
+// MARK: - Region (AcDbModelerGeometry)
+
+/// REGION ACIS payloads are opaque to the native DXF reader. When an
+/// associative HATCH references a REGION, the hatch's explicit boundary
+/// loops provide an exact renderable outline for the region.
+public final class DXFRegionEntity: DXFEntity {
+    public var boundaryLoops: [[DXFEntity]] = []
+
+    public init() {
+        super.init(eType: .rEGION)
     }
 }
 

@@ -337,6 +337,7 @@ public class DXFReader {
         case "HATCH":    return parseHatch(allPairs)
         case "XLINE":    return parseXLine(allPairs)
         case "RAY":      return parseRay(allPairs)
+        case "REGION":   return parseRegion(allPairs)
         case "DIMENSION": return parseDimension(allPairs)
         case "LEADER":   return parseLeader(allPairs)
         case "MULTILEADER", "MLEADER": return parseMLeader(allPairs)
@@ -404,6 +405,12 @@ public class DXFReader {
 // MARK: - Entity Parsers
 
 extension DXFReader {
+
+    func parseRegion(_ pairs: [(Int, String)]) -> DXFRegionEntity {
+        let e = DXFRegionEntity()
+        applyCommon(pairs, to: e)
+        return e
+    }
 
     func parsePoint(_ pairs: [(Int, String)]) -> DXFPointEntity {
         let e = DXFPointEntity()

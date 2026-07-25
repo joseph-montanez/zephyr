@@ -363,8 +363,14 @@ public enum DXFImporter {
         resolveAssociativeHatchBoundaries(
             in: reader.entities,
             sourceEntityByHandle: sourceEntityByHandle)
+        resolveRegionBoundaries(
+            in: reader.entities,
+            sourceEntityByHandle: sourceEntityByHandle)
         for block in reader.blocks {
             resolveAssociativeHatchBoundaries(
+                in: block.entities,
+                sourceEntityByHandle: sourceEntityByHandle)
+            resolveRegionBoundaries(
                 in: block.entities,
                 sourceEntityByHandle: sourceEntityByHandle)
         }
@@ -630,22 +636,98 @@ public enum DXFImporter {
                 if let leader = entity as? DXFLeaderEntity, leader.vertices.count >= 2 {
                     let associated = leader.annotHandle == 0 ? nil : reader.entities.first { $0.handle == leader.annotHandle }
                     let textEntity = associated as? DXFTextEntity
+                    let mtextEntity = textEntity as? DXFMTextEntity
                     let insertEntity = associated as? DXFInsertEntity
+                    let styleName = leader.style.isEmpty ? "Standard" : leader.style
+                    let sourceDimensionStyle = reader.dimstyles.first {
+                        $0.name.caseInsensitiveCompare(styleName) == .orderedSame
+                    }
+                    let dimensionStyle = dimensionStyles[styleName]
+                        ?? dimensionStyles.first {
+                            $0.key.caseInsensitiveCompare(styleName) == .orderedSame
+                        }?.value
+                        ?? .default
+                    let arrowBlockName = sourceDimensionStyle.flatMap { source -> String? in
+                        if source.dimldrblkHandle != 0,
+                           let name = blockNameByHandle[source.dimldrblkHandle] {
+                            return name
+                        }
+                        if !source.dimldrblk.isEmpty { return source.dimldrblk }
+                        if source.dimblkHandle != 0,
+                           let name = blockNameByHandle[source.dimblkHandle] {
+                            return name
+                        }
+                        return source.dimblk.isEmpty ? nil : source.dimblk
+                    }
+                    let arrowhead = Self.leaderArrowhead(blockName: arrowBlockName)
                     let contentPosition = textEntity.map { Vector3(x: $0.basePoint.x, y: -$0.basePoint.y, z: $0.basePoint.z) }
                         ?? insertEntity.map { Vector3(x: $0.basePoint.x, y: -$0.basePoint.y, z: $0.basePoint.z) }
                         ?? leader.vertices.last.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) }
                         ?? .zero
+                    let textAttachmentPoint: Int? = {
+                        if let mtextEntity, (1...9).contains(mtextEntity.textGen) {
+                            return mtextEntity.textGen
+                        }
+                        guard let textEntity else { return nil }
+                        let horizontal = min(max(textEntity.alignH, 0), 2) + 1
+                        switch textEntity.alignV {
+                        case 3: return horizontal
+                        case 2: return horizontal + 3
+                        case 1: return horizontal + 6
+                        default: return nil
+                        }
+                    }()
+                    let textWidth = mtextEntity.flatMap {
+                        $0.widthScale > 1e-9 ? $0.widthScale : nil
+                    }
+                    let branchVertices = leader.vertices.map {
+                        Vector3(x: $0.x, y: -$0.y, z: $0.z)
+                    }
+                    let legacyHookDirection: Vector3? = {
+                        guard leader.hookFlag != 0, branchVertices.count >= 2 else {
+                            return nil
+                        }
+                        let last = branchVertices[branchVertices.count - 1]
+                        let previous = branchVertices[branchVertices.count - 2]
+                        let segmentDirection = (last - previous).normalized
+                        if segmentDirection.magnitudeSquared > 1e-18 {
+                            return segmentDirection
+                        }
+                        var horizontal = Vector3(
+                            x: leader.horizDir.x,
+                            y: -leader.horizDir.y,
+                            z: leader.horizDir.z).normalized
+                        if horizontal.magnitudeSquared <= 1e-18 {
+                            horizontal = Vector3(
+                                x: contentPosition.x >= last.x ? 1 : -1,
+                                y: 0,
+                                z: 0)
+                        } else if leader.hookLine == 0 {
+                            horizontal = horizontal * -1
+                        }
+                        return horizontal
+                    }()
+                    let legacyHookLength = legacyHookDirection == nil
+                        ? 0
+                        : max(leader.textWidth + dimensionStyle.textOffset, 0)
                     let style = CADLeaderStyle(
-                        name: leader.style.isEmpty ? "Standard" : leader.style,
+                        name: styleName,
                         pathType: leader.leaderType == 1 ? .spline : .straight,
-                        arrowEnabled: leader.arrow != 0,
-                        arrowSize: max(leader.textHeight, 2.5),
-                        landingEnabled: leader.hookLine != 0,
-                        doglegEnabled: leader.hookLine != 0,
-                        doglegLength: max(leader.textHeight * 2, 2.5),
-                        contentGap: max(leader.textHeight * 0.5, 0.5),
-                        textHeight: textEntity?.height ?? max(leader.textHeight, 2.5),
-                        textStyleName: textEntity?.style ?? "Standard",
+                        arrowEnabled: leader.arrow != 0
+                            && dimensionStyle.arrowSize > 1e-9
+                            && arrowhead != .none,
+                        arrowSize: dimensionStyle.arrowSize,
+                        arrowhead: arrowhead,
+                        arrowBlockName: arrowhead == .custom ? arrowBlockName : nil,
+                        landingEnabled: legacyHookLength > 1e-9,
+                        doglegEnabled: legacyHookLength > 1e-9,
+                        doglegLength: legacyHookLength,
+                        contentGap: dimensionStyle.textOffset,
+                        textHeight: textEntity.flatMap { $0.height > 1e-9 ? $0.height : nil }
+                            ?? max(dimensionStyle.textHeight, 0.0001),
+                        textStyleName: textEntity?.style
+                            ?? dimensionStyle.textStyle
+                            ?? "Standard",
                         blockScale: max(insertEntity?.xScale ?? 1, 0.0001),
                         blockRotation: insertEntity?.angle ?? 0)
                     let contentType: CADLeaderContentType = insertEntity == nil
@@ -653,7 +735,10 @@ public enum DXFImporter {
                         : .block
                     let data = CADLeaderData(
                         styleName: style.name,
-                        branches: [CADLeaderBranch(vertices: leader.vertices.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) })],
+                        branches: [CADLeaderBranch(
+                            vertices: branchVertices,
+                            doglegDirection: legacyHookDirection,
+                            doglegLength: legacyHookLength > 1e-9 ? legacyHookLength : nil)],
                         contentType: contentType,
                         text: textEntity.map {
                             DXFEntityConverter.cleanTextFormatting(
@@ -665,7 +750,8 @@ public enum DXFImporter {
                         contentRotation: textEntity.map { -$0.angle_p * .pi / 180 }
                             ?? insertEntity.map { -$0.angle }
                             ?? 0,
-                        textWidth: textEntity?.secPoint.x ?? (leader.textWidth > 0 ? leader.textWidth : nil),
+                        textWidth: textWidth,
+                        textAttachmentPoint: textAttachmentPoint,
                         isLegacyLeader: true,
                         styleOverrides: style)
                     let geometry = CADLeaderGeometry.build(
@@ -1312,9 +1398,15 @@ public enum DXFImporter {
         }
 
         if let text = entity as? DXFTextEntity {
+            let displayText: String
+            if text.eType == .aTTDEF, text.text.isEmpty {
+                displayText = text.attributeTag
+            } else {
+                displayText = text.text
+            }
             xdata["dxf.text"] = .string(
                 DXFEntityConverter.cleanTextFormatting(
-                    text.text,
+                    displayText,
                     entityType: text.eType))
             xdata["dxf.textEntityType"] = .string(text.eType.rawValue)
             xdata["dxf.textHeight"] = .double(text.height)
@@ -1582,6 +1674,35 @@ public enum DXFImporter {
                 if sourceHasAnalyticCurve && storedBoundaryIsLinearized {
                     loop.sourceBoundaryEntities = resolved
                 }
+            }
+        }
+    }
+
+    private static func resolveRegionBoundaries(
+        in entities: [DXFEntity],
+        sourceEntityByHandle: [UInt32: DXFEntity]
+    ) {
+        var assignedRegions = Set<ObjectIdentifier>()
+
+        for entity in entities {
+            guard let hatch = entity as? DXFHatchEntity else { continue }
+            let sourceHandles = Set(hatch.loops.flatMap(\.sourceBoundaryHandles))
+
+            for handle in sourceHandles {
+                guard let region = sourceEntityByHandle[handle] as? DXFRegionEntity else {
+                    continue
+                }
+                guard region.boundaryLoops.isEmpty else { continue }
+                let loops = hatch.loops.compactMap { loop -> [DXFEntity]? in
+                    guard loop.sourceBoundaryHandles.contains(handle),
+                          !loop.entities.isEmpty else { return nil }
+                    return loop.entities
+                }
+                guard !loops.isEmpty else { continue }
+
+                let identifier = ObjectIdentifier(region)
+                guard assignedRegions.insert(identifier).inserted else { continue }
+                region.boundaryLoops = loops
             }
         }
     }
