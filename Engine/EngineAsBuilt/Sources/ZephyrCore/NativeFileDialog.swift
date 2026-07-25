@@ -1,6 +1,29 @@
 import Foundation
 import SwiftSDL
 
+private final class NativeDialogCallbackQueue: @unchecked Sendable {
+    static let shared = NativeDialogCallbackQueue()
+
+    private let lock = NSLock()
+    private var callbacks: [@MainActor @Sendable () -> Void] = []
+
+    private init() {}
+
+    func enqueue(_ callback: @escaping @MainActor @Sendable () -> Void) {
+        lock.lock()
+        callbacks.append(callback)
+        lock.unlock()
+    }
+
+    func drain() -> [@MainActor @Sendable () -> Void] {
+        lock.lock()
+        let pending = callbacks
+        callbacks.removeAll(keepingCapacity: true)
+        lock.unlock()
+        return pending
+    }
+}
+
 #if os(macOS)
 import AppKit
 import UniformTypeIdentifiers
@@ -16,12 +39,33 @@ private final class NativeOpenPanelDelegate: NSObject, NSOpenSavePanelDelegate {
 
     func panel(_ sender: Any, shouldEnable url: URL) -> Bool {
         var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-           isDirectory.boolValue {
+        let exists = FileManager.default.fileExists(
+            atPath: url.path,
+            isDirectory: &isDirectory)
+
+        if exists, isDirectory.boolValue {
             return true
         }
 
-        return allowedExtensions.contains(url.pathExtension.lowercased())
+        let fileExtension = url.pathExtension.lowercased()
+        let enabled = allowsAllFiles || allowedExtensions.contains(fileExtension)
+
+        print(
+            "[NativeOpenPanel] shouldEnable " +
+            "name=\(url.lastPathComponent.debugDescription) " +
+            "extension=\(fileExtension.debugDescription) " +
+            "exists=\(exists) " +
+            "readable=\(FileManager.default.isReadableFile(atPath: url.path)) " +
+            "allowsAllFiles=\(allowsAllFiles) " +
+            "allowed=\(allowedExtensions.sorted()) " +
+            "result=\(enabled)")
+
+        return enabled
+    }
+
+    func panel(_ sender: Any, didChangeToDirectoryURL url: URL?) {
+        print("[NativeOpenPanel] directory=\(url?.path ?? "nil")")
+        (sender as? NSOpenPanel)?.validateVisibleColumns()
     }
 }
 #endif
@@ -234,6 +278,12 @@ public enum NativeFileDialog {
             allowedExtensions: allowedExtensions)
         panel.delegate = panelDelegate
 
+        print(
+            "[NativeOpenPanel] showing " +
+            "allowsAllFiles=\(allowsAllFiles) " +
+            "allowed=\(allowedExtensions.sorted()) " +
+            "filters=\(filters.map { $0.extensions })")
+
         let finished: (NSApplication.ModalResponse) -> Void = { response in
             let urls = response == .OK ? panel.urls : []
             _ = panelDelegate
@@ -285,6 +335,17 @@ public enum NativeFileDialog {
         )
     }
 
+    // MARK: - Callback Delivery
+
+    @discardableResult
+    public static func drainPendingCallbacks() -> Int {
+        let callbacks = NativeDialogCallbackQueue.shared.drain()
+        for callback in callbacks {
+            callback()
+        }
+        return callbacks.count
+    }
+
     // MARK: - C Callback
 
     /// The shared C callback invoked by SDL3 when the user selects files,
@@ -314,14 +375,11 @@ public enum NativeFileDialog {
         let selectedURLs = urls
         let dialogError = errorMessage
 
-        DispatchQueue.main.async {
+        NativeDialogCallbackQueue.shared.enqueue {
             if let dialogError {
                 print("[NativeFileDialog] \(dialogError)")
             }
-
-            MainActor.assumeIsolated {
-                context.completion(selectedURLs)
-            }
+            context.completion(selectedURLs)
         }
     }
 }
