@@ -16,9 +16,6 @@ import SwiftSDL
 //   - Apple platforms: uses PDFKit (native)
 //   - Windows/Linux: uses PDFium (via the CPdfium C bridge)
 //
-// NOTE: `fileBrowser` is an ImGuiFileBrowser struct. To avoid Swift 6
-// exclusive-access violations we never call mutating methods on the
-// stored property directly. Instead we copy → mutate → write-back.
 // =========================================================================
 @MainActor
 public final class PDFImportCommand: FeatureCommand {
@@ -39,9 +36,9 @@ public final class PDFImportCommand: FeatureCommand {
     private var currentMouseWorldX: Double = 0
     private var currentMouseWorldY: Double = 0
 
-    /// Internal file browser for PDF file selection.
-    /// Always accessed via copy → mutate → write-back to avoid exclusive-access violations.
-    private var fileBrowser = ImGuiFileBrowser()
+    /// Set to true after start() sets up state; renderImGui opens the native
+    /// dialog on the next frame to avoid calling SDL from within an ImGui callback.
+    private var pendingDialog: Bool = false
 
     /// When in page-selector mode, the user's chosen page number (1-indexed).
     private var selectedPageNumber: Int32 = 1
@@ -66,37 +63,20 @@ public final class PDFImportCommand: FeatureCommand {
         currentMouseWorldY = 0
         selectedPageNumber = 1
         loadedAssetName = ""
+        pendingDialog = true
         processor.commandPrompt = "Select a PDF file (Esc to cancel)."
-
-        // Build the browser fully before assigning — avoids overlapping
-        // mutations on self.fileBrowser.
-        var fb = ImGuiFileBrowser()
-        fb.onFileSelected = { [weak self] url in
-            self?.handlePDFSelected(url: url, engine: engine, processor: processor)
-        }
-        fb.open(filterExtension: "pdf")
-        fileBrowser = fb
     }
 
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
         state = .finished
-        var fb = fileBrowser
-        fb.close()
-        fileBrowser = fb
     }
 
     // ---------------------------------------------------------------------
     // MARK: - PDF file selection
     // ---------------------------------------------------------------------
 
-    private func handlePDFSelected(url: URL, engine: PhrostEngine, processor: CADCommandProcessor) {
-        // Close the browser via copy-mutate-writeback
-        do {
-            var fb = fileBrowser
-            fb.close()
-            fileBrowser = fb
-        }
-
+    /// Entry point when URL is already known (e.g. from native dialog in executeCommand).
+    internal func handlePDFSelected(url: URL, engine: PhrostEngine, processor: CADCommandProcessor) {
         guard PDFPageRenderer.isAvailable else {
             state = .selectingPage(info: PDFInfo(pageCount: 0, url: url))
             processor.commandPrompt = "PDF import not available."
@@ -476,9 +456,6 @@ public final class PDFImportCommand: FeatureCommand {
     ) -> CommandResult {
         switch scancode {
         case SDL_SCANCODE_ESCAPE:
-            var fb = fileBrowser
-            fb.close()
-            fileBrowser = fb
             state = .finished
             return .finished
         default:
@@ -550,19 +527,34 @@ public final class PDFImportCommand: FeatureCommand {
     public func renderImGui(engine: PhrostEngine) {
         switch state {
         case .selectingFile:
-            // Copy → mutate → write-back to avoid exclusive-access violation
-            // between render() and the subsequent .isOpen read.
-            var fb = fileBrowser
-            fb.render(ui: engine.ui)
-            let stillOpen = fb.isOpen
-            fileBrowser = fb
-
-            // Only finish if the user dismissed the browser WITHOUT selecting
-            // a file. handlePDFSelected changes state to .selectingPage/.finished,
-            // so we check state.is(.selectingFile) to avoid killing the command
-            // right after a successful selection.
-            if !stillOpen, state.is(.selectingFile) {
-                engine.commandProcessor.finishFeatureCommand(engine: engine)
+            if pendingDialog {
+                pendingDialog = false
+                // Defer to the SDL event-processing phase via engine.pendingDialogRequest.
+                // SDL_ShowOpenFileDialog fails silently when called from within
+                // ImGui's render frame.
+                print("[PDFImport] Enqueuing native dialog request...")
+                engine.pendingDialogRequest = { [weak self, weak engine] in
+                    guard let self, let engine else { return }
+                    print("[PDFImport] Showing native open dialog (window: \(engine.window != nil ? "valid" : "NULL"))...")
+                    NativeFileDialog.showOpenDialog(
+                        window: engine.window,
+                        filters: [
+                            NativeFileDialog.Filter(label: "PDF Documents", extensions: ["pdf"])
+                        ]
+                    ) { [weak self] urls in
+                        print("[PDFImport] Dialog callback fired, urls count: \(urls.count)")
+                        guard let self else {
+                            print("[PDFImport] Callback: self dead")
+                            return
+                        }
+                        if let url = urls.first {
+                            self.handlePDFSelected(url: url, engine: engine, processor: engine.commandProcessor)
+                        } else {
+                            print("[PDFImport] No URL selected, finishing command")
+                            self.state = .finished
+                        }
+                    }
+                }
             }
 
         case .selectingPage:

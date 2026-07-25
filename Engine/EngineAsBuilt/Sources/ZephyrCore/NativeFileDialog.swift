@@ -1,6 +1,31 @@
 import Foundation
 import SwiftSDL
 
+#if os(macOS)
+import AppKit
+import UniformTypeIdentifiers
+
+private final class NativeOpenPanelDelegate: NSObject, NSOpenSavePanelDelegate {
+    private let allowsAllFiles: Bool
+    private let allowedExtensions: Set<String>
+
+    init(allowsAllFiles: Bool, allowedExtensions: Set<String>) {
+        self.allowsAllFiles = allowsAllFiles
+        self.allowedExtensions = allowedExtensions
+    }
+
+    func panel(_ sender: Any, shouldEnable url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+           isDirectory.boolValue {
+            return true
+        }
+
+        return allowedExtensions.contains(url.pathExtension.lowercased())
+    }
+}
+#endif
+
 // =========================================================================
 // MARK: - NativeFileDialog
 //
@@ -11,10 +36,11 @@ import SwiftSDL
 // `DispatchQueue.main` before invoking the Swift completion handler.
 //
 // Memory safety notes:
-// - Filter strings and the CallbackContext are heap-allocated and kept
-//   alive until the callback fires via `Unmanaged.passRetained`.
-// - The C callback balances the retain with `takeRetainedValue`, then
-//   frees the context (which releases the C-string arrays).
+// - SDL requires the filter array and its strings to remain valid until the
+//   asynchronous callback is invoked.
+// - All C strings and filter structs use explicitly allocated storage owned by
+//   CallbackContext. No pointer escapes a withUnsafeBufferPointer closure.
+// - The CallbackContext is retained until the callback consumes it.
 // =========================================================================
 
 @MainActor
@@ -32,42 +58,104 @@ public enum NativeFileDialog {
             self.extensions = extensions
         }
 
-        /// Convert to SDL3 semicolon-delimited pattern: e.g. "dxf;dwg"
+        /// Convert to SDL3 semicolon-delimited pattern: e.g. "dxf;DXF;dwg;DWG"
+        /// macOS NSOpenPanel can be case-sensitive with extensions.
         fileprivate var sdlPattern: String {
-            extensions.joined(separator: ";")
+            var all: [String] = []
+            for ext in extensions {
+                if ext == "*" {
+                    all.append("*")
+                } else {
+                    all.append(ext.lowercased())
+                    all.append(ext.uppercased())
+                }
+            }
+            return all.joined(separator: ";")
         }
     }
 
-    /// Callback context that holds the Swift completion closure and
-    /// the C-string arrays needed by SDL. Retained via Unmanaged and
-    /// released in the C callback.
+    /// Owns a stable, null-terminated C string allocation.
+    private final class OwnedCString {
+        let pointer: UnsafeMutablePointer<CChar>
+        private let count: Int
+
+        init(_ value: String) {
+            let bytes = Array(value.utf8CString)
+            self.count = bytes.count
+            self.pointer = UnsafeMutablePointer<CChar>.allocate(capacity: bytes.count)
+
+            for index in bytes.indices {
+                pointer.advanced(by: index).initialize(to: bytes[index])
+            }
+        }
+
+        deinit {
+            pointer.deinitialize(count: count)
+            pointer.deallocate()
+        }
+
+        var immutablePointer: UnsafePointer<CChar> {
+            UnsafePointer(pointer)
+        }
+    }
+
+    /// Callback context that owns every pointer passed to SDL until the
+    /// asynchronous native dialog callback is invoked.
     ///
     /// Marked `@unchecked Sendable` because the reference is handed off
     /// from the creating thread to the SDL callback thread to the main
     /// thread — at each step exactly one thread owns the reference.
     private final class CallbackContext: @unchecked Sendable {
         let completion: @MainActor @Sendable ([URL]) -> Void
-        // Keep filter C-strings alive until the callback fires
-        let filterNames: [[CChar]]
-        let filterPatterns: [[CChar]]
-        let filterStructs: [SDL_DialogFileFilter]
+
+        private let filterNames: [OwnedCString]
+        private let filterPatterns: [OwnedCString]
+        private let filterStructStorage: UnsafeMutablePointer<SDL_DialogFileFilter>?
+        private let defaultLocationStorage: OwnedCString?
 
         init(
             completion: @escaping @MainActor @Sendable ([URL]) -> Void,
-            filters: [Filter]
+            filters: [Filter],
+            defaultLocation: String? = nil
         ) {
             self.completion = completion
-            self.filterNames = filters.map { Array($0.label.utf8CString) }
-            self.filterPatterns = filters.map { Array($0.sdlPattern.utf8CString) }
-            self.filterStructs = zip(filterNames, filterPatterns).map { name, pattern in
-                SDL_DialogFileFilter(
-                    name: name.withUnsafeBufferPointer { $0.baseAddress },
-                    pattern: pattern.withUnsafeBufferPointer { $0.baseAddress })
+
+            let names = filters.map { OwnedCString($0.label) }
+            let patterns = filters.map { OwnedCString($0.sdlPattern) }
+            self.filterNames = names
+            self.filterPatterns = patterns
+            self.defaultLocationStorage = defaultLocation.map(OwnedCString.init)
+
+            if filters.isEmpty {
+                self.filterStructStorage = nil
+            } else {
+                let storage = UnsafeMutablePointer<SDL_DialogFileFilter>.allocate(
+                    capacity: filters.count)
+
+                for index in filters.indices {
+                    storage.advanced(by: index).initialize(
+                        to: SDL_DialogFileFilter(
+                            name: names[index].immutablePointer,
+                            pattern: patterns[index].immutablePointer))
+                }
+
+                self.filterStructStorage = storage
+            }
+        }
+
+        deinit {
+            if let filterStructStorage {
+                filterStructStorage.deinitialize(count: filterNames.count)
+                filterStructStorage.deallocate()
             }
         }
 
         var filterStructPointer: UnsafePointer<SDL_DialogFileFilter>? {
-            filterStructs.withUnsafeBufferPointer { $0.baseAddress }
+            filterStructStorage.map { UnsafePointer($0) }
+        }
+
+        var defaultLocationPointer: UnsafePointer<CChar>? {
+            defaultLocationStorage?.immutablePointer
         }
     }
 
@@ -87,24 +175,81 @@ public enum NativeFileDialog {
         allowMultiple: Bool = false,
         completion: @escaping @MainActor @Sendable ([URL]) -> Void
     ) {
-        let context = CallbackContext(completion: completion, filters: filters)
-        let userdata = Unmanaged.passRetained(context).toOpaque()
+#if os(macOS)
+        showMacOpenDialog(
+            filters: filters,
+            allowMultiple: allowMultiple,
+            completion: completion)
+#else
+        let effectiveFilters = filters.contains { filter in
+            filter.extensions.contains("*")
+        } ? [] : filters
 
-        let filterPtr: UnsafePointer<SDL_DialogFileFilter>? = filters.isEmpty
-            ? nil
-            : context.filterStructPointer
-        let nFilters: Int32 = Int32(filters.count)
+        let context = CallbackContext(
+            completion: completion,
+            filters: effectiveFilters)
+        let userdata = Unmanaged.passRetained(context).toOpaque()
 
         SDL_ShowOpenFileDialog(
             nativeDialogCallback,
             userdata,
             window,
-            filterPtr,
-            nFilters,
-            nil,        // default_location
+            context.filterStructPointer,
+            Int32(effectiveFilters.count),
+            nil,
             allowMultiple
         )
+#endif
     }
+
+#if os(macOS)
+    private static func showMacOpenDialog(
+        filters: [Filter],
+        allowMultiple: Bool,
+        completion: @escaping @MainActor @Sendable ([URL]) -> Void
+    ) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = allowMultiple
+        panel.allowsOtherFileTypes = true
+        if #available(macOS 11.0, *) {
+            panel.allowedContentTypes = []
+        } else {
+            panel.allowedFileTypes = nil
+        }
+        panel.resolvesAliases = true
+        panel.treatsFilePackagesAsDirectories = false
+
+        let allowsAllFiles = filters.isEmpty || filters.contains { filter in
+            filter.extensions.contains("*")
+        }
+        let allowedExtensions = Set(
+            filters.flatMap(\.extensions)
+                .filter { $0 != "*" }
+                .map { $0.lowercased() })
+
+        let panelDelegate = NativeOpenPanelDelegate(
+            allowsAllFiles: allowsAllFiles,
+            allowedExtensions: allowedExtensions)
+        panel.delegate = panelDelegate
+
+        let finished: (NSApplication.ModalResponse) -> Void = { response in
+            let urls = response == .OK ? panel.urls : []
+            _ = panelDelegate
+            completion(urls)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+
+        if let parentWindow = NSApp.keyWindow ?? NSApp.mainWindow {
+            panel.beginSheetModal(
+                for: parentWindow,
+                completionHandler: finished)
+        } else {
+            panel.begin(completionHandler: finished)
+        }
+    }
+#endif
 
     // MARK: - Show Save Dialog
 
@@ -122,29 +267,21 @@ public enum NativeFileDialog {
         defaultName: String? = nil,
         completion: @escaping @MainActor @Sendable (URL?) -> Void
     ) {
-        // Wrap in a [URL]-based completion for reuse with the shared callback
-        let context = CallbackContext(completion: { urls in
-            completion(urls.first)
-        }, filters: filters)
+        let context = CallbackContext(
+            completion: { urls in
+                completion(urls.first)
+            },
+            filters: filters,
+            defaultLocation: defaultName)
         let userdata = Unmanaged.passRetained(context).toOpaque()
-
-        let filterPtr: UnsafePointer<SDL_DialogFileFilter>? = filters.isEmpty
-            ? nil
-            : context.filterStructPointer
-        let nFilters: Int32 = Int32(filters.count)
-
-        var defaultNameCStr: [CChar]? = nil
-        if let name = defaultName {
-            defaultNameCStr = Array(name.utf8CString)
-        }
 
         SDL_ShowSaveFileDialog(
             nativeDialogCallback,
             userdata,
             window,
-            filterPtr,
-            nFilters,
-            defaultNameCStr?.withUnsafeBufferPointer { $0.baseAddress }
+            context.filterStructPointer,
+            Int32(filters.count),
+            context.defaultLocationPointer
         )
     }
 
@@ -156,26 +293,34 @@ public enum NativeFileDialog {
     /// - `filelist`: NULL-terminated array of UTF-8 file paths, or NULL
     ///   if an error occurred, or a single NULL entry if cancelled.
     private static let nativeDialogCallback: SDL_DialogFileCallback = { userdata, filelist, _filterIndex in
-        // Extract and consume the retained context
         guard let userdata else { return }
         let context = Unmanaged<CallbackContext>.fromOpaque(userdata).takeRetainedValue()
 
         var urls: [URL] = []
+        var errorMessage: String?
 
-        if let filelist = filelist {
-            // filelist is NULL-terminated; iterate until we hit nil
-            var i = 0
-            while let cStr = filelist[i] {
-                let path = String(cString: cStr)
-                urls.append(URL(fileURLWithPath: path))
-                i += 1
+        if let filelist {
+            var index = 0
+            while let cString = filelist[index] {
+                urls.append(URL(fileURLWithPath: String(cString: cString)))
+                index += 1
             }
+        } else if let error = SDL_GetError(), error.pointee != 0 {
+            errorMessage = String(cString: error)
+        } else {
+            errorMessage = "Unknown SDL file dialog error"
         }
-        // If filelist is nil or first entry is nil → cancelled or error → urls remains []
+
+        let selectedURLs = urls
+        let dialogError = errorMessage
 
         DispatchQueue.main.async {
+            if let dialogError {
+                print("[NativeFileDialog] \(dialogError)")
+            }
+
             MainActor.assumeIsolated {
-                context.completion(urls)
+                context.completion(selectedURLs)
             }
         }
     }

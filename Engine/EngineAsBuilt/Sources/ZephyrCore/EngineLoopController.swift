@@ -82,6 +82,15 @@ public final class EngineLoopController {
                 framesToRender = 5
             }
 
+            // 2b. Execute any deferred native dialog request.
+            //     SDL_ShowOpenFileDialog / SDL_ShowSaveFileDialog must be called
+            //     from the event-processing phase, not during ImGui rendering.
+            if let request = engine.pendingDialogRequest {
+                engine.pendingDialogRequest = nil
+                framesToRender = max(framesToRender, 5)
+                request()
+            }
+
             engine.camera.updateFollow(spriteManager: engine.spriteManager)
 
             // Autosave tick

@@ -271,8 +271,7 @@ internal final class EngineInputHandler {
                     NativeFileDialog.showOpenDialog(
                         window: engine.window,
                         filters: [
-                            NativeFileDialog.Filter(label: "Drawings", extensions: ["dxf", "dwg", "eab"]),
-                            NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
+                            NativeFileDialog.Filter(label: "Drawings", extensions: ["dxf", "dwg", "eab"])
                         ],
                         allowMultiple: true
                     ) { [weak engine] urls in

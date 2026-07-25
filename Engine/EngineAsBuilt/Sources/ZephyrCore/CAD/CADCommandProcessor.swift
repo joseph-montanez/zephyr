@@ -534,8 +534,7 @@ public final class CADCommandProcessor {
             NativeFileDialog.showOpenDialog(
                 window: eng.window,
                 filters: [
-                    NativeFileDialog.Filter(label: "Drawings", extensions: ["dxf", "dwg", "eab"]),
-                    NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
+                    NativeFileDialog.Filter(label: "Drawings", extensions: ["dxf", "dwg", "eab"])
                 ],
                 allowMultiple: true
             ) { [weak eng] urls in
@@ -550,6 +549,23 @@ public final class CADCommandProcessor {
                 if !urls.isEmpty {
                     eng.zoomExtents()
                 }
+            }
+        case "PDFI", "PDFIMPORT", "PDF":
+            guard let eng = engine else { clearCommand(); return }
+            clearCommand()
+            NativeFileDialog.showOpenDialog(
+                window: eng.window,
+                filters: [
+                    NativeFileDialog.Filter(label: "PDF Documents", extensions: ["pdf"])
+                ]
+            ) { [weak eng] urls in
+                guard let eng, let url = urls.first else { return }
+                // Re-use the existing PDFImportCommand flow by executing it as
+                // a feature command and immediately feeding it the selected URL.
+                let cmd = PDFImportCommand()
+                eng.commandProcessor.activeFeatureCommand = cmd
+                cmd.start(engine: eng, processor: eng.commandProcessor)
+                cmd.handlePDFSelected(url: url, engine: eng, processor: eng.commandProcessor)
             }
         case "CLOSE":
             _ = engine?.tabManager.requestCloseActiveTab()
