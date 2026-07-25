@@ -284,6 +284,10 @@ public enum DXFEntityConverter {
             let dx = end.x - start.x
             let dy = end.y - start.y
             if abs(dx) > 1e-12 || abs(dy) > 1e-12 {
+                pos = Vector3(
+                    x: (start.x + end.x) * 0.5,
+                    y: (start.y + end.y) * 0.5,
+                    z: (start.z + end.z) * 0.5)
                 angle = atan2(dy, dx)
             }
         }

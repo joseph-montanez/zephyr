@@ -774,7 +774,7 @@ public final class SHXShapeFont: @unchecked Sendable {
 
             var offsetX: Double = 0
             switch alignH {
-            case 1, 4:
+            case 1, 3, 4, 5:
                 offsetX = -0.5 * (drawableBounds.minX + drawableBounds.maxX)
             case 2:
                 offsetX = -drawableBounds.maxX

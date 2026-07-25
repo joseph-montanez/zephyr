@@ -885,7 +885,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
         let minX: Double
         let maxX: Double
         switch alignH {
-        case 1, 4: // Center/Middle
+        case 1, 3, 4, 5: // Center/Middle/Aligned/Fit
             minX = -0.5 * W
             maxX = 0.5 * W
         case 2: // Right

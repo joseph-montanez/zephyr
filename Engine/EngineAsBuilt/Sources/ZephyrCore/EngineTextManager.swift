@@ -511,7 +511,14 @@ public final class EngineTextManager {
         ) -> Double {
             let hasParagraphAlignment = line.alignment != 0
             let paragraphAlignment = hasParagraphAlignment ? line.alignment : alignH
-            let effectiveAlignment = paragraphAlignment == 5 ? 0 : paragraphAlignment
+            let effectiveAlignment: Int
+            if hasParagraphAlignment {
+                effectiveAlignment = paragraphAlignment == 5 ? 0 : paragraphAlignment
+            } else if alignH == 3 || alignH == 5 {
+                effectiveAlignment = 1
+            } else {
+                effectiveAlignment = alignH
+            }
 
             if hasParagraphAlignment, let maxWidth, maxWidth > 0 {
                 let referenceBoxLeft: Double
