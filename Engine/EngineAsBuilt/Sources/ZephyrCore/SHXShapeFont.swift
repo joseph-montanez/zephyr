@@ -334,6 +334,94 @@ public final class SHXShapeFont: @unchecked Sendable {
             ( 1.0, -0.5),
         ]
 
+        func appendArc(
+            centerX: Double,
+            centerY: Double,
+            radius: Double,
+            startAngle: Double,
+            sweepAngle: Double
+        ) {
+            guard radius.isFinite, radius > 1e-12,
+                  sweepAngle.isFinite, abs(sweepAngle) > 1e-12 else { return }
+
+            let startX = x
+            let startY = y
+            let maxSegmentAngle = Double.pi / 18.0
+            let segmentCount = max(1, Int(ceil(abs(sweepAngle) / maxSegmentAngle)))
+
+            if penDown {
+                var previousX = startX
+                var previousY = startY
+                for segmentIndex in 1...segmentCount {
+                    let fraction = Double(segmentIndex) / Double(segmentCount)
+                    let angle = startAngle + sweepAngle * fraction
+                    let nextX = centerX + radius * cos(angle)
+                    let nextY = centerY + radius * sin(angle)
+                    segments.append((
+                        x1: previousX,
+                        y1: previousY,
+                        x2: nextX,
+                        y2: nextY))
+                    previousX = nextX
+                    previousY = nextY
+                }
+            }
+
+            if abs(abs(sweepAngle) - 2.0 * Double.pi) < 1e-9 {
+                x = startX
+                y = startY
+            } else {
+                let endAngle = startAngle + sweepAngle
+                x = centerX + radius * cos(endAngle)
+                y = centerY + radius * sin(endAngle)
+            }
+            lastX = x
+            lastY = y
+        }
+
+        func appendBulgeArc(dx: Double, dy: Double, bulgeByte: Int8) {
+            let startX = x
+            let startY = y
+            let endX = startX + dx
+            let endY = startY + dy
+            let chordLength = hypot(dx, dy)
+            let bulge = Double(bulgeByte) / 127.0
+
+            guard chordLength > 1e-12, abs(bulge) > 1e-12 else {
+                if penDown, chordLength > 1e-12 {
+                    segments.append((x1: startX, y1: startY, x2: endX, y2: endY))
+                }
+                x = endX
+                y = endY
+                lastX = x
+                lastY = y
+                return
+            }
+
+            let midpointX = (startX + endX) * 0.5
+            let midpointY = (startY + endY) * 0.5
+            let normalX = -dy / chordLength
+            let normalY = dx / chordLength
+            let centerOffset = chordLength * (1.0 - bulge * bulge) / (4.0 * bulge)
+            let centerX = midpointX + normalX * centerOffset
+            let centerY = midpointY + normalY * centerOffset
+            let radius = hypot(startX - centerX, startY - centerY)
+            let startAngle = atan2(startY - centerY, startX - centerX)
+            let sweepAngle = 4.0 * atan(bulge)
+
+            appendArc(
+                centerX: centerX,
+                centerY: centerY,
+                radius: radius,
+                startAngle: startAngle,
+                sweepAngle: sweepAngle)
+
+            x = endX
+            y = endY
+            lastX = x
+            lastY = y
+        }
+
         func interpret(
             _ shapeData: Data,
             offset: Int,
@@ -462,58 +550,58 @@ public final class SHXShapeFont: @unchecked Sendable {
                     case 10:
                         guard pos + 1 < end else { return }
                         let radius = Double(shapeData[pos]) * scale
-                        let sc = Int8(bitPattern: shapeData[pos + 1])
+                        let signedSpec = Int(Int8(bitPattern: shapeData[pos + 1]))
                         pos += 2
                         if !skip {
-                            let s = Int((sc >> 4) & 0x7)
-                            var c = Int(sc & 0x7)
-                            let ccw = (sc >> 7) & 1
-                            if c == 0 { c = 8 }
-                            let octant = Double.pi / 4.0
-                            let sDir = ccw != 0 ? -s : s
-                            let startAngle = Double(sDir) * octant
-                            let endAngle = Double(c + sDir) * octant
-                            let cx = x - radius * cos(startAngle)
-                            let cy = y - radius * sin(startAngle)
-                            x = cx + radius * cos(endAngle)
-                            y = cy + radius * sin(endAngle)
-                            if penDown {
-                                segments.append((x1: lastX, y1: lastY, x2: x, y2: y))
-                            }
-                            lastX = x
-                            lastY = y
+                            let spec = abs(signedSpec)
+                            let startOctant = (spec >> 4) & 0x7
+                            var octantCount = spec & 0x7
+                            if octantCount == 0 { octantCount = 8 }
+                            let octantAngle = Double.pi / 4.0
+                            let startAngle = Double(startOctant) * octantAngle
+                            let direction = signedSpec < 0 ? -1.0 : 1.0
+                            let sweepAngle = direction * Double(octantCount) * octantAngle
+                            let centerX = x - radius * cos(startAngle)
+                            let centerY = y - radius * sin(startAngle)
+                            appendArc(
+                                centerX: centerX,
+                                centerY: centerY,
+                                radius: radius,
+                                startAngle: startAngle,
+                                sweepAngle: sweepAngle)
                         }
                         skip = false
 
                     case 11:
                         guard pos + 4 < end else { return }
-                        let startOff = Double(shapeData[pos])
-                        let endOff = Double(shapeData[pos + 1])
+                        let startOffset = Double(shapeData[pos]) / 256.0
+                        let endOffset = Double(shapeData[pos + 1]) / 256.0
                         let radiusHigh = Int(shapeData[pos + 2])
                         let radiusLow = Int(shapeData[pos + 3])
-                        let sc = Int8(bitPattern: shapeData[pos + 4])
+                        let signedSpec = Int(Int8(bitPattern: shapeData[pos + 4]))
                         pos += 5
                         if !skip {
                             let radius = Double(256 * radiusHigh + radiusLow) * scale
-                            let octant = Double.pi / 4.0
-                            let s = Int((sc >> 4) & 0x7)
-                            var c = Int(sc & 0x7)
-                            let ccw = (sc >> 7) & 1
-                            if c == 0 { c = 8 }
-                            let sDir = ccw != 0 ? -s : s
-                            let startAngle = (startOff / 256.0) * octant
-                                + Double(sDir) * octant
-                            let endAngle = Double(c + sDir) * octant
-                                + (endOff / 256.0) * octant
-                            let cx = x - radius * cos(startAngle)
-                            let cy = y - radius * sin(startAngle)
-                            x = cx + radius * cos(endAngle)
-                            y = cy + radius * sin(endAngle)
-                            if penDown {
-                                segments.append((x1: lastX, y1: lastY, x2: x, y2: y))
+                            let spec = abs(signedSpec)
+                            let startOctant = (spec >> 4) & 0x7
+                            let endOctant = spec & 0x7
+                            let octantAngle = Double.pi / 4.0
+                            let startAngle = (Double(startOctant) + startOffset) * octantAngle
+                            let endAngle = (Double(endOctant) + endOffset) * octantAngle
+                            var sweepAngle = endAngle - startAngle
+                            if signedSpec > 0 {
+                                while sweepAngle <= 1e-12 { sweepAngle += 2.0 * Double.pi }
+                            } else {
+                                while sweepAngle >= -1e-12 { sweepAngle -= 2.0 * Double.pi }
                             }
-                            lastX = x
-                            lastY = y
+                            let centerX = x - radius * cos(startAngle)
+                            let centerY = y - radius * sin(startAngle)
+                            appendArc(
+                                centerX: centerX,
+                                centerY: centerY,
+                                radius: radius,
+                                startAngle: startAngle,
+                                sweepAngle: sweepAngle)
                         }
                         skip = false
 
@@ -521,15 +609,10 @@ public final class SHXShapeFont: @unchecked Sendable {
                         guard pos + 2 < end else { return }
                         let dx = Double(Int8(bitPattern: shapeData[pos])) * scale
                         let dy = Double(Int8(bitPattern: shapeData[pos + 1])) * scale
+                        let bulge = Int8(bitPattern: shapeData[pos + 2])
                         pos += 3
                         if !skip {
-                            x += dx
-                            y += dy
-                            if penDown {
-                                segments.append((x1: lastX, y1: lastY, x2: x, y2: y))
-                            }
-                            lastX = x
-                            lastY = y
+                            appendBulgeArc(dx: dx, dy: dy, bulgeByte: bulge)
                         }
                         skip = false
 
@@ -540,15 +623,10 @@ public final class SHXShapeFont: @unchecked Sendable {
                             pos += 2
                             if dx == 0 && dy == 0 { break }
                             guard pos < end else { return }
+                            let bulge = Int8(bitPattern: shapeData[pos])
                             pos += 1
                             if !skip {
-                                x += dx
-                                y += dy
-                                if penDown {
-                                    segments.append((x1: lastX, y1: lastY, x2: x, y2: y))
-                                }
-                                lastX = x
-                                lastY = y
+                                appendBulgeArc(dx: dx, dy: dy, bulgeByte: bulge)
                             }
                         }
                         skip = false
@@ -715,6 +793,10 @@ public final class SHXShapeFont: @unchecked Sendable {
                 let charAdvance: Double
                 if codePoint == 0x20 {
                     charAdvance = spaceAdvance
+                } else if codePoint == 0x09 {
+                    let tabStep = max(4.0 * fontHeight, 1e-9)
+                    let nextStop = (floor(cursorX / tabStep) + 1.0) * tabStep
+                    charAdvance = max(nextStop - cursorX, 1e-9)
                 } else if let glyph = glyphs[codePoint] {
                     charAdvance = glyph.advanceX
                     
@@ -915,11 +997,11 @@ public final class SHXShapeFont: @unchecked Sendable {
                 return stop - cursor
             }
 
-            let step = max(baseAdvance(glyph) * 4.0, 1e-9)
+            let step = max(defaultHeight * 4.0, 1e-9)
             let fallbackOrigin = max(lineLeft, tabStops.last ?? lineLeft)
             let distance = max(0.0, cursor - fallbackOrigin)
             let next = fallbackOrigin + (floor(distance / step) + 1.0) * step
-            return max(next - cursor, step)
+            return max(next - cursor, 1e-9)
         }
 
         func lineAdvance(
@@ -976,17 +1058,17 @@ public final class SHXShapeFont: @unchecked Sendable {
             lineLeft: Double,
             tabStops: [Double]
         ) -> Double {
-            let advanceWidth = lineAdvance(
-                glyphs,
-                lineLeft: lineLeft,
-                tabStops: tabStops)
             guard let bounds = drawableBounds(
                 glyphs,
                 lineLeft: lineLeft,
                 tabStops: tabStops) else {
-                return advanceWidth
+                return lineAdvance(
+                    glyphs,
+                    lineLeft: lineLeft,
+                    tabStops: tabStops)
             }
-            return max(advanceWidth, bounds.maxX - lineLeft)
+            let wrapLeft = min(lineLeft, bounds.minX)
+            return max(0.0, bounds.maxX - wrapLeft)
         }
 
         func splitRuns(
@@ -1073,8 +1155,27 @@ public final class SHXShapeFont: @unchecked Sendable {
                     candidate,
                     lineLeft: currentLeft,
                     tabStops: tabStops)
+                let separatorWidth: Double
+                if pendingWhitespace.isEmpty {
+                    separatorWidth = 0.0
+                } else {
+                    var cursor = currentLeft + lineAdvance(
+                        current,
+                        lineLeft: currentLeft,
+                        tabStops: tabStops)
+                    let separatorStart = cursor
+                    for glyph in pendingWhitespace {
+                        cursor += advance(
+                            glyph,
+                            cursor: cursor,
+                            lineLeft: currentLeft,
+                            tabStops: tabStops)
+                    }
+                    separatorWidth = cursor - separatorStart
+                }
+                let fitWidth = max(0.0, candidateWidth - separatorWidth)
 
-                if currentHasText && candidateWidth > availableWidth {
+                if currentHasText && fitWidth > availableWidth {
                     lines.append(FormattedLineLayout(
                         glyphs: current,
                         alignment: paragraph.alignment,
@@ -1311,6 +1412,10 @@ public final class SHXShapeFont: @unchecked Sendable {
             let codePoint = Int(char.value)
             if codePoint == 0x20 {
                 width += spaceAdvance
+            } else if codePoint == 0x09 {
+                let tabStep = max(4.0 * fontHeight, 1e-9)
+                let nextStop = (floor(width / tabStep) + 1.0) * tabStep
+                width = nextStop
             } else if codePoint == 0x0A || codePoint == 0x0D {
                 // skip
             } else {
@@ -1360,6 +1465,9 @@ public final class SHXShapeFont: @unchecked Sendable {
             let codePoint = Int(char.value)
             if codePoint == 0x20 {
                 cursorX += spaceAdvance
+            } else if codePoint == 0x09 {
+                let tabStep = max(4.0 * fontHeight, 1e-9)
+                cursorX = (floor(cursorX / tabStep) + 1.0) * tabStep
             } else if codePoint != 0x0A && codePoint != 0x0D {
                 includeGlyph(codePoint)
             }
