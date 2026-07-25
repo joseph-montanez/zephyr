@@ -255,7 +255,7 @@ public enum DXFEntityConverter {
         } else {
             sourceText = tx.text
         }
-        let cleaned = cleanMTextFormatting(sourceText)
+        let cleaned = cleanTextFormatting(sourceText, entityType: e.eType)
         guard !cleaned.isEmpty else { return [] }
         let height = tx.height > 0 ? tx.height : 2.5
         let isText = e.eType == .tEXT || e.eType == .aTTDEF || e.eType == .aTTRIB
@@ -1576,6 +1576,46 @@ public enum DXFEntityConverter {
             return DXFColorTable.aciToRGBA(e.color, color24: e.color24)
         }
         return nil
+    }
+
+    public static func cleanTextFormatting(_ text: String, entityType: DXFEType) -> String {
+        guard entityType != .mTEXT else {
+            return cleanMTextFormatting(text)
+        }
+
+        var clean = ""
+        var i = text.startIndex
+        while i < text.endIndex {
+            let c = text[i]
+            let nextI = text.index(after: i)
+            guard nextI < text.endIndex else {
+                clean.append(c)
+                break
+            }
+
+            if c == "^" {
+                switch text[nextI] {
+                case "I", "i":
+                    clean.append("\t")
+                    i = text.index(after: nextI)
+                    continue
+                case "J", "j", "M", "m":
+                    clean.append("\n")
+                    i = text.index(after: nextI)
+                    continue
+                case "^":
+                    clean.append("^")
+                    i = text.index(after: nextI)
+                    continue
+                default:
+                    break
+                }
+            }
+
+            clean.append(c)
+            i = nextI
+        }
+        return clean
     }
 
     public static func cleanMTextFormatting(_ text: String) -> String {

@@ -655,7 +655,11 @@ public enum DXFImporter {
                         styleName: style.name,
                         branches: [CADLeaderBranch(vertices: leader.vertices.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) })],
                         contentType: contentType,
-                        text: textEntity.map { DXFEntityConverter.cleanMTextFormatting($0.text) } ?? "",
+                        text: textEntity.map {
+                            DXFEntityConverter.cleanTextFormatting(
+                                $0.text,
+                                entityType: $0.eType)
+                        } ?? "",
                         blockName: insertEntity?.name,
                         contentPosition: contentPosition,
                         contentRotation: textEntity.map { -$0.angle_p * .pi / 180 }
@@ -1309,7 +1313,9 @@ public enum DXFImporter {
 
         if let text = entity as? DXFTextEntity {
             xdata["dxf.text"] = .string(
-                DXFEntityConverter.cleanMTextFormatting(text.text))
+                DXFEntityConverter.cleanTextFormatting(
+                    text.text,
+                    entityType: text.eType))
             xdata["dxf.textEntityType"] = .string(text.eType.rawValue)
             xdata["dxf.textHeight"] = .double(text.height)
             xdata["dxf.textHeightOverride"] = .int(text.hasExplicitHeight ? 1 : 0)

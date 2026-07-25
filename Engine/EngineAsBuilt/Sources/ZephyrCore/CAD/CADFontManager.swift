@@ -150,6 +150,48 @@ public enum CADFontManager {
     internal nonisolated static let cacheLock = NSRecursiveLock()
     internal static nonisolated(unsafe) var shxFontCache: [String: SHXShapeFont] = [:]
 
+    private static let platformSHXFontDirectories: [URL] = {
+#if os(Windows)
+        let environment = ProcessInfo.processInfo.environment
+        var programRoots: [String] = []
+        for key in ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"] {
+            guard let value = environment[key], !value.isEmpty else { continue }
+            if !programRoots.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) {
+                programRoots.append(value)
+            }
+        }
+
+        var directories: [URL] = []
+        var seen = Set<String>()
+        for root in programRoots {
+            let autodeskRoot = URL(fileURLWithPath: root, isDirectory: true)
+                .appendingPathComponent("Autodesk", isDirectory: true)
+            guard let products = try? FileManager.default.contentsOfDirectory(
+                at: autodeskRoot,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]) else { continue }
+
+            for product in products {
+                guard product.lastPathComponent.range(
+                    of: "AutoCAD",
+                    options: [.caseInsensitive, .diacriticInsensitive]) != nil else { continue }
+                let values = try? product.resourceValues(forKeys: [.isDirectoryKey])
+                guard values?.isDirectory == true else { continue }
+
+                let fonts = product.appendingPathComponent("Fonts", isDirectory: true)
+                guard FileManager.default.fileExists(atPath: fonts.path) else { continue }
+                let key = fonts.standardizedFileURL.path.lowercased()
+                if seen.insert(key).inserted {
+                    directories.append(fonts)
+                }
+            }
+        }
+        return directories
+#else
+        return []
+#endif
+    }()
+
     public static func getOrLoadSHXFont(
         filename: String,
         allowFallback: Bool = true
@@ -171,12 +213,13 @@ public enum CADFontManager {
         let exeDir = URL(fileURLWithPath: Bundle.main.executablePath ?? ".")
             .deletingLastPathComponent()
 
-        let fontDirectories = [
+        var fontDirectories = [
             exeDir.appendingPathComponent("Fonts"),
             URL(fileURLWithPath: "Fonts"),
             exeDir,
             URL(fileURLWithPath: ".")
         ]
+        fontDirectories.append(contentsOf: platformSHXFontDirectories)
 
         var fileNamesToTry: [String] = []
 
