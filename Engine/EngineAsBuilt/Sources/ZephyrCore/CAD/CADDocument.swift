@@ -34,6 +34,8 @@ public struct CADDocumentSnapshot: Sendable {
         Dictionary(textStyles.values.map { ($0.name, $0.fontFile) }, uniquingKeysWith: { first, _ in first })
     }
     public let dimensionStyles: [String: CADDimensionStyle]
+    public let leaderStyles: [String: CADLeaderStyle]
+    public let currentLeaderStyleName: String
     public let linetypePatterns: [String: [Double]]
     /// Names of image assets currently referenced by entities (not the raw Data blobs).
     /// The actual `imageStore` lives on `CADDocument` and persists across undo/redo.
@@ -49,6 +51,8 @@ public struct CADDocumentSnapshot: Sendable {
         unit: CADUnit,
         textStyles: [String: CADTextStyle],
         dimensionStyles: [String: CADDimensionStyle] = [:],
+        leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+        currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         imageAssetNames: Set<String> = []
     ) {
@@ -61,6 +65,8 @@ public struct CADDocumentSnapshot: Sendable {
         self.unit = unit
         self.textStyles = textStyles
         self.dimensionStyles = dimensionStyles
+        self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
+        self.currentLeaderStyleName = currentLeaderStyleName
         self.linetypePatterns = linetypePatterns
         self.imageAssetNames = imageAssetNames
     }
@@ -75,6 +81,8 @@ public struct CADDocumentSnapshot: Sendable {
         unit: CADUnit,
         textStyleFonts: [String: String],
         dimensionStyles: [String: CADDimensionStyle] = [:],
+        leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+        currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         imageAssetNames: Set<String> = []
     ) {
@@ -91,6 +99,8 @@ public struct CADDocumentSnapshot: Sendable {
             unit: unit,
             textStyles: styles.isEmpty ? ["Standard": .standard] : styles,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
+            currentLeaderStyleName: currentLeaderStyleName,
             linetypePatterns: linetypePatterns,
             imageAssetNames: imageAssetNames)
     }
@@ -272,6 +282,10 @@ public final class CADDocument {
     
     /// Map of dimension style name -> CADDimensionStyle
     public var dimensionStyles: [String: CADDimensionStyle] = [:]
+
+    /// Named multileader styles and the active style used by new leaders.
+    public var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
+    public var currentLeaderStyleName: String = "Standard"
 
     /// DXF linetype dash pattern definitions (e.g. "DASHED" -> [10.0, 5.0]).
     /// Key is the uppercased linetype name. Saved/loaded in EAB for accurate round-trip.
@@ -602,6 +616,46 @@ public final class CADDocument {
         return candidate
     }
 
+    private func preparedEntityForStorage(_ entity: CADEntity) -> CADEntity {
+        var result = entity
+        if let blockID = result.blockID, let block = blockTable[blockID] {
+            if var array = result.arrayData {
+                let path = CADArrayPathResolver.points(
+                    for: array,
+                    containerTransform: result.transform,
+                    document: self)
+                if array.kind == .path, path.count >= 2 {
+                    array.cachedPath = path
+                    result.arrayData = array
+                }
+                result.updateArrayCache(
+                    sourceBoundingBox: block.localBoundingBox,
+                    pathPoints: path)
+            } else {
+                result.localBoundingBox = block.localBoundingBox
+                result.updateAnchorCache(from: block.geometry)
+            }
+        } else if result.arrayData == nil {
+            result.localBoundingBox = CADEntity.computeLocalBoundingBox(
+                blockID: result.blockID,
+                localGeometry: result.localGeometry) ?? result.localBoundingBox
+            result.updateAnchorCache()
+        }
+        return result
+    }
+
+    private func refreshPathArrays(dependingOn pathHandle: UUID? = nil) {
+        let handles = entityRegistry.values.compactMap { entity -> UUID? in
+            guard let array = entity.arrayData, array.kind == .path else { return nil }
+            if let pathHandle, array.pathEntityHandle != pathHandle { return nil }
+            return entity.handle
+        }
+        for handle in handles {
+            guard let entity = entityRegistry[handle] else { continue }
+            entityRegistry[handle] = preparedEntityForStorage(entity)
+        }
+    }
+
     // MARK: - Block Operations
 
     public func addBlock(_ block: CADBlock) {
@@ -635,11 +689,15 @@ public final class CADDocument {
         block.primitiveXData.removeAll(keepingCapacity: false)
         block.updateBoundingBox()
         blockTable[handle] = block
-        for (entityHandle, var entity) in entityRegistry where entity.blockID == handle {
-            entity.localBoundingBox = block.localBoundingBox
-            entity.updateAnchorCache(from: geometry)
-            entityRegistry[entityHandle] = entity
+        let affectedHandles = entityRegistry.values
+            .filter { $0.blockID == handle }
+            .map(\.handle)
+        for entityHandle in affectedHandles {
+            if let entity = entityRegistry[entityHandle] {
+                entityRegistry[entityHandle] = preparedEntityForStorage(entity)
+            }
         }
+        for entityHandle in affectedHandles { refreshPathArrays(dependingOn: entityHandle) }
         markEdited(regenerate: true)
         invalidateEntityGrid()   // instance world boxes changed
     }
@@ -648,11 +706,7 @@ public final class CADDocument {
 
     public func addEntity(_ entity: CADEntity) {
         pushUndo()
-        var e = entity
-        if let bid = e.blockID, let block = blockTable[bid] {
-            e.localBoundingBox = block.localBoundingBox
-            e.updateAnchorCache(from: block.geometry)
-        }
+        let e = preparedEntityForStorage(entity)
         entityRegistry[e.handle] = e
         markEdited(regenerate: true)
         invalidateEntityGrid()
@@ -664,12 +718,9 @@ public final class CADDocument {
     public func addEntities(_ entities: [CADEntity]) {
         guard !entities.isEmpty else { return }
         pushUndo()
-        for var entity in entities {
-            if let bid = entity.blockID, let block = blockTable[bid] {
-                entity.localBoundingBox = block.localBoundingBox
-                entity.updateAnchorCache(from: block.geometry)
-            }
-            entityRegistry[entity.handle] = entity
+        for entity in entities {
+            let prepared = preparedEntityForStorage(entity)
+            entityRegistry[prepared.handle] = prepared
         }
         markEdited(regenerate: true)
         invalidateEntityGrid()
@@ -730,6 +781,9 @@ public final class CADDocument {
                 layerID: entity.layerID,
                 blockID: entity.blockID.flatMap { blockRemap[$0] ?? $0 },
                 localGeometry: entity.localGeometry,
+                dimensionMetadata: entity.dimensionMetadata,
+                leaderData: entity.leaderData,
+                arrayData: entity.arrayData,
                 transform: entity.transform,
                 xdata: entity.xdata,
                 drawOrder: entity.drawOrder
@@ -877,22 +931,37 @@ public final class CADDocument {
                 primitiveXData = [:]
             }
 
-            for (index, primitive) in geometry.enumerated() {
-                let primitiveStyle = primitiveStyles[index]
-                let backgroundScale = primitiveStyle?.textBackgroundScale
-                    ?? entityBackgroundScale
-                let hasVisibleBackground =
-                    primitiveStyle?.textBackgroundUsesViewportColor == true
-                    || primitiveStyle?.textBackgroundColor != nil
-                    || entityBackgroundUsesViewportColor
-                    || entityHasBackgroundColor
-                includePrimitiveRenderBounds(
-                    primitive,
-                    transform: entity.transform,
-                    textXData: primitiveXData[index] ?? [:],
-                    backgroundScale: backgroundScale,
-                    hasVisibleBackground: hasVisibleBackground,
-                    into: &bounds)
+            let transforms: [Transform3D]
+            if let array = entity.arrayData {
+                let path = CADArrayPathResolver.points(
+                    for: array,
+                    containerTransform: entity.transform,
+                    document: self)
+                transforms = array.evaluatedInstances(pathPoints: path).map {
+                    entity.transform.multiplying(by: $0.transform)
+                }
+            } else {
+                transforms = [entity.transform]
+            }
+
+            for transform in transforms {
+                for (index, primitive) in geometry.enumerated() {
+                    let primitiveStyle = primitiveStyles[index]
+                    let backgroundScale = primitiveStyle?.textBackgroundScale
+                        ?? entityBackgroundScale
+                    let hasVisibleBackground =
+                        primitiveStyle?.textBackgroundUsesViewportColor == true
+                        || primitiveStyle?.textBackgroundColor != nil
+                        || entityBackgroundUsesViewportColor
+                        || entityHasBackgroundColor
+                    includePrimitiveRenderBounds(
+                        primitive,
+                        transform: transform,
+                        textXData: primitiveXData[index] ?? [:],
+                        backgroundScale: backgroundScale,
+                        hasVisibleBackground: hasVisibleBackground,
+                        into: &bounds)
+                }
             }
         }
 
@@ -1316,7 +1385,8 @@ public final class CADDocument {
         pushUndo()
         guard var entity = entityRegistry[handle] else { return }
         entity.transform = newTransform
-        entityRegistry[handle] = entity
+        entityRegistry[handle] = preparedEntityForStorage(entity)
+        refreshPathArrays(dependingOn: handle)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -1324,7 +1394,8 @@ public final class CADDocument {
     public func updateTransformLive(for handle: UUID, to newTransform: Transform3D) {
         guard var entity = entityRegistry[handle] else { return }
         entity.transform = newTransform
-        entityRegistry[handle] = entity
+        entityRegistry[handle] = preparedEntityForStorage(entity)
+        refreshPathArrays(dependingOn: handle)
         markEdited(regenerate: true)
     }
 
@@ -1370,6 +1441,7 @@ public final class CADDocument {
             blockID: entity.blockID, localGeometry: geometry)
         entity.updateAnchorCache()   // anchors live in local space; geometry changed
         entityRegistry[handle] = entity
+        refreshPathArrays(dependingOn: handle)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -1377,11 +1449,9 @@ public final class CADDocument {
     /// Update entity without pushing undo — for live property editing.
     public func updateEntityLive(_ entity: CADEntity) {
         guard entityRegistry[entity.handle] != nil else { return }
-        var updated = entity
-        let computedBB = CADEntity.computeLocalBoundingBox(blockID: updated.blockID, localGeometry: updated.localGeometry)
-        updated.localBoundingBox = computedBB ?? updated.localBoundingBox
-        updated.updateAnchorCache()
+        let updated = preparedEntityForStorage(entity)
         entityRegistry[updated.handle] = updated
+        refreshPathArrays(dependingOn: updated.handle)
         // Don't invalidate grid or push undo.
         markEdited(regenerate: true)
     }
@@ -1390,12 +1460,9 @@ public final class CADDocument {
     public func updateEntity(_ entity: CADEntity) {
         pushUndo()
         guard entityRegistry[entity.handle] != nil else { return }
-        var updated = entity
-        updated.localBoundingBox = CADEntity.computeLocalBoundingBox(
-            blockID: updated.blockID,
-            localGeometry: updated.localGeometry) ?? updated.localBoundingBox
-        updated.updateAnchorCache()
+        let updated = preparedEntityForStorage(entity)
         entityRegistry[updated.handle] = updated
+        refreshPathArrays(dependingOn: updated.handle)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -1412,6 +1479,7 @@ public final class CADDocument {
         // live write is the ONLY place their anchors can be kept in sync.
         entity.updateAnchorCache()
         entityRegistry[handle] = entity
+        refreshPathArrays(dependingOn: handle)
         // Don't invalidate entity grid during live drag — only on finalize
     }
 
@@ -1432,11 +1500,15 @@ public final class CADDocument {
         }
         block.updateBoundingBox()
         blockTable[handle] = block
-        for (entityHandle, var entity) in entityRegistry where entity.blockID == handle {
-            entity.localBoundingBox = block.localBoundingBox
-            entity.updateAnchorCache(from: geometry)
-            entityRegistry[entityHandle] = entity
+        let affectedHandles = entityRegistry.values
+            .filter { $0.blockID == handle }
+            .map(\.handle)
+        for entityHandle in affectedHandles {
+            if let entity = entityRegistry[entityHandle] {
+                entityRegistry[entityHandle] = preparedEntityForStorage(entity)
+            }
         }
+        for entityHandle in affectedHandles { refreshPathArrays(dependingOn: entityHandle) }
         invalidateEntityGrid()
     }
 
@@ -1559,8 +1631,9 @@ public final class CADDocument {
                 z: t.position.z + delta.z
             )
             entity.transform = t
-            entityRegistry[handle] = entity
+            entityRegistry[handle] = preparedEntityForStorage(entity)
         }
+        for handle in handles { refreshPathArrays(dependingOn: handle) }
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -1575,8 +1648,9 @@ public final class CADDocument {
                 z: t.position.z + delta.z
             )
             entity.transform = t
-            entityRegistry[handle] = entity
+            entityRegistry[handle] = preparedEntityForStorage(entity)
         }
+        for handle in handles { refreshPathArrays(dependingOn: handle) }
         // Do not push undo or set isDirty. Handled on mouse-up.
     }
 
@@ -1599,8 +1673,9 @@ public final class CADDocument {
             )
             t.rotation = entity.transform.rotation + angleDeltaRadians
             entity.transform = t
-            entityRegistry[handle] = entity
+            entityRegistry[handle] = preparedEntityForStorage(entity)
         }
+        for handle in handles { refreshPathArrays(dependingOn: handle) }
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -1623,8 +1698,9 @@ public final class CADDocument {
             )
             t.rotation = entity.transform.rotation + angleDeltaRadians
             entity.transform = t
-            entityRegistry[handle] = entity
+            entityRegistry[handle] = preparedEntityForStorage(entity)
         }
+        for handle in handles { refreshPathArrays(dependingOn: handle) }
     }
 
     public func scaleEntities(handles: Set<UUID>, around center: Vector3, factor: Double) {
@@ -1647,8 +1723,9 @@ public final class CADDocument {
                 z: t.scale.z * factor
             )
             entity.transform = t
-            entityRegistry[handle] = entity
+            entityRegistry[handle] = preparedEntityForStorage(entity)
         }
+        for handle in handles { refreshPathArrays(dependingOn: handle) }
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -1672,8 +1749,9 @@ public final class CADDocument {
                 z: t.scale.z * factor
             )
             entity.transform = t
-            entityRegistry[handle] = entity
+            entityRegistry[handle] = preparedEntityForStorage(entity)
         }
+        for handle in handles { refreshPathArrays(dependingOn: handle) }
     }
 
     // MARK: - ALIGN Command Support
@@ -1715,8 +1793,9 @@ public final class CADDocument {
             for handle in handles {
                 guard var entity = entityRegistry[handle] else { continue }
                 entity.transform = translation.multiplying(by: entity.transform)
-                entityRegistry[handle] = entity
+                entityRegistry[handle] = preparedEntityForStorage(entity)
             }
+            for handle in handles { refreshPathArrays(dependingOn: handle) }
             markEdited(regenerate: true)
             invalidateEntityGrid()
             return
@@ -1728,8 +1807,9 @@ public final class CADDocument {
             for handle in handles {
                 guard var entity = entityRegistry[handle] else { continue }
                 entity.transform = translation.multiplying(by: entity.transform)
-                entityRegistry[handle] = entity
+                entityRegistry[handle] = preparedEntityForStorage(entity)
             }
+            for handle in handles { refreshPathArrays(dependingOn: handle) }
             markEdited(regenerate: true)
             invalidateEntityGrid()
             return
@@ -1750,26 +1830,121 @@ public final class CADDocument {
         for handle in handles {
             guard var entity = entityRegistry[handle] else { continue }
             entity.transform = finalTransform.multiplying(by: entity.transform)
-            entityRegistry[handle] = entity
+            entityRegistry[handle] = preparedEntityForStorage(entity)
         }
+        for handle in handles { refreshPathArrays(dependingOn: handle) }
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
 
     /// Atomically remove a set of entities and insert replacements in one undo step.
     /// Used by JOIN and similar commands that merge multiple entities into one.
+    public func replaceWithAssociativeArray(
+        sourceBlock: CADBlock,
+        removing handles: Set<UUID>,
+        arrayEntity: CADEntity
+    ) {
+        guard !handles.isEmpty else { return }
+        pushUndo()
+        blockTable[sourceBlock.handle] = sourceBlock
+        for handle in handles { entityRegistry.removeValue(forKey: handle) }
+        let prepared = preparedEntityForStorage(arrayEntity)
+        entityRegistry[prepared.handle] = prepared
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+    }
+
+    @discardableResult
+    public func replaceWithNonAssociativeArray(
+        sourceBlock: CADBlock,
+        removing handles: Set<UUID>,
+        arrayEntity: CADEntity
+    ) -> [UUID] {
+        guard !handles.isEmpty,
+              let array = arrayEntity.arrayData else { return [] }
+        let path = CADArrayPathResolver.points(
+            for: array,
+            containerTransform: arrayEntity.transform,
+            document: self)
+        let instances = array.evaluatedInstances(pathPoints: path)
+        guard !instances.isEmpty else { return [] }
+
+        pushUndo()
+        blockTable[sourceBlock.handle] = sourceBlock
+        for handle in handles { entityRegistry.removeValue(forKey: handle) }
+
+        var newHandles: [UUID] = []
+        newHandles.reserveCapacity(instances.count)
+        for instance in instances {
+            var copy = CADEntity(
+                layerID: arrayEntity.layerID,
+                blockID: sourceBlock.handle,
+                transform: arrayEntity.transform.multiplying(by: instance.transform),
+                xdata: arrayEntity.xdata,
+                drawOrder: arrayEntity.drawOrder)
+            copy = preparedEntityForStorage(copy)
+            entityRegistry[copy.handle] = copy
+            newHandles.append(copy.handle)
+        }
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return newHandles
+    }
+
+    @discardableResult
+    public func explodeAssociativeArray(handle: UUID) -> [UUID] {
+        explodeAssociativeArrays(handles: [handle])
+    }
+
+    @discardableResult
+    public func explodeAssociativeArrays(handles sourceHandles: Set<UUID>) -> [UUID] {
+        var work: [(entity: CADEntity, blockID: UUID, instances: [CADArrayInstance])] = []
+        for handle in sourceHandles {
+            guard let entity = entityRegistry[handle],
+                  let array = entity.arrayData,
+                  let blockID = entity.blockID,
+                  blockTable[blockID] != nil
+            else { continue }
+            let path = CADArrayPathResolver.points(
+                for: array,
+                containerTransform: entity.transform,
+                document: self)
+            let instances = array.evaluatedInstances(pathPoints: path)
+            if !instances.isEmpty { work.append((entity, blockID, instances)) }
+        }
+        guard !work.isEmpty else { return [] }
+
+        pushUndo()
+        var newHandles: [UUID] = []
+        newHandles.reserveCapacity(work.reduce(0) { $0 + $1.instances.count })
+        for item in work {
+            entityRegistry.removeValue(forKey: item.entity.handle)
+            for instance in item.instances {
+                var copy = CADEntity(
+                    layerID: item.entity.layerID,
+                    blockID: item.blockID,
+                    transform: item.entity.transform.multiplying(by: instance.transform),
+                    xdata: item.entity.xdata,
+                    drawOrder: item.entity.drawOrder)
+                copy = preparedEntityForStorage(copy)
+                entityRegistry[copy.handle] = copy
+                newHandles.append(copy.handle)
+            }
+        }
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return newHandles
+    }
+
     public func replaceEntities(remove handles: Set<UUID>, add newEntities: [CADEntity]) {
         guard !handles.isEmpty || !newEntities.isEmpty else { return }
         pushUndo()
         for handle in handles {
             entityRegistry.removeValue(forKey: handle)
         }
-        for var entity in newEntities {
-            if let bid = entity.blockID, let block = blockTable[bid] {
-                entity.localBoundingBox = block.localBoundingBox
-                entity.updateAnchorCache(from: block.geometry)
-            }
-            entityRegistry[entity.handle] = entity
+        for entity in newEntities {
+            let prepared = preparedEntityForStorage(entity)
+            entityRegistry[prepared.handle] = prepared
         }
         markEdited(regenerate: true)
         invalidateEntityGrid()
@@ -1937,11 +2112,7 @@ public final class CADDocument {
         if activeLayerID == nil, let first = layers.first { activeLayerID = first.handle }
         for block in blocks { blockTable[block.handle] = block }
         for entity in entities {
-            var e = entity
-            if let bid = e.blockID, let block = blockTable[bid] {
-                e.localBoundingBox = block.localBoundingBox
-                e.updateAnchorCache(from: block.geometry)
-            }
+            let e = preparedEntityForStorage(entity)
             entityRegistry[e.handle] = e
         }
         print("[CADDocument] import complete: registry has \(entityRegistry.count) entities")
@@ -1963,7 +2134,10 @@ public final class CADDocument {
         for layer in imported.layers { layerTable[layer.handle] = layer }
         if activeLayerID == nil, let first = imported.layers.first { activeLayerID = first.handle }
         for block in imported.blocks { blockTable[block.handle] = block }
-        for entity in imported.entities { entityRegistry[entity.handle] = entity }
+        for entity in imported.entities {
+            let prepared = preparedEntityForStorage(entity)
+            entityRegistry[prepared.handle] = prepared
+        }
         markEdited(regenerate: true)
         rebuildEntityGrid()
     }
@@ -2009,6 +2183,8 @@ public final class CADDocument {
         unit: CADUnit = .millimeter,
         textStyles: [String: CADTextStyle] = ["Standard": .standard],
         dimensionStyles: [String: CADDimensionStyle] = [:],
+        leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+        currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         activeLayerID: UUID? = nil,
         imageStore: [String: CADImageAsset] = [:]
@@ -2016,6 +2192,8 @@ public final class CADDocument {
         self.unit = unit
         self.textStyles = textStyles.isEmpty ? ["Standard": .standard] : textStyles
         self.dimensionStyles = dimensionStyles
+        self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
+        self.currentLeaderStyleName = self.leaderStyles.keys.first(where: { $0.caseInsensitiveCompare(currentLeaderStyleName) == .orderedSame }) ?? "Standard"
         self.linetypePatterns = linetypePatterns
         self.imageStore = imageStore
         for layer in layers { layerTable[layer.handle] = layer }
@@ -2047,6 +2225,8 @@ public final class CADDocument {
         unit: CADUnit = .millimeter,
         textStyleFonts: [String: String],
         dimensionStyles: [String: CADDimensionStyle] = [:],
+        leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+        currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         activeLayerID: UUID? = nil,
         imageStore: [String: CADImageAsset] = [:]
@@ -2063,6 +2243,8 @@ public final class CADDocument {
             unit: unit,
             textStyles: styles.isEmpty ? ["Standard": .standard] : styles,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
+            currentLeaderStyleName: currentLeaderStyleName,
             linetypePatterns: linetypePatterns,
             activeLayerID: activeLayerID,
             imageStore: imageStore)
@@ -2080,7 +2262,8 @@ public final class CADDocument {
             return CADDocumentSnapshot(
                 layers: [:], blocks: [:], entities: [:], constraints: [:],
                 solvedTransforms: [:], activeLayerID: nil, unit: unit,
-                textStyles: ["Standard": .standard], dimensionStyles: [:], linetypePatterns: [:],
+                textStyles: ["Standard": .standard], dimensionStyles: [:],
+                leaderStyles: ["Standard": .standard], currentLeaderStyleName: "Standard", linetypePatterns: [:],
                 imageAssetNames: [])
         }
         guard layerCount < 100_000 else {
@@ -2088,7 +2271,8 @@ public final class CADDocument {
             return CADDocumentSnapshot(
                 layers: [:], blocks: [:], entities: [:], constraints: [:],
                 solvedTransforms: [:], activeLayerID: nil, unit: unit,
-                textStyles: ["Standard": .standard], dimensionStyles: [:], linetypePatterns: [:],
+                textStyles: ["Standard": .standard], dimensionStyles: [:],
+                leaderStyles: ["Standard": .standard], currentLeaderStyleName: "Standard", linetypePatterns: [:],
                 imageAssetNames: [])
         }
 
@@ -2117,6 +2301,8 @@ public final class CADDocument {
             activeLayerID: activeLayerID, unit: unit,
             textStyles: textStyles,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
+            currentLeaderStyleName: currentLeaderStyleName,
             linetypePatterns: linetypePatterns,
             imageAssetNames: names
         )
@@ -2152,6 +2338,8 @@ public final class CADDocument {
         unit = snapshot.unit
         textStyles = snapshot.textStyles
         dimensionStyles = snapshot.dimensionStyles
+        leaderStyles = snapshot.leaderStyles
+        currentLeaderStyleName = snapshot.currentLeaderStyleName
         linetypePatterns = snapshot.linetypePatterns
         // Prune image assets no longer referenced by any entity after restore
         pruneUnreferencedImageAssets()

@@ -85,6 +85,9 @@ public class DXFWriter {
     private var materialByLayerHandle: String = ""
     private var materialGlobalHandle: String = ""
     private var imageDefinitionHandleByEntity: [ObjectIdentifier: String] = [:]
+    private var entityHandleByObject: [ObjectIdentifier: String] = [:]
+    private var mleaderStyleDictionaryHandle: String = ""
+    private var mleaderStyleHandleByName: [String: String] = [:]
     private var activeViewportHandleByBlockName: [String: String] = [:]
     private var outputLayouts: [DXFLayoutDefinition] = []
 
@@ -174,6 +177,9 @@ public class DXFWriter {
         materialByLayerHandle = ""
         materialGlobalHandle = ""
         imageDefinitionHandleByEntity.removeAll(keepingCapacity: true)
+        entityHandleByObject.removeAll(keepingCapacity: true)
+        mleaderStyleDictionaryHandle = ""
+        mleaderStyleHandleByName.removeAll(keepingCapacity: true)
         activeViewportHandleByBlockName.removeAll(keepingCapacity: true)
         outputLayouts = resolvedLayouts()
         prepareObjectHandles()
@@ -270,14 +276,50 @@ public class DXFWriter {
                 layoutHandleByBlockName[key] = allocHandle()
             }
         }
+        let allMLeaderEntities = entities.compactMap { $0 as? DXFMLeaderEntity }
+            + blocks.flatMap { $0.entities.compactMap { $0 as? DXFMLeaderEntity } }
+        let mleaderStyleNames = Set(allMLeaderEntities.map { leader -> String in
+            let name = leader.styleName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return name.isEmpty ? "Standard" : name
+        })
+        if !mleaderStyleNames.isEmpty {
+            mleaderStyleDictionaryHandle = allocHandle()
+            for name in mleaderStyleNames.sorted(by: { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }) {
+                mleaderStyleHandleByName[normalizedName(name)] = allocHandle()
+            }
+        }
         for entity in entities {
-            guard entity is DXFImageEntity else { continue }
-            imageDefinitionHandleByEntity[ObjectIdentifier(entity)] = allocHandle()
+            entityHandleByObject[ObjectIdentifier(entity)] = allocHandle()
+            if entity is DXFImageEntity {
+                imageDefinitionHandleByEntity[ObjectIdentifier(entity)] = allocHandle()
+            }
+        }
+        for block in blocks {
+            for entity in block.entities {
+                entityHandleByObject[ObjectIdentifier(entity)] = allocHandle()
+            }
         }
     }
 
     private func blockRecordHandle(for name: String) -> String? {
         blockRecordHandleByName[normalizedName(name)]
+    }
+
+    private func blockAttributeDefinitionHandle(
+        blockName: String,
+        tag: String,
+        sourceHandle: UInt32
+    ) -> String? {
+        guard let block = blocks.first(where: {
+            normalizedName($0.name) == normalizedName(blockName)
+        }) else { return nil }
+        let normalizedTag = normalizedName(tag)
+        guard let definition = block.entities.compactMap({ $0 as? DXFTextEntity }).first(where: {
+            $0.eType == .aTTDEF
+                && ((sourceHandle != 0 && $0.handle == sourceHandle)
+                    || (!normalizedTag.isEmpty && normalizedName($0.attributeTag) == normalizedTag))
+        }) else { return nil }
+        return entityHandleByObject[ObjectIdentifier(definition)]
     }
 
     private func entityOwnerBlockName(at index: Int, entity: DXFEntity) -> String {
@@ -526,6 +568,30 @@ public class DXFWriter {
                 instanceCount: entities.filter { $0.eType == .iMAGE }.count,
                 wasProxy: 0,
                 isEntity: 1,
+                &out)
+        }
+        let mleaderEntityCount = entities.filter { $0.eType == .mLEADER }.count
+            + blocks.reduce(0) { count, block in
+                count + block.entities.filter { $0.eType == .mLEADER }.count
+            }
+        if mleaderEntityCount > 0 {
+            writeClass(
+                dxfName: "MULTILEADER",
+                cppName: "AcDbMLeader",
+                appName: "ObjectDBX Classes",
+                proxyFlags: 4095,
+                instanceCount: mleaderEntityCount,
+                wasProxy: 0,
+                isEntity: 1,
+                &out)
+            writeClass(
+                dxfName: "MLEADERSTYLE",
+                cppName: "AcDbMLeaderStyle",
+                appName: "ObjectDBX Classes",
+                proxyFlags: 4095,
+                instanceCount: mleaderStyleHandleByName.count,
+                wasProxy: 0,
+                isEntity: 0,
                 &out)
         }
         if hasMaterials {
@@ -1128,7 +1194,7 @@ public class DXFWriter {
         ownerHandle: String? = nil,
         ownerBlockName: String? = nil
     ) {
-        let h = allocHandle()
+        let h = entityHandleByObject[ObjectIdentifier(e)] ?? allocHandle()
         if let viewport = e as? DXFViewportEntity,
            let ownerBlockName,
            viewport.vpID > 1 || activeViewportHandleByBlockName[normalizedName(ownerBlockName)] == nil {
@@ -1367,7 +1433,165 @@ public class DXFWriter {
             writeInt(76, ld.vertices.count, &out)
             writeInt(77, ld.colorUse, &out)
             for v in ld.vertices { writePoint3(10, v, &out) }
+            if let annotation = ld.annotation,
+               let annotationHandle = entityHandleByObject[ObjectIdentifier(annotation)] {
+                writeStr(340, annotationHandle, &out)
+            } else if ld.annotHandle != 0 {
+                writeStr(340, String(ld.annotHandle, radix: 16).uppercased(), &out)
+            }
             writeCoord3(210, ld.extrusionPoint, &out)
+
+        case .mLEADER:
+            guard let ml = e as? DXFMLeaderEntity else { return }
+            writeEntityHeader("MULTILEADER", entity: ml, handle: h, ownerHandle: ownerHandle, &out)
+            out += "100\r\nAcDbMLeader\r\n"
+            writeInt(270, 2, &out)
+            writeStr(300, "CONTEXT_DATA{", &out)
+            writeDbl(40, ml.contentScale, &out)
+            writePoint3(10, ml.contentBasePosition ?? ml.textPosition, &out)
+            writeDbl(41, ml.textHeight, &out)
+            writeDbl(140, ml.arrowSize, &out)
+            writeDbl(145, ml.landingGap, &out)
+            writeInt(174, ml.textAngleType, &out)
+            writeInt(175, ml.textAlignment, &out)
+            writeInt(176, 0, &out)
+            writeInt(177, 1, &out)
+
+            let hasMText = ml.contentType == 2 && !ml.text.isEmpty
+            writeInt(290, hasMText ? 1 : 0, &out)
+            if hasMText {
+                writeStr(304, ml.text, &out)
+                writePoint3(11, Vector3(x: 0, y: 0, z: 1), &out)
+                writeStr(340, textStyleHandleByName[normalizedName(ml.textStyleName)]
+                    ?? textStyleHandleByName["STANDARD"]
+                    ?? "0", &out)
+                writePoint3(12, ml.textPosition, &out)
+                writePoint3(13, ml.textDirection, &out)
+                writeDbl(42, ml.textRotation, &out)
+                writeDbl(43, ml.textWidth, &out)
+                writeDbl(45, 1.0, &out)
+                writeInt(170, 1, &out)
+                writeInt(171, ml.textAttachment, &out)
+                writeInt(172, ml.textFlowDirection, &out)
+                writeInt(291, 0, &out)
+                writeInt(292, 0, &out)
+                writeInt(173, 0, &out)
+                writeInt(293, 0, &out)
+                writeInt(294, ml.textDirectionNegative ? 1 : 0, &out)
+                writeInt(295, 0, &out)
+            }
+
+            let hasBlock = ml.contentType == 1 && !ml.blockName.isEmpty
+            writeInt(296, hasBlock ? 1 : 0, &out)
+            if hasBlock, let blockHandle = blockRecordHandle(for: ml.blockName) {
+                writeStr(341, blockHandle, &out)
+                writePoint3(15, ml.textPosition, &out)
+                writePoint3(16, Vector3(
+                    x: ml.blockScale,
+                    y: ml.blockScale,
+                    z: ml.blockScale), &out)
+                writeDbl(46, ml.blockRotation, &out)
+            }
+
+            writePoint3(110, .zero, &out)
+            writePoint3(111, Vector3(x: 1, y: 0, z: 0), &out)
+            writePoint3(112, Vector3(x: 0, y: 1, z: 0), &out)
+            writeInt(297, 0, &out)
+
+            for (branchIndex, branch) in ml.branches.enumerated()
+                where branch.vertices.count >= 2 {
+                guard let lastPoint = branch.vertices.last else { continue }
+                var direction = branch.doglegDirection?.normalized ?? Vector3(
+                    x: ml.textPosition.x >= lastPoint.x ? 1 : -1,
+                    y: 0,
+                    z: 0)
+                if direction.magnitudeSquared <= 1e-18 {
+                    direction = Vector3(x: 1, y: 0, z: 0)
+                }
+
+                writeStr(302, "LEADER{", &out)
+                writeInt(290, ml.landingEnabled ? 1 : 0, &out)
+                writeInt(291, ml.doglegEnabled ? 1 : 0, &out)
+                writePoint3(10, lastPoint, &out)
+                writePoint3(11, direction, &out)
+                let leaderLineIndex = branch.leaderLineIndex ?? branchIndex
+                writeInt(90, leaderLineIndex, &out)
+                writeDbl(40, branch.doglegLength ?? ml.doglegLength, &out)
+                writeStr(304, "LEADER_LINE{", &out)
+                for vertex in branch.vertices.dropLast() {
+                    writePoint3(10, vertex, &out)
+                }
+                writeInt(91, leaderLineIndex, &out)
+                writeStr(305, "}", &out)
+                writeInt(271, 0, &out)
+                writeStr(303, "}", &out)
+            }
+            writeInt(272, 9, &out)
+            writeInt(273, 9, &out)
+            writeStr(301, "}", &out)
+
+            let styleKey = normalizedName(ml.styleName.isEmpty ? "Standard" : ml.styleName)
+            writeStr(340, mleaderStyleHandleByName[styleKey] ?? "0", &out)
+            var propertyOverrideFlags = (1 << 5) | (1 << 7) | (1 << 9) | (1 << 10) | (1 << 16)
+            if hasMText { propertyOverrideFlags |= 1 << 18 }
+            if hasBlock {
+                propertyOverrideFlags |= (1 << 19) | (1 << 21) | (1 << 22)
+            }
+            writeInt(90, propertyOverrideFlags, &out)
+            writeInt(170, ml.pathType, &out)
+            writeInt(171, -2, &out)
+            writeInt(290, ml.landingEnabled ? 1 : 0, &out)
+            writeInt(291, ml.doglegEnabled ? 1 : 0, &out)
+            writeDbl(41, ml.doglegLength, &out)
+            if !ml.arrowheadName.isEmpty,
+               let arrowHandle = blockRecordHandle(for: ml.arrowheadName) {
+                writeStr(342, arrowHandle, &out)
+            }
+            writeDbl(42, ml.arrowSize, &out)
+            writeInt(172, ml.contentType, &out)
+            writeStr(343, textStyleHandleByName[normalizedName(ml.textStyleName)]
+                ?? textStyleHandleByName["STANDARD"]
+                ?? "0", &out)
+            writeInt(173, ml.leftAttachment, &out)
+            writeInt(95, ml.rightAttachment, &out)
+            writeInt(174, ml.textAngleType, &out)
+            writeInt(175, ml.textAlignment, &out)
+            writeInt(292, ml.textFrameEnabled ? 1 : 0, &out)
+            if hasBlock, let blockHandle = blockRecordHandle(for: ml.blockName) {
+                writeStr(344, blockHandle, &out)
+            }
+            writePoint3(10, Vector3(
+                x: ml.blockScale,
+                y: ml.blockScale,
+                z: ml.blockScale), &out)
+            writeDbl(43, ml.blockRotation, &out)
+            writeInt(176, 0, &out)
+            writeInt(293, ml.contentScale != 1 ? 1 : 0, &out)
+            if hasBlock {
+                for attribute in ml.blockAttributes {
+                    guard let definitionHandle = blockAttributeDefinitionHandle(
+                        blockName: ml.blockName,
+                        tag: attribute.tag,
+                        sourceHandle: attribute.definitionHandle) else { continue }
+                    writeStr(330, definitionHandle, &out)
+                    writeInt(177, attribute.index, &out)
+                    writeDbl(44, attribute.width, &out)
+                    writeStr(302, attribute.text, &out)
+                }
+            }
+            writeInt(294, ml.textDirectionNegative ? 1 : 0, &out)
+            writeInt(178, ml.textAlignInIPE, &out)
+            writeInt(179, ml.textAttachmentPoint, &out)
+            writeDbl(45, ml.contentScale, &out)
+            writeInt(271, ml.attachmentDirection, &out)
+            writeInt(272, ml.bottomAttachment, &out)
+            writeInt(273, ml.topAttachment, &out)
+            for (branchIndex, branch) in ml.branches.enumerated()
+                where !branch.arrowheadName.isEmpty {
+                guard let arrowHandle = blockRecordHandle(for: branch.arrowheadName) else { continue }
+                writeInt(94, branch.leaderLineIndex ?? branchIndex, &out)
+                writeStr(345, arrowHandle, &out)
+            }
 
         case .hATCH:
             guard let ht = e as? DXFHatchEntity else { return }
@@ -1562,6 +1786,39 @@ public class DXFWriter {
         default:
             break
         }
+        writeExtendedData(e, &out)
+    }
+
+    private func writeExtendedData(_ entity: DXFEntity, _ out: inout String) {
+        guard hasExtendedData else { return }
+        let registered = Set(appids.map { $0.name.uppercased() })
+        var active = false
+        for pair in entity.extendedData {
+            if pair.code == 1001 {
+                guard let appID = pair.value as? String else {
+                    active = false
+                    continue
+                }
+                active = registered.contains(appID.uppercased())
+                if active { writeStr(1001, appID, &out) }
+                continue
+            }
+            guard active else { continue }
+            switch pair.value {
+            case let value as String:
+                writeStr(pair.code, value, &out)
+            case let value as Double:
+                writeDbl(pair.code, value, &out)
+            case let value as Int:
+                writeInt(pair.code, value, &out)
+            case let value as Int32:
+                writeInt(pair.code, Int(value), &out)
+            case let value as UInt32:
+                writeInt(pair.code, Int(value), &out)
+            default:
+                continue
+            }
+        }
     }
 
     private func writeEntityHeader(
@@ -1609,7 +1866,7 @@ public class DXFWriter {
         if e.color24 >= 0 { writeInt(420, Int(e.color24), &out) }
         if e.lineType != "BYLAYER" { writeStr(6, e.lineType, &out) }
         if e.ltypeScale != 1.0 { writeDbl(48, e.ltypeScale, &out) }
-        if !e.visible { writeInt(60, 0, &out) }
+        if !e.visible { writeInt(60, 1, &out) }
         if e.space != 0 { writeInt(67, e.space, &out) }
         if e.lWeight != .byLayer { writeInt(370, e.lWeight.dxfInt, &out) }
         if !e.colorName.isEmpty { writeStr(430, e.colorName, &out) }
@@ -1626,6 +1883,17 @@ public class DXFWriter {
 
         let imageEntities = entities.compactMap { $0 as? DXFImageEntity }
         let imageDictionaryHandle = imageEntities.isEmpty ? nil : allocHandle()
+        var mleaderStyleEntityByName: [String: DXFMLeaderEntity] = [:]
+        let allMLeaderEntities = entities.compactMap { $0 as? DXFMLeaderEntity }
+            + blocks.flatMap { $0.entities.compactMap { $0 as? DXFMLeaderEntity } }
+        for leader in allMLeaderEntities {
+            let name = leader.styleName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedName = name.isEmpty ? "Standard" : name
+            let key = normalizedName(resolvedName)
+            if mleaderStyleEntityByName[key] == nil {
+                mleaderStyleEntityByName[key] = leader
+            }
+        }
 
         out += "  0\r\nSECTION\r\n  2\r\nOBJECTS\r\n"
 
@@ -1641,6 +1909,9 @@ public class DXFWriter {
         out += "  3\r\nACAD_PLOTSTYLENAME\r\n350\r\n\(plotStyleDictionaryHandle)\r\n"
         if let imageDictionaryHandle {
             out += "  3\r\nACAD_IMAGE_DICT\r\n350\r\n\(imageDictionaryHandle)\r\n"
+        }
+        if !mleaderStyleDictionaryHandle.isEmpty {
+            out += "  3\r\nACAD_MLEADERSTYLE\r\n350\r\n\(mleaderStyleDictionaryHandle)\r\n"
         }
 
         out += "  0\r\nDICTIONARY\r\n  5\r\n\(groupDictionaryHandle)\r\n"
@@ -1675,6 +1946,27 @@ public class DXFWriter {
             }
         }
 
+        if !mleaderStyleDictionaryHandle.isEmpty {
+            out += "  0\r\nDICTIONARY\r\n  5\r\n\(mleaderStyleDictionaryHandle)\r\n"
+            out += "330\r\n\(rootDictionaryHandle)\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n"
+            for (key, handle) in mleaderStyleHandleByName.sorted(by: { $0.key < $1.key }) {
+                let storedName = mleaderStyleEntityByName[key]?.styleName
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                writeStr(3, storedName.isEmpty ? "Standard" : storedName, &out)
+                writeStr(350, handle, &out)
+            }
+
+            for (key, handle) in mleaderStyleHandleByName.sorted(by: { $0.key < $1.key }) {
+                guard let leader = mleaderStyleEntityByName[key] else { continue }
+                let name = leader.styleName.trimmingCharacters(in: .whitespacesAndNewlines)
+                writeMLeaderStyleObject(
+                    leader,
+                    name: name.isEmpty ? "Standard" : name,
+                    handle: handle,
+                    &out)
+            }
+        }
+
         if let imageDictionaryHandle {
             out += "  0\r\nDICTIONARY\r\n  5\r\n\(imageDictionaryHandle)\r\n"
             out += "330\r\n\(rootDictionaryHandle)\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n"
@@ -1704,6 +1996,70 @@ public class DXFWriter {
         out += "  0\r\nENDSEC\r\n"
     }
 
+
+    private func writeMLeaderStyleObject(
+        _ leader: DXFMLeaderEntity,
+        name: String,
+        handle: String,
+        _ out: inout String
+    ) {
+        out += "  0\r\nMLEADERSTYLE\r\n  5\r\n\(handle)\r\n"
+        out += "330\r\n\(mleaderStyleDictionaryHandle)\r\n100\r\nAcDbMLeaderStyle\r\n"
+        writeInt(179, 2, &out)
+        writeInt(170, leader.contentType, &out)
+        writeInt(171, 1, &out)
+        writeInt(172, 0, &out)
+        writeInt(90, max(2, leader.maxLeaderPoints), &out)
+        writeDbl(40, 0.0, &out)
+        writeDbl(41, 0.0, &out)
+        writeInt(173, leader.pathType, &out)
+        writeInt(91, 256, &out)
+        writeStr(340, "0", &out)
+        writeInt(92, -2, &out)
+        writeInt(290, leader.landingEnabled ? 1 : 0, &out)
+        writeDbl(42, leader.landingGap, &out)
+        writeInt(291, leader.doglegEnabled ? 1 : 0, &out)
+        writeDbl(43, leader.doglegLength, &out)
+        writeStr(3, name, &out)
+        if !leader.arrowheadName.isEmpty,
+           let arrowHandle = blockRecordHandle(for: leader.arrowheadName) {
+            writeStr(341, arrowHandle, &out)
+        } else {
+            writeStr(341, "0", &out)
+        }
+        writeDbl(44, leader.arrowSize, &out)
+        writeStr(300, "", &out)
+        writeStr(342, textStyleHandleByName[normalizedName(leader.textStyleName)] ?? textStyleHandleByName["STANDARD"] ?? "0", &out)
+        writeInt(174, leader.leftAttachment, &out)
+        writeInt(175, leader.textAngleType, &out)
+        writeInt(176, leader.textAlignment, &out)
+        writeInt(178, leader.rightAttachment, &out)
+        writeInt(93, 256, &out)
+        writeDbl(45, leader.textHeight, &out)
+        writeInt(292, leader.textFrameEnabled ? 1 : 0, &out)
+        writeInt(297, leader.alwaysLeftJustify ? 1 : 0, &out)
+        writeDbl(46, leader.landingGap, &out)
+        if !leader.blockName.isEmpty, let blockHandle = blockRecordHandle(for: leader.blockName) {
+            writeStr(343, blockHandle, &out)
+        } else {
+            writeStr(343, "0", &out)
+        }
+        writeInt(94, 256, &out)
+        writeDbl(47, leader.blockScale, &out)
+        writeDbl(49, leader.blockScale, &out)
+        writeDbl(140, leader.blockScale, &out)
+        writeInt(293, 1, &out)
+        writeDbl(141, leader.blockRotation, &out)
+        writeInt(294, 1, &out)
+        writeInt(177, 0, &out)
+        writeDbl(142, 1.0, &out)
+        writeInt(295, 0, &out)
+        writeInt(296, 0, &out)
+        writeDbl(143, 0.0, &out)
+        writeInt(271, leader.attachmentDirection, &out)
+        writeInt(272, leader.bottomAttachment, &out)
+        writeInt(273, leader.topAttachment, &out)
+    }
 
     private func writePlotStyleObjects(_ out: inout String) {
         out += "  0\r\nACDBDICTIONARYWDFLT\r\n  5\r\n\(plotStyleDictionaryHandle)\r\n"

@@ -139,10 +139,13 @@ struct PropertiesPanelUI {
                     engine.cadSelection.clearSelection()
                 }
             }
-            // Show "Edit Text" button for text entities
-            if entity.xdata["dxf.text"] != nil {
+            if entity.xdata["dxf.text"] != nil
+                || entity.leaderData?.value.contentType == .mtext {
                 ImGuiSameLine(0, 8)
                 if igSmallButton("Edit Text") {
+                    if entity.leaderData != nil {
+                        engine.cadSelection.selectLeaderContent(entity.handle)
+                    }
                     engine.commandProcessor.executeCommand("DDEDIT")
                 }
             }
@@ -300,6 +303,10 @@ struct PropertiesPanelUI {
             igSeparator()
         }
 
+
+        if entity.leaderData != nil {
+            renderLeaderSection(entity: entity, engine: engine)
+        }
 
         // Section 5.5: Dimension Properties
         if let dimBox = entity.dimensionMetadata {
@@ -523,6 +530,302 @@ struct PropertiesPanelUI {
                 igSeparator()
             }
         }
+    }
+
+    private static func renderLeaderSection(
+        entity: CADEntity,
+        engine: PhrostEngine
+    ) {
+        guard let box = entity.leaderData,
+              ImGuiCollapsingHeader(
+                "Leader Properties",
+                Int32(ImGuiTreeNodeFlags_DefaultOpen.rawValue)) else { return }
+
+        var data = box.value
+        var style = data.styleOverrides
+            ?? engine.document.leaderStyle(named: data.styleName)
+            ?? .standard
+        var changed = false
+
+        ImGuiTextV("Style: \(data.styleName)")
+        switch data.contentType {
+        case .none: ImGuiTextV("Content: None")
+        case .mtext: ImGuiTextV("Content: MText")
+        case .block: ImGuiTextV("Content: Block")
+        }
+
+        if data.contentType == .mtext && ImGuiButton("Edit Leader Text", ImVec2(x: 0, y: 0)) {
+            engine.cadSelection.selectLeaderContent(entity.handle)
+            engine.commandProcessor.executeCommand("DDEDIT")
+        }
+
+        let pathLabel: String
+        switch style.pathType {
+        case .straight: pathLabel = "Straight"
+        case .spline: pathLabel = "Spline"
+        case .none: pathLabel = "None"
+        }
+        if ImGuiBeginCombo("Leader line", pathLabel, 0) {
+            let choices: [(CADLeaderPathType, String)] = [
+                (.straight, "Straight"),
+                (.spline, "Spline"),
+                (.none, "None")
+            ]
+            for choice in choices {
+                let selected = choice.0 == style.pathType
+                if ImGuiSelectable(choice.1, selected, 0, ImVec2(x: 0, y: 0)) {
+                    style.pathType = choice.0
+                    changed = true
+                }
+                if selected { ImGuiSetItemDefaultFocus() }
+            }
+            ImGuiEndCombo()
+        }
+
+        var arrowEnabled = style.arrowEnabled
+        if ImGuiCheckbox("Arrowhead enabled", &arrowEnabled) {
+            style.arrowEnabled = arrowEnabled
+            changed = true
+        }
+        let currentArrowhead = style.arrowhead ?? .closedFilled
+        if ImGuiBeginCombo("Arrowhead", leaderArrowheadLabel(currentArrowhead), 0) {
+            for arrowhead in CADLeaderArrowhead.allCases {
+                let selected = arrowhead == currentArrowhead
+                if ImGuiSelectable(leaderArrowheadLabel(arrowhead), selected, 0, ImVec2(x: 0, y: 0)) {
+                    style.arrowhead = arrowhead
+                    style.arrowEnabled = arrowhead != .none
+                    if arrowhead != .custom { style.arrowBlockName = nil }
+                    changed = true
+                }
+                if selected { ImGuiSetItemDefaultFocus() }
+            }
+            ImGuiEndCombo()
+        }
+        if style.arrowhead == .custom {
+            let blockName = style.arrowBlockName ?? "Select block"
+            if ImGuiBeginCombo("Arrow block", blockName, 0) {
+                for block in engine.document.allBlocks
+                    .filter({ !$0.name.isEmpty })
+                    .sorted(by: { $0.name < $1.name }) {
+                    let selected = block.name.caseInsensitiveCompare(style.arrowBlockName ?? "") == .orderedSame
+                    if ImGuiSelectable(block.name, selected, 0, ImVec2(x: 0, y: 0)) {
+                        style.arrowBlockName = block.name
+                        changed = true
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+        }
+        var arrowSize = Float(style.arrowSize)
+        if ImGuiInputFloat("Arrow size", &arrowSize, 0.1, 1.0, "%.3f", 0) {
+            style.arrowSize = Double(max(0, arrowSize))
+            changed = true
+        }
+
+        var landingEnabled = style.landingEnabled
+        if ImGuiCheckbox("Landing enabled", &landingEnabled) {
+            style.landingEnabled = landingEnabled
+            changed = true
+        }
+        var doglegEnabled = style.doglegEnabled
+        if ImGuiCheckbox("Dogleg enabled", &doglegEnabled) {
+            style.doglegEnabled = doglegEnabled
+            changed = true
+        }
+        var doglegLength = Float(style.doglegLength)
+        if ImGuiInputFloat("Dogleg length", &doglegLength, 0.1, 1.0, "%.3f", 0) {
+            let newLength = Double(max(0, doglegLength))
+            style.doglegLength = newLength
+            for index in data.branches.indices where data.branches[index].doglegLength != nil {
+                data.branches[index].doglegLength = newLength
+            }
+            changed = true
+        }
+        let previousContentGap = style.contentGap
+        var contentGap = Float(style.contentGap)
+        if ImGuiInputFloat("Content gap", &contentGap, 0.1, 1.0, "%.3f", 0) {
+            style.contentGap = Double(max(0, contentGap))
+            changed = true
+        }
+        var extendToText = style.extendLeaderToText ?? false
+        if ImGuiCheckbox("Extend leader to text", &extendToText) {
+            style.extendLeaderToText = extendToText
+            changed = true
+        }
+
+        if data.contentType == .mtext {
+            var textHeight = Float(style.textHeight)
+            if ImGuiInputFloat("Text height", &textHeight, 0.1, 1.0, "%.3f", 0) {
+                style.textHeight = Double(max(0.0001, textHeight))
+                changed = true
+            }
+            if ImGuiBeginCombo("Text style", style.textStyleName, 0) {
+                for textStyle in engine.document.textStyles.values.sorted(by: { $0.name < $1.name }) {
+                    let selected = textStyle.name.caseInsensitiveCompare(style.textStyleName) == .orderedSame
+                    if ImGuiSelectable(textStyle.name, selected, 0, ImVec2(x: 0, y: 0)) {
+                        style.textStyleName = textStyle.name
+                        changed = true
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            let textAlignment = style.textAlignment ?? .left
+            if ImGuiBeginCombo("Text alignment", leaderTextAlignmentLabel(textAlignment), 0) {
+                for alignment in CADLeaderTextAlignment.allCases {
+                    let selected = alignment == textAlignment
+                    if ImGuiSelectable(leaderTextAlignmentLabel(alignment), selected, 0, ImVec2(x: 0, y: 0)) {
+                        style.textAlignment = alignment
+                        changed = true
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            let textAttachment = data.textAttachment
+                ?? style.leftAttachment
+                ?? .middleOfTop
+            if ImGuiBeginCombo("Text attachment", leaderTextAttachmentLabel(textAttachment), 0) {
+                for attachment in CADLeaderTextAttachment.allCases {
+                    let selected = attachment == textAttachment
+                    if ImGuiSelectable(leaderTextAttachmentLabel(attachment), selected, 0, ImVec2(x: 0, y: 0)) {
+                        data.textAttachment = attachment
+                        changed = true
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            let textAngleType = style.textAngleType ?? .insertAngle
+            if ImGuiBeginCombo("Text angle", leaderTextAngleLabel(textAngleType), 0) {
+                for angleType in CADLeaderTextAngleType.allCases {
+                    let selected = angleType == textAngleType
+                    if ImGuiSelectable(leaderTextAngleLabel(angleType), selected, 0, ImVec2(x: 0, y: 0)) {
+                        style.textAngleType = angleType
+                        changed = true
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            let attachmentDirection = style.textAttachmentDirection ?? .horizontal
+            if ImGuiBeginCombo("Attachment direction", leaderAttachmentDirectionLabel(attachmentDirection), 0) {
+                for direction in CADLeaderTextAttachmentDirection.allCases {
+                    let selected = direction == attachmentDirection
+                    if ImGuiSelectable(leaderAttachmentDirectionLabel(direction), selected, 0, ImVec2(x: 0, y: 0)) {
+                        style.textAttachmentDirection = direction
+                        changed = true
+                    }
+                    if selected { ImGuiSetItemDefaultFocus() }
+                }
+                ImGuiEndCombo()
+            }
+            var alwaysLeft = style.alwaysLeftJustify ?? false
+            if ImGuiCheckbox("Always left justify", &alwaysLeft) {
+                style.alwaysLeftJustify = alwaysLeft
+                changed = true
+            }
+            var frameEnabled = style.textFrameEnabled
+            if ImGuiCheckbox("Text frame", &frameEnabled) {
+                style.textFrameEnabled = frameEnabled
+                changed = true
+            }
+            var rotationDegrees = Float(data.contentRotation * 180.0 / .pi)
+            if ImGuiInputFloat("Text rotation", &rotationDegrees, 1, 15, "%.1f deg", 0) {
+                data.contentRotation = Double(rotationDegrees) * .pi / 180.0
+                changed = true
+            }
+        }
+
+        if changed {
+            let gapDelta = style.contentGap - previousContentGap
+            if data.contentType != .none,
+               abs(gapDelta) > 1e-9,
+               let direction = leaderContentDirection(data: data) {
+                data.contentPosition = data.contentPosition + direction * gapDelta
+            }
+            data.styleOverrides = style
+            var updatedEntity = entity
+            updatedEntity.leaderData = CADLeaderDataBox(data)
+            updatedEntity = engine.document.regeneratedLeaderEntity(updatedEntity)
+            engine.document.updateEntity(updatedEntity)
+            engine.tabManager.markActiveDirty()
+        }
+        igSeparator()
+    }
+
+
+    private static func leaderArrowheadLabel(_ value: CADLeaderArrowhead) -> String {
+        switch value {
+        case .none: return "None"
+        case .closedFilled: return "Closed filled"
+        case .closedBlank: return "Closed blank"
+        case .open: return "Open"
+        case .dot: return "Dot"
+        case .dotBlank: return "Dot blank"
+        case .architecturalTick: return "Architectural tick"
+        case .oblique: return "Oblique"
+        case .originIndicator: return "Origin indicator"
+        case .boxFilled: return "Box filled"
+        case .boxBlank: return "Box blank"
+        case .custom: return "Custom block"
+        }
+    }
+
+    private static func leaderTextAlignmentLabel(_ value: CADLeaderTextAlignment) -> String {
+        switch value {
+        case .left: return "Left"
+        case .center: return "Center"
+        case .right: return "Right"
+        }
+    }
+
+    private static func leaderTextAngleLabel(_ value: CADLeaderTextAngleType) -> String {
+        switch value {
+        case .insertAngle: return "Insert angle"
+        case .horizontal: return "Horizontal"
+        case .alwaysRightReading: return "Always right-reading"
+        }
+    }
+
+    private static func leaderAttachmentDirectionLabel(
+        _ value: CADLeaderTextAttachmentDirection
+    ) -> String {
+        value == .horizontal ? "Horizontal" : "Vertical"
+    }
+
+    private static func leaderTextAttachmentLabel(_ value: CADLeaderTextAttachment) -> String {
+        switch value {
+        case .topOfTop: return "Top of top line"
+        case .middleOfTop: return "Middle of top line"
+        case .middle: return "Middle"
+        case .middleOfBottom: return "Middle of bottom line"
+        case .bottomOfBottom: return "Bottom of bottom line"
+        case .bottomLine: return "Bottom line"
+        case .bottomOfTopLine: return "Bottom of top line"
+        case .bottomOfTop: return "Bottom of top"
+        case .allLine: return "All lines"
+        case .center: return "Center"
+        case .linedCenter: return "Underline/overline center"
+        }
+    }
+
+    private static func leaderContentDirection(data: CADLeaderData) -> Vector3? {
+        guard let branch = data.branches.first,
+              let last = branch.vertices.last else { return nil }
+
+        if let doglegDirection = branch.doglegDirection?.normalized,
+           doglegDirection.magnitudeSquared > 1e-18 {
+            return doglegDirection
+        }
+
+        let towardContent = (data.contentPosition - last).normalized
+        if towardContent.magnitudeSquared > 1e-18 {
+            return towardContent
+        }
+
+        return Vector3(x: 1, y: 0, z: 0)
     }
 
     // MARK: - Hatch / Gradient properties

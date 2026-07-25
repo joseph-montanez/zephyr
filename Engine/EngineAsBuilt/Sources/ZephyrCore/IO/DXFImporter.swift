@@ -33,19 +33,25 @@ public struct DXFImportResult: Sendable {
         Dictionary(textStyles.values.map { ($0.name, $0.fontFile) }, uniquingKeysWith: { first, _ in first })
     }
     public let dimensionStyles: [String: CADDimensionStyle]
+    public let leaderStyles: [String: CADLeaderStyle]
     public let views: [DXFDrawingView]
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
                 textStyles: [String: CADTextStyle], linetypePatterns: [String: [Double]],
-                dimensionStyles: [String: CADDimensionStyle], views: [DXFDrawingView]) {
+                dimensionStyles: [String: CADDimensionStyle],
+                leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+                views: [DXFDrawingView]) {
         self.layers = layers; self.blocks = blocks; self.entities = entities
         self.textStyles = textStyles; self.linetypePatterns = linetypePatterns
         self.dimensionStyles = dimensionStyles
+        self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.views = views
     }
 
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
                 textStyleFonts: [String: String], linetypePatterns: [String: [Double]],
-                dimensionStyles: [String: CADDimensionStyle], views: [DXFDrawingView]) {
+                dimensionStyles: [String: CADDimensionStyle],
+                leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+                views: [DXFDrawingView]) {
         let styles = Dictionary(uniqueKeysWithValues: textStyleFonts.map { name, font in
             (name, CADTextStyle(name: name, fontFile: font).normalized)
         })
@@ -56,11 +62,55 @@ public struct DXFImportResult: Sendable {
             textStyles: styles.isEmpty ? ["Standard": .standard] : styles,
             linetypePatterns: linetypePatterns,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
             views: views)
     }
 }
 
 public enum DXFImporter {
+
+    private static func normalizedLeaderBlockKey(_ name: String) -> String {
+        name.uppercased().filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func leaderArrowhead(blockName: String?) -> CADLeaderArrowhead {
+        guard let blockName else { return .closedFilled }
+        let key = blockName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .replacingOccurrences(of: " ", with: "")
+        if key.isEmpty { return .closedFilled }
+        switch key {
+        case "_NONE", "NONE": return .none
+        case "_CLOSEDFILLED", "CLOSEDFILLED", "_CLOSED", "CLOSED": return .closedFilled
+        case "_CLOSEDBLANK", "CLOSEDBLANK": return .closedBlank
+        case "_OPEN", "OPEN", "_OPEN30", "OPEN30", "_OPEN90", "OPEN90": return .open
+        case "_DOT", "DOT", "_SMALL", "SMALL": return .dot
+        case "_DOTBLANK", "DOTBLANK", "_SMALLBLANK", "SMALLBLANK": return .dotBlank
+        case "_ARCHTICK", "ARCHTICK", "_ARCHITECTURALTICK", "ARCHITECTURALTICK": return .architecturalTick
+        case "_OBLIQUE", "OBLIQUE": return .oblique
+        case "_ORIGIN", "ORIGIN", "_ORIGIN2", "ORIGIN2": return .originIndicator
+        case "_BOXFILLED", "BOXFILLED", "_BOX", "BOX": return .boxFilled
+        case "_BOXBLANK", "BOXBLANK": return .boxBlank
+        default: return .custom
+        }
+    }
+
+    private static func leaderTextAttachment(_ rawValue: Int) -> CADLeaderTextAttachment? {
+        CADLeaderTextAttachment(rawValue: rawValue)
+    }
+
+    private static func leaderTextAlignment(_ rawValue: Int) -> CADLeaderTextAlignment {
+        CADLeaderTextAlignment(rawValue: rawValue) ?? .left
+    }
+
+    private static func leaderTextAngleType(_ rawValue: Int) -> CADLeaderTextAngleType {
+        CADLeaderTextAngleType(rawValue: rawValue) ?? .insertAngle
+    }
+
+    private static func leaderAttachmentDirection(_ rawValue: Int) -> CADLeaderTextAttachmentDirection {
+        CADLeaderTextAttachmentDirection(rawValue: rawValue) ?? .horizontal
+    }
 
     private struct StyledPrimitive {
         var primitive: CADPrimitive
@@ -264,7 +314,7 @@ public enum DXFImporter {
         // Guard against pathological data
         guard entityCount < 10_000_000 else {
             print("[DXFImporter] ERROR: \(entityCount) entities exceeds safety limit")
-            return DXFImportResult(layers: [], blocks: [], entities: [], textStyles: ["Standard": .standard], linetypePatterns: [:], dimensionStyles: [:], views: [])
+            return DXFImportResult(layers: [], blocks: [], entities: [], textStyles: ["Standard": .standard], linetypePatterns: [:], dimensionStyles: [:], leaderStyles: ["Standard": .standard], views: [])
         }
 
         let globalLineTypeScale = reader.header.ltScale > 0 ? reader.header.ltScale : 1.0
@@ -335,6 +385,19 @@ public enum DXFImporter {
             blockNameByHandle[record.handle] = record.name
             blockHandleByName[record.name.uppercased()] = record.handle
         }
+        for block in reader.blocks where block.parentHandle != 0 && !block.name.isEmpty {
+            blockNameByHandle[block.parentHandle] = block.name
+            blockHandleByName[block.name.uppercased()] = block.parentHandle
+        }
+        var blockAttributeDefinitionByHandle: [UInt32: DXFTextEntity] = [:]
+        for block in reader.blocks {
+            for entity in block.entities {
+                guard let attribute = entity as? DXFTextEntity,
+                      attribute.eType == .aTTDEF,
+                      attribute.handle != 0 else { continue }
+                blockAttributeDefinitionByHandle[attribute.handle] = attribute
+            }
+        }
         var textStyleNameByHandle: [UInt32: String] = [:]
         for textStyle in reader.textstyles where textStyle.handle != 0 && !textStyle.name.isEmpty {
             textStyleNameByHandle[textStyle.handle] = textStyle.name
@@ -343,6 +406,46 @@ public enum DXFImporter {
             reader.dimstyles,
             blockNameByHandle: blockNameByHandle,
             textStyleNameByHandle: textStyleNameByHandle)
+        var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
+        var leaderStyleByHandle: [UInt32: CADLeaderStyle] = [:]
+        for entry in reader.mleaderStyles {
+            let pathType: CADLeaderPathType = entry.pathType == 2
+                ? .spline
+                : (entry.pathType == 0 ? .none : .straight)
+            let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedName = name.isEmpty ? "Standard" : name
+            let arrowBlockName = entry.arrowheadHandle == 0
+                ? nil
+                : blockNameByHandle[entry.arrowheadHandle]
+            let arrowhead = Self.leaderArrowhead(blockName: arrowBlockName)
+            let style = CADLeaderStyle(
+                name: resolvedName,
+                pathType: pathType,
+                arrowEnabled: entry.arrowSize > 0 && arrowhead != .none,
+                arrowSize: max(entry.arrowSize, 0),
+                arrowhead: arrowhead,
+                arrowBlockName: arrowhead == .custom ? arrowBlockName : nil,
+                landingEnabled: entry.landingEnabled,
+                doglegEnabled: entry.doglegEnabled,
+                doglegLength: max(entry.doglegLength, 0),
+                contentGap: max(entry.landingGap, 0),
+                textHeight: max(entry.textHeight, 0.0001),
+                textStyleName: textStyleNameByHandle[entry.textStyleHandle] ?? "Standard",
+                textFrameEnabled: entry.textFrameEnabled,
+                textAlignment: Self.leaderTextAlignment(entry.textAlignment),
+                textAngleType: Self.leaderTextAngleType(entry.textAngleType),
+                textAttachmentDirection: Self.leaderAttachmentDirection(entry.attachmentDirection),
+                leftAttachment: Self.leaderTextAttachment(entry.leftAttachment),
+                rightAttachment: Self.leaderTextAttachment(entry.rightAttachment),
+                topAttachment: Self.leaderTextAttachment(entry.topAttachment),
+                bottomAttachment: Self.leaderTextAttachment(entry.bottomAttachment),
+                alwaysLeftJustify: entry.alwaysLeftJustify,
+                maxLeaderPoints: entry.maxLeaderPoints,
+                blockScale: max(entry.blockScale, 0.0001),
+                blockRotation: entry.blockRotation)
+            leaderStyles[resolvedName] = style
+            if entry.handle != 0 { leaderStyleByHandle[entry.handle] = style }
+        }
 
         var blockGeometryCache: [String: [StyledPrimitive]] = [:]
 
@@ -437,6 +540,19 @@ public enum DXFImporter {
             blockByID[handle] = cadBlock
         }
 
+        let leaderBlockByKey = Dictionary(
+            blocks.map { (Self.normalizedLeaderBlockKey($0.name), $0) },
+            uniquingKeysWith: { first, _ in first })
+
+        func resolveLeaderBlock(named name: String) -> CADBlock? {
+            if let exact = blocks.first(where: {
+                $0.name.caseInsensitiveCompare(name) == .orderedSame
+            }) {
+                return exact
+            }
+            return leaderBlockByKey[Self.normalizedLeaderBlockKey(name)]
+        }
+
         let sortEntsFlags: Int = {
             if let value = reader.header.headerVars["$SORTENTS"] as? Int { return value }
             if let value = reader.header.headerVars["$SORTENTS"] as? Int32 { return Int(value) }
@@ -501,9 +617,257 @@ public enum DXFImporter {
                 ownerHandle: ownerHandle)
             var converted: [CADEntity] = []
             converted.reserveCapacity(orderedEntities.count)
+            var seenArrayGroups = Set<UUID>()
+            let attachedLeaderAnnotations = Set(orderedEntities.compactMap { entity -> UInt32? in
+                guard let leader = entity as? DXFLeaderEntity, leader.annotHandle != 0 else { return nil }
+                return leader.annotHandle
+            })
 
             for (drawOrder, entity) in orderedEntities.enumerated() {
                 guard Self.shouldRenderAttributeEntity(entity) else { continue }
+                if attachedLeaderAnnotations.contains(entity.handle) { continue }
+
+                if let leader = entity as? DXFLeaderEntity, leader.vertices.count >= 2 {
+                    let associated = leader.annotHandle == 0 ? nil : reader.entities.first { $0.handle == leader.annotHandle }
+                    let textEntity = associated as? DXFTextEntity
+                    let insertEntity = associated as? DXFInsertEntity
+                    let contentPosition = textEntity.map { Vector3(x: $0.basePoint.x, y: -$0.basePoint.y, z: $0.basePoint.z) }
+                        ?? insertEntity.map { Vector3(x: $0.basePoint.x, y: -$0.basePoint.y, z: $0.basePoint.z) }
+                        ?? leader.vertices.last.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) }
+                        ?? .zero
+                    let style = CADLeaderStyle(
+                        name: leader.style.isEmpty ? "Standard" : leader.style,
+                        pathType: leader.leaderType == 1 ? .spline : .straight,
+                        arrowEnabled: leader.arrow != 0,
+                        arrowSize: max(leader.textHeight, 2.5),
+                        landingEnabled: leader.hookLine != 0,
+                        doglegEnabled: leader.hookLine != 0,
+                        doglegLength: max(leader.textHeight * 2, 2.5),
+                        contentGap: max(leader.textHeight * 0.5, 0.5),
+                        textHeight: textEntity?.height ?? max(leader.textHeight, 2.5),
+                        textStyleName: textEntity?.style ?? "Standard",
+                        blockScale: max(insertEntity?.xScale ?? 1, 0.0001),
+                        blockRotation: insertEntity?.angle ?? 0)
+                    let contentType: CADLeaderContentType = insertEntity == nil
+                        ? (textEntity == nil ? .none : .mtext)
+                        : .block
+                    let data = CADLeaderData(
+                        styleName: style.name,
+                        branches: [CADLeaderBranch(vertices: leader.vertices.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) })],
+                        contentType: contentType,
+                        text: textEntity.map { DXFEntityConverter.cleanMTextFormatting($0.text) } ?? "",
+                        blockName: insertEntity?.name,
+                        contentPosition: contentPosition,
+                        contentRotation: textEntity.map { -$0.angle_p * .pi / 180 }
+                            ?? insertEntity.map { -$0.angle }
+                            ?? 0,
+                        textWidth: textEntity?.secPoint.x ?? (leader.textWidth > 0 ? leader.textWidth : nil),
+                        isLegacyLeader: true,
+                        styleOverrides: style)
+                    let geometry = CADLeaderGeometry.build(
+                        data: data,
+                        style: style,
+                        blockResolver: { resolveLeaderBlock(named: $0) })
+                    var cadEnt = CADEntity(
+                        handle: UUID(),
+                        layerID: layerID(for: entity),
+                        localGeometry: geometry,
+                        leaderData: CADLeaderDataBox(data),
+                        transform: .identity,
+                        xdata: Self.entityStyleXData(from: entity, globalLineTypeScale: globalLineTypeScale),
+                        drawOrder: drawOrder)
+                    cadEnt.drawOrder = drawOrder
+                    converted.append(cadEnt)
+                    continue
+                }
+
+                if let leader = entity as? DXFMLeaderEntity, !leader.branches.isEmpty {
+                    let importedStyle = reader.mleaderStyles.first { $0.handle == leader.styleHandle }
+                    let namedStyle = leaderStyleByHandle[leader.styleHandle]
+                    let importedArrowBlockName = importedStyle.flatMap {
+                        $0.arrowheadHandle == 0 ? nil : blockNameByHandle[$0.arrowheadHandle]
+                    }
+                    let importedArrowhead = Self.leaderArrowhead(blockName: importedArrowBlockName)
+                    let templateStyle = namedStyle ?? CADLeaderStyle(
+                        name: importedStyle?.name ?? leader.styleName,
+                        pathType: leader.pathType == 2 ? .spline : (leader.pathType == 0 ? .none : .straight),
+                        arrowEnabled: (importedStyle?.arrowSize ?? leader.arrowSize) > 0 && importedArrowhead != .none,
+                        arrowSize: max(importedStyle?.arrowSize ?? leader.arrowSize, 0),
+                        arrowhead: importedArrowhead,
+                        arrowBlockName: importedArrowhead == .custom ? importedArrowBlockName : nil,
+                        landingEnabled: importedStyle?.landingEnabled ?? leader.landingEnabled,
+                        doglegEnabled: importedStyle?.doglegEnabled ?? leader.doglegEnabled,
+                        doglegLength: max(importedStyle?.doglegLength ?? leader.doglegLength, 0),
+                        contentGap: max(importedStyle?.landingGap ?? leader.landingGap, 0),
+                        textHeight: max(importedStyle?.textHeight ?? leader.textHeight, 0.0001),
+                        textStyleName: importedStyle.flatMap { textStyleNameByHandle[$0.textStyleHandle] } ?? "Standard",
+                        textFrameEnabled: importedStyle?.textFrameEnabled ?? leader.textFrameEnabled,
+                        textAlignment: Self.leaderTextAlignment(importedStyle?.textAlignment ?? leader.textAlignment),
+                        textAngleType: Self.leaderTextAngleType(importedStyle?.textAngleType ?? leader.textAngleType),
+                        textAttachmentDirection: Self.leaderAttachmentDirection(importedStyle?.attachmentDirection ?? leader.attachmentDirection),
+                        leftAttachment: Self.leaderTextAttachment(importedStyle?.leftAttachment ?? leader.leftAttachment),
+                        rightAttachment: Self.leaderTextAttachment(importedStyle?.rightAttachment ?? leader.rightAttachment),
+                        topAttachment: Self.leaderTextAttachment(importedStyle?.topAttachment ?? leader.topAttachment),
+                        bottomAttachment: Self.leaderTextAttachment(importedStyle?.bottomAttachment ?? leader.bottomAttachment),
+                        alwaysLeftJustify: importedStyle?.alwaysLeftJustify ?? false,
+                        maxLeaderPoints: importedStyle?.maxLeaderPoints ?? 2,
+                        blockScale: max(importedStyle?.blockScale ?? leader.blockScale, 0.0001),
+                        blockRotation: importedStyle?.blockRotation ?? leader.blockRotation)
+                    let contextScale = leader.hasContextScale ? max(leader.contentScale, 1e-9) : 1
+                    let firstBranchDoglegLength = leader.branches.compactMap(\.doglegLength).first
+                    let entityArrowBlockName = leader.arrowheadHandle == 0
+                        ? templateStyle.arrowBlockName
+                        : blockNameByHandle[leader.arrowheadHandle]
+                    let entityArrowhead = leader.arrowheadHandle == 0
+                        ? (templateStyle.arrowhead ?? .closedFilled)
+                        : Self.leaderArrowhead(blockName: entityArrowBlockName)
+                    let effectiveStyle = CADLeaderStyle(
+                        name: templateStyle.name,
+                        pathType: leader.pathType == 2 ? .spline : (leader.pathType == 0 ? .none : .straight),
+                        arrowEnabled: (leader.hasContextArrowSize ? leader.arrowSize : templateStyle.arrowSize) > 0
+                            && entityArrowhead != .none,
+                        arrowSize: max(
+                            leader.hasContextArrowSize ? leader.arrowSize : templateStyle.arrowSize * contextScale,
+                            0),
+                        arrowhead: entityArrowhead,
+                        arrowBlockName: entityArrowhead == .custom ? entityArrowBlockName : nil,
+                        landingEnabled: leader.landingEnabled,
+                        doglegEnabled: leader.doglegEnabled,
+                        doglegLength: max(
+                            firstBranchDoglegLength ?? templateStyle.doglegLength * contextScale,
+                            0),
+                        contentGap: max(
+                            leader.hasContextLandingGap ? leader.landingGap : templateStyle.contentGap * contextScale,
+                            0),
+                        textHeight: max(
+                            leader.hasContextTextHeight ? leader.textHeight : templateStyle.textHeight * contextScale,
+                            0.0001),
+                        textStyleName: textStyleNameByHandle[leader.textStyleHandle] ?? templateStyle.textStyleName,
+                        textFrameEnabled: leader.textFrameEnabled || templateStyle.textFrameEnabled,
+                        textAlignment: Self.leaderTextAlignment(leader.textAlignment),
+                        textAngleType: Self.leaderTextAngleType(leader.textAngleType),
+                        textAttachmentDirection: Self.leaderAttachmentDirection(leader.attachmentDirection),
+                        leftAttachment: Self.leaderTextAttachment(leader.leftAttachment),
+                        rightAttachment: Self.leaderTextAttachment(leader.rightAttachment),
+                        topAttachment: Self.leaderTextAttachment(leader.topAttachment),
+                        bottomAttachment: Self.leaderTextAttachment(leader.bottomAttachment),
+                        alwaysLeftJustify: templateStyle.alwaysLeftJustify,
+                        maxLeaderPoints: templateStyle.maxLeaderPoints,
+                        blockScale: max(leader.blockScale, 0.0001),
+                        blockRotation: leader.blockRotation)
+                    let blockContentHandle = leader.blockContentHandle != 0
+                        ? leader.blockContentHandle
+                        : (importedStyle?.blockContentHandle ?? 0)
+                    let blockNameFromHandle = blockContentHandle == 0
+                        ? nil
+                        : blockNameByHandle[blockContentHandle]
+                    let requestedBlockName = blockNameFromHandle
+                        ?? (leader.blockName.isEmpty ? nil : leader.blockName)
+                    let resolvedContentBlock = requestedBlockName.flatMap {
+                        resolveLeaderBlock(named: $0)
+                    }
+                    let blockName = resolvedContentBlock?.name ?? requestedBlockName
+                    let contentType: CADLeaderContentType
+                    switch leader.contentType {
+                    case 0:
+                        contentType = leader.text.isEmpty && blockName == nil ? .none : (blockName == nil ? .mtext : .block)
+                    case 1:
+                        contentType = blockName == nil ? .none : .block
+                    default:
+                        contentType = leader.text.isEmpty ? .none : .mtext
+                    }
+                    let blockAttributes: [CADLeaderBlockAttribute]? = {
+                        guard contentType == .block, !leader.blockAttributes.isEmpty else { return nil }
+                        let values = leader.blockAttributes.compactMap { override -> CADLeaderBlockAttribute? in
+                            guard let definition = blockAttributeDefinitionByHandle[override.definitionHandle] else {
+                                return nil
+                            }
+                            let useSecondPoint = definition.alignH != 0 || definition.alignV != 0
+                            let sourcePosition = useSecondPoint ? definition.secPoint : definition.basePoint
+                            return CADLeaderBlockAttribute(
+                                definitionHandle: override.definitionHandle,
+                                tag: definition.attributeTag,
+                                text: override.text,
+                                position: Vector3(
+                                    x: sourcePosition.x,
+                                    y: -sourcePosition.y,
+                                    z: sourcePosition.z),
+                                height: definition.height > 0 ? definition.height : effectiveStyle.textHeight,
+                                rotation: -definition.angle_p * .pi / 180,
+                                styleName: definition.style,
+                                alignH: definition.alignH,
+                                alignV: definition.alignV,
+                                index: override.index,
+                                width: override.width)
+                        }
+                        return values.isEmpty ? nil : values
+                    }()
+                    let blockContentPrimitives: [CADLeaderBlockPrimitive]? = {
+                        guard let block = resolvedContentBlock else { return nil }
+                        let snapshot = block.geometry.compactMap {
+                            CADLeaderBlockPrimitive(primitive: $0)
+                        }
+                        return snapshot.isEmpty ? nil : snapshot
+                    }()
+                    let data = CADLeaderData(
+                        styleName: effectiveStyle.name,
+                        branches: leader.branches.map { branch in
+                            let branchArrowBlockName = branch.arrowheadHandle == 0
+                                ? nil
+                                : blockNameByHandle[branch.arrowheadHandle]
+                            let branchArrowhead = branch.arrowheadHandle == 0
+                                ? nil
+                                : Self.leaderArrowhead(blockName: branchArrowBlockName)
+                            return CADLeaderBranch(
+                                vertices: branch.vertices.map { Vector3(x: $0.x, y: -$0.y, z: $0.z) },
+                                doglegDirection: branch.doglegDirection.map {
+                                    Vector3(x: $0.x, y: -$0.y, z: $0.z)
+                                },
+                                doglegLength: branch.doglegLength,
+                                leaderLineIndex: branch.leaderLineIndex,
+                                arrowhead: branchArrowhead,
+                                arrowBlockName: branchArrowhead == .custom ? branchArrowBlockName : nil)
+                        },
+                        contentType: contentType,
+                        text: DXFEntityConverter.cleanMTextFormatting(leader.text),
+                        sourceText: leader.text,
+                        blockName: blockName,
+                        contentPosition: Vector3(
+                            x: leader.textPosition.x,
+                            y: -leader.textPosition.y,
+                            z: leader.textPosition.z),
+                        contentBasePosition: leader.contentBasePosition.map {
+                            Vector3(x: $0.x, y: -$0.y, z: $0.z)
+                        },
+                        contentRotation: -leader.textRotation,
+                        textWidth: leader.textWidth > 0 ? leader.textWidth : nil,
+                        textDirection: Vector3(
+                            x: leader.textDirection.x,
+                            y: -leader.textDirection.y,
+                            z: leader.textDirection.z),
+                        textDirectionNegative: leader.textDirectionNegative,
+                        textAttachmentPoint: leader.textAttachmentPoint,
+                        textAttachment: Self.leaderTextAttachment(leader.textAttachment),
+                        textFlowDirection: leader.textFlowDirection,
+                        blockAttributes: blockAttributes,
+                        blockContentPrimitives: blockContentPrimitives,
+                        styleOverrides: effectiveStyle)
+                    let geometry = CADLeaderGeometry.build(
+                        data: data,
+                        style: effectiveStyle,
+                        blockResolver: { resolveLeaderBlock(named: $0) })
+                    var cadEnt = CADEntity(
+                        handle: UUID(),
+                        layerID: layerID(for: entity),
+                        localGeometry: geometry,
+                        leaderData: CADLeaderDataBox(data),
+                        transform: .identity,
+                        xdata: Self.entityStyleXData(from: entity, globalLineTypeScale: globalLineTypeScale),
+                        drawOrder: drawOrder)
+                    cadEnt.drawOrder = drawOrder
+                    converted.append(cadEnt)
+                    continue
+                }
 
                 if let insert = entity as? DXFInsertEntity,
                    let blockID = blockNameToID[insert.name],
@@ -511,26 +875,78 @@ public enum DXFImporter {
                     let columns = max(1, insert.colCount)
                     let rows = max(1, insert.rowCount)
                     let blockBase = blockBaseByName[insert.name] ?? .zero
-                    for row in 0..<rows {
-                        for column in 0..<columns {
+                    let arrayXData = Self.arrayXData(from: insert)
+                    if let groupID = arrayXData.groupID {
+                        if arrayXData.role == "I" || seenArrayGroups.contains(groupID) {
+                            continue
+                        }
+                        if arrayXData.role == "M",
+                           let payload = CADArrayDXFCodec.decode(arrayXData.payloadChunks),
+                           let containerTransform = payload.transform {
+                            seenArrayGroups.insert(groupID)
+                            var arrayData = payload.data
+                            arrayData.pathEntityHandle = nil
                             var cadEnt = CADEntity(
                                 handle: UUID(),
                                 layerID: layerID(for: entity),
                                 blockID: blockID,
-                                localGeometry: nil,
-                                transform: Self.insertTransform(
-                                    insert,
-                                    blockBase: blockBase,
-                                    column: column,
-                                    row: row),
+                                arrayData: arrayData,
+                                transform: containerTransform,
                                 xdata: Self.entityStyleXData(
                                     from: entity,
                                     globalLineTypeScale: globalLineTypeScale),
                                 drawOrder: drawOrder,
-                                localBoundingBox: block.localBoundingBox)
+                                localBoundingBox: arrayData.localBoundingBox(
+                                    source: block.localBoundingBox,
+                                    pathPoints: arrayData.cachedPath))
                             cadEnt.drawOrder = drawOrder
                             converted.append(cadEnt)
+                            continue
                         }
+                    }
+
+                    if columns > 1 || rows > 1 {
+                        let sx = abs(insert.xScale) > 1e-12 ? insert.xScale : 1.0
+                        let rawSY = abs(insert.yScale) > 1e-12 ? insert.yScale : 1.0
+                        let effectiveSY = insert.haveExtrusion && insert.extrusion.z < 0 ? -rawSY : rawSY
+                        let transform = Self.insertTransform(
+                            insert,
+                            blockBase: blockBase)
+                        let arrayData = CADArrayData.rectangular(
+                            columns: columns,
+                            rows: rows,
+                            columnSpacing: insert.colSpace / sx,
+                            rowSpacing: -insert.rowSpace / effectiveSY)
+                        var cadEnt = CADEntity(
+                            handle: UUID(),
+                            layerID: layerID(for: entity),
+                            blockID: blockID,
+                            arrayData: arrayData,
+                            transform: transform,
+                            xdata: Self.entityStyleXData(
+                                from: entity,
+                                globalLineTypeScale: globalLineTypeScale),
+                            drawOrder: drawOrder,
+                            localBoundingBox: arrayData.localBoundingBox(
+                                source: block.localBoundingBox))
+                        cadEnt.drawOrder = drawOrder
+                        converted.append(cadEnt)
+                    } else {
+                        var cadEnt = CADEntity(
+                            handle: UUID(),
+                            layerID: layerID(for: entity),
+                            blockID: blockID,
+                            localGeometry: nil,
+                            transform: Self.insertTransform(
+                                insert,
+                                blockBase: blockBase),
+                            xdata: Self.entityStyleXData(
+                                from: entity,
+                                globalLineTypeScale: globalLineTypeScale),
+                            drawOrder: drawOrder,
+                            localBoundingBox: block.localBoundingBox)
+                        cadEnt.drawOrder = drawOrder
+                        converted.append(cadEnt)
                     }
 
                     for attribute in insert.attributes
@@ -774,6 +1190,8 @@ public enum DXFImporter {
                             blockID: modelEntity.blockID,
                             localGeometry: modelEntity.localGeometry,
                             dimensionMetadata: modelEntity.dimensionMetadata,
+                            leaderData: modelEntity.leaderData,
+                            arrayData: modelEntity.arrayData,
                             transform: projection.multiplying(by: modelEntity.transform),
                             xdata: viewport.projectedXData(modelEntity.xdata),
                             drawOrder: projectedDrawOrder,
@@ -796,6 +1214,8 @@ public enum DXFImporter {
                             blockID: modelEntity.blockID,
                             localGeometry: modelEntity.localGeometry,
                             dimensionMetadata: modelEntity.dimensionMetadata,
+                            leaderData: modelEntity.leaderData,
+                            arrayData: modelEntity.arrayData,
                             transform: projection.multiplying(by: modelEntity.transform),
                             xdata: syntheticViewportXData(modelEntity.xdata, projection: projection),
                             drawOrder: projectedDrawOrder,
@@ -820,7 +1240,31 @@ public enum DXFImporter {
             textStyles: textStyles,
             linetypePatterns: linetypePatterns,
             dimensionStyles: dimensionStyles,
+            leaderStyles: leaderStyles,
             views: views)
+    }
+
+    private static func arrayXData(
+        from entity: DXFEntity
+    ) -> (groupID: UUID?, role: String?, payloadChunks: [String]) {
+        var active = false
+        var values: [String] = []
+        for pair in entity.extendedData {
+            if pair.code == 1001 {
+                active = (pair.value as? String)?.caseInsensitiveCompare(
+                    CADArrayDXFCodec.appID) == .orderedSame
+                continue
+            }
+            if active, pair.code == 1000, let value = pair.value as? String {
+                values.append(value)
+            }
+        }
+        guard values.contains(CADArrayDXFCodec.marker) else { return (nil, nil, []) }
+        let groupID = values.first(where: { $0.hasPrefix("G:") })
+            .flatMap { UUID(uuidString: String($0.dropFirst(2))) }
+        let role = values.first(where: { $0.hasPrefix("R:") })
+            .map { String($0.dropFirst(2)) }
+        return (groupID, role, values.filter { $0.hasPrefix("D:") })
     }
 
     private static func entityStyleXData(

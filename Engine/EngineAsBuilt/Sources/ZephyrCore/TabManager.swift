@@ -326,6 +326,10 @@ public final class TabManager {
                 doc.textStyles = imported.textStyles
                 doc.linetypePatterns = imported.linetypePatterns
                 doc.dimensionStyles = imported.dimensionStyles
+                doc.leaderStyles = imported.leaderStyles
+                doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
+                    ? (imported.leaderStyles.keys.sorted().first ?? "Standard")
+                    : "Standard"
                 doc.savedRevision = doc.editRevision
                 return DrawingView(
                     name: view.name,
@@ -364,6 +368,10 @@ public final class TabManager {
             doc.textStyles = imported.textStyles
             doc.linetypePatterns = imported.linetypePatterns
             doc.dimensionStyles = imported.dimensionStyles
+            doc.leaderStyles = imported.leaderStyles
+            doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
+                ? (imported.leaderStyles.keys.sorted().first ?? "Standard")
+                : "Standard"
             doc.savedRevision = doc.editRevision  // freshly imported
             return DrawingView(
                 name: view.name,
@@ -830,6 +838,15 @@ public final class TabManager {
         return xdata
     }
 
+    public var editingArrayHandle: UUID? {
+        guard let tab = activeTab,
+              let blockID = tab.editingBlockID,
+              let parentDocument = tab.parentDocument else { return nil }
+        return parentDocument.entitiesView.first {
+            $0.blockID == blockID && $0.arrayData != nil
+        }?.handle
+    }
+
     /// Enters block editor mode for the given block ID.
     public func enterBlockEditor(blockID: UUID) {
         guard var tab = activeTab else { return }
@@ -850,6 +867,8 @@ public final class TabManager {
         tempDoc.unit = tab.document.unit
         tempDoc.textStyles = tab.document.textStyles
         tempDoc.dimensionStyles = tab.document.dimensionStyles
+        tempDoc.leaderStyles = tab.document.leaderStyles
+        tempDoc.currentLeaderStyleName = tab.document.currentLeaderStyleName
         tempDoc.linetypePatterns = tab.document.linetypePatterns
         tempDoc.imageStore = tab.document.imageStore
 

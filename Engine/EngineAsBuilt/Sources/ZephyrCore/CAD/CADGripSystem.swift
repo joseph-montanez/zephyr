@@ -26,12 +26,14 @@ public enum CADGripSystem {
         document: CADDocument,
         cam: CameraTransform,
         simplifyComplexBlocks: Bool = true,
-        selectedHandles: Set<UUID>? = nil
+        selectedHandles: Set<UUID>? = nil,
+        selectedLeaderContentHandle: UUID? = nil
     ) -> CADSelectionManager.CadGripInfo? {
         let grips = getAllGrips(
             document: document, cam: cam,
             simplifyComplexBlocks: simplifyComplexBlocks,
-            selectedHandles: selectedHandles)
+            selectedHandles: selectedHandles,
+            selectedLeaderContentHandle: selectedLeaderContentHandle)
         let threshold: Float = 10.0
         var bestDist: Float = threshold * 2
         var best: CADSelectionManager.CadGripInfo? = nil
@@ -56,7 +58,8 @@ public enum CADGripSystem {
         document: CADDocument,
         cam: CameraTransform,
         simplifyComplexBlocks: Bool = true,
-        selectedHandles: Set<UUID>? = nil
+        selectedHandles: Set<UUID>? = nil,
+        selectedLeaderContentHandle: UUID? = nil
     ) -> [CADSelectionManager.CadGripInfo] {
         let handles = selectedHandles ?? []
         guard !handles.isEmpty else { return [] }
@@ -66,6 +69,23 @@ public enum CADGripSystem {
         for handle in handles {
             guard let entity = document.entity(for: handle) else { continue }
             guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+
+            if let leaderData = entity.leaderData?.value {
+                results.append(contentsOf: leaderGrips(
+                    for: handle,
+                    data: leaderData,
+                    entity: entity,
+                    cam: cam,
+                    contentOnly: selectedLeaderContentHandle == handle))
+                continue
+            }
+
+            if let array = entity.arrayData, array.kind == .rectangular {
+                results.append(contentsOf: rectangularArrayGrips(
+                    for: handle, entity: entity, array: array, cam: cam))
+                continue
+            }
+
             guard let geometry = document.resolvedGeometry(for: entity), !geometry.isEmpty else { continue }
 
             // ── Dimension entities: generate dimension-specific control grips
@@ -449,6 +469,52 @@ public enum CADGripSystem {
     /// individual block primitive grips. This gives the user grips at the
     /// meaningful control points: text position, dimension line position,
     /// and extension line origins.
+    private static func leaderGrips(
+        for handle: UUID,
+        data: CADLeaderData,
+        entity: CADEntity,
+        cam: CameraTransform,
+        contentOnly: Bool
+    ) -> [CADSelectionManager.CadGripInfo] {
+        var results: [CADSelectionManager.CadGripInfo] = []
+
+        if !contentOnly {
+            for (branchIndex, branch) in data.branches.enumerated() {
+                for (vertexIndex, localPoint) in branch.vertices.enumerated() {
+                    let worldPoint = entity.transform.transformPoint(localPoint)
+                    let screen = EngineCameraManager.worldToScreen(
+                        worldX: worldPoint.x,
+                        worldY: worldPoint.y,
+                        cam: cam)
+                    results.append(CADSelectionManager.CadGripInfo(
+                        handle: handle,
+                        grip: .vertex(
+                            entity: handle,
+                            index: CADLeaderGripIndex.vertex(
+                                branchIndex: branchIndex,
+                                vertexIndex: vertexIndex)),
+                        screenPos: screen,
+                        worldPos: worldPoint))
+                }
+            }
+        }
+
+        if contentOnly, data.contentType != .none {
+            let worldPoint = entity.transform.transformPoint(data.contentPosition)
+            let screen = EngineCameraManager.worldToScreen(
+                worldX: worldPoint.x,
+                worldY: worldPoint.y,
+                cam: cam)
+            results.append(CADSelectionManager.CadGripInfo(
+                handle: handle,
+                grip: .vertex(entity: handle, index: CADLeaderGripIndex.content),
+                screenPos: screen,
+                worldPos: worldPoint))
+        }
+
+        return results
+    }
+
     private static func dimensionGrips(
         for handle: UUID,
         metadata: CADDimensionMetadata,
@@ -485,6 +551,100 @@ public enum CADGripSystem {
             if let p3 = metadata.defPoint3 {
                 addGrip(.vertex(entity: handle, index: 1002), localPos: p3)
             }
+        }
+
+        return grips
+    }
+
+    private static func rectangularArrayGrips(
+        for handle: UUID,
+        entity: CADEntity,
+        array: CADArrayData,
+        cam: CameraTransform
+    ) -> [CADSelectionManager.CadGripInfo] {
+        let c = cos(array.axisAngle)
+        let s = sin(array.axisAngle)
+        let columnUnit = Vector3(x: c, y: s, z: 0)
+        let rowUnit = Vector3(x: -s, y: c, z: 0)
+        var grips: [CADSelectionManager.CadGripInfo] = []
+
+        func addGrip(
+            _ type: CADSelectionManager.GripType,
+            localPosition: Vector3,
+            localDirection: Vector3? = nil
+        ) {
+            let worldPosition = entity.transform.transformPoint(localPosition)
+            let screenPosition = EngineCameraManager.worldToScreen(
+                worldX: worldPosition.x, worldY: worldPosition.y, cam: cam)
+            var screenDirection: SDL_FPoint? = nil
+            if let localDirection {
+                let directionPoint = entity.transform.transformPoint(localPosition + localDirection)
+                let directionScreen = EngineCameraManager.worldToScreen(
+                    worldX: directionPoint.x, worldY: directionPoint.y, cam: cam)
+                screenDirection = SDL_FPoint(
+                    x: directionScreen.x - screenPosition.x,
+                    y: directionScreen.y - screenPosition.y)
+            }
+            grips.append(CADSelectionManager.CadGripInfo(
+                handle: handle,
+                grip: type,
+                screenPos: screenPosition,
+                worldPos: worldPosition,
+                screenDirection: screenDirection))
+        }
+
+        addGrip(.arrayBase, localPosition: .zero)
+
+        let columns = max(1, array.columns)
+        let rows = max(1, array.rows)
+        let columnDirection = columnUnit * (array.columnSpacing < 0 ? -1 : 1)
+        let rowDirection = rowUnit * (array.rowSpacing < 0 ? -1 : 1)
+        let columnSpacing = columnUnit * array.columnSpacing
+        let rowSpacing = rowUnit * array.rowSpacing
+
+        func overlapSeparation(along unit: Vector3, spacing: Double) -> Double {
+            let origin = entity.transform.transformPoint(.zero)
+            let axisPoint = entity.transform.transformPoint(unit)
+            let worldPerLocalUnit = max(
+                1e-9,
+                hypot(axisPoint.x - origin.x, axisPoint.y - origin.y))
+            let desiredLocalDistance = 18.0 / max(1e-9, cam.camZoom * worldPerLocalUnit)
+            guard abs(spacing) > 1e-9 else { return desiredLocalDistance }
+            return min(desiredLocalDistance, abs(spacing) * 0.4)
+        }
+
+        if abs(array.columnSpacing) > 1e-9 {
+            addGrip(
+                .arraySpacing(axis: 0),
+                localPosition: columnSpacing,
+                localDirection: columnDirection)
+
+            var countPosition = columnSpacing * Double(max(1, columns - 1))
+            if columns <= 2 {
+                countPosition = countPosition + columnDirection * overlapSeparation(
+                    along: columnDirection, spacing: array.columnSpacing)
+            }
+            addGrip(
+                .arrayCount(axis: 0),
+                localPosition: countPosition,
+                localDirection: columnDirection)
+        }
+
+        if abs(array.rowSpacing) > 1e-9 {
+            addGrip(
+                .arraySpacing(axis: 1),
+                localPosition: rowSpacing,
+                localDirection: rowDirection)
+
+            var countPosition = rowSpacing * Double(max(1, rows - 1))
+            if rows <= 2 {
+                countPosition = countPosition + rowDirection * overlapSeparation(
+                    along: rowDirection, spacing: array.rowSpacing)
+            }
+            addGrip(
+                .arrayCount(axis: 1),
+                localPosition: countPosition,
+                localDirection: rowDirection)
         }
 
         return grips

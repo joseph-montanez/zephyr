@@ -48,6 +48,71 @@ struct AppCommandRegistration {
             factory: { ChamferCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAY",
+            aliases: ["AR"],
+            factory: { ArrayCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYRECT",
+            aliases: ["ARRAYR"],
+            factory: { ArrayCommand(initialKind: .rectangular) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYPOLAR",
+            aliases: ["ARRAYP"],
+            factory: { ArrayCommand(initialKind: .polar) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYPATH",
+            aliases: ["ARRAYPA"],
+            factory: { ArrayCommand(initialKind: .path) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYEDIT",
+            factory: { ArrayEditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYCLOSE",
+            factory: { ArrayCloseCommand(commandLineOnly: false) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-ARRAYCLOSE",
+            factory: { ArrayCloseCommand(commandLineOnly: true) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYCLASSIC",
+            factory: {
+                ArrayCommand(
+                    forceAssociative: false,
+                    allowedKinds: [.rectangular, .polar])
+            }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-ARRAY",
+            factory: {
+                ArrayCommand(
+                    forceAssociative: false,
+                    allowedKinds: [.rectangular, .polar])
+            }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYASSOCIATIVITY",
+            factory: { ArrayAssociativityCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYEDITSTATE",
+            factory: { ArrayEditStateCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYTYPE",
+            factory: { ArrayTypeCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "EXPLODE",
+            aliases: ["X"],
+            factory: { ExplodeArrayCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "MATCHPROP",
             aliases: ["MA", "MATCH"],
             factory: { MatchPropCommand() }
@@ -117,6 +182,41 @@ struct AppCommandRegistration {
             factory: { DrawPaletteCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "LEADER",
+            aliases: ["LEAD"],
+            factory: { LeaderCreateCommand(mode: .leader) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "QLEADER",
+            aliases: ["LE"],
+            factory: { LeaderCreateCommand(mode: .qleader) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADER",
+            aliases: ["MLD"],
+            factory: { LeaderCreateCommand(mode: .mleader) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADEREDIT",
+            aliases: ["MLE"],
+            factory: { MLeaderEditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADERALIGN",
+            aliases: ["MLA"],
+            factory: { MLeaderAlignCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADERCOLLECT",
+            aliases: ["MLC"],
+            factory: { MLeaderCollectCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLEADERSTYLE",
+            aliases: ["MLS"],
+            factory: { MLeaderStyleCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "TEXT",
             aliases: ["T", "DTEXT", "MTEXT"],
             factory: { TextCommand() }
@@ -142,8 +242,17 @@ struct AppCommandRegistration {
             factory: { DataTableCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "MEASURE",
+            factory: { MeasureDivideCommand(operation: .measure) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIVIDE",
+            aliases: ["DIV"],
+            factory: { MeasureDivideCommand(operation: .divide) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "MEASUREGEOM",
-            aliases: ["MEASURE", "MEA", "MG"],
+            aliases: ["MEASUREGEOMETRY", "MEA", "MG"],
             factory: { MeasureGeomTool() }
         )
 

@@ -31,6 +31,12 @@ public final class CADSelectionManager {
         case vertex(entity: UUID, index: Int)
         /// Midpoint grip between two consecutive vertices of an entity's polyline.
         case midpoint(entity: UUID, betweenA: Int, andB: Int)
+        /// Associative rectangular-array base point.
+        case arrayBase
+        /// Associative rectangular-array spacing grip. Axis 0 = columns, 1 = rows.
+        case arraySpacing(axis: Int)
+        /// Associative rectangular-array count/extent grip. Axis 0 = columns, 1 = rows.
+        case arrayCount(axis: Int)
     }
 
     // MARK: - Selection State
@@ -40,6 +46,7 @@ public final class CADSelectionManager {
     /// rect-select or selectAll). Used by the properties panel to determine
     /// which entity's properties to show.
     public internal(set) var lastSelectedHandle: UUID? = nil
+    public internal(set) var selectedLeaderContentHandle: UUID? = nil
     /// Incremented on every selection change. Used by the render loop
     /// to invalidate the cached grip geometry.
     public internal(set) var _selectionGeneration: Int = 0
@@ -52,8 +59,17 @@ public final class CADSelectionManager {
 
     public func select(_ handle: UUID?) {
         selectedHandles.removeAll()
+        selectedLeaderContentHandle = nil
         if let h = handle { selectedHandles.insert(h); lastSelectedHandle = h }
         else { lastSelectedHandle = nil }
+        _markSelectionChanged()
+    }
+
+    public func selectLeaderContent(_ handle: UUID) {
+        selectedHandles.removeAll()
+        selectedHandles.insert(handle)
+        lastSelectedHandle = handle
+        selectedLeaderContentHandle = handle
         _markSelectionChanged()
     }
 
@@ -62,9 +78,11 @@ public final class CADSelectionManager {
         if selectedHandles.contains(h) {
             selectedHandles.remove(h)
             if lastSelectedHandle == h { lastSelectedHandle = nil }
+            if selectedLeaderContentHandle == h { selectedLeaderContentHandle = nil }
         } else {
             selectedHandles.insert(h)
             lastSelectedHandle = h
+            selectedLeaderContentHandle = nil
         }
         _markSelectionChanged()
     }
@@ -73,6 +91,7 @@ public final class CADSelectionManager {
     public func addToSelection(_ handle: UUID) {
         selectedHandles.insert(handle)
         lastSelectedHandle = handle
+        selectedLeaderContentHandle = nil
         _markSelectionChanged()
     }
 
@@ -80,6 +99,7 @@ public final class CADSelectionManager {
     public func removeFromSelection(_ handle: UUID) {
         selectedHandles.remove(handle)
         if lastSelectedHandle == handle { lastSelectedHandle = nil }
+        if selectedLeaderContentHandle == handle { selectedLeaderContentHandle = nil }
         _markSelectionChanged()
     }
 
@@ -88,6 +108,7 @@ public final class CADSelectionManager {
     public func clearSelection() {
         selectedHandles.removeAll()
         lastSelectedHandle = nil
+        selectedLeaderContentHandle = nil
         _markSelectionChanged()
     }
 
@@ -98,6 +119,7 @@ public final class CADSelectionManager {
     public func selectAll(in document: CADDocument) {
         selectedHandles.removeAll()
         lastSelectedHandle = nil
+        selectedLeaderContentHandle = nil
         for entity in document.entitiesView {
             guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
             selectedHandles.insert(entity.handle)
@@ -189,6 +211,7 @@ public final class CADSelectionManager {
         mode: RectSelectMode,
         style: RectSelectStyle
     ) {
+        selectedLeaderContentHandle = nil
         if mode == .replace {
             selectedHandles.removeAll()
             lastSelectedHandle = nil
@@ -251,6 +274,7 @@ public final class CADSelectionManager {
     public func deleteSelected(in document: CADDocument) {
         document.removeEntities(handles: selectedHandles)
         selectedHandles.removeAll()
+        selectedLeaderContentHandle = nil
         _markSelectionChanged()
     }
 
@@ -264,7 +288,22 @@ public final class CADSelectionManager {
         public let handle: UUID
         public let grip: GripType
         public let screenPos: SDL_FPoint
-        public var worldPos: Vector3  // var: mutated incrementally during grip drag
+        public var worldPos: Vector3
+        public let screenDirection: SDL_FPoint?
+
+        public init(
+            handle: UUID,
+            grip: GripType,
+            screenPos: SDL_FPoint,
+            worldPos: Vector3,
+            screenDirection: SDL_FPoint? = nil
+        ) {
+            self.handle = handle
+            self.grip = grip
+            self.screenPos = screenPos
+            self.worldPos = worldPos
+            self.screenDirection = screenDirection
+        }
     }
 
     /// Returns the grip (if any) at the given screen position. Delegates to
@@ -279,7 +318,8 @@ public final class CADSelectionManager {
             screenX: screenX, screenY: screenY,
             document: document, cam: cam,
             simplifyComplexBlocks: simplifyComplexBlocks,
-            selectedHandles: self.selectedHandles)
+            selectedHandles: self.selectedHandles,
+            selectedLeaderContentHandle: selectedLeaderContentHandle)
     }
 
     /// Returns world-space vertex arrays for an entity's geometry (for hover
@@ -300,7 +340,8 @@ public final class CADSelectionManager {
         return CADGripSystem.getAllGrips(
             document: document, cam: cam,
             simplifyComplexBlocks: simplifyComplexBlocks,
-            selectedHandles: selectedHandles)
+            selectedHandles: selectedHandles,
+            selectedLeaderContentHandle: selectedLeaderContentHandle)
     }
 
     /// Same as `getAllGrips` but uses pre-computed world-space points.

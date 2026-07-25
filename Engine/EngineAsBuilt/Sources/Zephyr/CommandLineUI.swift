@@ -80,15 +80,26 @@ struct CommandLineUI {
         let wflags: Int32 = 1 | 2 | 4 | 8 | 64 | 256 // Added ImGuiWindowFlags_AlwaysAutoResize (64)
         let paletteFlags: Int32 = wflags | 4096 // ImGuiWindowFlags_NoFocusOnAppearing
         
-        // Filter commands based on the current input to populate the autocomplete.
+        // Active feature commands own their text input. Do not offer global
+        // command autocomplete while entering an option or annotation.
         let newText = engine.commandProcessor.commandBuffer
-        let inputMatches = engine.commandProcessor.matchCommands(input: newText)
+        let activeFeatureCommand = engine.commandProcessor.activeFeatureCommand
+        let featureInputActive = activeFeatureCommand != nil
+        let featureOptions = activeFeatureCommand?.commandTextOptions(for: newText) ?? []
+        let inputMatches = featureInputActive
+            ? []
+            : engine.commandProcessor.matchCommands(input: newText)
         let selIndex = engine.commandProcessor.commandSelectionIndex
         _cmdAutoMatches = inputMatches
         
         let clampedIndex = !inputMatches.isEmpty ? max(0, min(selIndex, inputMatches.count - 1)) : 0
-        let paramHint = findParameterHint(input: newText)
-        let showPalette = !inputMatches.isEmpty || (!newText.isEmpty && paramHint != nil)
+        let featureClampedIndex = !featureOptions.isEmpty
+            ? max(0, min(selIndex, featureOptions.count - 1))
+            : 0
+        let paramHint = featureInputActive ? nil : findParameterHint(input: newText)
+        let showPalette = featureInputActive
+            ? !featureOptions.isEmpty
+            : (!inputMatches.isEmpty || (!newText.isEmpty && paramHint != nil))
         
         var currentY = winY
         
@@ -103,7 +114,7 @@ struct CommandLineUI {
             ImGuiPopStyleColor(1)
             ImGuiSameLine(0, 16)
             
-            let promptText = "Cmd: "
+            let promptText = featureInputActive ? "Input: " : "Cmd: "
             ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textDim)
             ImGuiTextV(promptText)
             ImGuiPopStyleColor(1)
@@ -133,7 +144,7 @@ struct CommandLineUI {
                 
                 return igInputTextWithHint(
                     "##CmdInput",
-                    "type a command...",
+                    featureInputActive ? "enter option or annotation..." : "type a command...",
                     base,
                     bufSize,
                     Int32(ImGuiInputTextFlags_EnterReturnsTrue.rawValue)
@@ -174,16 +185,36 @@ struct CommandLineUI {
                 CommandLineUI._needsClearSelection = true
             }
 
-            if !inputMatches.isEmpty && ImGuiIsKeyPressed(ImGuiKey_Tab, false) {
+            if featureInputActive,
+               !featureOptions.isEmpty,
+               ImGuiIsKeyPressed(ImGuiKey_Tab, false) {
+                engine.commandProcessor.commandBuffer = featureOptions[featureClampedIndex].value
+                engine.commandProcessor.commandSelectionIndex = featureClampedIndex
+                CommandLineUI._needsClearSelection = true
+            } else if !inputMatches.isEmpty && ImGuiIsKeyPressed(ImGuiKey_Tab, false) {
                 engine.commandProcessor.commandBuffer = inputMatches[0].descriptor.canonicalName
                 engine.commandProcessor.commandSelectionIndex = 0
                 CommandLineUI._needsClearSelection = true
             }
 
-            updateSelection(engine: engine, matches: inputMatches)
+            if featureInputActive {
+                updateSelection(engine: engine, itemCount: featureOptions.count)
+            } else {
+                updateSelection(engine: engine, matches: inputMatches)
+            }
 
             if submitted {
-                if !inputMatches.isEmpty && clampedIndex >= 0 && clampedIndex < inputMatches.count {
+                if featureInputActive {
+                    engine.commandProcessor.commandLineActive = false
+                    engine.commandProcessor.commandBuffer = ""
+                    _ = engine.commandProcessor.submitTextToActiveFeatureCommand(
+                        newTextFromInput,
+                        engine: engine)
+                    if engine.commandProcessor.commandLineActive {
+                        _needsClearSelection = true
+                        _needsFocus = true
+                    }
+                } else if !inputMatches.isEmpty && clampedIndex >= 0 && clampedIndex < inputMatches.count {
                     let desc = inputMatches[clampedIndex].descriptor
                     if !desc.syntax.isEmpty {
                         prepareForParameterEntry(engine: engine, descriptor: desc)
@@ -217,12 +248,21 @@ struct CommandLineUI {
         currentY += inputHeight + 8.0
 
         // 2. PALETTE WINDOW
-        if showPalette || (!newText.isEmpty) {
+        if showPalette || (!featureInputActive && !newText.isEmpty) {
             ImGuiSetNextWindowPos(ImVec2(x: winX, y: currentY), Int32(ImGuiCond_Always.rawValue), ImVec2(x: 0, y: 0))
             ImGuiSetNextWindowSizeConstraints(ImVec2(x: cmdW, y: 0), ImVec2(x: cmdW, y: dh * 0.6), { _ in }, nil)
             
             if igBegin("##CmdPalette", nil, paletteFlags) {
-                if !inputMatches.isEmpty {
+                if featureInputActive {
+                    let currentOptions = activeFeatureCommand?.commandTextOptions(
+                        for: engine.commandProcessor.commandBuffer) ?? []
+                    renderFeatureOptions(
+                        engine: engine,
+                        options: currentOptions,
+                        selectedIndex: currentOptions.isEmpty
+                            ? 0
+                            : max(0, min(engine.commandProcessor.commandSelectionIndex, currentOptions.count - 1)))
+                } else if !inputMatches.isEmpty {
                     CommandAutocompleteUI.renderMatches(
                         engine: engine,
                         matches: inputMatches,
@@ -271,6 +311,60 @@ struct CommandLineUI {
             }
         }
         return nil
+    }
+
+    private static func renderFeatureOptions(
+        engine: PhrostEngine,
+        options: [FeatureCommandTextOption],
+        selectedIndex: Int
+    ) {
+        ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textDim)
+        ImGuiTextV("OPTIONS")
+        ImGuiPopStyleColor(1)
+        ImGuiDummy(ImVec2(x: 0, y: 6))
+
+        for (index, option) in options.enumerated() {
+            let aliasText = option.aliases.isEmpty
+                ? option.value
+                : "\(option.value) [\(option.aliases.joined(separator: "/"))]"
+            if ImGuiSelectable(
+                "\(aliasText)##FeatureOption\(index)",
+                index == selectedIndex,
+                0,
+                ImVec2(x: 0, y: 0)) {
+                engine.commandProcessor.commandBuffer = option.value
+                engine.commandProcessor.commandSelectionIndex = index
+                _needsClearSelection = true
+                _needsFocus = true
+            }
+            if !option.description.isEmpty {
+                ImGuiSameLine(260, 0)
+                ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textDim)
+                ImGuiTextV(option.description)
+                ImGuiPopStyleColor(1)
+            }
+        }
+    }
+
+    private static func updateSelection(engine: PhrostEngine, itemCount: Int) {
+        guard itemCount > 0 else {
+            engine.commandProcessor.commandSelectionIndex = 0
+            return
+        }
+
+        if ImGuiIsKeyPressed(ImGuiKey_UpArrow, false) {
+            engine.commandProcessor.commandSelectionIndex =
+                engine.commandProcessor.commandSelectionIndex > 0
+                ? engine.commandProcessor.commandSelectionIndex - 1
+                : itemCount - 1
+        }
+
+        if ImGuiIsKeyPressed(ImGuiKey_DownArrow, false) {
+            engine.commandProcessor.commandSelectionIndex =
+                engine.commandProcessor.commandSelectionIndex + 1 < itemCount
+                ? engine.commandProcessor.commandSelectionIndex + 1
+                : 0
+        }
     }
 
     /// Handles Up/Down arrow key navigation through the autocomplete list.

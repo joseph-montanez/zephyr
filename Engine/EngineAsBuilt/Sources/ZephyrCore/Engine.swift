@@ -231,6 +231,9 @@ public final class PhrostEngine {
     /// Called before an OS or custom-titlebar close request is accepted.
     /// Return false when the app needs to show an unsaved-changes confirmation first.
     public var windowCloseRequestHandler: (() -> Bool)?
+    /// Deferred native dialog request. Set during ImGui rendering, executed
+    /// after SDL event polling so SDL_ShowOpenFileDialog works correctly.
+    public var pendingDialogRequest: (@MainActor () -> Void)?
     public internal(set) var windowWidth: Int32 = 0
     public internal(set) var windowHeight: Int32 = 0
     internal var pixelWidth: Int32 = 0

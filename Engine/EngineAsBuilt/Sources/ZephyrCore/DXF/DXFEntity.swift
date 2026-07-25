@@ -137,6 +137,7 @@ public enum DXFEType: String, Sendable {
     case iMAGE         = "IMAGE"
     case iNSERT        = "INSERT"
     case lEADER        = "LEADER"
+    case mLEADER       = "MULTILEADER"
     case lINE          = "LINE"
     case lWPOLYLINE    = "LWPOLYLINE"
     case mTEXT         = "MTEXT"
@@ -942,6 +943,7 @@ public class DXFLeaderEntity: DXFEntity {
     public var vertNum: Int            // 76
     public var colorUse: Int           // 77
     public var annotHandle: UInt32     // 340
+    public var annotation: DXFEntity?
     public var extrusionPoint: Vector3 // 210,220,230
     public var horizDir: Vector3       // 211,221,231
     public var offsetBlock: Vector3    // 212,222,232
@@ -960,10 +962,145 @@ public class DXFLeaderEntity: DXFEntity {
         self.vertNum = 0
         self.colorUse = 0
         self.annotHandle = 0
+        self.annotation = nil
         self.extrusionPoint = Vector3(x: 0, y: 0, z: 1)
         self.horizDir = .zero
         self.offsetBlock = .zero
         self.offsetText = .zero
+        super.init(eType: eType)
+    }
+}
+
+// MARK: - Multileader
+
+public struct DXFMLeaderStyleEntry: Sendable {
+    public var handle: UInt32 = 0
+    public var name: String = "Standard"
+    public var pathType: Int = 1
+    public var contentType: Int = 2
+    public var maxLeaderPoints: Int = 2
+    public var arrowSize: Double = 2.5
+    public var landingGap: Double = 1.25
+    public var doglegLength: Double = 8
+    public var textHeight: Double = 2.5
+    public var textStyleHandle: UInt32 = 0
+    public var arrowheadHandle: UInt32 = 0
+    public var arrowheadName: String = ""
+    public var blockContentHandle: UInt32 = 0
+    public var leftAttachment: Int = 1
+    public var rightAttachment: Int = 1
+    public var textAngleType: Int = 0
+    public var textAlignment: Int = 0
+    public var alwaysLeftJustify: Bool = false
+    public var attachmentDirection: Int = 0
+    public var bottomAttachment: Int = 9
+    public var topAttachment: Int = 9
+    public var landingEnabled: Bool = true
+    public var doglegEnabled: Bool = true
+    public var textFrameEnabled: Bool = false
+    public var blockScale: Double = 1
+    public var blockRotation: Double = 0
+
+    public init() {}
+}
+
+public struct DXFMLeaderBlockAttribute: Sendable {
+    public var definitionHandle: UInt32
+    public var tag: String
+    public var index: Int
+    public var width: Double
+    public var text: String
+
+    public init(
+        definitionHandle: UInt32 = 0,
+        tag: String = "",
+        index: Int = 0,
+        width: Double = 0,
+        text: String = ""
+    ) {
+        self.definitionHandle = definitionHandle
+        self.tag = tag
+        self.index = index
+        self.width = width
+        self.text = text
+    }
+}
+
+public struct DXFMLeaderBranch: Sendable {
+    public var vertices: [Vector3]
+    public var doglegDirection: Vector3?
+    public var doglegLength: Double?
+    public var leaderLineIndex: Int?
+    public var arrowheadHandle: UInt32
+    public var arrowheadName: String
+
+    public init(
+        vertices: [Vector3] = [],
+        doglegDirection: Vector3? = nil,
+        doglegLength: Double? = nil,
+        leaderLineIndex: Int? = nil,
+        arrowheadHandle: UInt32 = 0,
+        arrowheadName: String = ""
+    ) {
+        self.vertices = vertices
+        self.doglegDirection = doglegDirection
+        self.doglegLength = doglegLength
+        self.leaderLineIndex = leaderLineIndex
+        self.arrowheadHandle = arrowheadHandle
+        self.arrowheadName = arrowheadName
+    }
+}
+
+public class DXFMLeaderEntity: DXFEntity {
+    public var styleHandle: UInt32 = 0
+    public var styleName: String = "Standard"
+    public var textStyleHandle: UInt32 = 0
+    public var blockContentHandle: UInt32 = 0
+    public var arrowheadHandle: UInt32 = 0
+    public var arrowheadName: String = ""
+    public var arrowheadOverrides: [Int: UInt32] = [:]
+    public var contentScale: Double = 1
+    public var hasContextScale: Bool = false
+    public var contentType: Int = 2
+    public var pathType: Int = 1
+    public var text: String = ""
+    public var contentBasePosition: Vector3?
+    public var textPosition: Vector3 = .zero
+    public var textDirection: Vector3 = Vector3(x: 1, y: 0, z: 0)
+    public var textRotation: Double = 0
+    public var textAttachment: Int = 1
+    public var textFlowDirection: Int = 5
+    public var textDirectionNegative: Bool = false
+    public var textAlignInIPE: Int = 0
+    public var textAttachmentPoint: Int = 1
+    public var leftAttachment: Int = 1
+    public var rightAttachment: Int = 1
+    public var textAngleType: Int = 0
+    public var textAlignment: Int = 0
+    public var alwaysLeftJustify: Bool = false
+    public var attachmentDirection: Int = 0
+    public var bottomAttachment: Int = 9
+    public var topAttachment: Int = 9
+    public var textHeight: Double = 2.5
+    public var hasContextTextHeight: Bool = false
+    public var textWidth: Double = 0
+    public var textStyleName: String = "Standard"
+    public var textFrameEnabled: Bool = false
+    public var maxLeaderPoints: Int = 2
+    public var blockScale: Double = 1
+    public var blockRotation: Double = 0
+    public var arrowSize: Double = 2.5
+    public var hasContextArrowSize: Bool = false
+    public var landingGap: Double = 1.25
+    public var hasContextLandingGap: Bool = false
+    public var doglegLength: Double = 8
+    public var landingEnabled: Bool = true
+    public var doglegEnabled: Bool = true
+    public var blockName: String = ""
+    public var blockAttributes: [DXFMLeaderBlockAttribute] = []
+    public var branches: [DXFMLeaderBranch] = []
+
+    public override init(eType: DXFEType = .mLEADER) {
         super.init(eType: eType)
     }
 }

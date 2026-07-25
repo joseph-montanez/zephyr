@@ -123,7 +123,10 @@ struct AppUI {
             renderHatchEditingRibbonIfNeeded(entity: entity, engine: engine)
         }
 
-        // 6c. Data table contextual ribbon and in-canvas cell editor.
+        // 6c. Associative array contextual ribbon.
+        ArrayRibbonUI.renderIfNeeded(engine: engine, displayWidth: dw)
+
+        // 6d. Data table contextual ribbon and in-canvas cell editor.
         DataTableRibbonUI.renderIfNeeded(engine: engine, displayWidth: dw)
 
         // 7. Block management panel — list/create/edit blocks.
@@ -146,6 +149,9 @@ struct AppUI {
 
         if engine.ui.styleManagerActive {
             StyleManagerUI.render(engine: engine, dw: dw, dh: dh)
+        }
+        if engine.ui.leaderStyleManagerActive {
+            LeaderStyleManagerUI.render(engine: engine, dw: dw, dh: dh)
         }
 
         // 9b. Text editor modal dialog (when creating/editing text).
@@ -189,7 +195,11 @@ struct AppUI {
                 blockName = "Unknown Block"
             }
 
-            ImGuiOpenPopup("Close Block Editor##BlockClose", Int32(ImGuiPopupFlags_None.rawValue))
+            let editingArraySource = engine.tabManager.editingArrayHandle != nil
+            let closePopupTitle = editingArraySource
+                ? "Close Array Source##BlockClose"
+                : "Close Block Editor##BlockClose"
+            ImGuiOpenPopup(closePopupTitle, Int32(ImGuiPopupFlags_None.rawValue))
 
             let popupW: Float = 360
             let popupH: Float = 100
@@ -200,14 +210,18 @@ struct AppUI {
             ImGuiSetNextWindowSize(ImVec2(x: popupW, y: popupH), Int32(ImGuiCond_Appearing.rawValue))
 
             var popupOpen = true
-            if ImGuiBeginPopupModal("Close Block Editor##BlockClose", &popupOpen,
+            if ImGuiBeginPopupModal(closePopupTitle, &popupOpen,
                                     Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)) {
                 defer { ImGuiEndPopup() }
 
                 if !popupOpen {
                     engine.ui.blockClosePending = false
                 } else {
-                    ImGuiTextV("Save changes to block \"\(blockName)\" before closing?")
+                    if editingArraySource {
+                        ImGuiTextV("Save changes to the array source before closing?")
+                    } else {
+                        ImGuiTextV("Save changes to block \"\(blockName)\" before closing?")
+                    }
 
                     igSeparator()
 

@@ -36,6 +36,7 @@ public final class EngineUIManager {
     public var dataTablePanelVisible: Bool = false
 
     public var styleManagerActive: Bool = false
+    public var leaderStyleManagerActive: Bool = false
 
     /// Whether the Layers panel is visible (toggled via "LA"/"LAYER" command). Default true.
     public var layersPanelVisible: Bool = true

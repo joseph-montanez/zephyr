@@ -34,8 +34,8 @@ public struct TextEditorUI {
         let x = (dw - popupW) / 2
         let y = (dh - popupH) / 2
 
-        ImGuiSetNextWindowPos(ImVec2(x: x, y: y), Int32(ImGuiCond_Always.rawValue), ImVec2(x: 0, y: 0))
-        ImGuiSetNextWindowSize(ImVec2(x: popupW, y: popupH), Int32(ImGuiCond_Always.rawValue))
+        ImGuiSetNextWindowPos(ImVec2(x: x, y: y), Int32(ImGuiCond_FirstUseEver.rawValue), ImVec2(x: 0, y: 0))
+        ImGuiSetNextWindowSize(ImVec2(x: popupW, y: popupH), Int32(ImGuiCond_FirstUseEver.rawValue))
 
         // No close button — we handle closing ourselves
         let flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)
@@ -47,6 +47,7 @@ public struct TextEditorUI {
             return .active
         }
         defer { ImGuiEnd() }
+        AppLayout.reportCurrentDockedPanel(engine: engine)
 
         if !opened {
             return .cancelled

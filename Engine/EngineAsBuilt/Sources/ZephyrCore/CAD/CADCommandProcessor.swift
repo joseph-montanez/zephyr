@@ -22,6 +22,33 @@ import SwiftSDL
 // =========================================================================
 
 /// Result returned by `FeatureCommand` event handlers.
+public struct FeatureCommandTextOption: Sendable, Hashable {
+    public let value: String
+    public let title: String
+    public let aliases: [String]
+    public let description: String
+
+    public init(
+        value: String,
+        title: String,
+        aliases: [String] = [],
+        description: String = ""
+    ) {
+        self.value = value
+        self.title = title
+        self.aliases = aliases
+        self.description = description
+    }
+
+    public func matches(_ input: String) -> Bool {
+        let query = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return true }
+        return title.lowercased().hasPrefix(query)
+            || value.lowercased().hasPrefix(query)
+            || aliases.contains { $0.lowercased().hasPrefix(query) }
+    }
+}
+
 public enum CommandResult {
     /// Command is still active, waiting for more input.
     /// The event was NOT consumed — the engine should fall through to its default behavior.
@@ -76,6 +103,10 @@ public protocol FeatureCommand: AnyObject {
     /// Returns `.finished` if the command consumed the text and is done;
     /// `.continue` if the text was consumed but the command is still active.
     func handleCommandText(_ text: String, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult
+
+    /// Context-sensitive command-line options shown while this feature command
+    /// owns the input field.
+    func commandTextOptions(for input: String) -> [FeatureCommandTextOption]
 }
 
 public extension FeatureCommand {
@@ -91,6 +122,8 @@ public extension FeatureCommand {
 
     /// Default: ignore command-line text.
     func handleCommandText(_ text: String, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult { .continue }
+
+    func commandTextOptions(for input: String) -> [FeatureCommandTextOption] { [] }
 }
 
 // =========================================================================
@@ -165,7 +198,12 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "RAY",        aliases: [],                category: .draw,    syntax: "", description: "Draw a ray from a start point in a direction"),
         CommandDescriptor(canonicalName: "DRAW",       aliases: ["D", "TOOLS"],    category: .draw,    syntax: "", description: "Open the draw tools palette"),
         CommandDescriptor(canonicalName: "TEXT",       aliases: ["T", "DTEXT", "MTEXT"], category: .draw, syntax: "", description: "Place a new text entity"),
-        CommandDescriptor(canonicalName: "MEASUREGEOM",aliases: ["MEASURE", "MEA", "MG"], category: .draw, syntax: "", description: "Measure geometry: quick measure, distance, area, and angle"),
+        CommandDescriptor(canonicalName: "LEADER",     aliases: ["LEAD"], category: .draw, syntax: "", description: "Create a classic leader with text or block content"),
+        CommandDescriptor(canonicalName: "QLEADER",    aliases: ["LE"], category: .draw, syntax: "", description: "Create a prompted quick leader"),
+        CommandDescriptor(canonicalName: "MLEADER",    aliases: ["MLD"], category: .draw, syntax: "", description: "Create an associative multileader"),
+        CommandDescriptor(canonicalName: "MEASURE",    aliases: [], category: .draw, syntax: "", description: "Place points or blocks at measured intervals along an object"),
+        CommandDescriptor(canonicalName: "DIVIDE",     aliases: ["DIV"], category: .draw, syntax: "", description: "Place points or blocks at equal divisions along an object"),
+        CommandDescriptor(canonicalName: "MEASUREGEOM", aliases: ["MEASUREGEOMETRY", "MEA", "MG"], category: .draw, syntax: "", description: "Measure geometry: quick measure, distance, area, and angle"),
         CommandDescriptor(canonicalName: "DIMLINEAR",  aliases: ["DLI", "DIMLIN"], category: .draw, syntax: "", description: "Horizontal or vertical dimension between two points"),
         CommandDescriptor(canonicalName: "DIMALIGNED", aliases: ["DAL", "DIMALIGN"], category: .draw, syntax: "", description: "Dimension parallel to measured distance"),
         CommandDescriptor(canonicalName: "DIMRADIUS",  aliases: ["DRA", "DIMRAD"], category: .draw, syntax: "", description: "Radius dimension for arcs/circles"),
@@ -192,9 +230,25 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "TRIM",       aliases: ["TR"],            category: .modify,  syntax: "", description: "Trim lines at intersections — click the side to remove"),
         CommandDescriptor(canonicalName: "FILLET",     aliases: ["F"],            category: .modify,  syntax: "", description: "Round corners between objects using an exact tangent arc"),
         CommandDescriptor(canonicalName: "CHAMFER",    aliases: ["CHA", "BEVEL"], category: .modify,  syntax: "", description: "Bevel corners using distances or a distance and angle"),
+        CommandDescriptor(canonicalName: "ARRAY", aliases: ["AR"], category: .modify, syntax: "", description: "Create a rectangular, polar, or path array"),
+        CommandDescriptor(canonicalName: "ARRAYRECT", aliases: ["ARRAYR"], category: .modify, syntax: "", description: "Create an associative rectangular array"),
+        CommandDescriptor(canonicalName: "ARRAYPOLAR", aliases: ["ARRAYP"], category: .modify, syntax: "", description: "Create an associative polar array"),
+        CommandDescriptor(canonicalName: "ARRAYPATH", aliases: ["ARRAYPA"], category: .modify, syntax: "", description: "Create an associative path array"),
+        CommandDescriptor(canonicalName: "ARRAYEDIT", aliases: [], category: .modify, syntax: "", description: "Select and edit an associative array"),
+        CommandDescriptor(canonicalName: "ARRAYCLOSE", aliases: [], category: .modify, syntax: "", description: "Close array editing or source-edit mode"),
+        CommandDescriptor(canonicalName: "-ARRAYCLOSE", aliases: [], category: .modify, syntax: "[Yes|No]", description: "Close array source editing from the command line"),
+        CommandDescriptor(canonicalName: "ARRAYCLASSIC", aliases: [], category: .modify, syntax: "", description: "Create a legacy non-associative rectangular or polar array"),
+        CommandDescriptor(canonicalName: "-ARRAY", aliases: [], category: .modify, syntax: "", description: "Create a non-associative rectangular or polar array from prompts"),
+        CommandDescriptor(canonicalName: "ARRAYASSOCIATIVITY", aliases: [], category: .settings, syntax: "[0|1]", description: "Set whether new arrays are associative"),
+        CommandDescriptor(canonicalName: "ARRAYEDITSTATE", aliases: [], category: .settings, syntax: "", description: "Display whether array source editing is active"),
+        CommandDescriptor(canonicalName: "ARRAYTYPE", aliases: [], category: .settings, syntax: "[0|1|2]", description: "Set the default array type: rectangular, path, or polar"),
+        CommandDescriptor(canonicalName: "EXPLODE", aliases: ["X"], category: .modify, syntax: "", description: "Convert selected associative arrays to independent block references"),
         CommandDescriptor(canonicalName: "MATCHPROP",   aliases: ["MA", "MATCH"],  category: .modify,  syntax: "", description: "Copy properties from one entity to others"),
         CommandDescriptor(canonicalName: "TORIENT",    aliases: ["TO", "TEXTO"], category: .modify, syntax: "", description: "Rotate text individually to an absolute or most-readable angle"),
         CommandDescriptor(canonicalName: "SPLINEEDIT", aliases: ["SPE"],           category: .modify,  syntax: "", description: "Edit an existing spline (reverse, convert to polyline, etc.)"),
+        CommandDescriptor(canonicalName: "MLEADEREDIT", aliases: ["MLE"], category: .modify, syntax: "", description: "Add or remove leader branches and edit multileader content"),
+        CommandDescriptor(canonicalName: "MLEADERALIGN", aliases: ["MLA"], category: .modify, syntax: "", description: "Align and distribute selected multileader content"),
+        CommandDescriptor(canonicalName: "MLEADERCOLLECT", aliases: ["MLC"], category: .modify, syntax: "", description: "Collect selected block multileaders into one multileader"),
         // --- View ---
         CommandDescriptor(canonicalName: "SELECTALL",  aliases: ["SELALL"],        category: .view,    syntax: "", description: "Select all entities in the active layer"),
         CommandDescriptor(canonicalName: "ZOOM",        aliases: ["Z"],             category: .view,    syntax: "", description: "Zoom: All/Center/Dynamic/Extents/Left/Previous/Right/Scale/Object/Window"),
@@ -225,6 +279,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "BLOCKS",     aliases: ["BLOCKPANEL"],    category: .block,   syntax: "", description: "Show/hide the block panel"),
         // --- Settings ---
         CommandDescriptor(canonicalName: "STYLE",      aliases: ["ST"], category: .settings, syntax: "", description: "Create and edit text styles"),
+        CommandDescriptor(canonicalName: "MLEADERSTYLE", aliases: ["MLS"], category: .settings, syntax: "", description: "Create and edit multileader styles"),
         CommandDescriptor(canonicalName: "THEME",      aliases: ["DARKMODE", "LIGHTMODE"], category: .settings, syntax: "[DARK|LIGHT]", description: "Toggle or set the UI theme (dark/light mode)"),
         CommandDescriptor(canonicalName: "FPS",        aliases: [],                        category: .settings, syntax: "", description: "Toggle FPS counter in the title bar"),
         CommandDescriptor(canonicalName: "SET-BACKGROUND", aliases: ["SETBG", "BACKGROUND"], category: .settings, syntax: "<index|hex>", description: "Set viewport background color (ACI index 1-255 or hex RRGGBB)"),
@@ -325,6 +380,31 @@ public final class CADCommandProcessor {
     public typealias FeatureCommandFactory = () -> any FeatureCommand
     private var featureCommandRegistry: [String: FeatureCommandFactory] = [:]
 
+    public var arrayAssociativity: Bool =
+        UserDefaults.standard.object(forKey: "Zephyr.ArrayAssociativity") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(arrayAssociativity, forKey: "Zephyr.ArrayAssociativity")
+        }
+    }
+    public var arrayDefaultType: CADArrayKind = {
+        let raw = UserDefaults.standard.integer(forKey: "Zephyr.ArrayType")
+        switch raw {
+        case 1: return .path
+        case 2: return .polar
+        default: return .rectangular
+        }
+    }() {
+        didSet {
+            let raw: Int
+            switch arrayDefaultType {
+            case .rectangular: raw = 0
+            case .path: raw = 1
+            case .polar: raw = 2
+            }
+            UserDefaults.standard.set(raw, forKey: "Zephyr.ArrayType")
+        }
+    }
+
     // MARK: Engine Reference
 
     /// Weak reference to the owning engine, used to access document, selection, and drag state.
@@ -369,6 +449,19 @@ public final class CADCommandProcessor {
         cmd.cancel(engine: engine, processor: self)
         activeFeatureCommand = nil
         commandPrompt = nil
+    }
+
+    @discardableResult
+    public func submitTextToActiveFeatureCommand(
+        _ text: String,
+        engine: PhrostEngine
+    ) -> Bool {
+        guard let command = activeFeatureCommand else { return false }
+        let result = command.handleCommandText(text, engine: engine, processor: self)
+        if result == .finished, activeFeatureCommand != nil {
+            finishFeatureCommand(engine: engine)
+        }
+        return true
     }
 
     // MARK: - Command Execution
@@ -436,8 +529,44 @@ public final class CADCommandProcessor {
             engine?.zoomExtents()
             clearCommand()
         case "OPEN":
-            engine?.fileBrowser.open(filterExtension: "dxf;eab")
+            guard let eng = engine else { clearCommand(); return }
             clearCommand()
+            NativeFileDialog.showOpenDialog(
+                window: eng.window,
+                filters: [
+                    NativeFileDialog.Filter(label: "Drawings", extensions: ["dxf", "dwg", "eab"])
+                ],
+                allowMultiple: true
+            ) { [weak eng] urls in
+                guard let eng else { return }
+                for url in urls {
+                    do {
+                        try eng.tabManager.openTab(url: url)
+                    } catch {
+                        print("Failed to open \(url.lastPathComponent): \(error)")
+                    }
+                }
+                if !urls.isEmpty {
+                    eng.zoomExtents()
+                }
+            }
+        case "PDFI", "PDFIMPORT", "PDF":
+            guard let eng = engine else { clearCommand(); return }
+            clearCommand()
+            NativeFileDialog.showOpenDialog(
+                window: eng.window,
+                filters: [
+                    NativeFileDialog.Filter(label: "PDF Documents", extensions: ["pdf"])
+                ]
+            ) { [weak eng] urls in
+                guard let eng, let url = urls.first else { return }
+                // Re-use the existing PDFImportCommand flow by executing it as
+                // a feature command and immediately feeding it the selected URL.
+                let cmd = PDFImportCommand()
+                eng.commandProcessor.activeFeatureCommand = cmd
+                cmd.start(engine: eng, processor: eng.commandProcessor)
+                cmd.handlePDFSelected(url: url, engine: eng, processor: eng.commandProcessor)
+            }
         case "CLOSE":
             _ = engine?.tabManager.requestCloseActiveTab()
             clearCommand()
@@ -470,32 +599,38 @@ public final class CADCommandProcessor {
             clearCommand()
         case "SAVE", "QSAVE": 
             guard let eng = engine else { clearCommand(); return }
+            clearCommand()
             do {
                 try eng.tabManager.saveActiveTab()
             } catch TabManager.TabError.noFileURL {
-                eng.saveFileBrowser.openSave(
-                    filterExtension: "dxf;dwg;eab;pdf",
-                    defaultName: eng.tabManager.activeTab?.displayName ?? "untitled",
-                    defaultDXFVersion: eng.tabManager.activeTab?.dxfVersion ?? .defaultExport)
+                showNativeSaveDialog(engine: eng)
             } catch {
                 print("Save failed: \(error)")
             }
-            clearCommand()
         case "SAVEAS":
-            engine?.saveFileBrowser.openSave(
-                filterExtension: "dxf;dwg;eab;pdf",
-                defaultName: engine?.tabManager.activeTab?.displayName ?? "untitled",
-                defaultDXFVersion: engine?.tabManager.activeTab?.dxfVersion ?? .defaultExport)
+            guard let eng = engine else { clearCommand(); return }
             clearCommand()
+            showNativeSaveDialog(engine: eng)
         case "PDFEXPORT", "EXPORTPDF":
-            engine?.saveFileBrowser.openSave(
-                filterExtension: "pdf",
-                defaultName: (engine?.tabManager.activeTab?.displayName ?? "untitled")
-                    .replacingOccurrences(of: ".dxf", with: "")
-                    .replacingOccurrences(of: ".dwg", with: "")
-                    .replacingOccurrences(of: ".eab", with: "")
-            )
+            guard let eng = engine else { clearCommand(); return }
             clearCommand()
+            let pdfName = (eng.tabManager.activeTab?.displayName ?? "untitled")
+                .replacingOccurrences(of: ".dxf", with: "")
+                .replacingOccurrences(of: ".dwg", with: "")
+                .replacingOccurrences(of: ".eab", with: "")
+            NativeFileDialog.showSaveDialog(
+                window: eng.window,
+                filters: [
+                    NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"])
+                ],
+                defaultName: pdfName
+            ) { [weak eng] url in
+                guard let eng, let url else { return }
+                eng.tabManager.startSaveActiveTabAs(
+                    url: url,
+                    dxfVersion: eng.tabManager.activeTab?.dxfVersion ?? .r2018
+                )
+            }
         // --- Existing commands ---
         case "M", "MOVE":
             guard let engine = engine else { clearCommand(); return }
@@ -1152,10 +1287,23 @@ public final class CADCommandProcessor {
                 }
             }
             // Try feature command registry before giving up.
-            else if let factory = featureCommandRegistry[upper], let eng = engine {
+            else if let eng = engine {
+                let parts = upper.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+                let commandName = parts.first.map(String.init) ?? upper
+                guard let factory = featureCommandRegistry[commandName] else {
+                    clearCommand()
+                    return
+                }
                 let cmd = factory()
                 activeFeatureCommand = cmd
                 cmd.start(engine: eng, processor: self)
+                if parts.count > 1, activeFeatureCommand != nil {
+                    let argument = String(parts[1])
+                    let result = cmd.handleCommandText(argument, engine: eng, processor: self)
+                    if result == .finished, activeFeatureCommand != nil {
+                        finishFeatureCommand(engine: eng)
+                    }
+                }
             } else {
                 clearCommand()
             }
@@ -1294,6 +1442,25 @@ public final class CADCommandProcessor {
     }
 
     // MARK: - Command Helpers
+
+    /// Show the native file-save dialog and, on confirmation, save the active tab.
+    private func showNativeSaveDialog(engine eng: PhrostEngine) {
+        let defaultName = eng.tabManager.activeTab?.displayName ?? "untitled"
+        let dxfVersion = eng.tabManager.activeTab?.dxfVersion ?? .r2018
+        NativeFileDialog.showSaveDialog(
+            window: eng.window,
+            filters: [
+                NativeFileDialog.Filter(label: "DXF Drawing", extensions: ["dxf"]),
+                NativeFileDialog.Filter(label: "Zephyr Drawing", extensions: ["eab"]),
+                NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"]),
+                NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
+            ],
+            defaultName: defaultName
+        ) { [weak eng] url in
+            guard let eng, let url else { return }
+            eng.tabManager.startSaveActiveTabAs(url: url, dxfVersion: dxfVersion)
+        }
+    }
 
     private func startCommand(_ name: String, prompt: String) {
         activeCommand = name
@@ -1610,6 +1777,9 @@ public final class CADCommandProcessor {
                 layerID: entity.layerID,
                 blockID: entity.blockID,
                 localGeometry: entity.localGeometry,
+                dimensionMetadata: entity.dimensionMetadata,
+                leaderData: entity.leaderData,
+                arrayData: entity.arrayData,
                 transform: entity.transform,
                 xdata: entity.xdata,
                 drawOrder: entity.drawOrder

@@ -3,6 +3,81 @@ import Foundation
 /// Converts Zephyr CAD types to DXF format using pure Swift DXFWriter.
 public enum DXFWriterBridge {
 
+    private static func dxfLeaderArrowBlockName(
+        arrowhead: CADLeaderArrowhead,
+        customName: String?
+    ) -> String {
+        switch arrowhead {
+        case .none: return "_None"
+        case .closedFilled: return ""
+        case .closedBlank: return "_ClosedBlank"
+        case .open: return "_Open"
+        case .dot: return "_Dot"
+        case .dotBlank: return "_DotBlank"
+        case .architecturalTick: return "_ArchTick"
+        case .oblique: return "_Oblique"
+        case .originIndicator: return "_Origin"
+        case .boxFilled: return "_BoxFilled"
+        case .boxBlank: return "_BoxBlank"
+        case .custom: return customName ?? ""
+        }
+    }
+
+
+    private static func builtInLeaderArrowBlock(named name: String) -> CADBlock? {
+        let point = Vector3.zero
+        let upper = Vector3(x: 1, y: 0.38, z: 0)
+        let lower = Vector3(x: 1, y: -0.38, z: 0)
+        let geometry: [CADPrimitive]
+        switch name.uppercased() {
+        case "_NONE":
+            geometry = []
+        case "_CLOSEDBLANK":
+            geometry = [.polygon(points: [point, upper, lower])]
+        case "_OPEN":
+            geometry = [
+                .line(start: point, end: upper),
+                .line(start: point, end: lower)
+            ]
+        case "_DOT":
+            geometry = [
+                .circle(center: Vector3(x: 0.5, y: 0, z: 0), radius: 0.5),
+                .fillPolygon(points: (0..<20).map { index in
+                    let angle = Double(index) * 2 * Double.pi / 20
+                    return Vector3(x: 0.5 + cos(angle) * 0.5, y: sin(angle) * 0.5, z: 0)
+                })
+            ]
+        case "_DOTBLANK":
+            geometry = [.circle(center: Vector3(x: 0.5, y: 0, z: 0), radius: 0.5)]
+        case "_ARCHTICK", "_OBLIQUE":
+            geometry = [.line(
+                start: Vector3(x: -0.15, y: -0.55, z: 0),
+                end: Vector3(x: 0.85, y: 0.55, z: 0))]
+        case "_ORIGIN":
+            geometry = [
+                .circle(center: Vector3(x: 0.5, y: 0, z: 0), radius: 0.45),
+                .line(start: Vector3(x: 0.5, y: -0.45, z: 0), end: Vector3(x: 0.5, y: 0.45, z: 0))
+            ]
+        case "_BOXFILLED":
+            geometry = [.fillPolygon(points: [
+                Vector3(x: 0.08, y: -0.42, z: 0),
+                Vector3(x: 0.92, y: -0.42, z: 0),
+                Vector3(x: 0.92, y: 0.42, z: 0),
+                Vector3(x: 0.08, y: 0.42, z: 0)
+            ])]
+        case "_BOXBLANK":
+            geometry = [.polygon(points: [
+                Vector3(x: 0.08, y: -0.42, z: 0),
+                Vector3(x: 0.92, y: -0.42, z: 0),
+                Vector3(x: 0.92, y: 0.42, z: 0),
+                Vector3(x: 0.08, y: 0.42, z: 0)
+            ])]
+        default:
+            return nil
+        }
+        return CADBlock(name: name, geometry: geometry, dxfFlags: 1)
+    }
+
     public static let defaultExportVersion: DXFVersion = .defaultExport
 
     private struct ExportViewData {
@@ -12,6 +87,7 @@ public enum DXFWriterBridge {
         var blocks: [CADBlock]
         var entities: [CADEntity]
         var textStyles: [String: CADTextStyle]
+        var leaderStyles: [String: CADLeaderStyle]
         var linetypePatterns: [String: [Double]]
         var unit: CADUnit
     }
@@ -26,6 +102,8 @@ public enum DXFWriterBridge {
         var layerID: UUID
         var blockID: UUID?
         var geometry: [CADPrimitive]?
+        var arrayData: CADArrayData?
+        var leaderData: CADLeaderDataBox?
         var xdata: [ProjectionXDataPair]
     }
 
@@ -48,6 +126,7 @@ public enum DXFWriterBridge {
             blocks: document.allBlocks,
             entities: document.allEntities,
             textStyles: document.textStyles,
+            leaderStyles: document.leaderStyles,
             linetypePatterns: document.linetypePatterns,
             unit: document.unit)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion)
@@ -66,6 +145,7 @@ public enum DXFWriterBridge {
                 blocks: $0.document.allBlocks,
                 entities: $0.document.allEntities,
                 textStyles: $0.document.textStyles,
+                leaderStyles: $0.document.leaderStyles,
                 linetypePatterns: $0.document.linetypePatterns,
                 unit: $0.document.unit)
         }
@@ -90,6 +170,7 @@ public enum DXFWriterBridge {
             textStyles: Dictionary(uniqueKeysWithValues: textStyleFonts.map { name, font in
                 (name, CADTextStyle(name: name, fontFile: font))
             }),
+            leaderStyles: ["Standard": .standard],
             linetypePatterns: linetypePatterns,
             unit: .millimeter)
         try exportToDXF(views: [view], filePath: filePath, dxfVersion: dxfVersion)
@@ -110,10 +191,47 @@ public enum DXFWriterBridge {
             orderedViews.append(view)
         }
 
+        var requestedArrowBlocks = Set<String>()
+        for view in orderedViews {
+            for style in view.leaderStyles.values {
+                let name = Self.dxfLeaderArrowBlockName(
+                    arrowhead: style.arrowEnabled ? (style.arrowhead ?? .closedFilled) : .none,
+                    customName: style.arrowBlockName)
+                if !name.isEmpty { requestedArrowBlocks.insert(name) }
+            }
+            for entity in view.entities {
+                guard let data = entity.leaderData?.value else { continue }
+                if let style = data.styleOverrides {
+                    let name = Self.dxfLeaderArrowBlockName(
+                        arrowhead: style.arrowEnabled ? (style.arrowhead ?? .closedFilled) : .none,
+                        customName: style.arrowBlockName)
+                    if !name.isEmpty { requestedArrowBlocks.insert(name) }
+                }
+                for branch in data.branches {
+                    guard let arrowhead = branch.arrowhead else { continue }
+                    let name = Self.dxfLeaderArrowBlockName(
+                        arrowhead: arrowhead,
+                        customName: branch.arrowBlockName)
+                    if !name.isEmpty { requestedArrowBlocks.insert(name) }
+                }
+            }
+        }
+        if !requestedArrowBlocks.isEmpty {
+            let existing = Set(orderedViews.flatMap(\.blocks).map { $0.name.uppercased() })
+            let generated = requestedArrowBlocks.compactMap { name -> CADBlock? in
+                guard !existing.contains(name.uppercased()) else { return nil }
+                return Self.builtInLeaderArrowBlock(named: name)
+            }
+            if !generated.isEmpty { orderedViews[0].blocks.append(contentsOf: generated) }
+        }
+
         let writer = DXFWriter()
         writer.version = dxfVersion
         writer.codePage = "ANSI_1252"
         writer.headerVars["$INSUNITS"] = modelView.unit.dxfINSUNITS
+        let arrayAppID = DXFAppIdEntry()
+        arrayAppID.name = CADArrayDXFCodec.appID
+        writer.addAppId(arrayAppID)
 
         addHeaderExtents(entities: modelView.entities, to: writer)
 
@@ -247,23 +365,249 @@ public enum DXFWriterBridge {
             for entity in exportEntities {
                 let layerName = layerNameByID[entity.layerID] ?? "0"
 
+                if let box = entity.leaderData, dxfVersion.rawValue >= "AC1021" {
+                    let data = box.value
+                    let style = data.styleOverrides
+                        ?? view.leaderStyles.first(where: { $0.key.caseInsensitiveCompare(data.styleName) == .orderedSame })?.value
+                        ?? .standard
+                    let localTextDirection = data.textDirection?.normalized ?? Vector3(
+                        x: cos(data.contentRotation),
+                        y: sin(data.contentRotation),
+                        z: 0)
+                    let textDirection = transformedVector(localTextDirection, by: entity.transform)
+                    let entityScale = max(abs(entity.transform.scale.x), 1e-9)
+
+                    if data.isLegacyLeader, data.branches.count == 1,
+                       let branch = data.branches.first, branch.vertices.count >= 2 {
+                        let leader = DXFLeaderEntity()
+                        leader.layer = layerName
+                        leader.space = isPaperSpace ? 1 : 0
+                        leader.style = "STANDARD"
+                        leader.arrow = style.arrowEnabled ? 1 : 0
+                        leader.leaderType = style.pathType == .spline ? 1 : 0
+                        leader.flag = data.contentType == .block ? 2 : (data.contentType == .none ? 3 : 0)
+                        leader.hookLine = style.landingEnabled ? 1 : 0
+                        leader.hookFlag = data.contentPosition.x < (branch.vertices.last?.x ?? data.contentPosition.x) ? 1 : 0
+                        leader.textHeight = style.textHeight * entityScale
+                        leader.textWidth = data.textWidth ?? 0
+                        leader.vertices = branch.vertices.map { toDXF(entity.transform.transformPoint($0)) }
+                        leader.vertNum = leader.vertices.count
+                        leader.horizDir = toDXFVector(textDirection.normalized)
+                        applyEntityStyle(entity.xdata, to: leader)
+
+                        var annotation: DXFEntity?
+                        switch data.contentType {
+                        case .none:
+                            break
+                        case .mtext:
+                            let text = DXFMTextEntity()
+                            text.layer = layerName
+                            text.space = isPaperSpace ? 1 : 0
+                            text.basePoint = toDXF(entity.transform.transformPoint(data.contentPosition))
+                            text.height = style.textHeight * entityScale
+                            text.widthScale = data.textWidth ?? 0
+                            text.angle_p = -atan2(textDirection.y, textDirection.x) * 180 / .pi
+                            text.text = data.text
+                            text.style = style.textStyleName
+                            text.textGen = 1
+                            applyEntityStyle(entity.xdata, to: text)
+                            annotation = text
+                        case .block:
+                            if let blockName = data.blockName {
+                                let insert = DXFInsertEntity()
+                                insert.layer = layerName
+                                insert.space = isPaperSpace ? 1 : 0
+                                insert.name = blockName
+                                insert.basePoint = toDXF(entity.transform.transformPoint(data.contentPosition))
+                                insert.xScale = style.blockScale * entityScale
+                                insert.yScale = style.blockScale * entityScale
+                                insert.zScale = style.blockScale * entityScale
+                                insert.angle = -atan2(textDirection.y, textDirection.x) + style.blockRotation
+                                applyEntityStyle(entity.xdata, to: insert)
+                                annotation = insert
+                            }
+                        }
+                        leader.annotation = annotation
+                        writer.addEntity(leader, ownerBlockName: ownerBlockName)
+                        if let annotation {
+                            writer.addEntity(annotation, ownerBlockName: ownerBlockName)
+                        }
+                        continue
+                    }
+
+                    let ml = DXFMLeaderEntity()
+                    ml.layer = layerName
+                    ml.space = isPaperSpace ? 1 : 0
+                    ml.contentScale = 1
+                    ml.contentType = data.contentType == .block ? 1 : (data.contentType == .none ? 0 : 2)
+                    ml.pathType = style.pathType == .spline ? 2 : (style.pathType == .none ? 0 : 1)
+                    ml.text = data.sourceText ?? data.text
+                    ml.textPosition = toDXF(entity.transform.transformPoint(data.contentPosition))
+                    let localContentBase: Vector3 = data.contentBasePosition ?? {
+                        guard let branch = data.branches.first,
+                              let last = branch.vertices.last else {
+                            return data.contentPosition
+                        }
+                        var direction = branch.doglegDirection?.normalized ?? Vector3(
+                            x: data.contentPosition.x >= last.x ? 1 : -1,
+                            y: 0,
+                            z: 0)
+                        if direction.magnitudeSquared <= 1e-18 {
+                            direction = Vector3(x: 1, y: 0, z: 0)
+                        }
+                        return Vector3(
+                            x: data.contentPosition.x - direction.x * style.contentGap,
+                            y: data.contentPosition.y - direction.y * style.contentGap,
+                            z: data.contentPosition.z)
+                    }()
+                    ml.contentBasePosition = toDXF(entity.transform.transformPoint(localContentBase))
+                    ml.textDirection = toDXFVector(textDirection.normalized)
+                    ml.textRotation = -atan2(textDirection.y, textDirection.x)
+                    ml.textAttachment = data.textAttachment?.rawValue
+                        ?? style.leftAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.middleOfTop.rawValue
+                    ml.textFlowDirection = data.textFlowDirection ?? 5
+                    ml.textDirectionNegative = data.textDirectionNegative ?? false
+                    ml.textAttachmentPoint = data.textAttachmentPoint ?? 1
+                    ml.leftAttachment = style.leftAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.middleOfTop.rawValue
+                    ml.rightAttachment = style.rightAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.middleOfTop.rawValue
+                    ml.textAngleType = style.textAngleType?.rawValue
+                        ?? CADLeaderTextAngleType.insertAngle.rawValue
+                    ml.textAlignment = style.textAlignment?.rawValue
+                        ?? CADLeaderTextAlignment.left.rawValue
+                    ml.alwaysLeftJustify = style.alwaysLeftJustify ?? false
+                    ml.attachmentDirection = style.textAttachmentDirection?.rawValue
+                        ?? CADLeaderTextAttachmentDirection.horizontal.rawValue
+                    ml.bottomAttachment = style.bottomAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.center.rawValue
+                    ml.topAttachment = style.topAttachment?.rawValue
+                        ?? CADLeaderTextAttachment.center.rawValue
+                    ml.styleName = style.name
+                    ml.textHeight = style.textHeight * entityScale
+                    ml.hasContextTextHeight = true
+                    ml.textWidth = (data.textWidth ?? 0) * entityScale
+                    ml.textStyleName = style.textStyleName
+                    ml.textFrameEnabled = style.textFrameEnabled
+                    ml.maxLeaderPoints = style.maxLeaderPoints
+                    ml.blockScale = style.blockScale * entityScale
+                    ml.blockRotation = style.blockRotation
+                    let arrowhead = style.arrowEnabled
+                        ? (style.arrowhead ?? .closedFilled)
+                        : .none
+                    ml.arrowSize = style.arrowEnabled ? style.arrowSize * entityScale : 0
+                    ml.arrowheadName = Self.dxfLeaderArrowBlockName(
+                        arrowhead: arrowhead,
+                        customName: style.arrowBlockName)
+                    ml.hasContextArrowSize = true
+                    ml.landingGap = style.contentGap * entityScale
+                    ml.hasContextLandingGap = true
+                    ml.doglegLength = style.doglegLength * entityScale
+                    ml.landingEnabled = style.landingEnabled
+                    ml.doglegEnabled = style.doglegEnabled
+                    ml.blockName = data.blockName ?? ""
+                    ml.blockAttributes = data.blockAttributes?.map { attribute in
+                        DXFMLeaderBlockAttribute(
+                            definitionHandle: attribute.definitionHandle ?? 0,
+                            tag: attribute.tag,
+                            index: attribute.index,
+                            width: attribute.width,
+                            text: attribute.text)
+                    } ?? []
+                    ml.branches = data.branches.enumerated().map { index, branch in
+                        let branchArrowhead = branch.arrowhead
+                        let branchArrowName = branchArrowhead.map {
+                            Self.dxfLeaderArrowBlockName(
+                                arrowhead: $0,
+                                customName: branch.arrowBlockName)
+                        } ?? ""
+                        return DXFMLeaderBranch(
+                            vertices: branch.vertices.map {
+                                toDXF(entity.transform.transformPoint($0))
+                            },
+                            doglegDirection: branch.doglegDirection.map {
+                                toDXFVector(transformedVector($0, by: entity.transform).normalized)
+                            },
+                            doglegLength: (branch.doglegLength ?? style.doglegLength) * entityScale,
+                            leaderLineIndex: branch.leaderLineIndex ?? index,
+                            arrowheadName: branchArrowName)
+                    }
+                    applyEntityStyle(entity.xdata, to: ml)
+                    writer.addEntity(ml, ownerBlockName: ownerBlockName)
+                    continue
+                }
+
                 if let blockID = entity.blockID,
                    let blockName = blockNameByID[blockID] {
-                    let insert = DXFInsertEntity()
-                    insert.name = blockName
-                    insert.layer = layerName
-                    insert.space = isPaperSpace ? 1 : 0
-                    let origin = entity.transform.transformPoint(.zero)
-                    let xAxis = transformedVector(Vector3(x: 1, y: 0, z: 0), by: entity.transform)
-                    let yAxis = transformedVector(Vector3(x: 0, y: 1, z: 0), by: entity.transform)
-                    let zAxis = transformedVector(Vector3(x: 0, y: 0, z: 1), by: entity.transform)
-                    insert.basePoint = toDXF(origin)
-                    insert.xScale = max(xAxis.magnitude, 1e-12)
-                    insert.yScale = max(yAxis.magnitude, 1e-12)
-                    insert.zScale = max(zAxis.magnitude, 1e-12)
-                    insert.angle = -atan2(xAxis.y, xAxis.x)
-                    applyEntityStyle(entity.xdata, to: insert)
-                    writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                    if let array = entity.arrayData {
+                        let groupID = UUID()
+                        let payload = CADArrayDXFPayload(
+                            groupID: groupID,
+                            containerTransform: entity.transform,
+                            data: array)
+                        let payloadChunks = CADArrayDXFCodec.encode(payload)
+
+                        if canExportAsMInsert(array: array, transform: entity.transform) {
+                            let insert = makeInsert(
+                                blockName: blockName,
+                                layerName: layerName,
+                                paperSpace: isPaperSpace,
+                                transform: entity.transform)
+                            insert.colCount = max(1, array.columns)
+                            insert.rowCount = max(1, array.rows)
+                            insert.colSpace = array.columnSpacing * insert.xScale
+                            insert.rowSpace = -array.rowSpacing * insert.yScale
+                            applyEntityStyle(entity.xdata, to: insert)
+                            appendArrayXData(
+                                to: insert,
+                                groupID: groupID,
+                                role: "M",
+                                payloadChunks: payloadChunks)
+                            writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                        } else {
+                            let instances = array.evaluatedInstances(pathPoints: array.cachedPath)
+                            if instances.isEmpty {
+                                let insert = makeInsert(
+                                    blockName: blockName,
+                                    layerName: layerName,
+                                    paperSpace: isPaperSpace,
+                                    transform: entity.transform)
+                                insert.visible = false
+                                applyEntityStyle(entity.xdata, to: insert)
+                                appendArrayXData(
+                                    to: insert,
+                                    groupID: groupID,
+                                    role: "M",
+                                    payloadChunks: payloadChunks)
+                                writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                            } else {
+                                for (instanceIndex, instance) in instances.enumerated() {
+                                    let transform = entity.transform.multiplying(by: instance.transform)
+                                    let insert = makeInsert(
+                                        blockName: blockName,
+                                        layerName: layerName,
+                                        paperSpace: isPaperSpace,
+                                        transform: transform)
+                                    applyEntityStyle(entity.xdata, to: insert)
+                                    appendArrayXData(
+                                        to: insert,
+                                        groupID: groupID,
+                                        role: instanceIndex == 0 ? "M" : "I",
+                                        payloadChunks: instanceIndex == 0 ? payloadChunks : [])
+                                    writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                                }
+                            }
+                        }
+                    } else {
+                        let insert = makeInsert(
+                            blockName: blockName,
+                            layerName: layerName,
+                            paperSpace: isPaperSpace,
+                            transform: entity.transform)
+                        applyEntityStyle(entity.xdata, to: insert)
+                        writer.addEntity(insert, ownerBlockName: ownerBlockName)
+                    }
                     continue
                 }
 
@@ -541,6 +885,8 @@ public enum DXFWriterBridge {
             layerID: entity.layerID,
             blockID: entity.blockID,
             geometry: entity.localGeometry,
+            arrayData: entity.arrayData,
+            leaderData: entity.leaderData,
             xdata: metadata)
     }
 
@@ -1965,6 +2311,62 @@ public enum DXFWriterBridge {
             r: UInt8((rgb >> 16) & 0xFF),
             g: UInt8((rgb >> 8) & 0xFF),
             b: UInt8(rgb & 0xFF))
+    }
+
+    private static func canExportAsMInsert(
+        array: CADArrayData,
+        transform: Transform3D
+    ) -> Bool {
+        guard array.kind == .rectangular,
+              array.levels == 1,
+              abs(array.axisAngle) <= 1e-10,
+              abs(array.columnElevationIncrement) <= 1e-10,
+              abs(array.rowElevationIncrement) <= 1e-10,
+              array.hiddenItems.isEmpty
+        else { return false }
+
+        let origin = transform.transformPoint(.zero)
+        let x = transform.transformPoint(Vector3(x: 1, y: 0, z: 0)) - origin
+        let y = transform.transformPoint(Vector3(x: 0, y: 1, z: 0)) - origin
+        let determinant = x.x * y.y - x.y * y.x
+        let orthogonality = abs(x.x * y.x + x.y * y.y)
+        return determinant > 1e-12
+            && orthogonality <= 1e-9 * max(1.0, x.magnitude * y.magnitude)
+    }
+
+    private static func appendArrayXData(
+        to entity: DXFEntity,
+        groupID: UUID,
+        role: String,
+        payloadChunks: [String]
+    ) {
+        entity.extendedData.append((1001, CADArrayDXFCodec.appID))
+        entity.extendedData.append((1000, CADArrayDXFCodec.marker))
+        entity.extendedData.append((1000, "G:\(groupID.uuidString)"))
+        entity.extendedData.append((1000, "R:\(role)"))
+        for chunk in payloadChunks { entity.extendedData.append((1000, chunk)) }
+    }
+
+    private static func makeInsert(
+        blockName: String,
+        layerName: String,
+        paperSpace: Bool,
+        transform: Transform3D
+    ) -> DXFInsertEntity {
+        let insert = DXFInsertEntity()
+        insert.name = blockName
+        insert.layer = layerName
+        insert.space = paperSpace ? 1 : 0
+        let origin = transform.transformPoint(.zero)
+        let xAxis = transformedVector(Vector3(x: 1, y: 0, z: 0), by: transform)
+        let yAxis = transformedVector(Vector3(x: 0, y: 1, z: 0), by: transform)
+        let zAxis = transformedVector(Vector3(x: 0, y: 0, z: 1), by: transform)
+        insert.basePoint = toDXF(origin)
+        insert.xScale = max(xAxis.magnitude, 1e-12)
+        insert.yScale = max(yAxis.magnitude, 1e-12)
+        insert.zScale = max(zAxis.magnitude, 1e-12)
+        insert.angle = -atan2(xAxis.y, xAxis.x)
+        return insert
     }
 
     private static func transformedVector(_ vector: Vector3, by transform: Transform3D) -> Vector3 {

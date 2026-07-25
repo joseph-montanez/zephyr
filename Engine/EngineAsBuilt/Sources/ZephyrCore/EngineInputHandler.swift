@@ -202,16 +202,45 @@ internal final class EngineInputHandler {
             return
         }
 
-        // Escape-to-close the command line / layer-move popup works even
-        // when ImGui has keyboard capture.
-        if e.key.scancode == SDL_SCANCODE_ESCAPE {
+        let scancode = e.key.scancode
+        var routedEnterToFeatureCommand = false
+
+        if scancode == SDL_SCANCODE_ESCAPE {
             if engine.ui.layerMoveActive {
                 engine.ui.layerMoveActive = false
                 engine.ui.layerMoveBuffer = ""
                 engine.ui.layerMoveMatches = []
-            } else if engine.commandProcessor.commandLineActive {
+                return
+            }
+            if engine.commandProcessor.activeFeatureCommand != nil {
                 engine.commandProcessor.commandLineActive = false
                 engine.commandProcessor.commandBuffer = ""
+                engine.commandProcessor.finishFeatureCommand(engine: engine)
+                return
+            }
+            if engine.commandProcessor.commandLineActive {
+                engine.commandProcessor.commandLineActive = false
+                engine.commandProcessor.commandBuffer = ""
+                return
+            }
+        }
+
+        if (scancode == SDL_SCANCODE_RETURN || scancode == SDL_SCANCODE_KP_ENTER),
+           !engine.commandProcessor.commandLineActive,
+           let featureCmd = engine.commandProcessor.activeFeatureCommand {
+            routedEnterToFeatureCommand = true
+            let result = featureCmd.handleKeyDown(
+                scancode: scancode,
+                engine: engine,
+                processor: engine.commandProcessor)
+            switch result {
+            case .finished:
+                engine.commandProcessor.finishFeatureCommand(engine: engine)
+                return
+            case .handled:
+                return
+            case .continue:
+                break
             }
         }
 
@@ -239,7 +268,25 @@ internal final class EngineInputHandler {
                 case SDL_SCANCODE_A:
                     engine.selectAll()
                 case SDL_SCANCODE_O:
-                    engine.fileBrowser.open(filterExtension: "dxf;eab")
+                    NativeFileDialog.showOpenDialog(
+                        window: engine.window,
+                        filters: [
+                            NativeFileDialog.Filter(label: "Drawings", extensions: ["dxf", "dwg", "eab"])
+                        ],
+                        allowMultiple: true
+                    ) { [weak engine] urls in
+                        guard let engine else { return }
+                        for url in urls {
+                            do {
+                                try engine.tabManager.openTab(url: url)
+                            } catch {
+                                print("Failed to open \(url.lastPathComponent): \(error)")
+                            }
+                        }
+                        if !urls.isEmpty {
+                            engine.zoomExtents()
+                        }
+                    }
                 case SDL_SCANCODE_N:
                     engine.tabManager.newTab()
                     engine.zoomExtents()
@@ -251,19 +298,13 @@ internal final class EngineInputHandler {
                     }
                 case SDL_SCANCODE_S:
                     if engine.io.pointee.KeyShift {
-                        engine.saveFileBrowser.openSave(
-                            filterExtension: "dxf;eab;pdf",
-                            defaultName: engine.tabManager.activeTab?.displayName ?? "untitled",
-                            defaultDXFVersion: engine.tabManager.activeTab?.dxfVersion ?? .defaultExport)
+                        showNativeSaveDialog()
                     } else {
                         engine.tabManager.startSaveActiveTab()
                         // If the tab has no file URL, startSaveActiveTab does nothing —
-                        // fall back to opening the Save As browser.
+                        // fall back to opening the native save dialog.
                         if engine.tabManager.activeFileURL == nil {
-                            engine.saveFileBrowser.openSave(
-                                filterExtension: "dxf;eab;pdf",
-                                defaultName: engine.tabManager.activeTab?.displayName ?? "untitled",
-                                defaultDXFVersion: engine.tabManager.activeTab?.dxfVersion ?? .defaultExport)
+                            showNativeSaveDialog()
                         }
                     }
                 case SDL_SCANCODE_C:
@@ -291,9 +332,10 @@ internal final class EngineInputHandler {
                 // ── Bare key handling (no Ctrl/Cmd held) ──
                 // When a feature command is active, route ALL keys to it first.
                 // If it returns .handled or .finished, stop — don't run global behavior.
-                if let featureCmd = engine.commandProcessor.activeFeatureCommand {
+                if !routedEnterToFeatureCommand,
+                   let featureCmd = engine.commandProcessor.activeFeatureCommand {
                     let result = featureCmd.handleKeyDown(
-                        scancode: e.key.scancode, engine: engine,
+                        scancode: scancode, engine: engine,
                         processor: engine.commandProcessor)
                     switch result {
                     case .finished:
@@ -512,6 +554,25 @@ internal final class EngineInputHandler {
         }
     }
 
+    /// Show the native file-save dialog and, on confirmation, save the active tab.
+    private func showNativeSaveDialog() {
+        let defaultName = engine.tabManager.activeTab?.displayName ?? "untitled"
+        let dxfVersion = engine.tabManager.activeTab?.dxfVersion ?? .r2018
+        NativeFileDialog.showSaveDialog(
+            window: engine.window,
+            filters: [
+                NativeFileDialog.Filter(label: "DXF Drawing", extensions: ["dxf"]),
+                NativeFileDialog.Filter(label: "Zephyr Drawing", extensions: ["eab"]),
+                NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"]),
+                NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
+            ],
+            defaultName: defaultName
+        ) { [weak engine] url in
+            guard let engine, let url else { return }
+            engine.tabManager.startSaveActiveTabAs(url: url, dxfVersion: dxfVersion)
+        }
+    }
+
     // MARK: - Mouse Motion
 
     private func handleMouseMotion(x: Float, y: Float, xrel: Float, yrel: Float) {
@@ -549,6 +610,20 @@ internal final class EngineInputHandler {
         guard let filePath = e.drop.data else { return }
         let pathStr = String(cString: filePath)
         let ext = URL(fileURLWithPath: pathStr).pathExtension.lowercased()
+
+        // ── CAD files: open in new tab ──
+        let cadExtensions = Set(["dxf", "dwg", "eab"])
+        if cadExtensions.contains(ext) {
+            do {
+                try engine.tabManager.openTab(url: URL(fileURLWithPath: pathStr))
+                engine.zoomExtents()
+                print("[Drop] Opened CAD file: \(pathStr)")
+            } catch {
+                print("[Drop] Failed to open CAD file \(pathStr): \(error)")
+            }
+            return
+        }
+
         guard CADImageAsset.supportedExtensions.contains(ext) else { return }
 
         // Validate file size
