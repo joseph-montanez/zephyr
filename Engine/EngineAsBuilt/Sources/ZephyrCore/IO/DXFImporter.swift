@@ -96,6 +96,87 @@ public enum DXFImporter {
         }
     }
 
+    private struct LegacyLeaderDStyleOverrides {
+        var arrowSize: Double?
+        var textOffset: Double?
+    }
+
+    private static func legacyLeaderDStyleOverrides(
+        _ leader: DXFLeaderEntity
+    ) -> LegacyLeaderDStyleOverrides {
+        var result = LegacyLeaderDStyleOverrides()
+        var isAcadData = false
+        var isDStyleData = false
+        var braceDepth = 0
+        var pendingVariable: Int?
+
+        for entry in leader.extendedData {
+            switch entry.code {
+            case 1001:
+                let name = (entry.value as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased()
+                isAcadData = name == "ACAD"
+                isDStyleData = false
+                braceDepth = 0
+                pendingVariable = nil
+
+            case 1000 where isAcadData:
+                let name = (entry.value as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased()
+                isDStyleData = name == "DSTYLE"
+                braceDepth = 0
+                pendingVariable = nil
+
+            case 1002 where isDStyleData:
+                guard let token = entry.value as? String else { continue }
+                if token == "{" {
+                    braceDepth += 1
+                } else if token == "}" {
+                    braceDepth = max(0, braceDepth - 1)
+                    pendingVariable = nil
+                }
+
+            case 1070 where isDStyleData && braceDepth > 0:
+                if let value = entry.value as? Int {
+                    pendingVariable = value
+                } else if let value = entry.value as? Int32 {
+                    pendingVariable = Int(value)
+                }
+
+            case 1040, 1041, 1042 where isDStyleData && braceDepth > 0:
+                guard let variable = pendingVariable else { continue }
+                let value: Double?
+                if let number = entry.value as? Double {
+                    value = number
+                } else if let number = entry.value as? Int {
+                    value = Double(number)
+                } else if let number = entry.value as? Int32 {
+                    value = Double(number)
+                } else {
+                    value = nil
+                }
+                if let value {
+                    switch variable {
+                    case 41:
+                        result.arrowSize = value
+                    case 147:
+                        result.textOffset = value
+                    default:
+                        break
+                    }
+                }
+                pendingVariable = nil
+
+            default:
+                break
+            }
+        }
+
+        return result
+    }
+
     private static func leaderTextAttachment(_ rawValue: Int) -> CADLeaderTextAttachment? {
         CADLeaderTextAttachment(rawValue: rawValue)
     }
@@ -318,6 +399,12 @@ public enum DXFImporter {
         }
 
         let globalLineTypeScale = reader.header.ltScale > 0 ? reader.header.ltScale : 1.0
+        let pointDisplayMode: Int = {
+            if let value = reader.header.headerVars["$PDMODE"] as? Int { return value }
+            if let value = reader.header.headerVars["$PDMODE"] as? Int32 { return Int(value) }
+            return 0
+        }()
+        let renderPointEntities = pointDisplayMode != 1
         var layers: [Layer] = []
         var layerNameToID: [String: UUID] = [:]
 
@@ -465,6 +552,7 @@ public enum DXFImporter {
 
             for entity in block.entities {
                 guard Self.shouldRenderAttributeEntity(entity) else { continue }
+                if entity.eType == .pOINT && !renderPointEntities { continue }
 
                 if let insert = entity as? DXFInsertEntity, blockByName[insert.name] != nil {
                     let child = convertBlockGeometry(named: insert.name, visited: nextVisited)
@@ -634,6 +722,7 @@ public enum DXFImporter {
 
             for (drawOrder, entity) in orderedEntities.enumerated() {
                 guard Self.shouldRenderAttributeEntity(entity) else { continue }
+                if entity.eType == .pOINT && !renderPointEntities { continue }
                 if attachedLeaderAnnotations.contains(entity.handle) { continue }
 
                 if let leader = entity as? DXFLeaderEntity, leader.vertices.count >= 2 {
@@ -650,6 +739,13 @@ public enum DXFImporter {
                             $0.key.caseInsensitiveCompare(styleName) == .orderedSame
                         }?.value
                         ?? .default
+                    let dstyleOverrides = Self.legacyLeaderDStyleOverrides(leader)
+                    let effectiveArrowSize = max(
+                        dstyleOverrides.arrowSize ?? dimensionStyle.arrowSize,
+                        0)
+                    let effectiveTextOffset = max(
+                        dstyleOverrides.textOffset ?? dimensionStyle.textOffset,
+                        0)
                     let arrowBlockName = sourceDimensionStyle.flatMap { source -> String? in
                         if source.dimldrblkHandle != 0,
                            let name = blockNameByHandle[source.dimldrblkHandle] {
@@ -712,20 +808,20 @@ public enum DXFImporter {
                     }()
                     let legacyHookLength = legacyHookDirection == nil
                         ? 0
-                        : max(leader.textWidth + dimensionStyle.textOffset, 0)
+                        : max(leader.textWidth + effectiveTextOffset, 0)
                     let style = CADLeaderStyle(
                         name: styleName,
                         pathType: leader.leaderType == 1 ? .spline : .straight,
                         arrowEnabled: leader.arrow != 0
-                            && dimensionStyle.arrowSize > 1e-9
+                            && effectiveArrowSize > 1e-9
                             && arrowhead != .none,
-                        arrowSize: dimensionStyle.arrowSize,
+                        arrowSize: effectiveArrowSize,
                         arrowhead: arrowhead,
                         arrowBlockName: arrowhead == .custom ? arrowBlockName : nil,
                         landingEnabled: legacyHookLength > 1e-9,
                         doglegEnabled: legacyHookLength > 1e-9,
                         doglegLength: legacyHookLength,
-                        contentGap: dimensionStyle.textOffset,
+                        contentGap: effectiveTextOffset,
                         textHeight: textEntity.flatMap { $0.height > 1e-9 ? $0.height : nil }
                             ?? max(dimensionStyle.textHeight, 0.0001),
                         textStyleName: textEntity?.style
