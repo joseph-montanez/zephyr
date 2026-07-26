@@ -971,21 +971,50 @@ public enum DXFImporter {
                             guard let definition = blockAttributeDefinitionByHandle[override.definitionHandle] else {
                                 return nil
                             }
-                            let useSecondPoint = definition.alignH != 0 || definition.alignV != 0
-                            let sourcePosition = useSecondPoint ? definition.secPoint : definition.basePoint
+                            let definitionPrimitive: CADPrimitive? = {
+                                if let block = resolvedContentBlock {
+                                    for (index, primitive) in block.geometry.enumerated() {
+                                        let xdata = block.primitiveXData[index] ?? [:]
+                                        guard case .string(let type) = xdata["dxf.attributeType"],
+                                              type.caseInsensitiveCompare("ATTDEF") == .orderedSame,
+                                              case .string(let tag) = xdata["dxf.attributeTag"],
+                                              tag.caseInsensitiveCompare(definition.attributeTag) == .orderedSame else {
+                                            continue
+                                        }
+                                        return primitive
+                                    }
+                                }
+                                return DXFEntityConverter
+                                    .convertEntityToPrimitives(
+                                        definition,
+                                        bylayerColor: nil,
+                                        showAttributeDefinitionTagWhenEmpty: true)
+                                    .first
+                            }()
+                            guard let definitionPrimitive,
+                                  case .text(
+                                    let position,
+                                    _,
+                                    let height,
+                                    let rotation,
+                                    let styleName,
+                                    let alignH,
+                                    let alignV,
+                                    _,
+                                    _
+                                  ) = definitionPrimitive else {
+                                return nil
+                            }
                             return CADLeaderBlockAttribute(
                                 definitionHandle: override.definitionHandle,
                                 tag: definition.attributeTag,
                                 text: override.text,
-                                position: Vector3(
-                                    x: sourcePosition.x,
-                                    y: -sourcePosition.y,
-                                    z: sourcePosition.z),
-                                height: definition.height > 0 ? definition.height : effectiveStyle.textHeight,
-                                rotation: -definition.angle_p * .pi / 180,
-                                styleName: definition.style,
-                                alignH: definition.alignH,
-                                alignV: definition.alignV,
+                                position: position,
+                                height: height > 0 ? height : effectiveStyle.textHeight,
+                                rotation: rotation,
+                                styleName: styleName ?? definition.style,
+                                alignH: alignH,
+                                alignV: alignV,
                                 index: override.index,
                                 width: override.width)
                         }
@@ -993,8 +1022,13 @@ public enum DXFImporter {
                     }()
                     let blockContentPrimitives: [CADLeaderBlockPrimitive]? = {
                         guard let block = resolvedContentBlock else { return nil }
-                        let snapshot = block.geometry.compactMap {
-                            CADLeaderBlockPrimitive(primitive: $0)
+                        let snapshot = block.geometry.enumerated().compactMap {
+                            index, primitive -> CADLeaderBlockPrimitive? in
+                            let xdata = block.primitiveXData[index] ?? [:]
+                            guard !Self.isNonconstantAttributeDefinition(xdata) else {
+                                return nil
+                            }
+                            return CADLeaderBlockPrimitive(primitive: primitive)
                         }
                         return snapshot.isEmpty ? nil : snapshot
                     }()
@@ -1571,6 +1605,22 @@ public enum DXFImporter {
             xdata[key] = value
         }
         return xdata
+    }
+
+    private static func isNonconstantAttributeDefinition(
+        _ xdata: [String: XDataValue]
+    ) -> Bool {
+        guard case .string(let type) = xdata["dxf.attributeType"],
+              type.caseInsensitiveCompare("ATTDEF") == .orderedSame else {
+            return false
+        }
+        let flags: Int
+        if case .int(let value) = xdata["dxf.attributeFlags"] {
+            flags = value
+        } else {
+            flags = 0
+        }
+        return (flags & 2) == 0
     }
 
     private static func shouldRenderAttributeEntity(
@@ -2217,7 +2267,10 @@ public enum DXFImporter {
         by transform: Transform3D,
         nestedInsertStyle: CADPrimitiveStyle
     ) -> [StyledPrimitive] {
-        values.map { item in
+        let scale = transform.scale
+        let planarWidthScale = max((abs(scale.x) + abs(scale.y)) * 0.5, 1e-12)
+
+        return values.map { item in
             var style = item.style
             if style?.isColorByBlock == true {
                 style?.color = nestedInsertStyle.color
@@ -2252,10 +2305,19 @@ public enum DXFImporter {
                 let currentOpacity = style?.opacity ?? 1.0
                 style?.opacity = currentOpacity * nestedOpacity
             }
+            if let geomWidth = style?.geomWidth, geomWidth > 0 {
+                style?.geomWidth = geomWidth * planarWidthScale
+            }
+
+            var xdata = transformedPrimitiveXData(item.xdata, by: transform)
+            if case .double(let width)? = xdata["dxf.polylineWidth"], width > 0 {
+                xdata["dxf.polylineWidth"] = .double(width * planarWidthScale)
+            }
+
             return StyledPrimitive(
                 primitive: transformPrimitive(item.primitive, by: transform),
                 style: style,
-                xdata: transformedPrimitiveXData(item.xdata, by: transform))
+                xdata: xdata)
         }
     }
 

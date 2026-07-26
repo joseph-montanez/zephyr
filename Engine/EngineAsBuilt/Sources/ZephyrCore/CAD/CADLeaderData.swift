@@ -879,10 +879,12 @@ public enum CADLeaderGeometry {
             for name in names {
                 let isPrimaryBlock = name.caseInsensitiveCompare(data.blockName ?? "") == .orderedSame
                 let resolvedBlock = blockResolver(name)
-                var blockGeometry = resolvedBlock?.geometry ?? []
-                if blockGeometry.isEmpty, isPrimaryBlock, let snapshot = data.blockContentPrimitives {
-                    blockGeometry = snapshot.map(\.primitive)
-                }
+                let snapshotGeometry = isPrimaryBlock
+                    ? data.blockContentPrimitives?.map(\.primitive)
+                    : nil
+                let blockGeometry = snapshotGeometry?.isEmpty == false
+                    ? snapshotGeometry!
+                    : (resolvedBlock?.geometry ?? [])
                 guard !blockGeometry.isEmpty else { continue }
 
                 let scale = style.blockScale
@@ -910,8 +912,10 @@ public enum CADLeaderGeometry {
                         attributePrimitives,
                         by: transform))
                 }
-                let bounds = resolvedBlock?.localBoundingBox
-                    ?? CADEntity.computeLocalBoundingBox(blockID: nil, localGeometry: blockGeometry)
+                let bounds = CADEntity.computeLocalBoundingBox(
+                    blockID: nil,
+                    localGeometry: blockGeometry)
+                    ?? resolvedBlock?.localBoundingBox
                     ?? BoundingBox3D()
                 let width = max(bounds.max.x - bounds.min.x, style.textHeight)
                 offset += width * scale + style.contentGap
