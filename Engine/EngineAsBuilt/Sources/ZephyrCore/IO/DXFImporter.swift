@@ -464,7 +464,7 @@ public enum DXFImporter {
             var geometry: [StyledPrimitive] = []
 
             for entity in block.entities {
-                guard Self.shouldRenderAttributeEntity(entity, insideBlockDefinition: true) else { continue }
+                guard Self.shouldRenderAttributeEntity(entity) else { continue }
 
                 if let insert = entity as? DXFInsertEntity, blockByName[insert.name] != nil {
                     let child = convertBlockGeometry(named: insert.name, visited: nextVisited)
@@ -511,7 +511,10 @@ public enum DXFImporter {
                 let xdata = Self.entityStyleXData(
                     from: entity,
                     globalLineTypeScale: globalLineTypeScale)
-                let primitives = DXFEntityConverter.convertEntityToPrimitives(entity, bylayerColor: nil)
+                let primitives = DXFEntityConverter.convertEntityToPrimitives(
+                    entity,
+                    bylayerColor: nil,
+                    showAttributeDefinitionTagWhenEmpty: entity.eType == .aTTDEF)
                 geometry.append(contentsOf: primitives.map {
                     StyledPrimitive(primitive: $0, style: style, xdata: xdata)
                 })
@@ -1475,14 +1478,12 @@ public enum DXFImporter {
     }
 
     private static func shouldRenderAttributeEntity(
-        _ entity: DXFEntity,
-        insideBlockDefinition: Bool = false
+        _ entity: DXFEntity
     ) -> Bool {
         guard entity.visible else { return false }
         guard let text = entity as? DXFTextEntity else { return true }
 
         let invisibleFlag = 1
-        let constantFlag = 2
         switch text.eType {
         case .aTTRIB:
             return text.visible
@@ -1490,10 +1491,6 @@ public enum DXFImporter {
                 && !text.text.isEmpty
         case .aTTDEF:
             guard text.visible, (text.attributeFlags & invisibleFlag) == 0 else {
-                return false
-            }
-            if insideBlockDefinition,
-               (text.attributeFlags & constantFlag) == 0 {
                 return false
             }
             return !text.text.isEmpty || !text.attributeTag.isEmpty

@@ -204,6 +204,22 @@ public final class CADRendererBridge {
         }
     }
 
+    private nonisolated static func isNonconstantAttributeDefinition(
+        _ xdata: [String: XDataValue]
+    ) -> Bool {
+        guard case .string(let type) = xdata["dxf.attributeType"],
+              type.caseInsensitiveCompare("ATTDEF") == .orderedSame else {
+            return false
+        }
+        let flags: Int
+        if case .int(let value) = xdata["dxf.attributeFlags"] {
+            flags = value
+        } else {
+            flags = 0
+        }
+        return (flags & 2) == 0
+    }
+
     private nonisolated static func resolvedPrimitiveStyle(
         primitive: CADPrimitive,
         style: CADPrimitiveStyle?,
@@ -689,6 +705,9 @@ public final class CADRendererBridge {
                                 let primitive = item.primitive
                                 let primitiveStyle = v.primitiveStyles[item.index]
                                 let primitiveXData = v.primitiveXData[item.index] ?? [:]
+                                if Self.isNonconstantAttributeDefinition(primitiveXData) {
+                                    continue
+                                }
                                 let drawStyle = Self.resolvedPrimitiveStyle(
                                     primitive: primitive,
                                     style: primitiveStyle,
