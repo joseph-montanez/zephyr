@@ -893,15 +893,19 @@ public enum DXFEntityConverter {
                             y: -majorLength * sin(rotation), z: 0)
         let axisV = Vector3(x: -minorLength * sin(rotation),
                             y: -minorLength * cos(rotation), z: 0)
+
+        let dxfIsCCW = ellipse.isCCW != 0
+        let startParam = dxfIsCCW ? normalized.start : -normalized.start
+        let endParam = dxfIsCCW ? normalized.end : -normalized.end
         let sweep = normalizedHatchArcSweep(
-            start: normalized.start,
-            end: normalized.end,
-            isCCW: ellipse.isCCW == 0)
+            start: startParam,
+            end: endParam,
+            isCCW: dxfIsCCW)
         guard abs(sweep) > 1e-12 else { return nil }
 
         let edge = CADHatchEdge.ellipticalArc(
             center: center, axisU: axisU, axisV: axisV,
-            startParam: normalized.start, sweep: sweep)
+            startParam: startParam, sweep: sweep)
         let points = edge.tessellatedPoints(segmentsPerRadian: 4.0)
         guard let first = points.first, let last = points.last else { return nil }
         if normalized.isFull {
