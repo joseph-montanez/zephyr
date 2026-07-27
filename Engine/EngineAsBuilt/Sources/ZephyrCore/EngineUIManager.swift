@@ -39,7 +39,7 @@ public final class EngineUIManager {
     public var leaderStyleManagerActive: Bool = false
 
     /// Whether the Layers panel is visible (toggled via "LA"/"LAYER" command). Default true.
-    public var layersPanelVisible: Bool = true
+    public var layersPanelVisible: Bool = false
     public var fpsCacheFrame: Int = 15
 
     /// When true, the block editor close-confirmation popup is shown.

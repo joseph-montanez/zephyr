@@ -41,13 +41,13 @@ struct ZephyrApp {
         // Create the rendering engine with the CAD window configuration.
         // Flags: resizable window with high-pixel-density (Retina/HiDPI) support.
         #if os(Windows)
-            let flags: SDLWindowFlags = [.resizable, .highPixelDensity, .borderless]
+            let flags: SDLWindowFlags = [.resizable, .highPixelDensity, .borderless, .maximized]
         #elseif os(macOS)
             // Keep a native titled window so macOS supplies its rounded frame,
             // then make its titlebar transparent and full-size in PhrostEngine.
-            let flags: SDLWindowFlags = [.resizable, .highPixelDensity]
+            let flags: SDLWindowFlags = [.resizable, .highPixelDensity, .maximized]
         #else
-            let flags: SDLWindowFlags = [.resizable, .highPixelDensity]
+            let flags: SDLWindowFlags = [.resizable, .highPixelDensity, .maximized]
         #endif
 
         guard let engine = PhrostEngine(

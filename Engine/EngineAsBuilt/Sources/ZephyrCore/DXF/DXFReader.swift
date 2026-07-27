@@ -963,6 +963,8 @@ extension DXFReader {
         var splineNControl: Int = 0
         var splineFitCountSeen = false
         var sourceHandlesRemaining = 0
+        var seedPointsRemaining = 0
+        var currentSeedPointIndex: Int?
         var currentPatternLine: DXFHatchPatternLineData?
 
         func flushPatternLine() {
@@ -989,6 +991,8 @@ extension DXFReader {
                 currentPatternLine?.offset.x = d(v)
             case 46:
                 currentPatternLine?.offset.y = d(v)
+            case 47:
+                e.pixelSize = d(v)
             case 49:
                 currentPatternLine?.dashes.append(d(v))
             case 79:
@@ -1053,7 +1057,10 @@ extension DXFReader {
                     lp.numEdges = nc
                 }
             case 10:
-                if e.spline != nil {
+                if seedPointsRemaining > 0 {
+                    e.seedPoints.append(Vector3(x: d(v), y: 0, z: 0))
+                    currentSeedPointIndex = e.seedPoints.count - 1
+                } else if e.spline != nil {
                     e.spline?.controlPoints.append(Vector3(x: d(v), y: 0, z: 0))
                 } else if e.pt != nil {
                     e.pt?.basePoint.x = d(v)
@@ -1066,7 +1073,12 @@ extension DXFReader {
                     e.basePoint.x = d(v)
                 }
             case 20:
-                if e.spline != nil, !(e.spline?.controlPoints ?? []).isEmpty {
+                if let index = currentSeedPointIndex,
+                   index >= 0, index < e.seedPoints.count {
+                    e.seedPoints[index].y = d(v)
+                    currentSeedPointIndex = nil
+                    seedPointsRemaining = max(0, seedPointsRemaining - 1)
+                } else if e.spline != nil, !(e.spline?.controlPoints ?? []).isEmpty {
                     e.spline?.controlPoints[e.spline!.controlPoints.count - 1].y = d(v)
                 } else if e.pt != nil {
                     e.pt?.basePoint.y = d(v)
@@ -1174,7 +1186,12 @@ extension DXFReader {
                     e.gradientColors.append(last)
                 }
             case 470: e.gradientName = decode(v)
-            case 98: e.clearEntities()
+            case 98:
+                seedPointsRemaining = min(100_000, max(0, i(v)))
+                currentSeedPointIndex = nil
+                e.seedPoints.removeAll(keepingCapacity: true)
+                e.seedPoints.reserveCapacity(seedPointsRemaining)
+                e.clearEntities()
             default: break
             }
         }

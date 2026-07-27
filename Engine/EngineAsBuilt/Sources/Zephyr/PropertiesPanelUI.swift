@@ -71,7 +71,7 @@ struct PropertiesPanelUI {
         _wasVisible = true
 
         let isDocked = _isDocked
-        var flags = Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)
+        var flags = Int32(0)
         if isDocked {
             flags |= Int32(ImGuiWindowFlags_NoTitleBar.rawValue)
         }

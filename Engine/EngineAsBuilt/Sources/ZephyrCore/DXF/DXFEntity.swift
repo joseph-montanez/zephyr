@@ -781,6 +781,8 @@ public class DXFHatchEntity: DXFPointEntity {
     public var angle_p: Double         // 52 (degrees)
     public var scale: Double           // 41
     public var defLines: Int           // 78
+    public var pixelSize: Double       // 47: hatch pixel size
+    public var seedPoints: [Vector3] = [] // 98 followed by 10/20 pairs
 
     // Gradient (codes 450-470)
     public var isGradient: Int         // 450
@@ -851,6 +853,7 @@ public class DXFHatchEntity: DXFPointEntity {
         self.angle_p = 0
         self.scale = 1
         self.defLines = 0
+        self.pixelSize = 0
         self.isGradient = 0
         self.gradientName = ""
         self.gradientAngle = 0

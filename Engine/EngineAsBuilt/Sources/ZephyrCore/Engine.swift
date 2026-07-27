@@ -226,6 +226,10 @@ public final class PhrostEngine {
     internal var uiGlyphRangesStorage: UnsafeMutablePointer<ImWchar>?
     internal var uiGlyphRangesStorageCount: Int = 0
 
+    /// C string copy of the ImGui ini file path — must stay alive for the
+    /// lifetime of the ImGui context because ImGui stores the raw pointer.
+    private var _imguiIniPath: UnsafeMutablePointer<CChar>? = nil
+
     // MARK: State
     internal var running = true
     /// Called before an OS or custom-titlebar close request is accepted.
@@ -578,6 +582,20 @@ public final class PhrostEngine {
         self.ctx = ImGuiCreateContext(nil)
         self.io = ImGuiGetIO()!
         self.io.pointee.ConfigFlags |= Int32(ImGuiConfigFlags_DockingEnable.rawValue)
+
+        // Point ImGui's ini file to the app support directory so docking layout
+        // persists between launches.
+        if let iniURL = UserSettings.imguiIniURL() {
+            let iniPath = iniURL.path
+            self._imguiIniPath = _strdup(iniPath)
+            if let iniCStr = self._imguiIniPath {
+                self.io.pointee.IniFilename = UnsafePointer(iniCStr)
+            }
+            if FileManager.default.fileExists(atPath: iniPath) {
+                ImGuiLoadIniSettingsFromDisk(iniPath)
+            }
+        }
+
         self.commandProcessor.configure(engine: self)
 
         // Register draw-order commands
@@ -674,6 +692,18 @@ public final class PhrostEngine {
 
         updateScale(dpiScale: dpiScale, fbScale: fbScale, force: true)
 
+        // Load persisted user settings and apply them to the UI manager.
+        let settings = UserSettings.load()
+        self.ui.isDarkTheme = settings.isDarkTheme
+        self.ui.layersPanelVisible = settings.layersPanelVisible
+        self.ui.drawPaletteVisible = settings.drawPaletteVisible
+        self.ui.blockPanelVisible = settings.blockPanelVisible
+        self.ui.dataTablePanelVisible = settings.dataTablePanelVisible
+        self.ui.showPropertiesPanel = settings.showPropertiesPanel
+        self.ui.showFPS = settings.showFPS
+        self.ui.toolbarVisible = settings.toolbarVisible
+        self.ui.radialNavVisible = settings.radialNavVisible
+
         print("Zephyr Initialized Successfully")
     }
 
@@ -712,6 +742,10 @@ public final class PhrostEngine {
             uiGlyphRangesStorage?.deallocate()
             uiGlyphRangesStorage = nil
             uiGlyphRangesStorageCount = 0
+            if let ptr = _imguiIniPath {
+                free(ptr)
+                _imguiIniPath = nil
+            }
         }
     }
 
@@ -799,6 +833,25 @@ public final class PhrostEngine {
     /// Immediately stops the engine. Confirmation UI should call this only
     /// after the user has explicitly chosen to discard changes and exit.
     public func stop() {
+        // Persist user settings and ImGui docking layout before shutting down.
+        let settings = UserSettings(
+            isDarkTheme: ui.isDarkTheme,
+            layersPanelVisible: ui.layersPanelVisible,
+            drawPaletteVisible: ui.drawPaletteVisible,
+            blockPanelVisible: ui.blockPanelVisible,
+            dataTablePanelVisible: ui.dataTablePanelVisible,
+            showPropertiesPanel: ui.showPropertiesPanel,
+            showFPS: ui.showFPS,
+            toolbarVisible: ui.toolbarVisible,
+            radialNavVisible: ui.radialNavVisible)
+        settings.save()
+        if let iniURL = UserSettings.imguiIniURL() {
+            let dir = iniURL.deletingLastPathComponent()
+            if !FileManager.default.fileExists(atPath: dir.path) {
+                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            }
+            ImGuiSaveIniSettingsToDisk(iniURL.path)
+        }
         self.running = false
     }
 

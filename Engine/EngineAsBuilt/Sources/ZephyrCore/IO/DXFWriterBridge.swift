@@ -654,7 +654,7 @@ public enum DXFWriterBridge {
             writer.writeToString(),
             includeElementType: dxfVersion != .r10 && dxfVersion != .r12
         )
-        let encoding: String.Encoding = writer.codePage == "UTF-8" ? .utf8 : .isoLatin1
+        let encoding = writer.outputStringEncoding
         guard let data = content.data(using: encoding, allowLossyConversion: false) else {
             throw DXFWriter.WriterError.writeError(
                 "Cannot encode DXF using \(writer.codePage)"
@@ -1297,6 +1297,15 @@ public enum DXFWriterBridge {
         hatch.doubleFlag = xdataInt(xdata, "dxf.hatchDouble") ?? 0
         hatch.patternLines = patternLines(from: xdata)
 
+        let transformScale = planarScale(of: transform)
+        if let pixelSize = xdataDouble(xdata, "dxf.hatchPixelSize"),
+           pixelSize.isFinite, pixelSize > 0 {
+            hatch.pixelSize = pixelSize * transformScale
+        }
+        hatch.seedPoints = hatchSeedPoints(from: xdata).map {
+            toDXF(transform.transformPoint($0))
+        }
+
         var regions: [HatchRegion] = []
         var primaryColor: ColorRGBA?
         var patternDefinitionName: String?
@@ -1657,6 +1666,30 @@ public enum DXFWriterBridge {
                 offset: Vector3(x: offsetX, y: offsetY, z: 0),
                 dashes: dashes)
         }
+    }
+
+    private static func hatchSeedPoints(from xdata: [String: XDataValue]) -> [Vector3] {
+        guard let json = xdataString(xdata, "dxf.hatchSeedPoints"),
+              let data = json.data(using: .utf8),
+              let values = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return values.compactMap { value in
+            guard let x = (value["x"] as? NSNumber)?.doubleValue,
+                  let y = (value["y"] as? NSNumber)?.doubleValue else {
+                return nil
+            }
+            let z = (value["z"] as? NSNumber)?.doubleValue ?? 0
+            return Vector3(x: x, y: y, z: z)
+        }
+    }
+
+    private static func planarScale(of transform: Transform3D) -> Double {
+        let origin = transform.transformPoint(.zero)
+        let xScale = (transform.transformPoint(Vector3(x: 1, y: 0, z: 0)) - origin).magnitude
+        let yScale = (transform.transformPoint(Vector3(x: 0, y: 1, z: 0)) - origin).magnitude
+        let scale = max(xScale, yScale)
+        return scale.isFinite && scale > 1e-12 ? scale : 1.0
     }
 
     private static func gradientStops(from xdata: [String: XDataValue]) -> [(position: Double, aci: UInt16, rgb: Int32)] {

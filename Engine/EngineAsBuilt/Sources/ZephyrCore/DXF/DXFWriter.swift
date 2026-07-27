@@ -145,7 +145,7 @@ public class DXFWriter {
     /// Write DXF file to path
     public func write(to path: String) throws {
         let content = buildDXF()
-        let encoding: String.Encoding = textCodec.codePage == "UTF-8" ? .utf8 : .isoLatin1
+        let encoding = outputStringEncoding
         guard let data = content.data(using: encoding, allowLossyConversion: false) else {
             throw WriterError.writeError("Cannot encode DXF using \(textCodec.codePage)")
         }
@@ -1698,7 +1698,17 @@ public class DXFWriter {
             if ht.isGradient == 0, ht.bgColor >= 0 {
                 writeInt(63, Int(ht.bgColor), &out)
             }
-            writeInt(98, 0, &out)
+
+            if ht.isGradient != 0 || ht.pixelSize > 0 {
+                let pixelSize = ht.pixelSize.isFinite && ht.pixelSize > 0
+                    ? ht.pixelSize
+                    : max(abs(ht.scale), 1.0) * 0.01
+                writeDbl(47, pixelSize, &out)
+            }
+            writeInt(98, ht.seedPoints.count, &out)
+            for point in ht.seedPoints {
+                writePoint(10, point, &out)
+            }
 
             if ht.isGradient != 0 {
                 writeInt(450, ht.isGradient, &out)
@@ -2204,8 +2214,17 @@ public class DXFWriter {
 
     // MARK: - Write Helpers
 
-    private var outputStringEncoding: String.Encoding {
-        textCodec.codePage == "UTF-8" ? .utf8 : .isoLatin1
+    private var storesStringsAsUTF8: Bool {
+        switch version {
+        case .r2007, .r2010, .r2013, .r2018:
+            return true
+        default:
+            return false
+        }
+    }
+
+    public var outputStringEncoding: String.Encoding {
+        storesStringsAsUTF8 || textCodec.codePage == "UTF-8" ? .utf8 : .isoLatin1
     }
 
     private func normalizedDXFString(_ value: String, mtext: Bool) -> String {

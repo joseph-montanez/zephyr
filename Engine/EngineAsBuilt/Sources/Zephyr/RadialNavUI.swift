@@ -27,7 +27,7 @@ struct RadialNavUI {
     static var targetRotationDeg: Float = 0
     static var isDoubleClicked: Bool = false
     static var popupRotationDeg: Float = 0.0
-    static var windowPos: ImVec2? = nil
+    static var dragOffset: ImVec2? = nil
     static var dragStartMousePos: ImVec2? = nil
 
     static func render(engine: PhrostEngine, dw: Float, dh: Float) {
@@ -35,16 +35,22 @@ struct RadialNavUI {
 
         let size: Float = 320
         let padding: Float = 20
-        // Position at bottom right, above the status bar by default
-        if let pos = windowPos {
-            ImGuiSetNextWindowPos(pos, Int32(ImGuiCond_Always.rawValue), ImVec2(x: 0, y: 0))
+
+        // Use FirstUseEver so ImGui's ini file remembers position & size across runs.
+        // When the user is actively dragging the nav, we override with Always.
+        if let offset = dragOffset {
+            let io = ImGuiGetIO()!
+            ImGuiSetNextWindowPos(
+                ImVec2(x: io.pointee.MousePos.x - offset.x, y: io.pointee.MousePos.y - offset.y),
+                Int32(ImGuiCond_Always.rawValue),
+                ImVec2(x: 0, y: 0))
         } else {
             ImGuiSetNextWindowPos(
                 ImVec2(x: dw - size - padding, y: dh - size - padding - AppLayout.statusBarHeight),
-                Int32(ImGuiCond_Always.rawValue),
+                Int32(ImGuiCond_FirstUseEver.rawValue),
                 ImVec2(x: 0, y: 0))
         }
-        ImGuiSetNextWindowSize(ImVec2(x: size, y: size), Int32(ImGuiCond_Always.rawValue))
+        ImGuiSetNextWindowSize(ImVec2(x: size, y: size), Int32(ImGuiCond_FirstUseEver.rawValue))
         
         ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowPadding.rawValue), ImVec2(x: 0, y: 0))
         ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowRounding.rawValue), Float(0))
@@ -55,8 +61,7 @@ struct RadialNavUI {
             Int32(ImGuiWindowFlags_NoTitleBar.rawValue) |
             Int32(ImGuiWindowFlags_NoResize.rawValue) |
             Int32(ImGuiWindowFlags_NoMove.rawValue) |
-            Int32(ImGuiWindowFlags_NoScrollbar.rawValue) |
-            Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)
+            Int32(ImGuiWindowFlags_NoScrollbar.rawValue)
 
         var open = true
         if igBegin("RadialNavUI", &open, flags) {
@@ -260,14 +265,19 @@ struct RadialNavUI {
                     }
                 } else if currentZone == 1 {
                     if !isHugeDelta && wasDragged {
-                        if windowPos == nil { windowPos = winPos }
-                        windowPos = ImVec2(x: windowPos!.x + Float(dx), y: windowPos!.y + Float(dy))
+                        if dragOffset == nil {
+                            let io = ImGuiGetIO()!
+                            dragOffset = ImVec2(
+                                x: io.pointee.MousePos.x - winPos.x,
+                                y: io.pointee.MousePos.y - winPos.y)
+                        }
                     }
                 }
             } else {
                 if wasActive {
                     engine.interaction.forceHideOSCursor = false
                     _ = SDL_SetWindowRelativeMouseMode(engine.window, false)
+                    dragOffset = nil
                     
                     if let startPos = dragStartMousePos {
                         // When dragging the nav itself (zone 1), keep the mouse at the new position.

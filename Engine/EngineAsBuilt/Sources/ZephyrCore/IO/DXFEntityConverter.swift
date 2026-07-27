@@ -390,6 +390,22 @@ public enum DXFEntityConverter {
             "dxf.hatchIsGradient": .bool(hatch.isGradient != 0)
         ]
 
+        if hatch.pixelSize.isFinite, hatch.pixelSize > 0 {
+            values["dxf.hatchPixelSize"] = .double(hatch.pixelSize)
+        }
+
+        if !hatch.seedPoints.isEmpty {
+            let boundaryTransform = hatchBoundaryTransform(for: hatch)
+            let points: [[String: Double]] = hatch.seedPoints.map {
+                let point = boundaryTransform.transformPoint(yflip($0))
+                return ["x": point.x, "y": point.y, "z": point.z]
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: points),
+               let json = String(data: data, encoding: .utf8) {
+                values["dxf.hatchSeedPoints"] = .string(json)
+            }
+        }
+
         if !hatch.patternLines.isEmpty {
             let lines: [[String: Any]] = hatch.patternLines.map {
                 [
