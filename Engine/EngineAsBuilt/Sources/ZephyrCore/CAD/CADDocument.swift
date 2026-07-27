@@ -37,6 +37,7 @@ public struct CADDocumentSnapshot: Sendable {
     public let leaderStyles: [String: CADLeaderStyle]
     public let currentLeaderStyleName: String
     public let linetypePatterns: [String: [Double]]
+    public let dxfRoundTripPayload: DXFRoundTripPayload?
     /// Names of image assets currently referenced by entities (not the raw Data blobs).
     /// The actual `imageStore` lives on `CADDocument` and persists across undo/redo.
     public let imageAssetNames: Set<String>
@@ -54,6 +55,7 @@ public struct CADDocumentSnapshot: Sendable {
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
+        dxfRoundTripPayload: DXFRoundTripPayload? = nil,
         imageAssetNames: Set<String> = []
     ) {
         self.layers = layers
@@ -68,6 +70,7 @@ public struct CADDocumentSnapshot: Sendable {
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.currentLeaderStyleName = currentLeaderStyleName
         self.linetypePatterns = linetypePatterns
+        self.dxfRoundTripPayload = dxfRoundTripPayload
         self.imageAssetNames = imageAssetNames
     }
 
@@ -84,6 +87,7 @@ public struct CADDocumentSnapshot: Sendable {
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
+        dxfRoundTripPayload: DXFRoundTripPayload? = nil,
         imageAssetNames: Set<String> = []
     ) {
         let styles = Dictionary(uniqueKeysWithValues: textStyleFonts.map { name, font in
@@ -102,6 +106,7 @@ public struct CADDocumentSnapshot: Sendable {
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
             linetypePatterns: linetypePatterns,
+            dxfRoundTripPayload: dxfRoundTripPayload,
             imageAssetNames: imageAssetNames)
     }
 }
@@ -290,6 +295,9 @@ public final class CADDocument {
     /// DXF linetype dash pattern definitions (e.g. "DASHED" -> [10.0, 5.0]).
     /// Key is the uppercased linetype name. Saved/loaded in EAB for accurate round-trip.
     public var linetypePatterns: [String: [Double]] = [:]
+
+    /// Raw DXF classes/objects retained for lossless round-trip of native entities.
+    public var dxfRoundTripPayload: DXFRoundTripPayload?
 
     /// Image asset store keyed by sha256 hex name. Multiple entities can reference
     /// the same asset. Persists across undo/redo boundaries (snapshots only store
@@ -2131,6 +2139,7 @@ public final class CADDocument {
         self.textStyles = imported.textStyles.isEmpty ? ["Standard": .standard] : imported.textStyles
         self.linetypePatterns = imported.linetypePatterns
         self.dimensionStyles = imported.dimensionStyles
+        self.dxfRoundTripPayload = imported.roundTripPayload
         for layer in imported.layers { layerTable[layer.handle] = layer }
         if activeLayerID == nil, let first = imported.layers.first { activeLayerID = first.handle }
         for block in imported.blocks { blockTable[block.handle] = block }
@@ -2304,6 +2313,7 @@ public final class CADDocument {
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
             linetypePatterns: linetypePatterns,
+            dxfRoundTripPayload: dxfRoundTripPayload,
             imageAssetNames: names
         )
     }
@@ -2341,6 +2351,7 @@ public final class CADDocument {
         leaderStyles = snapshot.leaderStyles
         currentLeaderStyleName = snapshot.currentLeaderStyleName
         linetypePatterns = snapshot.linetypePatterns
+        dxfRoundTripPayload = snapshot.dxfRoundTripPayload
         // Prune image assets no longer referenced by any entity after restore
         pruneUnreferencedImageAssets()
         markEdited(regenerate: true)

@@ -113,6 +113,26 @@ public struct DataTableRawDXFGroup: Hashable, Sendable, Codable {
     }
 }
 
+public struct DXFRawRecord: Hashable, Sendable, Codable {
+    public var type: String
+    public var groups: [DataTableRawDXFGroup]
+
+    public init(type: String, groups: [DataTableRawDXFGroup]) {
+        self.type = type
+        self.groups = groups
+    }
+}
+
+public struct DXFRoundTripPayload: Hashable, Sendable, Codable {
+    public var classes: [DXFRawRecord]
+    public var objects: [DXFRawRecord]
+
+    public init(classes: [DXFRawRecord] = [], objects: [DXFRawRecord] = []) {
+        self.classes = classes
+        self.objects = objects
+    }
+}
+
 public struct DataTableNativeDXFPayload: Hashable, Sendable, Codable {
     public var rawGroups: [DataTableRawDXFGroup]
     public var blockName: String?

@@ -327,6 +327,7 @@ public final class TabManager {
                 doc.linetypePatterns = imported.linetypePatterns
                 doc.dimensionStyles = imported.dimensionStyles
                 doc.leaderStyles = imported.leaderStyles
+                doc.dxfRoundTripPayload = imported.roundTripPayload
                 doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
                     ? (imported.leaderStyles.keys.sorted().first ?? "Standard")
                     : "Standard"
@@ -369,6 +370,7 @@ public final class TabManager {
             doc.linetypePatterns = imported.linetypePatterns
             doc.dimensionStyles = imported.dimensionStyles
             doc.leaderStyles = imported.leaderStyles
+            doc.dxfRoundTripPayload = imported.roundTripPayload
             doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
                 ? (imported.leaderStyles.keys.sorted().first ?? "Standard")
                 : "Standard"

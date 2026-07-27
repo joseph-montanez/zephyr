@@ -231,6 +231,8 @@ public final class HatchCommand: FeatureCommand {
     }
 
     private func applyHatchXData(to entity: inout CADEntity) {
+        entity.xdata.removeValue(forKey: "dxf.hatchRawBody")
+        entity.xdata.removeValue(forKey: "dxf.hatchRawHandle")
         let pattern: String
         switch fillType {
         case 0: pattern = patternName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "ANSI31" : patternName.uppercased()

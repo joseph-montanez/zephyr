@@ -35,23 +35,27 @@ public struct DXFImportResult: Sendable {
     public let dimensionStyles: [String: CADDimensionStyle]
     public let leaderStyles: [String: CADLeaderStyle]
     public let views: [DXFDrawingView]
+    public let roundTripPayload: DXFRoundTripPayload?
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
                 textStyles: [String: CADTextStyle], linetypePatterns: [String: [Double]],
                 dimensionStyles: [String: CADDimensionStyle],
                 leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
-                views: [DXFDrawingView]) {
+                views: [DXFDrawingView],
+                roundTripPayload: DXFRoundTripPayload? = nil) {
         self.layers = layers; self.blocks = blocks; self.entities = entities
         self.textStyles = textStyles; self.linetypePatterns = linetypePatterns
         self.dimensionStyles = dimensionStyles
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.views = views
+        self.roundTripPayload = roundTripPayload
     }
 
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
                 textStyleFonts: [String: String], linetypePatterns: [String: [Double]],
                 dimensionStyles: [String: CADDimensionStyle],
                 leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
-                views: [DXFDrawingView]) {
+                views: [DXFDrawingView],
+                roundTripPayload: DXFRoundTripPayload? = nil) {
         let styles = Dictionary(uniqueKeysWithValues: textStyleFonts.map { name, font in
             (name, CADTextStyle(name: name, fontFile: font).normalized)
         })
@@ -63,7 +67,8 @@ public struct DXFImportResult: Sendable {
             linetypePatterns: linetypePatterns,
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
-            views: views)
+            views: views,
+            roundTripPayload: roundTripPayload)
     }
 }
 
@@ -1464,7 +1469,10 @@ public enum DXFImporter {
             linetypePatterns: linetypePatterns,
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
-            views: views)
+            views: views,
+            roundTripPayload: DXFRoundTripPayload(
+                classes: reader.rawClasses,
+                objects: reader.rawObjects))
     }
 
     private static func arrayXData(

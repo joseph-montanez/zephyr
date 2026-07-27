@@ -65,6 +65,8 @@ public class DXFWriter {
     public var blocks: [DXFBlockEntity] = []
     public var entities: [DXFEntity] = []
     public var layouts: [DXFLayoutDefinition] = []
+    public var preservedClasses: [DXFRawRecord] = []
+    public var preservedObjects: [DXFRawRecord] = []
 
     // Handle tracking
     private var nextHandle: UInt32 = 1
@@ -160,7 +162,7 @@ public class DXFWriter {
     // MARK: - DXF Builder
 
     private func buildDXF() -> String {
-        nextHandle = 1
+        nextHandle = max(1, preservedMaximumHandle() &+ 1)
         writingBlock = false
         currentBlockHandle = ""
         blockNameToHandle.removeAll(keepingCapacity: true)
@@ -200,6 +202,32 @@ public class DXFWriter {
     }
 
     // MARK: - Handles
+
+    private func parsedHandle(_ value: String) -> UInt32? {
+        UInt32(value.trimmingCharacters(in: .whitespacesAndNewlines), radix: 16)
+    }
+
+    private func preservedMaximumHandle() -> UInt32 {
+        var maximum: UInt32 = 0
+        for entity in entities where entity.handle > maximum { maximum = entity.handle }
+        for block in blocks {
+            if block.handle > maximum { maximum = block.handle }
+            for entity in block.entities where entity.handle > maximum { maximum = entity.handle }
+        }
+        for record in preservedObjects {
+            for group in record.groups where group.code == 5 || group.code == 105 {
+                if let handle = parsedHandle(group.value), handle > maximum {
+                    maximum = handle
+                }
+            }
+        }
+        return maximum
+    }
+
+    private func entityHandle(_ entity: DXFEntity) -> String {
+        if entity.handle != 0 { return String(format: "%X", entity.handle) }
+        return allocHandle()
+    }
 
     private func allocHandle() -> String {
         let h = nextHandle
@@ -289,14 +317,14 @@ public class DXFWriter {
             }
         }
         for entity in entities {
-            entityHandleByObject[ObjectIdentifier(entity)] = allocHandle()
+            entityHandleByObject[ObjectIdentifier(entity)] = entityHandle(entity)
             if entity is DXFImageEntity {
                 imageDefinitionHandleByEntity[ObjectIdentifier(entity)] = allocHandle()
             }
         }
         for block in blocks {
             for entity in block.entities {
-                entityHandleByObject[ObjectIdentifier(entity)] = allocHandle()
+                entityHandleByObject[ObjectIdentifier(entity)] = entityHandle(entity)
             }
         }
     }
@@ -534,6 +562,17 @@ public class DXFWriter {
         }
     }
 
+    private func writeRawGroup(_ group: DataTableRawDXFGroup, _ out: inout String) {
+        out += String(format: "%3d\r\n", group.code)
+        out += group.value
+        out += "\r\n"
+    }
+
+    private func writeRawRecord(_ record: DXFRawRecord, _ out: inout String) {
+        writeRawGroup(DataTableRawDXFGroup(code: 0, value: record.type), &out)
+        for group in record.groups { writeRawGroup(group, &out) }
+    }
+
     // MARK: - CLASSES
 
     private func writeClasses(_ out: inout String) {
@@ -605,16 +644,37 @@ public class DXFWriter {
                 isEntity: 0,
                 &out)
         }
-        if entities.contains(where: { $0.eType == .tABLE }) {
+        let tableEntityCount = entities.filter { $0.eType == .tABLE }.count
+            + blocks.reduce(0) { $0 + $1.entities.filter { $0.eType == .tABLE }.count }
+        if tableEntityCount > 0 {
             writeClass(
                 dxfName: "ACAD_TABLE",
                 cppName: "AcDbTable",
                 appName: "ObjectDBX Classes",
                 proxyFlags: 1025,
-                instanceCount: entities.filter { $0.eType == .tABLE }.count,
+                instanceCount: tableEntityCount,
                 wasProxy: 0,
                 isEntity: 1,
                 &out)
+        }
+
+        var generatedClassNames = Set<String>()
+        if !outputLayouts.isEmpty { generatedClassNames.insert("LAYOUT") }
+        if entities.contains(where: { $0.eType == .iMAGE }) {
+            generatedClassNames.formUnion(["IMAGEDEF", "IMAGE"])
+        }
+        if mleaderEntityCount > 0 {
+            generatedClassNames.formUnion(["MULTILEADER", "MLEADERSTYLE"])
+        }
+        if hasMaterials { generatedClassNames.insert("MATERIAL") }
+        if tableEntityCount > 0 { generatedClassNames.insert("ACAD_TABLE") }
+        generatedClassNames.insert("SORTENTSTABLE")
+        for record in preservedClasses {
+            let dxfName = record.groups.first(where: { $0.code == 1 })?.value
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .uppercased() ?? ""
+            guard !generatedClassNames.contains(dxfName) else { continue }
+            writeRawRecord(record, &out)
         }
         out += "  0\r\nENDSEC\r\n"
     }
@@ -1596,6 +1656,11 @@ public class DXFWriter {
         case .hATCH:
             guard let ht = e as? DXFHatchEntity else { return }
             writeEntityHeader("HATCH", entity: ht, handle: h, ownerHandle: ownerHandle, &out)
+            if !ht.rawBodyGroups.isEmpty {
+                for group in ht.rawBodyGroups { writeRawGroup(group, &out) }
+                writeExtendedData(ht, &out)
+                return
+            }
             out += "100\r\nAcDbHatch\r\n"
             writePoint3(10, ht.basePoint, &out)
             writeCoord3(210, ht.extrusion, &out)
@@ -1790,7 +1855,49 @@ public class DXFWriter {
             writeInt(421, 3355443, &out)
 
         case .tABLE:
-            writeEntityHeader("ACAD_TABLE", entity: e, handle: h, ownerHandle: ownerHandle, &out)
+            guard let table = e as? DXFTableEntity else { return }
+            if let payload = table.data.nativeDXFPayload,
+               !payload.isModified,
+               !payload.rawGroups.isEmpty {
+                writeRawGroup(DataTableRawDXFGroup(code: 0, value: "ACAD_TABLE"), &out)
+                writeRawGroup(DataTableRawDXFGroup(code: 5, value: h), &out)
+                var wroteHandle = false
+                var reachedEntitySubclass = false
+                var reachedBlockReferenceSubclass = false
+                for group in payload.rawGroups {
+                    if group.code == 5, !wroteHandle {
+                        wroteHandle = true
+                        continue
+                    }
+                    if group.code == 1001 { break }
+                    if group.code == 100 {
+                        let subclass = group.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if subclass.caseInsensitiveCompare("AcDbEntity") == .orderedSame {
+                            reachedEntitySubclass = true
+                        } else if subclass.caseInsensitiveCompare("AcDbBlockReference") == .orderedSame {
+                            reachedBlockReferenceSubclass = true
+                        }
+                    }
+                    if group.code == 330, !reachedEntitySubclass,
+                       let ownerHandle, !ownerHandle.isEmpty {
+                        writeRawGroup(DataTableRawDXFGroup(code: 330, value: ownerHandle), &out)
+                    } else if group.code == 8, reachedEntitySubclass, !reachedBlockReferenceSubclass {
+                        writeRawGroup(DataTableRawDXFGroup(code: 8, value: esc(layer: table.layer)), &out)
+                    } else if group.code == 343,
+                              let recordHandle = blockRecordHandle(for: table.blockName) {
+                        writeRawGroup(DataTableRawDXFGroup(code: 343, value: recordHandle), &out)
+                    } else {
+                        writeRawGroup(group, &out)
+                    }
+                }
+                writeExtendedData(table, &out)
+                return
+            }
+            writeEntityHeader("ACAD_TABLE", entity: table, handle: h, ownerHandle: ownerHandle, &out)
+            out += "100\r\nAcDbBlockReference\r\n"
+            writeStr(2, table.blockName, &out)
+            writePoint3(10, table.insertion, &out)
+            writePoint3(11, table.horizontal, &out)
             out += "100\r\nAcDbTable\r\n"
 
         default:
@@ -1891,6 +1998,41 @@ public class DXFWriter {
     private func writeObjects(_ out: inout String) {
         guard isModern else { return }
 
+        let rawRoot = preservedObjects.first(where: {
+            ($0.type.caseInsensitiveCompare("DICTIONARY") == .orderedSame
+                || $0.type.caseInsensitiveCompare("ACDBDICTIONARYWDFLT") == .orderedSame)
+                && $0.groups.first(where: { $0.code == 330 })?.value
+                    .trimmingCharacters(in: .whitespacesAndNewlines) == "0"
+        })
+        let rawRootHandle = rawRoot?.groups.first(where: { $0.code == 5 })?.value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var generatedRootNames: Set<String> = [
+            "ACAD_GROUP", "ACAD_LAYOUT", "ACAD_MATERIAL", "ACAD_PLOTSTYLENAME"
+        ]
+        if entities.contains(where: { $0.eType == .iMAGE }) {
+            generatedRootNames.insert("ACAD_IMAGE_DICT")
+        }
+        if !mleaderStyleDictionaryHandle.isEmpty {
+            generatedRootNames.insert("ACAD_MLEADERSTYLE")
+        }
+        var rawRootEntries: [(name: String, handle: String, code: Int)] = []
+        if let rawRoot {
+            var pendingName: String?
+            for group in rawRoot.groups {
+                if group.code == 3 {
+                    pendingName = group.value
+                } else if (group.code == 350 || group.code == 360), let name = pendingName {
+                    rawRootEntries.append((name, group.value, group.code))
+                    pendingName = nil
+                }
+            }
+        }
+        let skippedRawDictionaryHandles = Set(rawRootEntries.compactMap { entry -> String? in
+            generatedRootNames.contains(normalizedName(entry.name))
+                ? entry.handle.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                : nil
+        })
+
         let imageEntities = entities.compactMap { $0 as? DXFImageEntity }
         let imageDictionaryHandle = imageEntities.isEmpty ? nil : allocHandle()
         var mleaderStyleEntityByName: [String: DXFMLeaderEntity] = [:]
@@ -1922,6 +2064,10 @@ public class DXFWriter {
         }
         if !mleaderStyleDictionaryHandle.isEmpty {
             out += "  3\r\nACAD_MLEADERSTYLE\r\n350\r\n\(mleaderStyleDictionaryHandle)\r\n"
+        }
+        for entry in rawRootEntries where !generatedRootNames.contains(normalizedName(entry.name)) {
+            writeStr(3, entry.name, &out)
+            writeStr(entry.code, entry.handle, &out)
         }
 
         out += "  0\r\nDICTIONARY\r\n  5\r\n\(groupDictionaryHandle)\r\n"
@@ -2000,6 +2146,38 @@ public class DXFWriter {
                 writeDbl(21, 1.0, &out)
                 writeInt(280, 1, &out)
                 writeInt(281, 0, &out)
+            }
+        }
+
+        var generatedObjectTypes: Set<String> = [
+            "LAYOUT", "MATERIAL", "ACDBDICTIONARYWDFLT",
+            "ACDBPLACEHOLDER", "SORTENTSTABLE"
+        ]
+        if imageDictionaryHandle != nil { generatedObjectTypes.insert("IMAGEDEF") }
+        if !mleaderStyleDictionaryHandle.isEmpty { generatedObjectTypes.insert("MLEADERSTYLE") }
+        for record in preservedObjects {
+            let type = normalizedName(record.type)
+            let handle = record.groups.first(where: { $0.code == 5 || $0.code == 105 })?.value
+                .trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+            let owner = record.groups.first(where: { $0.code == 330 })?.value
+                .trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+            if handle == rawRootHandle?.uppercased() { continue }
+            if generatedObjectTypes.contains(type) { continue }
+            if skippedRawDictionaryHandles.contains(handle) || skippedRawDictionaryHandles.contains(owner) {
+                continue
+            }
+
+            writeRawGroup(DataTableRawDXFGroup(code: 0, value: record.type), &out)
+            for group in record.groups {
+                if group.code == 330,
+                   let rawRootHandle,
+                   normalizedName(group.value) == normalizedName(rawRootHandle) {
+                    writeRawGroup(DataTableRawDXFGroup(
+                        code: group.code,
+                        value: rootDictionaryHandle), &out)
+                } else {
+                    writeRawGroup(group, &out)
+                }
             }
         }
 

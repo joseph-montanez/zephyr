@@ -393,6 +393,14 @@ public enum DXFEntityConverter {
         if hatch.pixelSize.isFinite, hatch.pixelSize > 0 {
             values["dxf.hatchPixelSize"] = .double(hatch.pixelSize)
         }
+        if hatch.handle != 0 {
+            values["dxf.hatchRawHandle"] = .int(Int(hatch.handle))
+        }
+        if !hatch.rawBodyGroups.isEmpty,
+           let data = try? JSONEncoder().encode(hatch.rawBodyGroups),
+           let json = String(data: data, encoding: .utf8) {
+            values["dxf.hatchRawBody"] = .string(json)
+        }
 
         if !hatch.seedPoints.isEmpty {
             let boundaryTransform = hatchBoundaryTransform(for: hatch)

@@ -783,6 +783,7 @@ public class DXFHatchEntity: DXFPointEntity {
     public var defLines: Int           // 78
     public var pixelSize: Double       // 47: hatch pixel size
     public var seedPoints: [Vector3] = [] // 98 followed by 10/20 pairs
+    public var rawBodyGroups: [DataTableRawDXFGroup] = []
 
     // Gradient (codes 450-470)
     public var isGradient: Int         // 450

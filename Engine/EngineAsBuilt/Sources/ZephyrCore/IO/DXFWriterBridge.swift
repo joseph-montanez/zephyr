@@ -90,6 +90,7 @@ public enum DXFWriterBridge {
         var leaderStyles: [String: CADLeaderStyle]
         var linetypePatterns: [String: [Double]]
         var unit: CADUnit
+        var roundTripPayload: DXFRoundTripPayload?
     }
 
 
@@ -128,7 +129,8 @@ public enum DXFWriterBridge {
             textStyles: document.textStyles,
             leaderStyles: document.leaderStyles,
             linetypePatterns: document.linetypePatterns,
-            unit: document.unit)
+            unit: document.unit,
+            roundTripPayload: document.dxfRoundTripPayload)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion)
     }
 
@@ -147,7 +149,8 @@ public enum DXFWriterBridge {
                 textStyles: $0.document.textStyles,
                 leaderStyles: $0.document.leaderStyles,
                 linetypePatterns: $0.document.linetypePatterns,
-                unit: $0.document.unit)
+                unit: $0.document.unit,
+                roundTripPayload: $0.document.dxfRoundTripPayload)
         }
         try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion)
     }
@@ -172,7 +175,8 @@ public enum DXFWriterBridge {
             }),
             leaderStyles: ["Standard": .standard],
             linetypePatterns: linetypePatterns,
-            unit: .millimeter)
+            unit: .millimeter,
+            roundTripPayload: nil)
         try exportToDXF(views: [view], filePath: filePath, dxfVersion: dxfVersion)
     }
 
@@ -227,6 +231,10 @@ public enum DXFWriterBridge {
 
         let writer = DXFWriter()
         writer.version = dxfVersion
+        if let payload = orderedViews.compactMap(\.roundTripPayload).first {
+            writer.preservedClasses = payload.classes
+            writer.preservedObjects = payload.objects
+        }
         writer.codePage = "ANSI_1252"
         writer.headerVars["$INSUNITS"] = modelView.unit.dxfINSUNITS
         let arrayAppID = DXFAppIdEntry()
@@ -311,10 +319,35 @@ public enum DXFWriterBridge {
 
                 for (index, primitive) in block.geometry.enumerated() {
                     if consumedHatchIndices.contains(index) { continue }
+                    let primitiveXData = block.primitiveXData[index] ?? [:]
+                    if case .table(let data, let origin, _) = primitive {
+                        if let table = nativeTableEntity(
+                            data: data,
+                            origin: origin,
+                            transform: .identity) {
+                            applyPrimitiveStyle(block.primitiveStyles[index], to: table)
+                            if table.layer.isEmpty { table.layer = "0" }
+                            exported.entities.append(table)
+                        } else {
+                            for visual in DataTableTessellator.explodeForDXF(
+                                data: data,
+                                origin: origin,
+                                transform: .identity) {
+                                guard let entity = primitiveToEntity(
+                                    visual,
+                                    transform: .identity,
+                                    xdata: primitiveXData) else { continue }
+                                applyPrimitiveStyle(block.primitiveStyles[index], to: entity)
+                                if entity.layer.isEmpty { entity.layer = "0" }
+                                exported.entities.append(entity)
+                            }
+                        }
+                        continue
+                    }
                     guard let entity = primitiveToEntity(
                         primitive,
                         transform: .identity,
-                        xdata: block.primitiveXData[index] ?? [:]) else { continue }
+                        xdata: primitiveXData) else { continue }
                     applyPrimitiveStyle(block.primitiveStyles[index], to: entity)
                     if entity.layer.isEmpty { entity.layer = "0" }
                     exported.entities.append(entity)
@@ -631,6 +664,32 @@ public enum DXFWriterBridge {
 
                 for (primitiveIndex, primitive) in primitives.enumerated() {
                     if consumedHatchIndices.contains(primitiveIndex) { continue }
+                    if case .table(let data, let origin, _) = primitive {
+                        if let table = nativeTableEntity(
+                            data: data,
+                            origin: origin,
+                            transform: entity.transform) {
+                            table.layer = layerName
+                            table.space = isPaperSpace ? 1 : 0
+                            applyEntityStyle(entity.xdata, to: table)
+                            writer.addEntity(table, ownerBlockName: ownerBlockName)
+                        } else {
+                            for visual in DataTableTessellator.explodeForDXF(
+                                data: data,
+                                origin: origin,
+                                transform: entity.transform) {
+                                guard let exported = primitiveToEntity(
+                                    visual,
+                                    transform: .identity,
+                                    xdata: entity.xdata) else { continue }
+                                exported.layer = layerName
+                                exported.space = isPaperSpace ? 1 : 0
+                                applyEntityStyle(entity.xdata, to: exported)
+                                writer.addEntity(exported, ownerBlockName: ownerBlockName)
+                            }
+                        }
+                        continue
+                    }
                     guard let exported = primitiveToEntity(
                         primitive,
                         transform: entity.transform,
@@ -1257,6 +1316,38 @@ public enum DXFWriterBridge {
         xdata: [String: XDataValue],
         transform: Transform3D
     ) -> DXFHatchEntity? {
+        if transform == .identity,
+           let rawJSON = xdataString(xdata, "dxf.hatchRawBody"),
+           let rawData = rawJSON.data(using: .utf8),
+           let rawGroups = try? JSONDecoder().decode(
+               [DataTableRawDXFGroup].self,
+               from: rawData),
+           !rawGroups.isEmpty {
+            let hatch = DXFHatchEntity()
+            hatch.rawBodyGroups = rawGroups
+            hatch.name = xdataString(xdata, "dxf.hatchPatternName") ?? "SOLID"
+            hatch.solid = hatch.name.uppercased() == "SOLID" ? 1 : 0
+            hatch.scale = xdataDouble(xdata, "dxf.hatchScale") ?? 1.0
+            hatch.angle_p = -(xdataDouble(xdata, "dxf.hatchAngle") ?? 0) * 180.0 / .pi
+            hatch.hStyle = xdataInt(xdata, "dxf.hatchStyle") ?? 0
+            hatch.hPattern = xdataInt(xdata, "dxf.hatchPatternDefinitionType") ?? 1
+            if let rawHandle = xdataInt(xdata, "dxf.hatchRawHandle"), rawHandle > 0 {
+                hatch.handle = UInt32(rawHandle)
+            }
+            switch primitives.first {
+            case .hatchPath(_, _, _, _, _, let color, _),
+                 .hatch(_, _, _, _, let color, _):
+                applyColor(color, to: hatch)
+            case .fillComplexPolygon(_, _, let color):
+                applyColor(color, to: hatch)
+            case .gradient(_, _, _, _, let color, _):
+                applyColor(color, to: hatch)
+            default:
+                break
+            }
+            return hatch
+        }
+
         let hatchPaths = primitives.compactMap { primitive -> (region: HatchRegion, pattern: String, scale: Double, angle: Double, color: ColorRGBA?, background: ColorRGBA?)? in
             guard case .hatchPath(let outer, let holes, let pattern, let scale, let angle, let color, let background) = primitive else {
                 return nil
@@ -1837,6 +1928,30 @@ public enum DXFWriterBridge {
     }
 
     // MARK: - Primitive → DXFEntity
+
+    private static func nativeTableEntity(
+        data: DataTableData,
+        origin: Vector3,
+        transform: Transform3D
+    ) -> DXFTableEntity? {
+        guard transform == .identity,
+              let payload = data.nativeDXFPayload,
+              !payload.isModified,
+              !payload.rawGroups.isEmpty else { return nil }
+
+        let table = DXFTableEntity()
+        table.data = data
+        table.blockName = payload.blockName ?? ""
+        table.insertion = toDXF(origin)
+        table.horizontal = Vector3(x: 1, y: 0, z: 0)
+        if let handleGroup = payload.rawGroups.first(where: { $0.code == 5 }),
+           let handle = UInt32(
+               handleGroup.value.trimmingCharacters(in: .whitespacesAndNewlines),
+               radix: 16) {
+            table.handle = handle
+        }
+        return table
+    }
 
     private static func primitiveToEntity(
         _ primitive: CADPrimitive,

@@ -49,6 +49,8 @@ public class DXFReader {
     public var layouts: [DXFLayoutEntry] = []
     public var sortEntsTables: [DXFSortEntsTable] = []
     public var mleaderStyles: [DXFMLeaderStyleEntry] = []
+    public var rawClasses: [DXFRawRecord] = []
+    public var rawObjects: [DXFRawRecord] = []
     public var blocks: [DXFBlockEntity] = []
     public var entities: [DXFEntity] = []
 
@@ -146,7 +148,7 @@ public class DXFReader {
 
         switch name {
         case "HEADER":    try parseHeader()
-        case "CLASSES":   try skipToEndsec()
+        case "CLASSES":   try parseClasses()
         case "TABLES":    try parseTables()
         case "BLOCKS":    try parseBlocks()
         case "ENTITIES":  try parseEntities()
@@ -159,6 +161,36 @@ public class DXFReader {
         while pos < pairs.count {
             let (c, v) = pairs[pos]; pos += 1
             if c == 0 && v == "ENDSEC" { return }
+        }
+    }
+
+    private func rawRecord(at start: Int) -> (record: DXFRawRecord, next: Int)? {
+        guard start < pairs.count, pairs[start].code == 0 else { return nil }
+        let type = pairs[start].value
+        var index = start + 1
+        var groups: [DataTableRawDXFGroup] = []
+        while index < pairs.count, pairs[index].code != 0 {
+            groups.append(DataTableRawDXFGroup(
+                code: pairs[index].code,
+                value: pairs[index].value))
+            index += 1
+        }
+        return (DXFRawRecord(type: type, groups: groups), index)
+    }
+
+    private func parseClasses() throws {
+        while pos < pairs.count {
+            let (code, value) = pairs[pos]
+            if code == 0 && value == "ENDSEC" {
+                pos += 1
+                return
+            }
+            if code == 0, let captured = rawRecord(at: pos) {
+                rawClasses.append(captured.record)
+                pos = captured.next
+            } else {
+                pos += 1
+            }
         }
     }
 
@@ -953,6 +985,14 @@ extension DXFReader {
     func parseHatch(_ pairs: [(Int, String)]) -> DXFHatchEntity {
         let e = DXFHatchEntity()
         applyCommon(pairs, to: e)
+        if let start = pairs.firstIndex(where: {
+            $0.0 == 100 && $0.1.caseInsensitiveCompare("AcDbHatch") == .orderedSame
+        }) {
+            let end = pairs[start...].firstIndex(where: { $0.0 == 1001 }) ?? pairs.endIndex
+            e.rawBodyGroups = pairs[start..<end].map {
+                DataTableRawDXFGroup(code: $0.0, value: $0.1)
+            }
+        }
         if let owner = pairs.prefix(while: { $0.0 != 91 }).first(where: { $0.0 == 330 }) {
             e.parentHandle = parseHandle(owner.1)
         }
@@ -2181,6 +2221,9 @@ extension DXFReader {
                 }
                 pos += 1
                 return
+            }
+            if c == 0, let captured = rawRecord(at: pos) {
+                rawObjects.append(captured.record)
             }
             if c == 0 && (v == "DICTIONARY" || v == "ACDBDICTIONARYWDFLT") {
                 tryParse { try parseObjectDictionary(at: pos) }
