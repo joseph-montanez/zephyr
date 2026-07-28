@@ -231,9 +231,63 @@ public enum DXFWriterBridge {
 
         let writer = DXFWriter()
         writer.version = dxfVersion
-        if let payload = orderedViews.compactMap(\.roundTripPayload).first {
+        let roundTripPayload = orderedViews.compactMap(\.roundTripPayload).first
+        if let payload = roundTripPayload {
             writer.preservedClasses = payload.classes
             writer.preservedObjects = payload.objects
+            writer.preservedACDSData = payload.acdsData
+        }
+
+        var nativeTables: [(data: DataTableData, payload: DataTableNativeDXFPayload)] = []
+        var modifiedTableByDisplayBlock: [String: DataTableData] = [:]
+        func collectTable(_ data: DataTableData) {
+            guard let payload = data.nativeDXFPayload else { return }
+            nativeTables.append((data, payload))
+            if payload.isModified, let blockName = payload.blockName, !blockName.isEmpty {
+                modifiedTableByDisplayBlock[blockName.uppercased()] = data
+            }
+        }
+        for view in orderedViews {
+            for block in view.blocks {
+                for primitive in block.geometry {
+                    if case .table(let data, _, _) = primitive { collectTable(data) }
+                }
+            }
+            for entity in view.entities {
+                for primitive in entity.localGeometry ?? [] {
+                    if case .table(let data, _, _) = primitive { collectTable(data) }
+                }
+            }
+        }
+
+        func rawRecordKey(_ record: DXFRawRecord) -> String {
+            let handle = record.groups.first(where: { $0.code == 5 || $0.code == 105 })?.value ?? ""
+            return record.type.uppercased() + ":" + handle.uppercased()
+        }
+        var classKeys = Set(writer.preservedClasses.map(rawRecordKey))
+        var objectIndexByKey: [String: Int] = [:]
+        for (index, record) in writer.preservedObjects.enumerated() {
+            objectIndexByKey[rawRecordKey(record)] = index
+        }
+        for nativeTable in nativeTables {
+            for record in nativeTable.payload.requiredClasses ?? [] {
+                let key = rawRecordKey(record)
+                if classKeys.insert(key).inserted {
+                    writer.preservedClasses.append(record)
+                }
+            }
+            let records = nativeTable.payload.isModified
+                ? writer.rewrittenTableObjectRecords(for: nativeTable.data)
+                : (nativeTable.payload.referencedObjects ?? [])
+            for record in records {
+                let key = rawRecordKey(record)
+                if let index = objectIndexByKey[key] {
+                    writer.preservedObjects[index] = record
+                } else {
+                    objectIndexByKey[key] = writer.preservedObjects.count
+                    writer.preservedObjects.append(record)
+                }
+            }
         }
         writer.codePage = "ANSI_1252"
         writer.headerVars["$INSUNITS"] = modelView.unit.dxfINSUNITS
@@ -300,6 +354,22 @@ public enum DXFWriterBridge {
                 exported.flags = block.dxfFlags
                 if block.isInternalTableDisplayBlock {
                     exported.flags |= 1
+                }
+
+                if let tableData = modifiedTableByDisplayBlock[block.name.uppercased()] {
+                    for visual in DataTableTessellator.explodeForDXF(
+                        data: tableData,
+                        origin: .zero,
+                        transform: .identity) {
+                        guard let entity = primitiveToEntity(
+                            visual,
+                            transform: .identity,
+                            xdata: [:]) else { continue }
+                        if entity.layer.isEmpty { entity.layer = "0" }
+                        exported.entities.append(entity)
+                    }
+                    writer.addBlock(exported)
+                    continue
                 }
 
                 let blockHatches = hatchEntities(
@@ -706,6 +776,44 @@ public enum DXFWriterBridge {
                     viewport.space = 1
                     writer.addEntity(viewport, ownerBlockName: ownerBlockName)
                 }
+            }
+        }
+
+        // A native table is also retained in the document's round-trip payload.
+        // Restore it only when the model/view conversion dropped the table entity
+        // entirely. Tables that are still present (including transformed tables
+        // exported as exploded graphics) must not be duplicated.
+        var knownNativeTableHandles = Set<UInt32>()
+        for view in orderedViews {
+            for entity in view.entities {
+                if case .bool(true)? = entity.xdata["dxf.viewport.projected"] { continue }
+                for primitive in entity.localGeometry ?? [] {
+                    guard case .table(let data, _, _) = primitive,
+                          let value = data.nativeDXFPayload?.rawGroups
+                            .first(where: { $0.code == 5 })?.value,
+                          let handle = UInt32(
+                            value.trimmingCharacters(in: .whitespacesAndNewlines),
+                            radix: 16) else { continue }
+                    knownNativeTableHandles.insert(handle)
+                }
+            }
+        }
+        let emittedNativeTableHandles = Set(writer.entities.compactMap { entity -> UInt32? in
+            guard let table = entity as? DXFTableEntity, table.handle != 0 else { return nil }
+            return table.handle
+        })
+        if let payload = roundTripPayload {
+            for preserved in payload.nativeEntities
+            where preserved.record.type.caseInsensitiveCompare("ACAD_TABLE") == .orderedSame {
+                let handleText = preserved.record.groups.first(where: { $0.code == 5 })?.value
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let handle = handleText.flatMap { UInt32($0, radix: 16) }
+                if let handle,
+                   knownNativeTableHandles.contains(handle) || emittedNativeTableHandles.contains(handle) {
+                    continue
+                }
+                guard let table = nativeTableEntity(from: preserved) else { continue }
+                writer.addEntity(table, ownerBlockName: preserved.ownerBlockName)
             }
         }
 
@@ -1316,7 +1424,18 @@ public enum DXFWriterBridge {
         xdata: [String: XDataValue],
         transform: Transform3D
     ) -> DXFHatchEntity? {
-        if transform == .identity,
+        let boundaryCarriers = primitives.compactMap { primitive -> CADPolyline? in
+            guard case .polyline(let path, _) = primitive,
+                  path.isHatchBoundaryCarrier else { return nil }
+            return path
+        }
+        let hasCompleteAnalyticBoundary = !boundaryCarriers.isEmpty
+            && boundaryCarriers.allSatisfy { !$0.hatchEdges.isEmpty }
+        let requiresRawOCSPreservation = xdataInt(
+            xdata,
+            "dxf.hatchNonDefaultOCS") == 1
+        if (!hasCompleteAnalyticBoundary || requiresRawOCSPreservation),
+           transform == .identity,
            let rawJSON = xdataString(xdata, "dxf.hatchRawBody"),
            let rawData = rawJSON.data(using: .utf8),
            let rawGroups = try? JSONDecoder().decode(
@@ -1371,10 +1490,7 @@ public enum DXFWriterBridge {
             return (outer, holes, name, angle, color1, color2)
         }
 
-        let carriers = primitives.compactMap { primitive -> CADPolyline? in
-            guard case .polyline(let path, _) = primitive, path.isHatchBoundaryCarrier else { return nil }
-            return path
-        }
+        let carriers = boundaryCarriers
 
         let solidRegions = primitives.compactMap { primitive -> (outer: [Vector3], holes: [[Vector3]], color: ColorRGBA?)? in
             guard case .fillComplexPolygon(let outer, let holes, let color) = primitive else { return nil }
@@ -1525,6 +1641,7 @@ public enum DXFWriterBridge {
                 let loop = DXFHatchLoop(type: loopType)
                 loop.entities = entities
                 loop.numEdges = entities.count
+                loop.sourceBoundaryHandles = path.hatchSourceBoundaryHandles
                 return loop
             }
         }
@@ -1554,6 +1671,7 @@ public enum DXFWriterBridge {
         }
         loop.entities = [polyline]
         loop.numEdges = sourcePath.vertices.count
+        loop.sourceBoundaryHandles = path.hatchSourceBoundaryHandles
         return loop
     }
 
@@ -1601,16 +1719,23 @@ public enum DXFWriterBridge {
             ellipse.isCCW = sweep >= 0 ? 0 : 1
             return ellipse
 
-        case .spline(let controlPoints, let knots, let degree, let weights, let closed, let periodic):
-            guard controlPoints.count >= 2 else { return nil }
+        case .spline(let data):
+            guard data.controlPoints.count >= 2 || data.fitPoints.count >= 2 else { return nil }
             let spline = DXFSplineEntity()
-            spline.controlPoints = controlPoints.map(toDXF)
-            spline.knots = knots
-            spline.degree = degree
-            spline.weights = weights ?? []
-            spline.flags = (closed ? 1 : 0) | (periodic ? 2 : 0) | (weights == nil ? 0 : 4)
-            spline.nControl = Int32(controlPoints.count)
-            spline.nKnots = Int32(knots.count)
+            spline.controlPoints = data.controlPoints.map(toDXF)
+            spline.fitPoints = data.fitPoints.map(toDXF)
+            spline.knots = data.knots
+            spline.degree = data.degree
+            spline.weights = data.weights
+                ?? (data.rational ? Array(repeating: 1.0, count: data.controlPoints.count) : [])
+            spline.tgStart = data.startTangent.map(toDXFVector) ?? .zero
+            spline.tgEnd = data.endTangent.map(toDXFVector) ?? .zero
+            spline.flags = (data.closed ? 1 : 0)
+                | (data.periodic ? 2 : 0)
+                | (spline.weights.isEmpty ? 0 : 4)
+            spline.nControl = Int32(data.controlPoints.count)
+            spline.nKnots = Int32(data.knots.count)
+            spline.nFit = Int32(data.fitPoints.count)
             return spline
         }
     }
@@ -1930,13 +2055,53 @@ public enum DXFWriterBridge {
     // MARK: - Primitive → DXFEntity
 
     private static func nativeTableEntity(
+        from preserved: DXFPreservedEntity
+    ) -> DXFTableEntity? {
+        let groups = preserved.record.groups
+        guard !groups.isEmpty else { return nil }
+
+        var blockName = ""
+        var layerName = "0"
+        var reachedBlockReference = false
+        for group in groups {
+            if group.code == 100,
+               group.value.caseInsensitiveCompare("AcDbBlockReference") == .orderedSame {
+                reachedBlockReference = true
+                continue
+            }
+            if group.code == 8, layerName == "0" {
+                layerName = group.value
+            } else if reachedBlockReference, group.code == 2, blockName.isEmpty {
+                blockName = group.value
+            }
+        }
+
+        let nativePayload = DataTableNativeDXFPayload(
+            rawGroups: groups,
+            blockName: blockName.isEmpty ? nil : blockName,
+            blockRecordHandle: groups.first(where: { $0.code == 343 })?.value,
+            isModified: false)
+        let table = DXFTableEntity()
+        table.data = DataTableData(nativeDXFPayload: nativePayload)
+        table.blockName = blockName
+        table.layer = layerName
+        table.space = preserved.ownerBlockName.uppercased().contains("PAPER_SPACE") ? 1 : 0
+        if let value = groups.first(where: { $0.code == 5 })?.value,
+           let handle = UInt32(
+               value.trimmingCharacters(in: .whitespacesAndNewlines),
+               radix: 16) {
+            table.handle = handle
+        }
+        return table
+    }
+
+    private static func nativeTableEntity(
         data: DataTableData,
         origin: Vector3,
         transform: Transform3D
     ) -> DXFTableEntity? {
         guard transform == .identity,
               let payload = data.nativeDXFPayload,
-              !payload.isModified,
               !payload.rawGroups.isEmpty else { return nil }
 
         let table = DXFTableEntity()

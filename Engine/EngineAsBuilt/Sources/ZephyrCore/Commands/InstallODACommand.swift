@@ -1491,9 +1491,6 @@ public final class InstallODACommand: FeatureCommand {
         onProcess(process)
 
         do {
-            let processStartedAt = Date()
-            var lastStatusUpdate = Date.distantPast
-
             while process.isRunning {
                 try Task.checkCancellation()
                 try await Task.sleep(nanoseconds: 100_000_000)

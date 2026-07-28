@@ -150,7 +150,9 @@ public enum DXFImporter {
                     pendingVariable = Int(value)
                 }
 
-            case 1040, 1041, 1042 where isDStyleData && braceDepth > 0:
+            case 1040 where isDStyleData && braceDepth > 0,
+                 1041 where isDStyleData && braceDepth > 0,
+                 1042 where isDStyleData && braceDepth > 0:
                 guard let variable = pendingVariable else { continue }
                 let value: Double?
                 if let number = entry.value as? Double {
@@ -1472,7 +1474,9 @@ public enum DXFImporter {
             views: views,
             roundTripPayload: DXFRoundTripPayload(
                 classes: reader.rawClasses,
-                objects: reader.rawObjects))
+                objects: reader.rawObjects,
+                nativeEntities: reader.rawNativeEntities,
+                acdsData: reader.rawACDSData))
     }
 
     private static func arrayXData(

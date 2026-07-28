@@ -19,11 +19,48 @@ import Foundation
 // =========================================================================
 
 
+public struct CADHatchSplineData: Hashable, Sendable {
+    public var controlPoints: [Vector3]
+    public var knots: [Double]
+    public var degree: Int
+    public var weights: [Double]?
+    public var fitPoints: [Vector3]
+    public var startTangent: Vector3?
+    public var endTangent: Vector3?
+    public var closed: Bool
+    public var periodic: Bool
+    public var rational: Bool
+
+    public init(
+        controlPoints: [Vector3],
+        knots: [Double],
+        degree: Int,
+        weights: [Double]? = nil,
+        fitPoints: [Vector3] = [],
+        startTangent: Vector3? = nil,
+        endTangent: Vector3? = nil,
+        closed: Bool = false,
+        periodic: Bool = false,
+        rational: Bool? = nil
+    ) {
+        self.controlPoints = controlPoints
+        self.knots = knots
+        self.degree = degree
+        self.weights = weights
+        self.fitPoints = fitPoints
+        self.startTangent = startTangent
+        self.endTangent = endTangent
+        self.closed = closed
+        self.periodic = periodic
+        self.rational = rational ?? (weights != nil)
+    }
+}
+
 public enum CADHatchEdge: Hashable, Sendable {
     case line(start: Vector3, end: Vector3)
     case circularArc(center: Vector3, radius: Double, startAngle: Double, sweep: Double)
     case ellipticalArc(center: Vector3, axisU: Vector3, axisV: Vector3, startParam: Double, sweep: Double)
-    case spline(controlPoints: [Vector3], knots: [Double], degree: Int, weights: [Double]?, closed: Bool, periodic: Bool)
+    case spline(CADHatchSplineData)
 
     public var startPoint: Vector3? {
         switch self {
@@ -82,15 +119,16 @@ public enum CADHatchEdge: Hashable, Sendable {
                 return center + axisU * cos(param) + axisV * sin(param)
             }
 
-        case .spline(let controlPoints, let knots, let degree, let weights, let closed, let periodic):
-            guard controlPoints.count >= 2 else { return controlPoints }
-            let safeDegree = max(1, degree)
-            var cps = controlPoints
-            var ws = weights ?? Array(repeating: 1.0, count: cps.count)
+        case .spline(let data):
+            let sourcePoints = data.controlPoints.isEmpty ? data.fitPoints : data.controlPoints
+            guard sourcePoints.count >= 2 else { return sourcePoints }
+            let safeDegree = max(1, data.degree)
+            var cps = sourcePoints
+            var ws = data.weights ?? Array(repeating: 1.0, count: cps.count)
             if ws.count != cps.count { ws = Array(repeating: 1.0, count: cps.count) }
 
-            let expectedControlCount = knots.count - safeDegree - 1
-            if periodic, expectedControlCount > cps.count, !cps.isEmpty {
+            let expectedControlCount = data.knots.count - safeDegree - 1
+            if data.periodic, expectedControlCount > cps.count, !cps.isEmpty {
                 let baseCPs = cps
                 let baseWeights = ws
                 for index in 0..<(expectedControlCount - cps.count) {
@@ -99,9 +137,9 @@ public enum CADHatchEdge: Hashable, Sendable {
                 }
             }
 
-            guard cps.count > safeDegree, knots.count == cps.count + safeDegree + 1 else {
-                var fallback = cps
-                if closed || periodic,
+            guard cps.count > safeDegree, data.knots.count == cps.count + safeDegree + 1 else {
+                var fallback = data.fitPoints.isEmpty ? cps : data.fitPoints
+                if data.closed || data.periodic,
                    let first = fallback.first,
                    fallback.last != first {
                     fallback.append(first)
@@ -111,7 +149,7 @@ public enum CADHatchEdge: Hashable, Sendable {
 
             var points = NURBSEvaluator.evaluateAdaptiveByKnotSpans(
                 degree: safeDegree,
-                knots: knots,
+                knots: data.knots,
                 controlPoints: cps,
                 weights: ws,
                 chordTolerance: 0.01,
@@ -120,12 +158,12 @@ public enum CADHatchEdge: Hashable, Sendable {
             if points.count < 2 {
                 points = NURBSEvaluator.evaluateByKnotSpans(
                     degree: safeDegree,
-                    knots: knots,
+                    knots: data.knots,
                     controlPoints: cps,
                     weights: ws,
                     segmentsPerSpan: 16)
             }
-            if closed || periodic,
+            if data.closed || data.periodic,
                let first = points.first,
                let last = points.last,
                first.distance(to: last) > 1e-9 {
@@ -145,19 +183,24 @@ public enum CADHatchEdge: Hashable, Sendable {
         case .ellipticalArc(let center, let axisU, let axisV, let startParam, let sweep):
             return .ellipticalArc(center: center, axisU: axisU, axisV: axisV,
                                   startParam: startParam + sweep, sweep: -sweep)
-        case .spline(let controlPoints, let knots, let degree, let weights, let closed, let periodic):
+        case .spline(let data):
             let reversedKnots: [Double]
-            if let first = knots.first, let last = knots.last {
-                reversedKnots = knots.reversed().map { first + last - $0 }
+            if let first = data.knots.first, let last = data.knots.last {
+                reversedKnots = data.knots.reversed().map { first + last - $0 }
             } else {
-                reversedKnots = knots
+                reversedKnots = data.knots
             }
-            return .spline(controlPoints: Array(controlPoints.reversed()),
-                           knots: reversedKnots,
-                           degree: degree,
-                           weights: weights.map { Array($0.reversed()) },
-                           closed: closed,
-                           periodic: periodic)
+            return .spline(CADHatchSplineData(
+                controlPoints: Array(data.controlPoints.reversed()),
+                knots: reversedKnots,
+                degree: data.degree,
+                weights: data.weights.map { Array($0.reversed()) },
+                fitPoints: Array(data.fitPoints.reversed()),
+                startTangent: data.endTangent.map { $0 * -1.0 },
+                endTangent: data.startTangent.map { $0 * -1.0 },
+                closed: data.closed,
+                periodic: data.periodic,
+                rational: data.rational))
         }
     }
 
@@ -201,9 +244,18 @@ public enum CADHatchEdge: Hashable, Sendable {
         case .ellipticalArc(let center, let axisU, let axisV, let startParam, let sweep):
             return .ellipticalArc(center: point(center), axisU: vector(axisU), axisV: vector(axisV),
                                   startParam: startParam, sweep: sweep)
-        case .spline(let controlPoints, let knots, let degree, let weights, let closed, let periodic):
-            return .spline(controlPoints: controlPoints.map(point), knots: knots, degree: degree,
-                           weights: weights, closed: closed, periodic: periodic)
+        case .spline(let data):
+            return .spline(CADHatchSplineData(
+                controlPoints: data.controlPoints.map(point),
+                knots: data.knots,
+                degree: data.degree,
+                weights: data.weights,
+                fitPoints: data.fitPoints.map(point),
+                startTangent: data.startTangent.map(vector),
+                endTangent: data.endTangent.map(vector),
+                closed: data.closed,
+                periodic: data.periodic,
+                rational: data.rational))
         }
     }
 
@@ -215,8 +267,8 @@ public enum CADHatchEdge: Hashable, Sendable {
             return [startPoint, Optional(center), endPoint].compactMap { $0 }
         case .ellipticalArc(let center, let axisU, let axisV, _, _):
             return [startPoint, Optional(center), Optional(center + axisU), Optional(center + axisV), endPoint].compactMap { $0 }
-        case .spline(let controlPoints, _, _, _, _, _):
-            return controlPoints
+        case .spline(let data):
+            return data.controlPoints.isEmpty ? data.fitPoints : data.controlPoints
         }
     }
 }
@@ -250,6 +302,7 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
     public var hatchEdges: [CADHatchEdge]
     public var isHatchBoundaryCarrier: Bool
     public var hatchLoopType: Int?
+    public var hatchSourceBoundaryHandles: [UInt32]
 
     public init(
         vertices: [CADPolylineVertex],
@@ -257,7 +310,8 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         lineTypeGenerationEnabled: Bool = false,
         hatchEdges: [CADHatchEdge] = [],
         isHatchBoundaryCarrier: Bool = false,
-        hatchLoopType: Int? = nil
+        hatchLoopType: Int? = nil,
+        hatchSourceBoundaryHandles: [UInt32] = []
     ) {
         self.vertices = vertices
         self.isClosed = isClosed
@@ -265,6 +319,7 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         self.hatchEdges = hatchEdges
         self.isHatchBoundaryCarrier = isHatchBoundaryCarrier
         self.hatchLoopType = hatchLoopType
+        self.hatchSourceBoundaryHandles = hatchSourceBoundaryHandles
     }
 
     public init(
@@ -273,7 +328,8 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         lineTypeGenerationEnabled: Bool = false,
         hatchEdges: [CADHatchEdge] = [],
         isHatchBoundaryCarrier: Bool = false,
-        hatchLoopType: Int? = nil
+        hatchLoopType: Int? = nil,
+        hatchSourceBoundaryHandles: [UInt32] = []
     ) {
         self.vertices = points.map { CADPolylineVertex(position: $0) }
         self.isClosed = isClosed
@@ -281,6 +337,7 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         self.hatchEdges = hatchEdges
         self.isHatchBoundaryCarrier = isHatchBoundaryCarrier
         self.hatchLoopType = hatchLoopType
+        self.hatchSourceBoundaryHandles = hatchSourceBoundaryHandles
     }
 
     public var startIndex: Int { vertices.startIndex }

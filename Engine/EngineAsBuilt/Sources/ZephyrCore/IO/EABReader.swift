@@ -1069,8 +1069,8 @@ public enum EABReader {
                 }
                 return nil
             }
-            let readHatchPathMetadata = { () -> (edges: [CADHatchEdge], carrier: Bool, loopType: Int?) in
-                guard version >= 11 else { return ([], false, nil) }
+            let readHatchPathMetadata = { () -> (edges: [CADHatchEdge], carrier: Bool, loopType: Int?, sourceHandles: [UInt32]) in
+                guard version >= 11 else { return ([], false, nil, []) }
                 let carrier = r.readUInt8() != 0
                 let loopType: Int?
                 if version >= 12 {
@@ -1078,6 +1078,12 @@ public enum EABReader {
                     loopType = raw >= 0 ? raw : nil
                 } else {
                     loopType = nil
+                }
+                var sourceHandles: [UInt32] = []
+                if version >= 16 {
+                    let handleCount = safeCount(r.readUInt32(), limit: maxSafeHatchEdgeCount, label: "hatchSourceHandles")
+                    sourceHandles.reserveCapacity(handleCount)
+                    for _ in 0..<handleCount { sourceHandles.append(r.readUInt32()) }
                 }
                 let edgeCount = safeCount(r.readUInt32(), limit: maxSafeHatchEdgeCount, label: "hatchEdges")
                 var edges: [CADHatchEdge] = []
@@ -1123,14 +1129,65 @@ public enum EABReader {
                             for _ in 0..<weightCount { values.append(r.readFloat64()) }
                             weights = values
                         }
-                        edges.append(.spline(controlPoints: controlPoints, knots: knots,
-                                             degree: degree, weights: weights,
-                                             closed: closed, periodic: periodic))
+                        edges.append(.spline(CADHatchSplineData(
+                            controlPoints: controlPoints,
+                            knots: knots,
+                            degree: degree,
+                            weights: weights,
+                            closed: closed,
+                            periodic: periodic)))
+                    case 4:
+                        let degree = Int(r.readUInt32())
+                        let closed = r.readUInt8() != 0
+                        let periodic = r.readUInt8() != 0
+                        let rational = r.readUInt8() != 0
+                        let controlCount = safeCount(r.readUInt32(), limit: maxSafeVertexCount, label: "hatchSplineCtrlPts")
+                        var controlPoints: [Vector3] = []
+                        controlPoints.reserveCapacity(controlCount)
+                        for _ in 0..<controlCount {
+                            controlPoints.append(Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64()))
+                        }
+                        let knotCount = safeCount(r.readUInt32(), limit: maxSafeVertexCount, label: "hatchSplineKnots")
+                        var knots: [Double] = []
+                        knots.reserveCapacity(knotCount)
+                        for _ in 0..<knotCount { knots.append(r.readFloat64()) }
+                        let hasWeights = r.readUInt8() != 0
+                        var weights: [Double]? = nil
+                        if hasWeights {
+                            let weightCount = safeCount(r.readUInt32(), limit: maxSafeVertexCount, label: "hatchSplineWeights")
+                            var values: [Double] = []
+                            values.reserveCapacity(weightCount)
+                            for _ in 0..<weightCount { values.append(r.readFloat64()) }
+                            weights = values
+                        }
+                        let fitCount = safeCount(r.readUInt32(), limit: maxSafeVertexCount, label: "hatchSplineFitPts")
+                        var fitPoints: [Vector3] = []
+                        fitPoints.reserveCapacity(fitCount)
+                        for _ in 0..<fitCount {
+                            fitPoints.append(Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64()))
+                        }
+                        let startTangent: Vector3? = r.readUInt8() != 0
+                            ? Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                            : nil
+                        let endTangent: Vector3? = r.readUInt8() != 0
+                            ? Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                            : nil
+                        edges.append(.spline(CADHatchSplineData(
+                            controlPoints: controlPoints,
+                            knots: knots,
+                            degree: degree,
+                            weights: weights,
+                            fitPoints: fitPoints,
+                            startTangent: startTangent,
+                            endTangent: endTangent,
+                            closed: closed,
+                            periodic: periodic,
+                            rational: rational)))
                     default:
                         break
                     }
                 }
-                return (edges, carrier, loopType)
+                return (edges, carrier, loopType, sourceHandles)
             }
             switch type {
             case 0: // point
@@ -1194,7 +1251,8 @@ public enum EABReader {
                         lineTypeGenerationEnabled: lineTypeGenerationEnabled,
                         hatchEdges: metadata.edges,
                         isHatchBoundaryCarrier: metadata.carrier,
-                        hatchLoopType: metadata.loopType),
+                        hatchLoopType: metadata.loopType,
+                        hatchSourceBoundaryHandles: metadata.sourceHandles),
                     color: color))
             case 7: // fillPolygon
                 let ptCount = safeCount(r.readUInt32(), limit: maxSafeVertexCount, label: "fillPolyVerts")
@@ -1304,7 +1362,8 @@ public enum EABReader {
                                        lineTypeGenerationEnabled: lineTypeGenerationEnabled,
                                        hatchEdges: metadata.edges,
                                        isHatchBoundaryCarrier: metadata.carrier,
-                                       hatchLoopType: metadata.loopType)
+                                       hatchLoopType: metadata.loopType,
+                                       hatchSourceBoundaryHandles: metadata.sourceHandles)
                 }
                 let boundary = readPath()
                 let holeCount = safeCount(r.readUInt32(), limit: maxSafeHatchEdgeCount, label: "hatchHoles")

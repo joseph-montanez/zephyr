@@ -153,7 +153,7 @@ public final class DataTableCommand: FeatureCommand {
             _ = igCheckbox("Title row", &configuration.includeTitle)
             if configuration.includeTitle {
                 ImGuiSetNextItemWidth(-1)
-                _ = igInputText("Title", &configuration.title, 256, 0, nil, nil)
+                inputText("Title", value: &configuration.title)
             }
 
             ImGuiSetNextItemWidth(160)
@@ -201,6 +201,28 @@ public final class DataTableCommand: FeatureCommand {
 
         if !open {
             engine.commandProcessor.finishFeatureCommand(engine: engine)
+        }
+    }
+
+    private func inputText(_ label: String, value: inout String, capacity: Int = 256) {
+        let bufferCapacity = max(capacity, value.utf8.count + 1)
+        var buffer = [CChar](repeating: 0, count: bufferCapacity)
+        let bytes = value.utf8CString
+        for index in 0..<min(bytes.count, bufferCapacity) {
+            buffer[index] = bytes[index]
+        }
+
+        let changed = buffer.withUnsafeMutableBufferPointer { pointer -> Bool in
+            guard let baseAddress = pointer.baseAddress else { return false }
+            return igInputText(label, baseAddress, pointer.count, 0, nil, nil)
+        }
+
+        if changed {
+            let end = buffer.firstIndex(of: 0) ?? buffer.endIndex
+            value = String(
+                decoding: buffer[..<end].map { UInt8(bitPattern: $0) },
+                as: UTF8.self
+            )
         }
     }
 

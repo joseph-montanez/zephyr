@@ -265,8 +265,6 @@ public final class AlignCommand: FeatureCommand {
         let orangeColor = igGetColorU32_Vec4(ImVec4(x: 0.9, y: 0.6, z: 0.2, w: 1.0))
         let dashedColor = igGetColorU32_Vec4(ImVec4(x: 0.6, y: 0.6, z: 0.6, w: 0.8))
 
-        let cursorWorld = Vector3(x: currentMouseX, y: currentMouseY, z: 0)
-
         switch step {
         case .selectObjects:
             break
@@ -484,7 +482,7 @@ extension AlignCommand {
 
     /// Compute the combined Transform3D from two source/destination point pairs.
     private func computeTransform() -> Transform3D? {
-        guard let s1, let s2, let d1, let d2 else { return nil }
+        guard let s1, let d1, s2 != nil, d2 != nil else { return nil }
 
         let sv = sourceVector
         let dv = destVector
@@ -663,7 +661,7 @@ extension AlignCommand {
 
     /// Render a ghosted preview of the selection at the computed transform (for scale step).
     private func renderScalePreview(drawList: UnsafeMutablePointer<ImDrawList>, engine: PhrostEngine, cam: CameraTransform) {
-        guard let s1, let s2, let d1, let d2 else { return }
+        guard s1 != nil, s2 != nil, d1 != nil, d2 != nil else { return }
 
         // Compute the transform (same logic as applyAndFinish but without applying)
         guard let finalTransform = computeTransform() else { return }

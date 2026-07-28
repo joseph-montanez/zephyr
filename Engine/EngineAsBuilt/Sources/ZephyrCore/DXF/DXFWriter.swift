@@ -67,6 +67,7 @@ public class DXFWriter {
     public var layouts: [DXFLayoutDefinition] = []
     public var preservedClasses: [DXFRawRecord] = []
     public var preservedObjects: [DXFRawRecord] = []
+    public var preservedACDSData: [DataTableRawDXFGroup] = []
 
     // Handle tracking
     private var nextHandle: UInt32 = 1
@@ -195,6 +196,7 @@ public class DXFWriter {
         writeBlocks(&out)
         writeEntities(&out)
         writeObjects(&out)
+        writeACDSData(&out)
 
         // EOF
         out += "  0\r\nEOF\r\n"
@@ -571,6 +573,458 @@ public class DXFWriter {
     private func writeRawRecord(_ record: DXFRawRecord, _ out: inout String) {
         writeRawGroup(DataTableRawDXFGroup(code: 0, value: record.type), &out)
         for group in record.groups { writeRawGroup(group, &out) }
+    }
+
+    private func tableCellText(_ cell: DataTableCell) -> (raw: String, display: String) {
+        let value: String
+        switch cell.value {
+        case .string(let text): value = text
+        case .number(let number): value = dxfFmt(number)
+        case .integer(let integer): value = String(integer)
+        case .boolean(let boolean): value = boolean ? "1" : "0"
+        case .empty: value = ""
+        }
+        return (
+            cell.formulaExpression ?? value,
+            cell.cachedDisplayText ?? value)
+    }
+
+    private func tableAlignmentCode(
+        horizontal: DataTableCellAlignment,
+        vertical: DataTableCellVerticalAlignment
+    ) -> Int {
+        let horizontalOffset: Int
+        switch horizontal {
+        case .left: horizontalOffset = 0
+        case .center: horizontalOffset = 1
+        case .right: horizontalOffset = 2
+        }
+        let verticalOffset: Int
+        switch vertical {
+        case .top: verticalOffset = 1
+        case .middle: verticalOffset = 4
+        case .bottom: verticalOffset = 7
+        }
+        return verticalOffset + horizontalOffset
+    }
+
+    private func rewrittenTableCellGroups(
+        _ template: [DataTableRawDXFGroup],
+        cell: DataTableCell,
+        column: DataTableColumn,
+        table: DataTableData
+    ) -> [DataTableRawDXFGroup] {
+        var groups = template
+        if groups.isEmpty {
+            groups = [
+                DataTableRawDXFGroup(code: 171, value: "1"),
+                DataTableRawDXFGroup(code: 172, value: "0"),
+                DataTableRawDXFGroup(code: 173, value: "0"),
+                DataTableRawDXFGroup(code: 170, value: "4"),
+                DataTableRawDXFGroup(code: 140, value: dxfFmt(table.textHeight)),
+                DataTableRawDXFGroup(code: 301, value: "CELL_VALUE"),
+                DataTableRawDXFGroup(code: 93, value: "4"),
+                DataTableRawDXFGroup(code: 90, value: "4"),
+                DataTableRawDXFGroup(code: 1, value: ""),
+                DataTableRawDXFGroup(code: 94, value: "0"),
+                DataTableRawDXFGroup(code: 300, value: ""),
+                DataTableRawDXFGroup(code: 302, value: ""),
+                DataTableRawDXFGroup(code: 304, value: "ACVALUE_END")
+            ]
+        }
+
+        let horizontal = cell.horizontalAlignment ?? column.alignment
+        let vertical = cell.verticalAlignment ?? .middle
+        let alignment = tableAlignmentCode(horizontal: horizontal, vertical: vertical)
+        let text = tableCellText(cell)
+        var inValue = false
+        var wroteRaw = false
+        var wroteDisplay = false
+        var wroteAlignment = false
+        var wroteStyle = false
+        var wroteHeight = false
+
+        for index in groups.indices {
+            let code = groups[index].code
+            let marker = groups[index].value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if code == 301, marker == "CELL_VALUE" { inValue = true }
+            if code == 304, marker == "ACVALUE_END" { inValue = false }
+
+            if code == 170, !wroteAlignment {
+                groups[index].value = String(alignment)
+                wroteAlignment = true
+            } else if code == 7, !wroteStyle, let style = table.textStyleName, !style.isEmpty {
+                groups[index].value = textCodec.fromUtf8(style)
+                wroteStyle = true
+            } else if code == 140, !wroteHeight {
+                groups[index].value = dxfFmt(table.textHeight)
+                wroteHeight = true
+            } else if inValue, code == 1, !wroteRaw {
+                groups[index].value = textCodec.fromUtf8(text.raw)
+                wroteRaw = true
+            } else if inValue, code == 302, !wroteDisplay {
+                groups[index].value = textCodec.fromUtf8(text.display)
+                wroteDisplay = true
+            }
+        }
+
+        if !wroteAlignment {
+            let insertion = min(3, groups.count)
+            groups.insert(DataTableRawDXFGroup(code: 170, value: String(alignment)), at: insertion)
+        }
+        if !wroteHeight {
+            let insertion = min(4, groups.count)
+            groups.insert(DataTableRawDXFGroup(code: 140, value: dxfFmt(table.textHeight)), at: insertion)
+        }
+        if !wroteStyle, let style = table.textStyleName, !style.isEmpty {
+            let insertion = groups.firstIndex(where: { $0.code == 301 })
+                ?? min(5, groups.count)
+            groups.insert(
+                DataTableRawDXFGroup(code: 7, value: textCodec.fromUtf8(style)),
+                at: insertion)
+        }
+
+        let hasValueBlock = groups.contains {
+            $0.code == 301
+                && $0.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased() == "CELL_VALUE"
+        }
+        if hasValueBlock {
+            if !wroteRaw {
+                let insertion = groups.firstIndex(where: { $0.code == 302 || $0.code == 304 })
+                    ?? groups.endIndex
+                groups.insert(
+                    DataTableRawDXFGroup(code: 1, value: textCodec.fromUtf8(text.raw)),
+                    at: insertion)
+            }
+            if !wroteDisplay {
+                let insertion = groups.firstIndex(where: {
+                    $0.code == 304
+                        && $0.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                            .uppercased() == "ACVALUE_END"
+                }) ?? groups.endIndex
+                groups.insert(
+                    DataTableRawDXFGroup(code: 302, value: textCodec.fromUtf8(text.display)),
+                    at: insertion)
+            }
+        } else {
+            groups.append(DataTableRawDXFGroup(code: 301, value: "CELL_VALUE"))
+            groups.append(DataTableRawDXFGroup(code: 93, value: "4"))
+            groups.append(DataTableRawDXFGroup(code: 90, value: "4"))
+            groups.append(DataTableRawDXFGroup(code: 1, value: textCodec.fromUtf8(text.raw)))
+            groups.append(DataTableRawDXFGroup(code: 94, value: "0"))
+            groups.append(DataTableRawDXFGroup(code: 300, value: ""))
+            groups.append(DataTableRawDXFGroup(code: 302, value: textCodec.fromUtf8(text.display)))
+            groups.append(DataTableRawDXFGroup(code: 304, value: "ACVALUE_END"))
+        }
+        return groups
+    }
+
+    private func rewrittenTableContentRecord(
+        _ record: DXFRawRecord,
+        table: DataTableData
+    ) -> DXFRawRecord {
+        let flattenedCells = table.rows.flatMap { row in
+            table.columns.indices.map { columnIndex in
+                columnIndex < row.cells.count
+                    ? row.cells[columnIndex]
+                    : DataTableCell(columnID: table.columns[columnIndex].id)
+            }
+        }
+        let templateCellCount = record.groups.reduce(into: 0) { count, group in
+            if group.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                .uppercased() == "LINKEDTABLEDATACELL_BEGIN" {
+                count += 1
+            }
+        }
+        let canRewriteStructure = templateCellCount == flattenedCells.count
+
+        let rowHeights = table.rows.indices.map { index in
+            index < table.rowHeights.count && table.rowHeights[index] > 0
+                ? table.rowHeights[index]
+                : table.defaultRowHeight
+        }
+        let columnWidths = table.columns.map {
+            $0.width > 0 ? $0.width : table.defaultColumnWidth
+        }
+
+        var result: [DataTableRawDXFGroup] = []
+        result.reserveCapacity(record.groups.count)
+        var currentCellIndex = -1
+        var currentColumnIndex: Int?
+        var currentRowIndex: Int?
+        var inCellContent = false
+        var inCellValue = false
+        var wroteRawValue = false
+        var wroteDisplayValue = false
+
+        for index in record.groups.indices {
+            let source = record.groups[index]
+            let marker = source.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                .uppercased()
+            var group = source
+
+            if marker == "LINKEDTABLEDATACELL_BEGIN" {
+                currentCellIndex += 1
+                inCellContent = false
+                inCellValue = false
+                wroteRawValue = false
+                wroteDisplayValue = false
+            } else if marker == "CELLCONTENT_BEGIN" {
+                inCellContent = true
+            } else if marker == "CELLCONTENT_END" {
+                inCellContent = false
+                inCellValue = false
+            } else if marker == "LINKEDTABLEDATACELL_END" {
+                inCellContent = false
+                inCellValue = false
+            } else if marker == "TABLECOLUMN_BEGIN" {
+                currentColumnIndex = nil
+            } else if marker == "TABLECOLUMN_END" {
+                currentColumnIndex = nil
+            } else if marker == "TABLEROW_BEGIN" {
+                currentRowIndex = nil
+            } else if marker == "TABLEROW_END" {
+                currentRowIndex = nil
+            }
+
+            if source.code == 90, currentColumnIndex == nil,
+               result.last?.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased() == "TABLECOLUMN_BEGIN" {
+                currentColumnIndex = Int(source.value.trimmingCharacters(in: .whitespacesAndNewlines))
+            } else if source.code == 90, currentRowIndex == nil,
+                      result.last?.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .uppercased() == "TABLEROW_BEGIN" {
+                currentRowIndex = Int(source.value.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+
+            if canRewriteStructure,
+               source.code == 90,
+               index + 1 < record.groups.count,
+               record.groups[index + 1].code == 300,
+               record.groups[index + 1].value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased() == "COLUMN" {
+                group.value = String(table.columns.count)
+            } else if canRewriteStructure,
+                      source.code == 91,
+                      index + 1 < record.groups.count,
+                      record.groups[index + 1].code == 301,
+                      record.groups[index + 1].value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .uppercased() == "ROW" {
+                group.value = String(table.rows.count)
+            } else if source.code == 40,
+                      let columnIndex = currentColumnIndex,
+                      columnWidths.indices.contains(columnIndex) {
+                group.value = dxfFmt(columnWidths[columnIndex])
+            } else if source.code == 40,
+                      let rowIndex = currentRowIndex,
+                      rowHeights.indices.contains(rowIndex) {
+                group.value = dxfFmt(rowHeights[rowIndex])
+            }
+
+            if inCellContent, source.code == 300, marker == "VALUE" {
+                inCellValue = true
+                wroteRawValue = false
+                wroteDisplayValue = false
+            }
+
+            if inCellValue,
+               flattenedCells.indices.contains(currentCellIndex) {
+                let text = tableCellText(flattenedCells[currentCellIndex])
+                if source.code == 1, !wroteRawValue {
+                    group.value = textCodec.fromUtf8(text.raw)
+                    wroteRawValue = true
+                } else if source.code == 302, !wroteDisplayValue {
+                    group.value = textCodec.fromUtf8(text.display)
+                    wroteDisplayValue = true
+                } else if source.code == 304, marker == "ACVALUE_END" {
+                    if !wroteRawValue {
+                        result.append(DataTableRawDXFGroup(
+                            code: 1,
+                            value: textCodec.fromUtf8(text.raw)))
+                    }
+                    if !wroteDisplayValue {
+                        result.append(DataTableRawDXFGroup(
+                            code: 302,
+                            value: textCodec.fromUtf8(text.display)))
+                    }
+                    inCellValue = false
+                }
+            }
+
+            result.append(group)
+        }
+        return DXFRawRecord(type: record.type, groups: result)
+    }
+
+    public func rewrittenTableObjectRecords(
+        for table: DataTableData
+    ) -> [DXFRawRecord] {
+        guard let payload = table.nativeDXFPayload else { return [] }
+        return (payload.referencedObjects ?? []).map { record in
+            record.type.uppercased() == "TABLECONTENT"
+                ? rewrittenTableContentRecord(record, table: table)
+                : record
+        }
+    }
+
+    private func rewrittenNativeTableGroups(
+        table: DXFTableEntity,
+        payload: DataTableNativeDXFPayload,
+        ownerHandle: String?
+    ) -> [DataTableRawDXFGroup] {
+        var prefix: [DataTableRawDXFGroup] = []
+        var tableBody: [DataTableRawDXFGroup] = []
+        var inTable = false
+        var subclass = ""
+        var reachedEntitySubclass = false
+        var reachedBlockReferenceSubclass = false
+
+        let blockReferenceIndex = payload.rawGroups.firstIndex {
+            $0.code == 100
+                && $0.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased() == "ACDBBLOCKREFERENCE"
+        } ?? payload.rawGroups.endIndex
+        let hasProxyChunks = payload.rawGroups[..<blockReferenceIndex].contains {
+            $0.code == 310
+        }
+        let proxySize92Index = hasProxyChunks
+            ? payload.rawGroups[..<blockReferenceIndex].firstIndex(where: { $0.code == 92 })
+            : nil
+
+        for (rawIndex, group) in payload.rawGroups.enumerated() {
+            if group.code == 1001 { break }
+            if group.code == 100 {
+                subclass = group.value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                if subclass == "ACDBENTITY" { reachedEntitySubclass = true }
+                if subclass == "ACDBBLOCKREFERENCE" { reachedBlockReferenceSubclass = true }
+                if subclass == "ACDBTABLE" { inTable = true }
+            }
+            if inTable {
+                tableBody.append(group)
+                continue
+            }
+            if group.code == 5 || group.code == 160 || group.code == 310
+                || rawIndex == proxySize92Index {
+                continue
+            }
+            var value = group.value
+            if group.code == 330, !reachedEntitySubclass,
+               let ownerHandle, !ownerHandle.isEmpty {
+                value = ownerHandle
+            } else if group.code == 8, reachedEntitySubclass, !reachedBlockReferenceSubclass {
+                value = esc(layer: table.layer)
+            } else if subclass == "ACDBBLOCKREFERENCE" {
+                switch group.code {
+                case 2: value = textCodec.fromUtf8(table.blockName)
+                case 10: value = dxfFmt(table.insertion.x)
+                case 20: value = dxfFmt(table.insertion.y)
+                case 30: value = dxfFmt(table.insertion.z)
+                default: break
+                }
+            }
+            prefix.append(DataTableRawDXFGroup(code: group.code, value: value))
+        }
+
+        guard !tableBody.isEmpty else { return prefix }
+        let firstCellIndex = tableBody.firstIndex(where: { $0.code == 171 }) ?? tableBody.endIndex
+        let header = Array(tableBody[..<firstCellIndex])
+        let rawCells = firstCellIndex < tableBody.endIndex
+            ? Array(tableBody[firstCellIndex...])
+            : []
+        var templates: [[DataTableRawDXFGroup]] = []
+        var current: [DataTableRawDXFGroup] = []
+        for group in rawCells {
+            if group.code == 171, !current.isEmpty {
+                templates.append(current)
+                current = []
+            }
+            current.append(group)
+        }
+        if !current.isEmpty { templates.append(current) }
+
+        let rowCount = table.data.rows.count
+        let columnCount = table.data.columns.count
+        let rowHeights = (0..<rowCount).map { index in
+            index < table.data.rowHeights.count && table.data.rowHeights[index] > 0
+                ? table.data.rowHeights[index]
+                : table.data.defaultRowHeight
+        }
+        let columnWidths = table.data.columns.map {
+            $0.width > 0 ? $0.width : table.data.defaultColumnWidth
+        }
+
+        var rewrittenHeader: [DataTableRawDXFGroup] = []
+        var wroteRows = false
+        var wroteColumns = false
+        var wroteRowHeights = false
+        var wroteColumnWidths = false
+        var headerSubclass = ""
+        for group in header {
+            if group.code == 100 {
+                headerSubclass = group.value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            }
+            if group.code == 91, !wroteRows {
+                rewrittenHeader.append(DataTableRawDXFGroup(code: 91, value: String(rowCount)))
+                wroteRows = true
+            } else if group.code == 92, !wroteColumns {
+                rewrittenHeader.append(DataTableRawDXFGroup(code: 92, value: String(columnCount)))
+                wroteColumns = true
+            } else if group.code == 141 {
+                if !wroteRowHeights {
+                    for height in rowHeights {
+                        rewrittenHeader.append(DataTableRawDXFGroup(code: 141, value: dxfFmt(height)))
+                    }
+                    wroteRowHeights = true
+                }
+            } else if group.code == 142 {
+                if !wroteColumnWidths {
+                    for width in columnWidths {
+                        rewrittenHeader.append(DataTableRawDXFGroup(code: 142, value: dxfFmt(width)))
+                    }
+                    wroteColumnWidths = true
+                }
+            } else if headerSubclass == "ACDBTABLE", group.code == 11 {
+                rewrittenHeader.append(DataTableRawDXFGroup(code: 11, value: dxfFmt(table.horizontal.x)))
+            } else if headerSubclass == "ACDBTABLE", group.code == 21 {
+                rewrittenHeader.append(DataTableRawDXFGroup(code: 21, value: dxfFmt(table.horizontal.y)))
+            } else if headerSubclass == "ACDBTABLE", group.code == 31 {
+                rewrittenHeader.append(DataTableRawDXFGroup(code: 31, value: dxfFmt(table.horizontal.z)))
+            } else if group.code == 343,
+                      let recordHandle = blockRecordHandle(for: table.blockName) {
+                rewrittenHeader.append(DataTableRawDXFGroup(code: 343, value: recordHandle))
+            } else {
+                rewrittenHeader.append(group)
+            }
+        }
+        if !wroteRows { rewrittenHeader.append(DataTableRawDXFGroup(code: 91, value: String(rowCount))) }
+        if !wroteColumns { rewrittenHeader.append(DataTableRawDXFGroup(code: 92, value: String(columnCount))) }
+        if !wroteRowHeights {
+            for height in rowHeights { rewrittenHeader.append(DataTableRawDXFGroup(code: 141, value: dxfFmt(height))) }
+        }
+        if !wroteColumnWidths {
+            for width in columnWidths { rewrittenHeader.append(DataTableRawDXFGroup(code: 142, value: dxfFmt(width))) }
+        }
+
+        var result = prefix + rewrittenHeader
+        var cellIndex = 0
+        for row in table.data.rows {
+            for columnIndex in table.data.columns.indices {
+                let cell = columnIndex < row.cells.count
+                    ? row.cells[columnIndex]
+                    : DataTableCell(columnID: table.data.columns[columnIndex].id)
+                let template = cell.nativeDXFGroups
+                    ?? (cellIndex < templates.count ? templates[cellIndex] : templates.first)
+                    ?? []
+                result.append(contentsOf: rewrittenTableCellGroups(
+                    template,
+                    cell: cell,
+                    column: table.data.columns[columnIndex],
+                    table: table.data))
+                cellIndex += 1
+            }
+        }
+        return result
     }
 
     // MARK: - CLASSES
@@ -1666,7 +2120,7 @@ public class DXFWriter {
             writeCoord3(210, ht.extrusion, &out)
             writeStr(2, ht.name, &out)
             writeInt(70, ht.solid, &out)
-            writeInt(71, 0, &out)
+            writeInt(71, ht.associative, &out)
             writeInt(91, ht.loops.count, &out)
 
             for loop in ht.loops {
@@ -1683,7 +2137,10 @@ public class DXFWriter {
                         writeDbl(20, vertex.y, &out)
                         if hasBulge { writeDbl(42, vertex.bulge, &out) }
                     }
-                    writeInt(97, 0, &out)
+                    writeInt(97, loop.sourceBoundaryHandles.count, &out)
+                    for handle in loop.sourceBoundaryHandles {
+                        writeStr(330, String(handle, radix: 16).uppercased(), &out)
+                    }
                     continue
                 }
 
@@ -1737,7 +2194,10 @@ public class DXFWriter {
                         }
                     }
                 }
-                writeInt(97, 0, &out)
+                writeInt(97, loop.sourceBoundaryHandles.count, &out)
+                for handle in loop.sourceBoundaryHandles {
+                    writeStr(330, String(handle, radix: 16).uppercased(), &out)
+                }
             }
 
             writeInt(75, ht.hStyle, &out)
@@ -1857,10 +2317,19 @@ public class DXFWriter {
         case .tABLE:
             guard let table = e as? DXFTableEntity else { return }
             if let payload = table.data.nativeDXFPayload,
-               !payload.isModified,
                !payload.rawGroups.isEmpty {
                 writeRawGroup(DataTableRawDXFGroup(code: 0, value: "ACAD_TABLE"), &out)
                 writeRawGroup(DataTableRawDXFGroup(code: 5, value: h), &out)
+                if payload.isModified {
+                    for group in rewrittenNativeTableGroups(
+                        table: table,
+                        payload: payload,
+                        ownerHandle: ownerHandle) {
+                        writeRawGroup(group, &out)
+                    }
+                    writeExtendedData(table, &out)
+                    return
+                }
                 var wroteHandle = false
                 var reachedEntitySubclass = false
                 var reachedBlockReferenceSubclass = false
@@ -1991,6 +2460,17 @@ public class DXFWriter {
         if e.haveExtrusion || e.extrusion != Vector3(x: 0, y: 0, z: 1) {
             writeCoord3(210, e.extrusion, &out)
         }
+    }
+
+    // MARK: - ACDSDATA
+
+    private func writeACDSData(_ out: inout String) {
+        guard isModern, !preservedACDSData.isEmpty else { return }
+        out += "  0\r\nSECTION\r\n  2\r\nACDSDATA\r\n"
+        for group in preservedACDSData {
+            writeRawGroup(group, &out)
+        }
+        out += "  0\r\nENDSEC\r\n"
     }
 
     // MARK: - OBJECTS

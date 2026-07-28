@@ -535,7 +535,7 @@ public final class PDFImportCommand: FeatureCommand {
                 print("[PDFImport] Enqueuing native dialog request...")
                 engine.pendingDialogRequest = { [weak self, weak engine] in
                     guard let self, let engine else { return }
-                    print("[PDFImport] Showing native open dialog (window: \(engine.window != nil ? "valid" : "NULL"))...")
+                    print("[PDFImport] Showing native open dialog (window: valid)...")
                     NativeFileDialog.showOpenDialog(
                         window: engine.window,
                         filters: [

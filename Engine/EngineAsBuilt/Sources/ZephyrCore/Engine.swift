@@ -587,7 +587,7 @@ public final class PhrostEngine {
         // persists between launches.
         if let iniURL = UserSettings.imguiIniURL() {
             let iniPath = iniURL.path
-            self._imguiIniPath = _strdup(iniPath)
+            self._imguiIniPath = z_strdup(iniPath)
             if let iniCStr = self._imguiIniPath {
                 self.io.pointee.IniFilename = UnsafePointer(iniCStr)
             }

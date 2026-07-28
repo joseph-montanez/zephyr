@@ -57,7 +57,12 @@ public struct DocumentTab {
     public var activeViewIndex: Int = 0
     public var document: CADDocument {
         get { drawingViews[activeViewIndex].document }
-        set { drawingViews[activeViewIndex].document = newValue }
+        set {
+            drawingViews[activeViewIndex].document = newValue
+            if let payload = newValue.dxfRoundTripPayload {
+                dxfRoundTripPayload = payload
+            }
+        }
     }
     /// The file this document was opened from / last saved to. Nil for unsaved "Untitled" docs.
     public var fileURL: URL?
@@ -65,6 +70,9 @@ public struct DocumentTab {
     public var displayName: String
     /// DXF version used for manual DXF saves. New tabs default to AutoCAD 2018.
     public var dxfVersion: DXFVersion
+    /// File-level DXF records shared by model space and every layout.
+    /// Kept at tab scope so switching/replacing a drawing view cannot discard them.
+    public var dxfRoundTripPayload: DXFRoundTripPayload?
     /// Per-tab camera state (zoom, pan, rotation). Preserved across tab switches.
     public var cameraState: CameraState {
         get { drawingViews[activeViewIndex].cameraState }
@@ -80,6 +88,7 @@ public struct DocumentTab {
                 fileURL: URL? = nil,
                 displayName: String = "Untitled",
                 dxfVersion: DXFVersion = .defaultExport,
+                dxfRoundTripPayload: DXFRoundTripPayload? = nil,
                 editingBlockID: UUID? = nil,
                 parentDocument: CADDocument? = nil,
                 cameraState: CameraState = .default,
@@ -90,6 +99,8 @@ public struct DocumentTab {
         self.fileURL = fileURL
         self.displayName = displayName
         self.dxfVersion = dxfVersion
+        self.dxfRoundTripPayload = dxfRoundTripPayload
+            ?? self.drawingViews.compactMap { $0.document.dxfRoundTripPayload }.first
         self.editingBlockID = editingBlockID
         self.parentDocument = parentDocument
     }
@@ -104,11 +115,14 @@ public struct DocumentTab {
     public func buildSaveSnapshot(formatVersion: UInt32 = 7,
                                    appVersion: String = "Zephyr 1.0") -> SaveTabSnapshot {
         let viewEditRevisions = drawingViews.map { $0.document.editRevision }
+        let payload = dxfRoundTripPayload
+            ?? drawingViews.compactMap { $0.document.dxfRoundTripPayload }.first
         let viewSnapshots = drawingViews.map { view in
             view.document.buildSaveSnapshot(
                 viewName: view.name,
                 viewKind: view.kind,
-                cameraState: view.cameraState
+                cameraState: view.cameraState,
+                dxfRoundTripPayloadFallback: payload
             )
         }
         return SaveTabSnapshot(

@@ -387,7 +387,9 @@ public enum DXFEntityConverter {
             "dxf.hatchPatternDefinitionType": .int(hatch.hPattern),
             "dxf.hatchDouble": .bool(hatch.doubleFlag != 0),
             "dxf.hatchAssociative": .bool(hatch.associative != 0),
-            "dxf.hatchIsGradient": .bool(hatch.isGradient != 0)
+            "dxf.hatchIsGradient": .bool(hatch.isGradient != 0),
+            "dxf.hatchNonDefaultOCS": .bool(
+                hatchBoundaryTransform(for: hatch) != .identity)
         ]
 
         if hatch.pixelSize.isFinite, hatch.pixelSize > 0 {
@@ -656,6 +658,7 @@ public enum DXFEntityConverter {
                 ? $0
                 : $0.transformed(by: storedBoundaryTransform)
             path.hatchLoopType = loop.type
+            path.hatchSourceBoundaryHandles = loop.sourceBoundaryHandles
             return path
         }
         guard !loop.sourceBoundaryEntities.isEmpty else { return storedPath }
@@ -664,6 +667,7 @@ public enum DXFEntityConverter {
             return storedPath
         }
         sourcePath.hatchLoopType = loop.type
+        sourcePath.hatchSourceBoundaryHandles = loop.sourceBoundaryHandles
         guard let storedPath else { return sourcePath }
 
         return hatchPathsAreEquivalent(sourcePath, storedPath) ? sourcePath : storedPath
@@ -954,13 +958,20 @@ public enum DXFEntityConverter {
         let weights = spline.weights.isEmpty
             ? nil
             : normalizedSplineWeights(spline.weights, controlCount: controlPoints.count)
-        var edge = CADHatchEdge.spline(
+        let fitPoints = spline.fitPoints.map { yflip($0) }
+        let startTangent = spline.fitPoints.isEmpty ? nil : yflipVector(spline.tgStart)
+        let endTangent = spline.fitPoints.isEmpty ? nil : yflipVector(spline.tgEnd)
+        var edge = CADHatchEdge.spline(CADHatchSplineData(
             controlPoints: controlPoints,
             knots: spline.knots,
             degree: degree,
             weights: weights,
+            fitPoints: fitPoints,
+            startTangent: startTangent,
+            endTangent: endTangent,
             closed: declaredClosed || periodic,
-            periodic: periodic)
+            periodic: periodic,
+            rational: (spline.flags & 4) != 0))
         var points = edge.tessellatedPoints(segmentsPerRadian: 6.0)
         guard points.count >= 2 else { return nil }
 
@@ -972,13 +983,17 @@ public enum DXFEntityConverter {
         }
 
         if geometricallyClosed && !declaredClosed && !periodic {
-            edge = .spline(
+            edge = .spline(CADHatchSplineData(
                 controlPoints: controlPoints,
                 knots: spline.knots,
                 degree: degree,
                 weights: weights,
+                fitPoints: fitPoints,
+                startTangent: startTangent,
+                endTangent: endTangent,
                 closed: true,
-                periodic: false)
+                periodic: false,
+                rational: (spline.flags & 4) != 0))
             points = edge.tessellatedPoints(segmentsPerRadian: 6.0)
         }
 
@@ -1133,7 +1148,9 @@ public enum DXFEntityConverter {
             isClosed: path.isClosed,
             lineTypeGenerationEnabled: path.lineTypeGenerationEnabled,
             hatchEdges: path.hatchEdges.reversed().map { $0.reversed() },
-            isHatchBoundaryCarrier: path.isHatchBoundaryCarrier)
+            isHatchBoundaryCarrier: path.isHatchBoundaryCarrier,
+            hatchLoopType: path.hatchLoopType,
+            hatchSourceBoundaryHandles: path.hatchSourceBoundaryHandles)
     }
 
     private static func closeHatchPath(_ path: inout CADPolyline, toleranceSquared: Double) {
@@ -1868,6 +1885,10 @@ public enum DXFEntityConverter {
 
     /// Convert Vector3 → ZephyrCore.Vector3 with Y-flip
     private static func yflip(_ v: Vector3) -> Vector3 {
+        Vector3(x: v.x, y: -v.y, z: v.z)
+    }
+
+    private static func yflipVector(_ v: Vector3) -> Vector3 {
         Vector3(x: v.x, y: -v.y, z: v.z)
     }
 

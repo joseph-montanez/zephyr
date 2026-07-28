@@ -1188,6 +1188,8 @@ public enum EABWriter {
             let writeHatchPathMetadata = { (path: CADPolyline) in
                 w.writeUInt8(path.isHatchBoundaryCarrier ? 1 : 0)
                 w.writeInt32(Int32(path.hatchLoopType ?? -1))
+                w.writeUInt32(UInt32(path.hatchSourceBoundaryHandles.count))
+                for handle in path.hatchSourceBoundaryHandles { w.writeUInt32(handle) }
                 w.writeUInt32(UInt32(path.hatchEdges.count))
                 for edge in path.hatchEdges {
                     switch edge {
@@ -1206,21 +1208,34 @@ public enum EABWriter {
                             w.writeFloat64(point.x); w.writeFloat64(point.y); w.writeFloat64(point.z)
                         }
                         w.writeFloat64(startParam); w.writeFloat64(sweep)
-                    case .spline(let controlPoints, let knots, let degree, let weights, let closed, let periodic):
-                        w.writeUInt8(3)
-                        w.writeUInt32(UInt32(degree))
-                        w.writeUInt8(closed ? 1 : 0)
-                        w.writeUInt8(periodic ? 1 : 0)
-                        w.writeUInt32(UInt32(controlPoints.count))
-                        for point in controlPoints {
+                    case .spline(let data):
+                        w.writeUInt8(4)
+                        w.writeUInt32(UInt32(data.degree))
+                        w.writeUInt8(data.closed ? 1 : 0)
+                        w.writeUInt8(data.periodic ? 1 : 0)
+                        w.writeUInt8(data.rational ? 1 : 0)
+                        w.writeUInt32(UInt32(data.controlPoints.count))
+                        for point in data.controlPoints {
                             w.writeFloat64(point.x); w.writeFloat64(point.y); w.writeFloat64(point.z)
                         }
-                        w.writeUInt32(UInt32(knots.count))
-                        for knot in knots { w.writeFloat64(knot) }
-                        w.writeUInt8(weights == nil ? 0 : 1)
-                        if let weights {
+                        w.writeUInt32(UInt32(data.knots.count))
+                        for knot in data.knots { w.writeFloat64(knot) }
+                        w.writeUInt8(data.weights == nil ? 0 : 1)
+                        if let weights = data.weights {
                             w.writeUInt32(UInt32(weights.count))
                             for weight in weights { w.writeFloat64(weight) }
+                        }
+                        w.writeUInt32(UInt32(data.fitPoints.count))
+                        for point in data.fitPoints {
+                            w.writeFloat64(point.x); w.writeFloat64(point.y); w.writeFloat64(point.z)
+                        }
+                        w.writeUInt8(data.startTangent == nil ? 0 : 1)
+                        if let tangent = data.startTangent {
+                            w.writeFloat64(tangent.x); w.writeFloat64(tangent.y); w.writeFloat64(tangent.z)
+                        }
+                        w.writeUInt8(data.endTangent == nil ? 0 : 1)
+                        if let tangent = data.endTangent {
+                            w.writeFloat64(tangent.x); w.writeFloat64(tangent.y); w.writeFloat64(tangent.z)
                         }
                     }
                 }

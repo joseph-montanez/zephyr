@@ -51,6 +51,8 @@ public class DXFReader {
     public var mleaderStyles: [DXFMLeaderStyleEntry] = []
     public var rawClasses: [DXFRawRecord] = []
     public var rawObjects: [DXFRawRecord] = []
+    public var rawNativeEntities: [DXFPreservedEntity] = []
+    public var rawACDSData: [DataTableRawDXFGroup] = []
     public var blocks: [DXFBlockEntity] = []
     public var entities: [DXFEntity] = []
 
@@ -89,6 +91,7 @@ public class DXFReader {
         pos = 0
         try parseSections()
         resolveTableStyles()
+        resolveTableObjectGraphs()
         resolveImageReferences()
         return self
     }
@@ -153,6 +156,7 @@ public class DXFReader {
         case "BLOCKS":    try parseBlocks()
         case "ENTITIES":  try parseEntities()
         case "OBJECTS":   try parseObjects()
+        case "ACDSDATA":  try parseRawACDSData()
         default:          try skipToEndsec()
         }
     }
@@ -162,6 +166,32 @@ public class DXFReader {
             let (c, v) = pairs[pos]; pos += 1
             if c == 0 && v == "ENDSEC" { return }
         }
+    }
+
+    private func parseRawACDSData() throws {
+        rawACDSData.removeAll(keepingCapacity: true)
+        while pos < pairs.count {
+            let (code, value) = pairs[pos]
+            if code == 0 && value == "ENDSEC" {
+                pos += 1
+                return
+            }
+            rawACDSData.append(DataTableRawDXFGroup(code: code, value: value))
+            pos += 1
+        }
+    }
+
+    private func preservedNativeEntity(at start: Int) -> DXFPreservedEntity? {
+        guard let captured = rawRecord(at: start) else { return nil }
+        let ownerValue = captured.record.groups.first(where: { $0.code == 330 })?.value
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let ownerHandle = UInt32(ownerValue, radix: 16)
+        let ownerBlockName = ownerHandle.flatMap { handle in
+            blockRecords.first(where: { $0.handle == handle })?.name
+        } ?? "*Model_Space"
+        return DXFPreservedEntity(
+            record: captured.record,
+            ownerBlockName: ownerBlockName)
     }
 
     private func rawRecord(at start: Int) -> (record: DXFRawRecord, next: Int)? {
@@ -414,6 +444,10 @@ public class DXFReader {
             if c == 0 && v == "ENDSEC" { pos += 1; return }
             if c == 0 && v == "ENDBLK" { return }
             if c == 0 {
+                let preserved = v.caseInsensitiveCompare("ACAD_TABLE") == .orderedSame
+                    ? preservedNativeEntity(at: pos)
+                    : nil
+                if let preserved { rawNativeEntities.append(preserved) }
                 if let entity = try parseEntity(at: &pos) {
                     if let insert = entity as? DXFInsertEntity {
                         try collectInsertAttributes(insert)
@@ -1696,6 +1730,18 @@ extension DXFReader {
             }
         }
 
+        var rawCellGroups: [[DataTableRawDXFGroup]] = []
+        var currentCellGroups: [DataTableRawDXFGroup]? = nil
+        for (code, value) in tableGroups {
+            if code == 171 {
+                if let currentCellGroups { rawCellGroups.append(currentCellGroups) }
+                currentCellGroups = [DataTableRawDXFGroup(code: code, value: value)]
+            } else if currentCellGroups != nil {
+                currentCellGroups!.append(DataTableRawDXFGroup(code: code, value: value))
+            }
+        }
+        if let currentCellGroups { rawCellGroups.append(currentCellGroups) }
+
         table.blockName = blockName
         table.insertion = insertion
         table.horizontal = horizontal
@@ -1707,6 +1753,7 @@ extension DXFReader {
         var readingHeader = true
 
         var cellValues: [String] = []
+        var cellRawValues: [String?] = []
         var cellAlignments: [Int?] = []
         var cellTextStyles: [String?] = []
         var cellTextHeights: [Double?] = []
@@ -1723,6 +1770,7 @@ extension DXFReader {
                 ?? rawValue
                 ?? ""
             cellValues.append(preferred)
+            cellRawValues.append(rawValue)
             cellAlignments.append(pendingAlignment)
             cellTextStyles.append(pendingTextStyle)
             cellTextHeights.append(pendingTextHeight)
@@ -1884,12 +1932,16 @@ extension DXFReader {
                 let value = index < cellValues.count ? cellValues[index] : ""
                 let alignmentCode = index < cellAlignments.count ? cellAlignments[index] : nil
                 let cellAlignment = alignmentCode.map { alignment(from: $0) }
+                let rawValue = index < cellRawValues.count ? cellRawValues[index] : nil
+                let formula = rawValue.flatMap { $0.hasPrefix("=") ? $0 : nil }
                 cells.append(DataTableCell(
                     columnID: columns[column].id,
                     value: value.isEmpty ? .empty : .string(value),
+                    formulaExpression: formula,
                     cachedDisplayText: value.isEmpty ? nil : value,
                     horizontalAlignment: cellAlignment?.horizontal,
-                    verticalAlignment: cellAlignment?.vertical ?? .middle))
+                    verticalAlignment: cellAlignment?.vertical ?? .middle,
+                    nativeDXFGroups: index < rawCellGroups.count ? rawCellGroups[index] : nil))
             }
             rows.append(DataTableRow(cells: cells))
         }
@@ -2410,6 +2462,69 @@ extension DXFReader {
         tableStylesByHandle[handle] = TableStyleInfo(
             horizontalMargin: horizontalMargin ?? 0,
             verticalMargin: verticalMargin ?? horizontalMargin ?? 0)
+    }
+
+    private func resolveTableObjectGraphs() {
+        guard !rawObjects.isEmpty else { return }
+
+        func recordHandle(_ record: DXFRawRecord) -> UInt32? {
+            for group in record.groups where group.code == 5 || group.code == 105 {
+                let handle = parseHandle(group.value)
+                if handle != 0 { return handle }
+            }
+            return nil
+        }
+
+        func referencedHandles(_ groups: [DataTableRawDXFGroup]) -> Set<UInt32> {
+            var result = Set<UInt32>()
+            for group in groups {
+                let isHandleCode = ((320...369).contains(group.code) && group.code != 330)
+                    || (390...399).contains(group.code)
+                    || group.code == 480
+                    || group.code == 481
+                guard isHandleCode else { continue }
+                let handle = parseHandle(group.value)
+                if handle != 0 { result.insert(handle) }
+            }
+            return result
+        }
+
+        var objectsByHandle: [UInt32: DXFRawRecord] = [:]
+        for record in rawObjects {
+            if let handle = recordHandle(record) { objectsByHandle[handle] = record }
+        }
+
+        func attach(to entities: [DXFEntity]) {
+            for entity in entities {
+                if let table = entity as? DXFTableEntity,
+                   var payload = table.data.nativeDXFPayload {
+                    var pending = Array(referencedHandles(payload.rawGroups))
+                    var visited = Set<UInt32>()
+                    var records: [DXFRawRecord] = []
+                    while let handle = pending.popLast() {
+                        guard visited.insert(handle).inserted,
+                              let record = objectsByHandle[handle] else { continue }
+                        records.append(record)
+                        pending.append(contentsOf: referencedHandles(record.groups))
+                    }
+                    var requiredClassNames = Set(records.map { $0.type.uppercased() })
+                    requiredClassNames.insert("ACAD_TABLE")
+                    payload.requiredClasses = rawClasses.filter { record in
+                        record.groups.contains { group in
+                            group.code == 1
+                                && requiredClassNames.contains(
+                                    group.value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased())
+                        }
+                    }
+                    payload.referencedObjects = records
+                    table.data.nativeDXFPayload = payload
+                }
+                if let block = entity as? DXFBlockEntity { attach(to: block.entities) }
+            }
+        }
+
+        attach(to: entities)
+        for block in blocks { attach(to: block.entities) }
     }
 
     private func resolveTableStyles() {

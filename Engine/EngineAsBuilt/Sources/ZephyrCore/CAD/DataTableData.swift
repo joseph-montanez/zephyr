@@ -63,6 +63,7 @@ public struct DataTableCell: Hashable, Sendable, Codable {
     public var coveredByMerge: Bool
     public var horizontalAlignment: DataTableCellAlignment?
     public var verticalAlignment: DataTableCellVerticalAlignment?
+    public var nativeDXFGroups: [DataTableRawDXFGroup]?
 
     public init(columnID: UUID,
                 value: DataTableCellValue = .empty,
@@ -72,7 +73,8 @@ public struct DataTableCell: Hashable, Sendable, Codable {
                 colSpan: Int = 1,
                 coveredByMerge: Bool = false,
                 horizontalAlignment: DataTableCellAlignment? = nil,
-                verticalAlignment: DataTableCellVerticalAlignment? = nil) {
+                verticalAlignment: DataTableCellVerticalAlignment? = nil,
+                nativeDXFGroups: [DataTableRawDXFGroup]? = nil) {
         self.columnID = columnID
         self.value = value
         self.formulaExpression = formulaExpression
@@ -82,6 +84,7 @@ public struct DataTableCell: Hashable, Sendable, Codable {
         self.coveredByMerge = coveredByMerge
         self.horizontalAlignment = horizontalAlignment
         self.verticalAlignment = verticalAlignment
+        self.nativeDXFGroups = nativeDXFGroups
     }
 }
 
@@ -123,13 +126,51 @@ public struct DXFRawRecord: Hashable, Sendable, Codable {
     }
 }
 
+public struct DXFPreservedEntity: Hashable, Sendable, Codable {
+    public var record: DXFRawRecord
+    public var ownerBlockName: String
+
+    public init(record: DXFRawRecord, ownerBlockName: String = "*Model_Space") {
+        self.record = record
+        self.ownerBlockName = ownerBlockName
+    }
+}
+
 public struct DXFRoundTripPayload: Hashable, Sendable, Codable {
     public var classes: [DXFRawRecord]
     public var objects: [DXFRawRecord]
+    /// Native entities that must survive even when a view/model conversion drops them.
+    /// Currently used for ACAD_TABLE records whose binary 310 payload cannot be rebuilt.
+    public var nativeEntities: [DXFPreservedEntity]
+    /// Raw contents of the ACDSDATA section, excluding SECTION/ENDSEC wrappers.
+    public var acdsData: [DataTableRawDXFGroup]
 
-    public init(classes: [DXFRawRecord] = [], objects: [DXFRawRecord] = []) {
+    public init(
+        classes: [DXFRawRecord] = [],
+        objects: [DXFRawRecord] = [],
+        nativeEntities: [DXFPreservedEntity] = [],
+        acdsData: [DataTableRawDXFGroup] = []
+    ) {
         self.classes = classes
         self.objects = objects
+        self.nativeEntities = nativeEntities
+        self.acdsData = acdsData
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case classes, objects, nativeEntities, acdsData
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        classes = try container.decodeIfPresent([DXFRawRecord].self, forKey: .classes) ?? []
+        objects = try container.decodeIfPresent([DXFRawRecord].self, forKey: .objects) ?? []
+        nativeEntities = try container.decodeIfPresent(
+            [DXFPreservedEntity].self,
+            forKey: .nativeEntities) ?? []
+        acdsData = try container.decodeIfPresent(
+            [DataTableRawDXFGroup].self,
+            forKey: .acdsData) ?? []
     }
 }
 
@@ -138,17 +179,23 @@ public struct DataTableNativeDXFPayload: Hashable, Sendable, Codable {
     public var blockName: String?
     public var tableStyleHandle: String?
     public var blockRecordHandle: String?
+    public var requiredClasses: [DXFRawRecord]?
+    public var referencedObjects: [DXFRawRecord]?
     public var isModified: Bool
 
     public init(rawGroups: [DataTableRawDXFGroup] = [],
                 blockName: String? = nil,
                 tableStyleHandle: String? = nil,
                 blockRecordHandle: String? = nil,
+                requiredClasses: [DXFRawRecord]? = nil,
+                referencedObjects: [DXFRawRecord]? = nil,
                 isModified: Bool = false) {
         self.rawGroups = rawGroups
         self.blockName = blockName
         self.tableStyleHandle = tableStyleHandle
         self.blockRecordHandle = blockRecordHandle
+        self.requiredClasses = requiredClasses
+        self.referencedObjects = referencedObjects
         self.isModified = isModified
     }
 }

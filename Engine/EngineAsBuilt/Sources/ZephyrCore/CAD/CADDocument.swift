@@ -2261,7 +2261,9 @@ public final class CADDocument {
 
     // MARK: - Snapshot / Restore
 
-    public func snapshot() -> CADDocumentSnapshot {
+    public func snapshot(
+        dxfRoundTripPayloadFallback: DXFRoundTripPayload? = nil
+    ) -> CADDocumentSnapshot {
         // Validate internal dictionaries haven't been corrupted
         let entityCount = entityRegistry.count
         let layerCount = layerTable.count
@@ -2313,16 +2315,21 @@ public final class CADDocument {
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
             linetypePatterns: linetypePatterns,
-            dxfRoundTripPayload: dxfRoundTripPayload,
+            dxfRoundTripPayload: dxfRoundTripPayload ?? dxfRoundTripPayloadFallback,
             imageAssetNames: names
         )
     }
 
     /// Build a save-specific snapshot that includes referenced image assets.
     /// Image names are collected from all entities AND all blocks (including nested).
-    public func buildSaveSnapshot(viewName: String, viewKind: DXFDrawingViewKind,
-                                   cameraState: CameraState) -> SaveDocumentSnapshot {
-        let docSnap = snapshot()
+    public func buildSaveSnapshot(
+        viewName: String,
+        viewKind: DXFDrawingViewKind,
+        cameraState: CameraState,
+        dxfRoundTripPayloadFallback: DXFRoundTripPayload? = nil
+    ) -> SaveDocumentSnapshot {
+        let docSnap = snapshot(
+            dxfRoundTripPayloadFallback: dxfRoundTripPayloadFallback)
         // Collect referenced image names from entities and blocks
         var referencedNames = docSnap.imageAssetNames
         for block in blockTable.values {
