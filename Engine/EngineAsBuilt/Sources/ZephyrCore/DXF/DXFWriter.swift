@@ -2059,10 +2059,10 @@ public class DXFWriter {
             writeStr(7, tx.style, &out)
             writeInt(71, tx.textGen, &out)
             writeInt(72, tx.alignH, &out)
-            out += "100\r\nAcDbText\r\n"
             if tx.alignH != 0 || tx.alignV != 0 {
                 writePoint3(11, tx.secPoint, &out)
             }
+            out += "100\r\nAcDbText\r\n"
             writeInt(73, tx.alignV, &out)
 
         case .mTEXT:

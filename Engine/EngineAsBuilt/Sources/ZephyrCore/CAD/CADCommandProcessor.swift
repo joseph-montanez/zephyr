@@ -184,6 +184,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "CLOSEALLOTHERS", aliases: [],            category: .draw,    syntax: "", description: "Close all tabs except the active one"),
         CommandDescriptor(canonicalName: "SAVE",       aliases: ["QSAVE"],          category: .draw,    syntax: "", description: "Save the current drawing to its file"),
         CommandDescriptor(canonicalName: "SAVEAS",     aliases: [],                category: .draw,    syntax: "", description: "Save the current drawing as a new file"),
+        CommandDescriptor(canonicalName: "DXFVERSION", aliases: ["DXFVER"],        category: .settings, syntax: "[2018|2013|2010|2007|2004|2000|R14|R13|R12|R10]", description: "Set the DXF version used by Save and Save As"),
         CommandDescriptor(canonicalName: "PDFEXPORT",  aliases: ["EXPORTPDF"],     category: .draw,    syntax: "", description: "Export the current drawing to a PDF file"),
         CommandDescriptor(canonicalName: "PDFIMPORT",  aliases: ["PDFI", "PDF"],   category: .draw,    syntax: "", description: "Import a PDF page as an image underlay"),
         // --- Draw ---
@@ -611,6 +612,27 @@ public final class CADCommandProcessor {
             guard let eng = engine else { clearCommand(); return }
             clearCommand()
             showNativeSaveDialog(engine: eng)
+        case "DXFVERSION", "DXFVER":
+            guard let eng = engine else { clearCommand(); return }
+            let version = eng.tabManager.activeTab?.dxfVersion ?? .preferredExport
+            print("[CAD] DXF export version: \(version.displayName) (\(version.rawValue))")
+            print("[CAD] Usage: DXFVERSION <2018|2013|2010|2007|2004|2000|R14|R13|R12|R10>")
+            clearCommand()
+        case _ where upper.hasPrefix("DXFVERSION ") || upper.hasPrefix("DXFVER "):
+            guard let eng = engine else { clearCommand(); return }
+            let prefixLength = upper.hasPrefix("DXFVERSION ") ? 11 : 7
+            let argument = String(upper.dropFirst(prefixLength))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let version = DXFVersion.parseExportArgument(argument) else {
+                print("[CAD] Unknown DXF version '\(argument)'.")
+                print("[CAD] Available: 2018, 2013, 2010, 2007, 2004, 2000, R14, R13, R12, R10")
+                clearCommand()
+                return
+            }
+            _ = eng.tabManager.setActiveDXFVersion(version)
+            print("[CAD] DXF export version set to \(version.displayName) (\(version.rawValue)).")
+            print("[CAD] Save and Save As will use this version for DXF and DWG output.")
+            clearCommand()
         case "PDFEXPORT", "EXPORTPDF":
             guard let eng = engine else { clearCommand(); return }
             clearCommand()

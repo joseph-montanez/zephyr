@@ -17,6 +17,57 @@ public enum DXFVersion: String, Sendable {
     case r2018       = "AC1032"
 
     public static let defaultExport: DXFVersion = .r2018
+
+    public static var preferredExport: DXFVersion {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: "Zephyr.DXFExportVersion"),
+                  let version = DXFVersion(rawValue: raw),
+                  version != .unknown else {
+                return defaultExport
+            }
+            return version
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "Zephyr.DXFExportVersion")
+        }
+    }
+
+    public var displayName: String {
+        switch self {
+        case .r10: return "AutoCAD R10"
+        case .r12: return "AutoCAD R12"
+        case .r13: return "AutoCAD R13"
+        case .r14: return "AutoCAD R14"
+        case .r2000: return "AutoCAD 2000"
+        case .r2004: return "AutoCAD 2004"
+        case .r2007: return "AutoCAD 2007"
+        case .r2010: return "AutoCAD 2010"
+        case .r2013: return "AutoCAD 2013"
+        case .r2018: return "AutoCAD 2018"
+        case .unknown: return "Unknown"
+        }
+    }
+
+    public static func parseExportArgument(_ value: String) -> DXFVersion? {
+        let normalized = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .replacingOccurrences(of: "AUTOCAD", with: "")
+            .replacingOccurrences(of: " ", with: "")
+        switch normalized {
+        case "10", "R10", "AC1006": return .r10
+        case "12", "R12", "AC1009": return .r12
+        case "13", "R13", "AC1012": return .r13
+        case "14", "R14", "AC1014": return .r14
+        case "2000", "R2000", "AC1015": return .r2000
+        case "2004", "R2004", "AC1018": return .r2004
+        case "2007", "R2007", "AC1021": return .r2007
+        case "2010", "R2010", "AC1024": return .r2010
+        case "2013", "R2013", "AC1027": return .r2013
+        case "2018", "R2018", "AC1032": return .r2018
+        default: return nil
+        }
+    }
 }
 
 // MARK: - Line Width

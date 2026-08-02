@@ -137,6 +137,8 @@ public struct DXFPreservedEntity: Hashable, Sendable, Codable {
 }
 
 public struct DXFRoundTripPayload: Hashable, Sendable, Codable {
+    /// $ACADVER of the imported DXF whose opaque records are preserved below.
+    public var sourceAcadVersion: String?
     public var classes: [DXFRawRecord]
     /// Raw TABLE headers and table-entry records, excluding ENDTAB wrappers.
     public var tables: [DXFRawRecord]
@@ -148,12 +150,14 @@ public struct DXFRoundTripPayload: Hashable, Sendable, Codable {
     public var acdsData: [DataTableRawDXFGroup]
 
     public init(
+        sourceAcadVersion: String? = nil,
         classes: [DXFRawRecord] = [],
         tables: [DXFRawRecord] = [],
         objects: [DXFRawRecord] = [],
         nativeEntities: [DXFPreservedEntity] = [],
         acdsData: [DataTableRawDXFGroup] = []
     ) {
+        self.sourceAcadVersion = sourceAcadVersion
         self.classes = classes
         self.tables = tables
         self.objects = objects
@@ -162,11 +166,14 @@ public struct DXFRoundTripPayload: Hashable, Sendable, Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case classes, tables, objects, nativeEntities, acdsData
+        case sourceAcadVersion, classes, tables, objects, nativeEntities, acdsData
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        sourceAcadVersion = try container.decodeIfPresent(
+            String.self,
+            forKey: .sourceAcadVersion)
         classes = try container.decodeIfPresent([DXFRawRecord].self, forKey: .classes) ?? []
         tables = try container.decodeIfPresent([DXFRawRecord].self, forKey: .tables) ?? []
         objects = try container.decodeIfPresent([DXFRawRecord].self, forKey: .objects) ?? []

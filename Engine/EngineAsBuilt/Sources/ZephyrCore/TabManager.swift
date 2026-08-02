@@ -87,7 +87,7 @@ public struct DocumentTab {
     public init(document: CADDocument = CADDocument(),
                 fileURL: URL? = nil,
                 displayName: String = "Untitled",
-                dxfVersion: DXFVersion = .defaultExport,
+                dxfVersion: DXFVersion = .preferredExport,
                 dxfRoundTripPayload: DXFRoundTripPayload? = nil,
                 editingBlockID: UUID? = nil,
                 parentDocument: CADDocument? = nil,
@@ -98,9 +98,16 @@ public struct DocumentTab {
         ]
         self.fileURL = fileURL
         self.displayName = displayName
-        self.dxfVersion = dxfVersion
-        self.dxfRoundTripPayload = dxfRoundTripPayload
+        let resolvedPayload = dxfRoundTripPayload
             ?? self.drawingViews.compactMap { $0.document.dxfRoundTripPayload }.first
+        self.dxfRoundTripPayload = resolvedPayload
+        if let rawVersion = resolvedPayload?.sourceAcadVersion,
+           let sourceVersion = DXFVersion(rawValue: rawVersion),
+           sourceVersion != .unknown {
+            self.dxfVersion = sourceVersion
+        } else {
+            self.dxfVersion = dxfVersion
+        }
         self.editingBlockID = editingBlockID
         self.parentDocument = parentDocument
     }
@@ -277,6 +284,14 @@ public final class TabManager {
     /// Whether the active tab has unsaved changes.
     public var activeIsDirty: Bool {
         activeTab?.hasUnsavedChanges ?? false
+    }
+
+    @discardableResult
+    public func setActiveDXFVersion(_ version: DXFVersion) -> Bool {
+        guard activeIndex >= 0, activeIndex < tabs.count else { return false }
+        tabs[activeIndex].dxfVersion = version
+        DXFVersion.preferredExport = version
+        return true
     }
 
     // MARK: - Tab Lifecycle

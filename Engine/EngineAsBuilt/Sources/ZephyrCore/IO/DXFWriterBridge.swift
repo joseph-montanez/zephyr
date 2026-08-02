@@ -3,6 +3,36 @@ import Foundation
 /// Converts Zephyr CAD types to DXF format using pure Swift DXFWriter.
 public enum DXFWriterBridge {
 
+    private static let crossVersionSafeObjectTypes: Set<String> = [
+        "DICTIONARY",
+        "ACDBDICTIONARYWDFLT",
+        "XRECORD",
+        "DICTIONARYVAR",
+        "ACDBPLACEHOLDER",
+        "GROUP",
+        "SORTENTSTABLE"
+    ]
+
+    private static func normalizedDXFRecordType(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+    }
+
+    private static func crossVersionTables(from records: [DXFRawRecord]) -> [DXFRawRecord] {
+        records.filter { record in
+            let type = normalizedDXFRecordType(record.type)
+            if type == "APPID" { return true }
+            guard type == "TABLE" else { return false }
+            let name = record.groups.first(where: { $0.code == 2 })?.value ?? ""
+            return normalizedDXFRecordType(name) == "APPID"
+        }
+    }
+
+    private static func crossVersionObjects(from records: [DXFRawRecord]) -> [DXFRawRecord] {
+        records.filter {
+            crossVersionSafeObjectTypes.contains(normalizedDXFRecordType($0.type))
+        }
+    }
+
     private static func dxfLeaderArrowBlockName(
         arrowhead: CADLeaderArrowhead,
         customName: String?
@@ -229,14 +259,34 @@ public enum DXFWriterBridge {
             if !generated.isEmpty { orderedViews[0].blocks.append(contentsOf: generated) }
         }
 
+        let roundTripPayload = orderedViews.compactMap(\.roundTripPayload).first
+        let sourceVersion = roundTripPayload?.sourceAcadVersion.flatMap(DXFVersion.init(rawValue:))
+        let isCrossVersionExport = sourceVersion != nil
+            && sourceVersion != .unknown
+            && sourceVersion != dxfVersion
         let writer = DXFWriter()
         writer.version = dxfVersion
-        let roundTripPayload = orderedViews.compactMap(\.roundTripPayload).first
         if let payload = roundTripPayload {
-            writer.preservedClasses = payload.classes
-            writer.preservedTables = payload.tables
-            writer.preservedObjects = payload.objects
-            writer.preservedACDSData = payload.acdsData
+            if isCrossVersionExport {
+                writer.preservedClasses = []
+                writer.preservedTables = crossVersionTables(from: payload.tables)
+                writer.preservedObjects = crossVersionObjects(from: payload.objects)
+                writer.preservedACDSData = []
+                print(
+                    "[DXF] Upgrading \(sourceVersion?.rawValue ?? "unknown") to \(dxfVersion.rawValue): "
+                    + "discarded version-specific opaque records "
+                    + "(classes=\(payload.classes.count), "
+                    + "tables=\(payload.tables.count - writer.preservedTables.count), "
+                    + "objects=\(payload.objects.count - writer.preservedObjects.count), "
+                    + "entities=\(payload.nativeEntities.count), "
+                    + "acds=\(payload.acdsData.count))."
+                )
+            } else {
+                writer.preservedClasses = payload.classes
+                writer.preservedTables = payload.tables
+                writer.preservedObjects = payload.objects
+                writer.preservedACDSData = payload.acdsData
+            }
         }
 
         var nativeTables: [(data: DataTableData, payload: DataTableNativeDXFPayload)] = []
@@ -270,7 +320,7 @@ public enum DXFWriterBridge {
         for (index, record) in writer.preservedObjects.enumerated() {
             objectIndexByKey[rawRecordKey(record)] = index
         }
-        for nativeTable in nativeTables {
+        for nativeTable in nativeTables where !isCrossVersionExport {
             for record in nativeTable.payload.requiredClasses ?? [] {
                 let key = rawRecordKey(record)
                 if classKeys.insert(key).inserted {
@@ -392,7 +442,7 @@ public enum DXFWriterBridge {
                     if consumedHatchIndices.contains(index) { continue }
                     let primitiveXData = block.primitiveXData[index] ?? [:]
                     if case .table(let data, let origin, _) = primitive {
-                        if let table = nativeTableEntity(
+                        if !isCrossVersionExport, let table = nativeTableEntity(
                             data: data,
                             origin: origin,
                             transform: .identity) {
@@ -736,7 +786,7 @@ public enum DXFWriterBridge {
                 for (primitiveIndex, primitive) in primitives.enumerated() {
                     if consumedHatchIndices.contains(primitiveIndex) { continue }
                     if case .table(let data, let origin, _) = primitive {
-                        if let table = nativeTableEntity(
+                        if !isCrossVersionExport, let table = nativeTableEntity(
                             data: data,
                             origin: origin,
                             transform: entity.transform) {
@@ -803,7 +853,7 @@ public enum DXFWriterBridge {
             guard let table = entity as? DXFTableEntity, table.handle != 0 else { return nil }
             return table.handle
         })
-        if let payload = roundTripPayload {
+        if !isCrossVersionExport, let payload = roundTripPayload {
             for preserved in payload.nativeEntities
             where preserved.record.type.caseInsensitiveCompare("ACAD_TABLE") == .orderedSame {
                 let handleText = preserved.record.groups.first(where: { $0.code == 5 })?.value
@@ -1499,7 +1549,12 @@ public enum DXFWriterBridge {
         }
 
         let hatch = DXFHatchEntity()
-        hatch.associative = xdataInt(xdata, "dxf.hatchAssociative") ?? 0
+        // Native regeneration cannot retain the source entity handles from the
+        // imported database because supported entities receive new handles on
+        // export. Emitting 71=1 with stale 330 references makes AutoCAD attempt
+        // to resolve an invalid associative boundary. Raw-body passthrough
+        // returns above and keeps the original association intact.
+        hatch.associative = 0
         hatch.hStyle = xdataInt(xdata, "dxf.hatchStyle") ?? 0
         hatch.hPattern = xdataInt(xdata, "dxf.hatchPatternDefinitionType") ?? 1
         hatch.doubleFlag = xdataInt(xdata, "dxf.hatchDouble") ?? 0
@@ -1635,32 +1690,48 @@ public enum DXFWriterBridge {
         isOuter: Bool,
         transform: Transform3D
     ) -> DXFHatchLoop? {
+        let sourceLoopType = path.hatchLoopType ?? (isOuter ? 1 : 0)
+
+        // Keep imported polyline loops as polylines whenever the transform is a
+        // planar similarity. This preserves the original bulges, including the
+        // two semicircles commonly used for a full circular hatch boundary.
+        if (sourceLoopType & 2) != 0,
+           let sourcePath = transformedBulgeHatchPath(path, by: transform),
+           let loop = polylineHatchLoop(path: sourcePath, type: sourceLoopType) {
+            return loop
+        }
+
         if !path.hatchEdges.isEmpty {
             let entities = path.hatchEdges.compactMap { hatchEdgeEntity($0, transform: transform) }
             if entities.count == path.hatchEdges.count {
-                let loopType = (path.hatchLoopType ?? (isOuter ? 1 : 0)) & ~2
-                let loop = DXFHatchLoop(type: loopType)
+                let loop = DXFHatchLoop(type: sourceLoopType & ~2)
                 loop.entities = entities
                 loop.numEdges = entities.count
-                loop.sourceBoundaryHandles = path.hatchSourceBoundaryHandles
                 return loop
             }
         }
 
         let sourcePath: CADPolyline
-        if !path.hatchEdges.isEmpty {
-            let points = cleanLoop(path.tessellatedPoints()).map { transform.transformPoint($0) }
-            sourcePath = CADPolyline(points: points, isClosed: true)
+        if let transformed = transformedBulgeHatchPath(path, by: transform) {
+            sourcePath = transformed
         } else {
-            sourcePath = path.transformed(by: transform)
+            let points = cleanLoop(path.tessellatedPoints()).map { transform.transformPoint($0) }
+            sourcePath = CADPolyline(points: points, isClosed: path.isClosed)
         }
-        guard sourcePath.vertices.count >= 2 else { return nil }
+        return polylineHatchLoop(path: sourcePath, type: sourceLoopType | 2)
+    }
 
-        let loop = DXFHatchLoop(type: (path.hatchLoopType ?? (isOuter ? 1 : 0)) | 2)
+    private static func polylineHatchLoop(
+        path: CADPolyline,
+        type: Int
+    ) -> DXFHatchLoop? {
+        guard path.vertices.count >= 2 else { return nil }
+
+        let loop = DXFHatchLoop(type: type | 2)
         let polyline = DXFLWPolylineEntity()
-        polyline.flags = sourcePath.isClosed ? 1 : 0
-        polyline.vertexCount = sourcePath.vertices.count
-        for vertex in sourcePath.vertices {
+        polyline.flags = path.isClosed ? 1 : 0
+        polyline.vertexCount = path.vertices.count
+        for vertex in path.vertices {
             let value = DXFVertex2D()
             let point = toDXF(vertex.position)
             value.x = point.x
@@ -1671,9 +1742,38 @@ public enum DXFWriterBridge {
             polyline.vertices.append(value)
         }
         loop.entities = [polyline]
-        loop.numEdges = sourcePath.vertices.count
-        loop.sourceBoundaryHandles = path.hatchSourceBoundaryHandles
+        loop.numEdges = path.vertices.count
         return loop
+    }
+
+    private static func transformedBulgeHatchPath(
+        _ path: CADPolyline,
+        by transform: Transform3D
+    ) -> CADPolyline? {
+        let origin = transform.transformPoint(.zero)
+        let axisX = transform.transformPoint(Vector3(x: 1, y: 0, z: 0)) - origin
+        let axisY = transform.transformPoint(Vector3(x: 0, y: 1, z: 0)) - origin
+        let lengthX = axisX.magnitude
+        let lengthY = axisY.magnitude
+        let denominator = max(lengthX * lengthY, 1e-12)
+        guard lengthX > 1e-12, lengthY > 1e-12,
+              abs(lengthX - lengthY) <= max(lengthX, lengthY) * 1e-6,
+              abs(axisX.dot(axisY)) / denominator < 1e-6 else {
+            return nil
+        }
+
+        let widthScale = (lengthX + lengthY) * 0.5
+        let reversesOrientation = axisX.cross(axisY).z < 0
+        var result = path
+        for index in result.vertices.indices {
+            result.vertices[index].position = transform.transformPoint(path.vertices[index].position)
+            result.vertices[index].startWidth = path.vertices[index].startWidth * widthScale
+            result.vertices[index].endWidth = path.vertices[index].endWidth * widthScale
+            result.vertices[index].bulge = reversesOrientation
+                ? -path.vertices[index].bulge
+                : path.vertices[index].bulge
+        }
+        return result
     }
 
     private static func hatchEdgeEntity(_ edge: CADHatchEdge, transform: Transform3D) -> DXFEntity? {
@@ -1694,15 +1794,11 @@ public enum DXFWriterBridge {
                 x: center.x + radius * cos(startAngle),
                 y: center.y + radius * sin(startAngle),
                 z: center.z)
-            let cadEnd = Vector3(
-                x: center.x + radius * cos(startAngle + sweep),
-                y: center.y + radius * sin(startAngle + sweep),
-                z: center.z)
             let dxfStart = toDXF(cadStart) - arc.basePoint
-            let dxfEnd = toDXF(cadEnd) - arc.basePoint
+            let dxfSweep = -sweep
             arc.startAngle = atan2(dxfStart.y, dxfStart.x)
-            arc.endAngle = atan2(dxfEnd.y, dxfEnd.x)
-            arc.isCCW = sweep >= 0 ? 0 : 1
+            arc.endAngle = arc.startAngle + dxfSweep
+            arc.isCCW = dxfSweep >= 0 ? 1 : 0
             return arc
 
         case .ellipticalArc(let center, let axisU, let axisV, let startParam, let sweep):

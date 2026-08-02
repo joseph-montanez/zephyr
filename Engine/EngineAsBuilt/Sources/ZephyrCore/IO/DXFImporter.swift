@@ -1473,6 +1473,9 @@ public enum DXFImporter {
             leaderStyles: leaderStyles,
             views: views,
             roundTripPayload: DXFRoundTripPayload(
+                sourceAcadVersion: reader.versionRaw.isEmpty
+                    ? reader.version.rawValue
+                    : reader.versionRaw,
                 classes: reader.rawClasses,
                 tables: reader.rawTables,
                 objects: reader.rawObjects,
