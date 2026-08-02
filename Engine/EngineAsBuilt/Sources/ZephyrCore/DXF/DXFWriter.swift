@@ -2375,7 +2375,15 @@ public class DXFWriter {
                 }
                 writeInt(93, boundaries.count, &out)
                 for boundary in boundaries {
-                    if let line = boundary as? DXFLineEntity {
+                    if let ellipse = boundary as? DXFEllipseEntity {
+                        writeInt(72, 3, &out)
+                        writePoint(10, ellipse.basePoint, &out)
+                        writePoint(11, ellipse.secPoint, &out)
+                        writeDbl(40, ellipse.ratio, &out)
+                        writeDbl(50, ellipse.startParam * 180.0 / .pi, &out)
+                        writeDbl(51, ellipse.endParam * 180.0 / .pi, &out)
+                        writeInt(73, ellipse.isCCW != 0 ? 1 : 0, &out)
+                    } else if let line = boundary as? DXFLineEntity {
                         writeInt(72, 1, &out)
                         writePoint(10, line.basePoint, &out)
                         writePoint(11, line.secPoint, &out)
@@ -2386,14 +2394,6 @@ public class DXFWriter {
                         writeDbl(50, arc.startAngle * 180.0 / .pi, &out)
                         writeDbl(51, arc.endAngle * 180.0 / .pi, &out)
                         writeInt(73, arc.isCCW != 0 ? 1 : 0, &out)
-                    } else if let ellipse = boundary as? DXFEllipseEntity {
-                        writeInt(72, 3, &out)
-                        writePoint(10, ellipse.basePoint, &out)
-                        writePoint(11, ellipse.secPoint, &out)
-                        writeDbl(40, ellipse.ratio, &out)
-                        writeDbl(50, ellipse.startParam * 180.0 / .pi, &out)
-                        writeDbl(51, ellipse.endParam * 180.0 / .pi, &out)
-                        writeInt(73, ellipse.isCCW != 0 ? 1 : 0, &out)
                     } else if let spline = boundary as? DXFSplineEntity {
                         writeInt(72, 4, &out)
                         writeInt(94, spline.degree, &out)

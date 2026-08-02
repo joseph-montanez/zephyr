@@ -1706,18 +1706,42 @@ public enum DXFWriterBridge {
             return arc
 
         case .ellipticalArc(let center, let axisU, let axisV, let startParam, let sweep):
-            let uLength = axisU.magnitude
-            let vLength = axisV.magnitude
+            var dxfAxisU = toDXFVector(axisU)
+            var dxfAxisV = toDXFVector(axisV)
+            var uLength = dxfAxisU.magnitude
+            var vLength = dxfAxisV.magnitude
             let denominator = max(uLength * vLength, 1e-12)
             guard uLength > 1e-12, vLength > 1e-12,
-                  abs(axisU.dot(axisV)) / denominator < 1e-5 else { return nil }
+                  abs(dxfAxisU.dot(dxfAxisV)) / denominator < 1e-5,
+                  abs(sweep) > 1e-12 else { return nil }
+
+            var parameter = startParam
+            var parameterSweep = sweep
+            if dxfAxisU.cross(dxfAxisV).z < 0 {
+                dxfAxisV = dxfAxisV * -1.0
+                parameter = -parameter
+                parameterSweep = -parameterSweep
+            }
+
+            if vLength > uLength {
+                swap(&dxfAxisU, &dxfAxisV)
+                swap(&uLength, &vLength)
+                parameter -= .pi * 0.5
+            }
+
             let ellipse = DXFEllipseEntity()
             ellipse.basePoint = toDXF(center)
-            ellipse.secPoint = toDXFVector(axisU)
+            ellipse.secPoint = dxfAxisU
             ellipse.ratio = vLength / uLength
-            ellipse.startParam = startParam
-            ellipse.endParam = startParam + sweep
-            ellipse.isCCW = sweep >= 0 ? 0 : 1
+            if parameterSweep >= 0 {
+                ellipse.startParam = parameter
+                ellipse.endParam = parameter + parameterSweep
+                ellipse.isCCW = 1
+            } else {
+                ellipse.startParam = -parameter
+                ellipse.endParam = -(parameter + parameterSweep)
+                ellipse.isCCW = 0
+            }
             return ellipse
 
         case .spline(let data):
