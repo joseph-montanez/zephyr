@@ -234,6 +234,7 @@ public enum DXFWriterBridge {
         let roundTripPayload = orderedViews.compactMap(\.roundTripPayload).first
         if let payload = roundTripPayload {
             writer.preservedClasses = payload.classes
+            writer.preservedTables = payload.tables
             writer.preservedObjects = payload.objects
             writer.preservedACDSData = payload.acdsData
         }

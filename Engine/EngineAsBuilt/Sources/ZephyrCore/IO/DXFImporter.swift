@@ -1474,6 +1474,7 @@ public enum DXFImporter {
             views: views,
             roundTripPayload: DXFRoundTripPayload(
                 classes: reader.rawClasses,
+                tables: reader.rawTables,
                 objects: reader.rawObjects,
                 nativeEntities: reader.rawNativeEntities,
                 acdsData: reader.rawACDSData))

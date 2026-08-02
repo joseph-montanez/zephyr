@@ -50,6 +50,7 @@ public class DXFReader {
     public var sortEntsTables: [DXFSortEntsTable] = []
     public var mleaderStyles: [DXFMLeaderStyleEntry] = []
     public var rawClasses: [DXFRawRecord] = []
+    public var rawTables: [DXFRawRecord] = []
     public var rawObjects: [DXFRawRecord] = []
     public var rawNativeEntities: [DXFPreservedEntity] = []
     public var rawACDSData: [DataTableRawDXFGroup] = []
@@ -301,17 +302,17 @@ public class DXFReader {
             if code == 0 && value == "ENDSEC" { pos += 1; return }
             guard code == 0 && value == "TABLE" else { pos += 1; continue }
 
+            let tableStart = pos
             pos += 1
             var tableType = ""
             while pos < pairs.count {
                 let (c, v) = pairs[pos]
-                if c == 2 {
-                    tableType = v.uppercased()
-                    pos += 1
-                    break
-                }
+                if c == 2 { tableType = v.uppercased() }
                 if c == 0 { break }
                 pos += 1
+            }
+            if let captured = rawRecord(at: tableStart) {
+                rawTables.append(captured.record)
             }
 
             while pos < pairs.count {
@@ -319,6 +320,10 @@ public class DXFReader {
                 if c == 0 && v == "ENDSEC" { return }
                 if c == 0 && v == "ENDTAB" { pos += 1; break }
                 if c != 0 { pos += 1; continue }
+
+                if let captured = rawRecord(at: pos) {
+                    rawTables.append(captured.record)
+                }
 
                 switch tableType {
                 case "LAYER":        tryParse { try parseLayer(at: pos) }
@@ -329,7 +334,12 @@ public class DXFReader {
                 case "APPID":        tryParse { try parseAppId(at: pos) }
                 case "BLOCK_RECORD": tryParse { try parseBlockRecord(at: pos) }
                 case "IMAGEDEF":     tryParse { try parseImageDef(at: pos) }
-                default:              pos += 1
+                default:
+                    if let captured = rawRecord(at: pos) {
+                        pos = captured.next
+                    } else {
+                        pos += 1
+                    }
                 }
             }
         }

@@ -138,6 +138,8 @@ public struct DXFPreservedEntity: Hashable, Sendable, Codable {
 
 public struct DXFRoundTripPayload: Hashable, Sendable, Codable {
     public var classes: [DXFRawRecord]
+    /// Raw TABLE headers and table-entry records, excluding ENDTAB wrappers.
+    public var tables: [DXFRawRecord]
     public var objects: [DXFRawRecord]
     /// Native entities that must survive even when a view/model conversion drops them.
     /// Currently used for ACAD_TABLE records whose binary 310 payload cannot be rebuilt.
@@ -147,23 +149,26 @@ public struct DXFRoundTripPayload: Hashable, Sendable, Codable {
 
     public init(
         classes: [DXFRawRecord] = [],
+        tables: [DXFRawRecord] = [],
         objects: [DXFRawRecord] = [],
         nativeEntities: [DXFPreservedEntity] = [],
         acdsData: [DataTableRawDXFGroup] = []
     ) {
         self.classes = classes
+        self.tables = tables
         self.objects = objects
         self.nativeEntities = nativeEntities
         self.acdsData = acdsData
     }
 
     private enum CodingKeys: String, CodingKey {
-        case classes, objects, nativeEntities, acdsData
+        case classes, tables, objects, nativeEntities, acdsData
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         classes = try container.decodeIfPresent([DXFRawRecord].self, forKey: .classes) ?? []
+        tables = try container.decodeIfPresent([DXFRawRecord].self, forKey: .tables) ?? []
         objects = try container.decodeIfPresent([DXFRawRecord].self, forKey: .objects) ?? []
         nativeEntities = try container.decodeIfPresent(
             [DXFPreservedEntity].self,
