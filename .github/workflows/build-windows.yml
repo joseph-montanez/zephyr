@@ -538,6 +538,15 @@ jobs:
             Write-Host "Plot Styles copied."
           }
 
+          # Copy Patterns
+          $patternsSource = "$swiftDir\Patterns"
+          if (Test-Path $patternsSource) {
+            $patternsDest = "$dllDest\Patterns"
+            New-Item -ItemType Directory -Force -Path $patternsDest | Out-Null
+            Copy-Item -Path "$patternsSource\*" -Destination $patternsDest -Force -Recurse -ErrorAction SilentlyContinue
+            Write-Host "Patterns copied."
+          }
+
           Write-Host "--- DLLs in output ---"
           Get-ChildItem $dllDest -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
 
@@ -565,6 +574,9 @@ jobs:
           }
           if (Test-Path "$buildDir\Plot Styles") {
             Copy-Item -Path "$buildDir\Plot Styles" -Destination "$stageDir\Plot Styles" -Recurse -Force
+          }
+          if (Test-Path "$buildDir\Patterns") {
+            Copy-Item -Path "$buildDir\Patterns" -Destination "$stageDir\Patterns" -Recurse -Force
           }
 
           Write-Host "--- Staged files ---"

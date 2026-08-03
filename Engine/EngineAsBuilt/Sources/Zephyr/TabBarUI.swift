@@ -157,17 +157,28 @@ struct TabBarUI {
             ImGuiOpenPopup("Unsaved Changes##TabClose", Int32(ImGuiPopupFlags_None.rawValue))
         }
 
-        let popupW: Float = 320
-        let popupH: Float = 100
+        let io = ImGuiGetIO()!.pointee
+        let uiScale = max(0.75, engine.effectiveUiScale)
+        let popupW = min(460.0 * uiScale, max(180.0, dw - 32.0 * uiScale))
+        let popupMinH = min(160.0 * uiScale, max(120.0, io.DisplaySize.y - 48.0 * uiScale))
+        let popupMaxH = max(popupMinH, io.DisplaySize.y - 48.0 * uiScale)
         ImGuiSetNextWindowPos(
-            ImVec2(x: (dw - popupW) * 0.5, y: 150),
+            ImVec2(x: dw * 0.5, y: io.DisplaySize.y * 0.5),
             Int32(ImGuiCond_Appearing.rawValue),
-            ImVec2(x: 0, y: 0))
-        ImGuiSetNextWindowSize(ImVec2(x: popupW, y: popupH), Int32(ImGuiCond_Appearing.rawValue))
+            ImVec2(x: 0.5, y: 0.5))
+        ImGuiSetNextWindowSize(
+            ImVec2(x: popupW, y: popupMinH),
+            Int32(ImGuiCond_Appearing.rawValue))
+        ImGuiSetNextWindowSizeConstraints(
+            ImVec2(x: popupW, y: popupMinH),
+            ImVec2(x: popupW, y: popupMaxH),
+            { _ in },
+            nil)
 
         var closePopup = true
         if ImGuiBeginPopupModal("Unsaved Changes##TabClose", &closePopup,
-                                Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)) {
+                                Int32(ImGuiWindowFlags_NoSavedSettings.rawValue
+                                    | ImGuiWindowFlags_AlwaysAutoResize.rawValue)) {
             defer { ImGuiEndPopup() }
 
             if !closePopup {
@@ -178,11 +189,15 @@ struct TabBarUI {
 
             let tabName = (_tabClosePending >= 0 && _tabClosePending < engine.tabManager.tabs.count)
                 ? engine.tabManager.tabs[_tabClosePending].displayName : ""
-            ImGuiTextV("Save changes to \"\(tabName)\" before closing?")
+            ImGuiTextWrappedV("Save changes to \"\(tabName)\" before closing?")
 
             igSeparator()
+            let buttonGap = 8.0 * uiScale
+            let buttonH = max(ImGuiGetFrameHeight(), 36.0 * uiScale)
+            ImGuiDummy(ImVec2(x: 0, y: 4.0 * uiScale))
+            let buttonW = max(72.0 * uiScale, (ImGuiGetContentRegionAvail().x - buttonGap * 2.0) / 3.0)
 
-            if igSmallButton("Save") {
+            if igButton("Save", ImVec2(x: buttonW, y: buttonH)) {
                 do {
                     try engine.tabManager.saveActiveTab()
                     engine.tabManager.closeTab(at: _tabClosePending)
@@ -196,14 +211,14 @@ struct TabBarUI {
                 _tabClosePending = -1
                 ImGuiCloseCurrentPopup()
             }
-            ImGuiSameLine(0, 8)
-            if igSmallButton("Discard") {
+            ImGuiSameLine(0, buttonGap)
+            if igButton("Discard", ImVec2(x: buttonW, y: buttonH)) {
                 engine.tabManager.closeTab(at: _tabClosePending)
                 _tabClosePending = -1
                 ImGuiCloseCurrentPopup()
             }
-            ImGuiSameLine(0, 8)
-            if igSmallButton("Cancel") {
+            ImGuiSameLine(0, buttonGap)
+            if igButton("Cancel", ImVec2(x: buttonW, y: buttonH)) {
                 _tabClosePending = -1
                 ImGuiCloseCurrentPopup()
             }

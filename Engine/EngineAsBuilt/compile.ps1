@@ -152,7 +152,7 @@ $iconvType = if ($isRelease) { "bin" } else { "debug\bin" }
 Copy-Item -Path "$DevRoot\vcpkg\installed\$vcpkgTriplet\$iconvType\iconv-2.dll" -Destination $dllDest -Force -ErrorAction SilentlyContinue
 
 # Copy Fonts & Plot Styles
-foreach ($asset in @("Fonts", "Plot Styles")) {
+foreach ($asset in @("Fonts", "Plot Styles", "Patterns")) {
     if (Test-Path "$swiftBuildDir\$asset") {
         $assetDest = "$dllDest\$asset"
         New-Item -ItemType Directory -Path $assetDest -Force | Out-Null

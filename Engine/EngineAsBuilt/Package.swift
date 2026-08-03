@@ -26,7 +26,10 @@ let package = Package(
                 .product(name: "SwiftSDL_ttf", package: "SwiftSDL_ttf"),
                 .product(name: "ImGui", package: "SwiftImGui"),
             ],
-            path: "Sources/ZephyrCore"
+            path: "Sources/ZephyrCore",
+            resources: [
+                .copy("../../Patterns")
+            ]
         ),
         .executableTarget(
             name: "Zephyr",

@@ -201,43 +201,43 @@ struct AppUI {
                 : "Close Block Editor##BlockClose"
             ImGuiOpenPopup(closePopupTitle, Int32(ImGuiPopupFlags_None.rawValue))
 
-            let popupW: Float = 360
-            let popupH: Float = 100
-            ImGuiSetNextWindowPos(
-                ImVec2(x: (dw - popupW) * 0.5, y: 150),
-                Int32(ImGuiCond_Appearing.rawValue),
-                ImVec2(x: 0, y: 0))
-            ImGuiSetNextWindowSize(ImVec2(x: popupW, y: popupH), Int32(ImGuiCond_Appearing.rawValue))
+            prepareAutoSizedModal(preferredWidth: 460, minimumHeight: 160, displayWidth: dw, engine: engine)
 
             var popupOpen = true
             if ImGuiBeginPopupModal(closePopupTitle, &popupOpen,
-                                    Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)) {
+                                    Int32(ImGuiWindowFlags_NoSavedSettings.rawValue
+                                        | ImGuiWindowFlags_AlwaysAutoResize.rawValue)) {
                 defer { ImGuiEndPopup() }
 
                 if !popupOpen {
                     engine.ui.blockClosePending = false
                 } else {
                     if editingArraySource {
-                        ImGuiTextV("Save changes to the array source before closing?")
+                        ImGuiTextWrappedV("Save changes to the array source before closing?")
                     } else {
-                        ImGuiTextV("Save changes to block \"\(blockName)\" before closing?")
+                        ImGuiTextWrappedV("Save changes to block \"\(blockName)\" before closing?")
                     }
 
                     igSeparator()
+                    let uiScale = max(0.75, engine.effectiveUiScale)
+                    let buttonGap = 8.0 * uiScale
+                    let buttonH = max(ImGuiGetFrameHeight(), 36.0 * uiScale)
+                    ImGuiDummy(ImVec2(x: 0, y: 4.0 * uiScale))
+                    let buttonW = max(72.0 * uiScale, (ImGuiGetContentRegionAvail().x - buttonGap * 2.0) / 3.0)
 
-                    if igSmallButton("Save") {
+                    if igButton("Save", ImVec2(x: buttonW, y: buttonH)) {
                         engine.tabManager.exitBlockEditor(saveChanges: true)
                         engine.ui.blockClosePending = false
                         ImGuiCloseCurrentPopup()
                     }
-                    ImGuiSameLine(0, 8)
-                    if igSmallButton("Discard") {
+                    ImGuiSameLine(0, buttonGap)
+                    if igButton("Discard", ImVec2(x: buttonW, y: buttonH)) {
                         engine.tabManager.exitBlockEditor(saveChanges: false)
                         engine.ui.blockClosePending = false
                         ImGuiCloseCurrentPopup()
                     }
-                    ImGuiSameLine(0, 8)
-                    if igSmallButton("Cancel") {
+                    ImGuiSameLine(0, buttonGap)
+                    if igButton("Cancel", ImVec2(x: buttonW, y: buttonH)) {
                         engine.ui.blockClosePending = false
                         ImGuiCloseCurrentPopup()
                     }
@@ -255,23 +255,45 @@ struct AppUI {
     }
 
 
+    private static func prepareAutoSizedModal(
+        preferredWidth: Float,
+        minimumHeight: Float,
+        displayWidth: Float,
+        engine: PhrostEngine
+    ) {
+        let io = ImGuiGetIO()!.pointee
+        let uiScale = max(0.75, engine.effectiveUiScale)
+        let availableW = max(180.0, displayWidth - 32.0 * uiScale)
+        let modalW = min(preferredWidth * uiScale, availableW)
+        let maxH = max(120.0, io.DisplaySize.y - 48.0 * uiScale)
+        let minH = min(maxH, minimumHeight * uiScale)
+
+        ImGuiSetNextWindowPos(
+            ImVec2(x: displayWidth * 0.5, y: io.DisplaySize.y * 0.5),
+            Int32(ImGuiCond_Appearing.rawValue),
+            ImVec2(x: 0.5, y: 0.5))
+        ImGuiSetNextWindowSize(
+            ImVec2(x: modalW, y: minH),
+            Int32(ImGuiCond_Appearing.rawValue))
+        ImGuiSetNextWindowSizeConstraints(
+            ImVec2(x: modalW, y: minH),
+            ImVec2(x: modalW, y: maxH),
+            { _ in },
+            nil)
+    }
+
     private static func renderTabCloseConfirmation(engine: PhrostEngine, dw: Float) {
         if _tabClosePopupRequested {
             _tabClosePopupRequested = false
             ImGuiOpenPopup("Discard Changes##RequestedTabClose", Int32(ImGuiPopupFlags_None.rawValue))
         }
 
-        let popupW: Float = 380
-        let popupH: Float = 110
-        ImGuiSetNextWindowPos(
-            ImVec2(x: (dw - popupW) * 0.5, y: 150),
-            Int32(ImGuiCond_Appearing.rawValue),
-            ImVec2(x: 0, y: 0))
-        ImGuiSetNextWindowSize(ImVec2(x: popupW, y: popupH), Int32(ImGuiCond_Appearing.rawValue))
+        prepareAutoSizedModal(preferredWidth: 460, minimumHeight: 160, displayWidth: dw, engine: engine)
 
         var popupOpen = true
         if ImGuiBeginPopupModal("Discard Changes##RequestedTabClose", &popupOpen,
-                                Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)) {
+                                Int32(ImGuiWindowFlags_NoSavedSettings.rawValue
+                                    | ImGuiWindowFlags_AlwaysAutoResize.rawValue)) {
             defer { ImGuiEndPopup() }
 
             if !popupOpen {
@@ -287,16 +309,21 @@ struct AppUI {
             }
 
             let tabName = engine.tabManager.tabs[index].displayName
-            ImGuiTextV("Discard unsaved changes to \"\(tabName)\"?")
+            ImGuiTextWrappedV("Discard unsaved changes to \"\(tabName)\"?")
             igSeparator()
+            let uiScale = max(0.75, engine.effectiveUiScale)
+            let buttonGap = 8.0 * uiScale
+            let buttonH = max(ImGuiGetFrameHeight(), 36.0 * uiScale)
+            ImGuiDummy(ImVec2(x: 0, y: 4.0 * uiScale))
+            let buttonW = max(120.0 * uiScale, (ImGuiGetContentRegionAvail().x - buttonGap) / 2.0)
 
-            if igSmallButton("Discard Changes") {
+            if igButton("Discard Changes", ImVec2(x: buttonW, y: buttonH)) {
                 _ = engine.tabManager.closeTab(at: index)
                 _tabClosePendingID = nil
                 ImGuiCloseCurrentPopup()
             }
-            ImGuiSameLine(0, 8)
-            if igSmallButton("Cancel") {
+            ImGuiSameLine(0, buttonGap)
+            if igButton("Cancel", ImVec2(x: buttonW, y: buttonH)) {
                 _tabClosePendingID = nil
                 ImGuiCloseCurrentPopup()
             }
@@ -315,17 +342,12 @@ struct AppUI {
 
         ImGuiOpenPopup("Unsaved Changes##WindowClose", Int32(ImGuiPopupFlags_None.rawValue))
 
-        let popupW: Float = 440
-        let popupH: Float = 145
-        ImGuiSetNextWindowPos(
-            ImVec2(x: (dw - popupW) * 0.5, y: 150),
-            Int32(ImGuiCond_Appearing.rawValue),
-            ImVec2(x: 0, y: 0))
-        ImGuiSetNextWindowSize(ImVec2(x: popupW, y: popupH), Int32(ImGuiCond_Appearing.rawValue))
+        prepareAutoSizedModal(preferredWidth: 560, minimumHeight: 180, displayWidth: dw, engine: engine)
 
         var popupOpen = true
         if ImGuiBeginPopupModal("Unsaved Changes##WindowClose", &popupOpen,
-                                Int32(ImGuiWindowFlags_NoSavedSettings.rawValue)) {
+                                Int32(ImGuiWindowFlags_NoSavedSettings.rawValue
+                                    | ImGuiWindowFlags_AlwaysAutoResize.rawValue)) {
             defer { ImGuiEndPopup() }
 
             if !popupOpen {
@@ -335,17 +357,34 @@ struct AppUI {
 
             let names = dirtyTabs.prefix(4).map(\.displayName).joined(separator: ", ")
             let remaining = max(0, dirtyTabs.count - 4)
-            ImGuiTextV("Unsaved changes will be lost in:")
-            ImGuiTextV(remaining > 0 ? "\(names), and \(remaining) more" : names)
+            ImGuiTextWrappedV("Unsaved changes will be lost in:")
+            ImGuiTextWrappedV(remaining > 0 ? "\(names), and \(remaining) more" : names)
             igSeparator()
+            let uiScale = max(0.75, engine.effectiveUiScale)
+            let buttonGap = 8.0 * uiScale
+            let buttonH = max(ImGuiGetFrameHeight(), 36.0 * uiScale)
+            ImGuiDummy(ImVec2(x: 0, y: 4.0 * uiScale))
 
-            if igSmallButton("Discard Changes & Exit") {
+            let available = ImGuiGetContentRegionAvail().x
+            let discardMinW = ImGuiCalcTextSize("Discard Changes & Exit", nil, false, -1).x + 28.0 * uiScale
+            let cancelMinW = ImGuiCalcTextSize("Cancel", nil, false, -1).x + 28.0 * uiScale
+            let buttonsFitOneRow = discardMinW + cancelMinW + buttonGap <= available
+            let discardW = buttonsFitOneRow
+                ? max(discardMinW, (available - buttonGap) * 0.64)
+                : available
+            let cancelW = buttonsFitOneRow ? available - buttonGap - discardW : available
+
+            if igButton("Discard Changes & Exit", ImVec2(x: discardW, y: buttonH)) {
                 _windowClosePending = false
                 ImGuiCloseCurrentPopup()
                 engine.stop()
             }
-            ImGuiSameLine(0, 8)
-            if igSmallButton("Cancel") {
+            if buttonsFitOneRow {
+                ImGuiSameLine(0, buttonGap)
+            } else {
+                ImGuiDummy(ImVec2(x: 0, y: buttonGap))
+            }
+            if igButton("Cancel", ImVec2(x: cancelW, y: buttonH)) {
                 _windowClosePending = false
                 ImGuiCloseCurrentPopup()
             }
@@ -391,33 +430,33 @@ struct AppUI {
         let oldSettings = settings
         HatchRibbonUI.render(&settings, engine: engine)
 
-        guard settings.closeRequested || settings != oldSettings else { return }
+        let geometryFillType = hatchGeometryFillType(entity)
+        let needsGeometryRepair = geometryFillType != nil && geometryFillType != payload.fillType
+        guard settings.closeRequested || settings != oldSettings || needsGeometryRepair else { return }
 
-        let newPattern = hatchPatternName(from: settings)
+        let newPatternKey = hatchPatternKey(from: settings)
+        let newDXFPatternName = settings.fillType == 0
+            ? DXFHatchGenerator.patternExportName(for: newPatternKey)
+            : newPatternKey
         let newGeometry = buildHatchGeometry(
             regions: payload.regions,
             settings: settings,
-            patternName: newPattern)
+            patternName: newPatternKey)
 
         var newEntity = entity
         let originalPattern = patternNameFromXData(entity)
-        newEntity.xdata["dxf.hatchPatternName"] = .string(newPattern)
-        newEntity.xdata["dxf.hatchPatternType"] = .string(DXFHatchGenerator.patternKindName(for: newPattern))
+        newEntity.xdata["zephyr.hatchPatternKey"] = .string(newPatternKey)
+        newEntity.xdata["dxf.hatchPatternName"] = .string(newDXFPatternName)
+        newEntity.xdata["dxf.hatchPatternType"] = .string(DXFHatchGenerator.patternKindName(for: newPatternKey))
         newEntity.xdata["dxf.hatchScale"] = .double(Double(settings.scale))
         newEntity.xdata["dxf.hatchAngle"] = .double(Double(settings.angle))
-        newEntity.xdata["dxf.hatchSpacing"] = .double(DXFHatchGenerator.effectiveSpacing(patternName: newPattern, scale: Double(settings.scale)))
+        newEntity.xdata["dxf.hatchSpacing"] = .double(DXFHatchGenerator.effectiveSpacing(patternName: newPatternKey, scale: Double(settings.scale)))
         newEntity.xdata["dxf.hatchIsGradient"] = .bool(settings.fillType == 2)
-        let definitionType: Int
-        if settings.fillType == 3 {
-            definitionType = 0
-        } else if settings.fillType == 0,
-                  DXFHatchGenerator.predefinedPatterns[newPattern.uppercased()] == nil {
-            definitionType = 2
-        } else {
-            definitionType = 1
-        }
+        let definitionType = settings.fillType == 3
+            ? 0
+            : DXFHatchGenerator.patternDefinitionType(for: newPatternKey)
         newEntity.xdata["dxf.hatchPatternDefinitionType"] = .int(definitionType)
-        if originalPattern?.uppercased() != newPattern.uppercased() || settings.fillType != 0 {
+        if originalPattern?.uppercased() != newDXFPatternName.uppercased() || settings.fillType != 0 {
             newEntity.xdata.removeValue(forKey: "dxf.hatchPatternLines")
         }
         if settings.fillType == 2 {
@@ -520,12 +559,14 @@ struct AppUI {
 
         let allHatches = hatchPaths + legacyHatches
         if let first = allHatches.first {
-            let rawPattern = patternNameFromXData(entity) ?? first.pattern
-            let pattern = rawPattern.isEmpty ? "SOLID" : rawPattern.uppercased()
-            let fillType: Int32 = pattern == "USER" ? 3 : (pattern == "SOLID" ? 1 : 0)
+            let rawPattern = first.pattern.isEmpty
+                ? (editablePatternNameFromXData(entity) ?? "SOLID")
+                : first.pattern
+            let exportedPattern = DXFHatchGenerator.patternExportName(for: rawPattern)
+            let fillType: Int32 = exportedPattern == "USER" ? 3 : (exportedPattern == "SOLID" ? 1 : 0)
             return HatchEditPayload(
                 fillType: fillType,
-                patternName: pattern == "SOLID" || pattern == "GRADIENT" || pattern == "USER" ? "ANSI31" : pattern,
+                patternName: exportedPattern == "SOLID" || exportedPattern == "GRADIENT" || exportedPattern == "USER" ? "ANSI31" : rawPattern,
                 gradientName: "LINEAR",
                 scale: first.scale,
                 angle: first.angle,
@@ -553,12 +594,13 @@ struct AppUI {
                 }
             }
             guard !regions.isEmpty else { return nil }
+            let storedFillType = hatchFillTypeFromXData(entity) ?? 1
             return HatchEditPayload(
-                fillType: 1,
+                fillType: storedFillType,
                 patternName: editablePatternNameFromXData(entity) ?? "ANSI31",
-                gradientName: "LINEAR",
-                scale: 1.0,
-                angle: 0.0,
+                gradientName: hatchGradientNameFromXData(entity) ?? "LINEAR",
+                scale: hatchDoubleFromXData(entity, key: "dxf.hatchScale") ?? 1.0,
+                angle: hatchDoubleFromXData(entity, key: "dxf.hatchAngle") ?? 0.0,
                 primaryColor: complexPolygons.first?.color,
                 backgroundColor: nil,
                 secondaryColor: nil,
@@ -732,7 +774,55 @@ struct AppUI {
         return inside
     }
 
-    private static func hatchPatternName(from settings: HatchRibbonUI.Settings) -> String {
+
+    private static func hatchGeometryFillType(_ entity: CADEntity) -> Int32? {
+        guard let geometry = entity.localGeometry else { return nil }
+        if geometry.contains(where: {
+            if case .gradient = $0 { return true }
+            return false
+        }) { return 2 }
+        if geometry.contains(where: {
+            switch $0 {
+            case .hatch, .hatchPath: return true
+            default: return false
+            }
+        }) {
+            let pattern = patternNameFromXData(entity) ?? "ANSI31"
+            return pattern == "USER" ? 3 : 0
+        }
+        if geometry.contains(where: {
+            if case .fillComplexPolygon = $0 { return true }
+            return false
+        }) { return 1 }
+        return nil
+    }
+
+    private static func hatchFillTypeFromXData(_ entity: CADEntity) -> Int32? {
+        if case .bool(true)? = entity.xdata["dxf.hatchIsGradient"] { return 2 }
+        guard let pattern = patternNameFromXData(entity) else { return nil }
+        switch pattern {
+        case "GRADIENT": return 2
+        case "SOLID": return 1
+        case "USER": return 3
+        default: return 0
+        }
+    }
+
+    private static func hatchGradientNameFromXData(_ entity: CADEntity) -> String? {
+        guard case .string(let value)? = entity.xdata["dxf.hatchGradientName"] else { return nil }
+        let name = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        return name.isEmpty ? nil : name
+    }
+
+    private static func hatchDoubleFromXData(_ entity: CADEntity, key: String) -> Double? {
+        switch entity.xdata[key] {
+        case .double(let value)?: return value
+        case .int(let value)?: return Double(value)
+        default: return nil
+        }
+    }
+
+    private static func hatchPatternKey(from settings: HatchRibbonUI.Settings) -> String {
         switch settings.fillType {
         case 1: return "SOLID"
         case 2: return "GRADIENT"
@@ -750,6 +840,12 @@ struct AppUI {
     }
 
     private static func editablePatternNameFromXData(_ entity: CADEntity) -> String? {
+        if case .string(let value)? = entity.xdata["zephyr.hatchPatternKey"] {
+            let key = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if !key.isEmpty, key != "SOLID", key != "GRADIENT", key != "USER" {
+                return key
+            }
+        }
         guard let pattern = patternNameFromXData(entity), pattern != "SOLID", pattern != "GRADIENT", pattern != "USER" else { return nil }
         return pattern
     }

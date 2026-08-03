@@ -45,6 +45,7 @@ public final class HatchCommand: FeatureCommand {
     private var backgroundColor: ColorRGBA? = nil    // nil = None
     private var secondaryColor: ColorRGBA? = nil     // for gradients
     private var selectionMode: HatchSelectionMode = .pickPoints
+    private var lastCreatedHatchHandle: UUID?
 
     public init() {}
 
@@ -54,6 +55,7 @@ public final class HatchCommand: FeatureCommand {
         state = .waitingForInternalPoint
         currentMouseWorldX = 0
         currentMouseWorldY = 0
+        lastCreatedHatchHandle = nil
         processor.commandPrompt = "HATCH: Click inside an enclosed area to fill (Esc to cancel)."
     }
 
@@ -161,11 +163,13 @@ public final class HatchCommand: FeatureCommand {
         let angle = Double(hatchAngle)
 
         var prims: [CADPrimitive] = []
-        if fillType == 2, let c1 = primaryColor {
+        if fillType == 2 {
+            let c1 = primaryColor ?? ColorRGBA(r: 128, g: 128, b: 128, a: 255)
             let c2 = secondaryColor ?? ColorRGBA(
                 r: UInt8(min(255, Int(c1.r) + 60)),
                 g: UInt8(min(255, Int(c1.g) + 60)),
-                b: UInt8(min(255, Int(c1.b) + 60)))
+                b: UInt8(min(255, Int(c1.b) + 60)),
+                a: c1.a)
             prims.append(.gradient(
                 outer: boundary, holes: holes,
                 gradientName: gradientName, angle: angle, color1: c1, color2: c2))
@@ -233,19 +237,73 @@ public final class HatchCommand: FeatureCommand {
     private func applyHatchXData(to entity: inout CADEntity) {
         entity.xdata.removeValue(forKey: "dxf.hatchRawBody")
         entity.xdata.removeValue(forKey: "dxf.hatchRawHandle")
-        let pattern: String
+        entity.xdata.removeValue(forKey: "dxf.hatchPatternLines")
+
+        let patternKey: String
         switch fillType {
-        case 0: pattern = patternName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "ANSI31" : patternName.uppercased()
-        case 2: pattern = "GRADIENT"
-        default: pattern = "SOLID"
+        case 0:
+            let value = patternName.trimmingCharacters(in: .whitespacesAndNewlines)
+            patternKey = value.isEmpty ? "ANSI31" : value.uppercased()
+        case 2:
+            patternKey = "GRADIENT"
+        case 3:
+            patternKey = "USER"
+        default:
+            patternKey = "SOLID"
         }
+
+        let dxfPatternName = fillType == 0
+            ? DXFHatchGenerator.patternExportName(for: patternKey)
+            : patternKey
         let scale = Double(hatchScale)
-        entity.xdata["dxf.hatchPatternName"] = .string(pattern)
-        entity.xdata["dxf.hatchPatternType"] = .string(DXFHatchGenerator.patternKindName(for: pattern))
+        let definitionType = fillType == 3
+            ? 0
+            : DXFHatchGenerator.patternDefinitionType(for: patternKey)
+
+        entity.xdata["zephyr.hatchPatternKey"] = .string(patternKey)
+        entity.xdata["dxf.hatchPatternName"] = .string(dxfPatternName)
+        entity.xdata["dxf.hatchPatternType"] = .string(DXFHatchGenerator.patternKindName(for: patternKey))
+        entity.xdata["dxf.hatchPatternDefinitionType"] = .int(definitionType)
         entity.xdata["dxf.hatchScale"] = .double(scale)
         entity.xdata["dxf.hatchAngle"] = .double(Double(hatchAngle))
-        entity.xdata["dxf.hatchSpacing"] = .double(DXFHatchGenerator.effectiveSpacing(patternName: pattern, scale: scale))
+        entity.xdata["dxf.hatchSpacing"] = .double(
+            DXFHatchGenerator.effectiveSpacing(patternName: patternKey, scale: scale))
         entity.xdata["dxf.hatchAssociative"] = .bool(false)
+        entity.xdata["dxf.hatchIsGradient"] = .bool(fillType == 2)
+
+        if fillType == 2 {
+            let c1 = primaryColor ?? ColorRGBA(r: 128, g: 128, b: 128, a: 255)
+            let c2 = secondaryColor ?? ColorRGBA(
+                r: UInt8(min(255, Int(c1.r) + 60)),
+                g: UInt8(min(255, Int(c1.g) + 60)),
+                b: UInt8(min(255, Int(c1.b) + 60)),
+                a: c1.a)
+            entity.xdata["dxf.hatchGradientName"] = .string(gradientName.uppercased())
+            entity.xdata["dxf.hatchGradientAngle"] = .double(Double(hatchAngle))
+            entity.xdata["dxf.hatchGradientSingleColor"] = .bool(false)
+            entity.xdata["dxf.hatchGradientTint"] = .double(0.0)
+            entity.xdata["dxf.hatchGradientStops"] = .string(gradientStopsJSON(c1, c2))
+        } else {
+            entity.xdata.removeValue(forKey: "dxf.hatchGradientName")
+            entity.xdata.removeValue(forKey: "dxf.hatchGradientAngle")
+            entity.xdata.removeValue(forKey: "dxf.hatchGradientShift")
+            entity.xdata.removeValue(forKey: "dxf.hatchGradientTint")
+            entity.xdata.removeValue(forKey: "dxf.hatchGradientSingleColor")
+            entity.xdata.removeValue(forKey: "dxf.hatchGradientStops")
+        }
+    }
+
+    private func gradientStopsJSON(_ first: ColorRGBA, _ second: ColorRGBA) -> String {
+        func rgb(_ color: ColorRGBA) -> Int {
+            (Int(color.r) << 16) | (Int(color.g) << 8) | Int(color.b)
+        }
+        let stops: [[String: Any]] = [
+            ["position": 0.0, "aci": 0, "rgb": rgb(first)],
+            ["position": 1.0, "aci": 0, "rgb": rgb(second)]
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: stops),
+              let json = String(data: data, encoding: .utf8) else { return "[]" }
+        return json
     }
 
     private func classifyLoops(_ loops: [[Vector3]]) -> (outer: [Vector3], holes: [[Vector3]]) {
@@ -359,6 +417,7 @@ public final class HatchCommand: FeatureCommand {
 
         engine.document.addEntity(entity)
         engine.tabManager.markActiveDirty()
+        lastCreatedHatchHandle = entity.handle
 
         // Select the newly created hatch so the user can inspect/refine settings.
         engine.cadSelection.clearSelection()
@@ -386,6 +445,15 @@ public final class HatchCommand: FeatureCommand {
 
     public func renderImGui(engine: PhrostEngine) {
         guard case .waitingForInternalPoint = state else { return }
+
+        let previousFillType = fillType
+        let previousPatternName = patternName
+        let previousGradientName = gradientName
+        let previousScale = hatchScale
+        let previousAngle = hatchAngle
+        let previousPrimaryColor = primaryColor
+        let previousBackgroundColor = backgroundColor
+        let previousSecondaryColor = secondaryColor
 
         // Package command state into HatchRibbonUI.Settings
         var uiSettings = HatchRibbonUI.Settings(
@@ -415,8 +483,20 @@ public final class HatchCommand: FeatureCommand {
         backgroundColor = uiSettings.backgroundColor
         secondaryColor = uiSettings.secondaryColor
         selectionMode = uiSettings.selectionMode == 1 ? .selectBoundary : .pickPoints
-        
-        if uiSettings.applyClicked {
+
+        let settingsChanged = previousFillType != fillType
+            || previousPatternName != patternName
+            || previousGradientName != gradientName
+            || previousScale != hatchScale
+            || previousAngle != hatchAngle
+            || previousPrimaryColor != primaryColor
+            || previousBackgroundColor != backgroundColor
+            || previousSecondaryColor != secondaryColor
+
+        let shouldLiveApply = settingsChanged
+            && lastCreatedHatchHandle == engine.cadSelection.lastSelectedHandle
+
+        if uiSettings.applyClicked || shouldLiveApply {
             applyToSelected(engine: engine, processor: engine.commandProcessor)
         }
         if uiSettings.closeRequested {

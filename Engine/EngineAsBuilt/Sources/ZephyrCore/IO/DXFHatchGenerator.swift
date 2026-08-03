@@ -55,7 +55,21 @@ public enum DXFHatchGenerator {
 
     public static func registerImportedPatternDefinition(name: String, lines: [DXFHatchPatternLine]) -> String {
         let key = importedPatternKey(name: name, lines: lines)
-        importedPatternDefinitions[key.uppercased()] = DXFHatchPatternDefinition(name: name, kind: .custom, lines: lines)
+        importedPatternDefinitions[key.uppercased()] = DXFHatchPatternDefinition(
+            name: name,
+            kind: .custom,
+            lines: lines)
+        return key
+    }
+
+    public static func registerPatternDefinition(
+        _ definition: DXFHatchPatternDefinition,
+        namespace: String
+    ) -> String {
+        let key = importedPatternKey(
+            name: "\(namespace):\(definition.name)",
+            lines: definition.lines)
+        importedPatternDefinitions[key.uppercased()] = definition
         return key
     }
 
@@ -168,11 +182,46 @@ public enum DXFHatchGenerator {
             return DXFHatchPatternDefinition(name: "SOLID", kind: .solid, lines: [])
         }
         if let imported = importedPatternDefinitions[key] { return imported }
-        return predefinedPatterns[key]
+        if let predefined = predefinedPatterns[key] { return predefined }
+        HatchPatternLibrary.ensureLoaded()
+        return importedPatternDefinitions[key] ?? predefinedPatterns[key]
+    }
+
+    public static func patternDisplayName(for patternName: String) -> String {
+        patternDefinition(for: patternName)?.name
+            ?? patternName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static func patternExportName(for patternName: String) -> String {
+        let name = patternDisplayName(for: patternName).uppercased()
+        return name.isEmpty ? "ANSI31" : name
+    }
+
+    public static func patternDefinitionType(for patternName: String) -> Int {
+        switch patternDefinition(for: patternName)?.kind {
+        case .userDefined: return 0
+        case .custom: return 2
+        default: return 1
+        }
     }
 
     public static func patternKindName(for patternName: String) -> String {
         patternDefinition(for: patternName)?.kind.rawValue ?? DXFHatchPatternDefinition.Kind.custom.rawValue
+    }
+
+    public static func previewScale(for patternName: String, targetSpacing: Double = 12.0) -> Double {
+        guard let definition = patternDefinition(for: patternName), !definition.lines.isEmpty else {
+            return 1.0
+        }
+        var spacing = Double.infinity
+        for line in definition.lines {
+            let value = abs(line.offset.y) > 1e-9
+                ? abs(line.offset.y)
+                : hypot(line.offset.x, line.offset.y)
+            if value > 1e-9 { spacing = min(spacing, value) }
+        }
+        guard spacing.isFinite, spacing > 1e-9 else { return 1.0 }
+        return max(1e-9, targetSpacing / spacing)
     }
 
     public static func effectiveSpacing(patternName: String, scale: Double) -> Double {

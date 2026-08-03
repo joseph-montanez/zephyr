@@ -146,6 +146,7 @@ jobs:
           # Copy resources
           cp -R Engine/EngineAsBuilt/Fonts "$APP_RESOURCES/"
           cp -R "Engine/EngineAsBuilt/Plot Styles" "$APP_RESOURCES/" || true
+          cp -R "Engine/EngineAsBuilt/Patterns" "$APP_RESOURCES/" || true
           cp Engine/EngineAsBuilt/Shaders/*.msl "$APP_RESOURCES/"
 
           # Copy PDFium dylib if available
