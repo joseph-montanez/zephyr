@@ -97,6 +97,58 @@ public enum CADGripSystem {
                 continue
             }
 
+            if RevCloudSettings.gripsEnabled,
+               RevCloudGeometry.isRevisionCloud(entity: entity, geometry: geometry),
+               let cloudPath = geometry.compactMap({ primitive -> CADPolyline? in
+                   if case .polyline(let path, _) = primitive { return path }
+                   return nil
+               }).first,
+               let localGuide = RevCloudGeometry.guidePoints(of: entity, path: cloudPath),
+               localGuide.count >= 3 {
+                let worldGuide = localGuide.map { entity.transform.transformPoint($0) }
+                let center = Vector3(
+                    x: worldGuide.map(\.x).reduce(0, +) / Double(worldGuide.count),
+                    y: worldGuide.map(\.y).reduce(0, +) / Double(worldGuide.count),
+                    z: worldGuide.map(\.z).reduce(0, +) / Double(worldGuide.count))
+                let centerScreen = EngineCameraManager.worldToScreen(
+                    worldX: center.x, worldY: center.y, cam: cam)
+                results.append(CADSelectionManager.CadGripInfo(
+                    handle: handle,
+                    grip: .center,
+                    screenPos: centerScreen,
+                    worldPos: center))
+
+                for index in worldGuide.indices {
+                    let point = worldGuide[index]
+                    let screen = EngineCameraManager.worldToScreen(
+                        worldX: point.x, worldY: point.y, cam: cam)
+                    results.append(CADSelectionManager.CadGripInfo(
+                        handle: handle,
+                        grip: .vertex(
+                            entity: handle,
+                            index: RevCloudGripIndex.vertex(index)),
+                        screenPos: screen,
+                        worldPos: point))
+
+                    let next = (index + 1) % worldGuide.count
+                    let midpoint = Vector3(
+                        x: (point.x + worldGuide[next].x) * 0.5,
+                        y: (point.y + worldGuide[next].y) * 0.5,
+                        z: (point.z + worldGuide[next].z) * 0.5)
+                    let midpointScreen = EngineCameraManager.worldToScreen(
+                        worldX: midpoint.x, worldY: midpoint.y, cam: cam)
+                    results.append(CADSelectionManager.CadGripInfo(
+                        handle: handle,
+                        grip: .midpoint(
+                            entity: handle,
+                            betweenA: RevCloudGripIndex.vertex(index),
+                            andB: RevCloudGripIndex.vertex(next)),
+                        screenPos: midpointScreen,
+                        worldPos: midpoint))
+                }
+                continue
+            }
+
             let containsAnalyticHatchBoundary = geometry.contains { primitive in
                 switch primitive {
                 case .polyline(let path, _):

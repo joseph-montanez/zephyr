@@ -620,7 +620,35 @@ public enum CADPrimitiveGenerator {
         case .polyline(let path, _):
             if path.isHatchBoundaryCarrier { break }
 
-            if dashPattern != nil && !path.lineTypeGenerationEnabled {
+            let hasVariableWidths = path.vertices.contains {
+                $0.startWidth > 1e-12 || $0.endWidth > 1e-12
+            }
+            if hasVariableWidths {
+                for segment in 0..<path.segmentCount {
+                    let vertex = path.vertices[segment]
+                    let divisions: Int
+                    if let arc = path.arcParameters(forSegment: segment) {
+                        divisions = Swift.max(4, Int(ceil(abs(arc.sweep) * 12.0)))
+                    } else {
+                        divisions = 1
+                    }
+                    for step in 0..<divisions {
+                        let t0 = Double(step) / Double(divisions)
+                        let t1 = Double(step + 1) / Double(divisions)
+                        let p0 = transform.transformPoint(path.point(onSegment: segment, t: t0))
+                        let p1 = transform.transformPoint(path.point(onSegment: segment, t: t1))
+                        let width0 = vertex.startWidth + (vertex.endWidth - vertex.startWidth) * t0
+                        let width1 = vertex.startWidth + (vertex.endWidth - vertex.startWidth) * t1
+                        let width = Swift.max(0, (width0 + width1) * 0.5 * geometryScale)
+                        specs.append(PrimitiveSpec(
+                            type: .line,
+                            points: [renderPoint(p0), renderPoint(p1)],
+                            rects: [], corners: [], z: z, color: finalColor,
+                            lineWeight: lineWeight,
+                            geomWidth: width))
+                    }
+                }
+            } else if dashPattern != nil && !path.lineTypeGenerationEnabled {
                 var renderedStraightSegments = Set<PolylineSegmentKey>()
 
                 for segment in 0..<path.segmentCount {

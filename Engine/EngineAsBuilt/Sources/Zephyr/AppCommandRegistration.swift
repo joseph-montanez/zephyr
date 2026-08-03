@@ -167,6 +167,26 @@ struct AppCommandRegistration {
             factory: { HatchCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "REVCLOUD",
+            aliases: ["REVC"],
+            descriptor: CommandDescriptor(
+                canonicalName: "REVCLOUD",
+                aliases: ["REVC"],
+                category: .draw,
+                description: "Create or modify revision-cloud polylines"),
+            factory: { RevCloudCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "REVCLOUDPROPERTIES",
+            aliases: ["REVCLOUDPROP"],
+            descriptor: CommandDescriptor(
+                canonicalName: "REVCLOUDPROPERTIES",
+                aliases: ["REVCLOUDPROP"],
+                category: .modify,
+                description: "Change the arc chord length of revision clouds"),
+            factory: { RevCloudPropertiesCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "SPLINE",
             aliases: ["SPL"],
             factory: { SplineCommand() }
@@ -262,6 +282,28 @@ struct AppCommandRegistration {
             aliases: ["PDFI", "PDF"],
             factory: { PDFImportCommand() }
         )
+
+        let revCloudVariables: [(String, RevCloudVariableCommand.Variable, String)] = [
+            ("REVCLOUDCREATEMODE", .createMode, "Set the default revision-cloud creation mode"),
+            ("REVCLOUDAPPROXARCLEN", .approximateArcLength, "Set the target revision-cloud arc chord length"),
+            ("REVCLOUDMINARCLENGTH", .minimumArcLength, "Set the minimum revision-cloud arc chord length"),
+            ("REVCLOUDMAXARCLENGTH", .maximumArcLength, "Set the maximum revision-cloud arc chord length"),
+            ("REVCLOUDARCVARIANCE", .arcVariance, "Toggle varied revision-cloud arc chord lengths"),
+            ("REVCLOUDGRIPS", .grips, "Toggle simplified revision-cloud grips"),
+            ("REVCLOUDLAYER", .layer, "Set the layer used for new revision clouds"),
+            ("DELOBJ", .deleteObject, "Control deletion of source objects during conversion")
+        ]
+        for (name, variable, description) in revCloudVariables {
+            engine.commandProcessor.registerFeatureCommand(
+                name: name,
+                descriptor: CommandDescriptor(
+                    canonicalName: name,
+                    category: .settings,
+                    syntax: "<value>",
+                    description: description),
+                factory: { RevCloudVariableCommand(variable) }
+            )
+        }
 
         // --- View commands ---
         engine.commandProcessor.registerFeatureCommand(

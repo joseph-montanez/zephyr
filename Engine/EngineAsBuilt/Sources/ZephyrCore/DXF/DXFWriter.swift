@@ -69,6 +69,7 @@ public class DXFWriter {
     public var preservedTables: [DXFRawRecord] = []
     public var preservedObjects: [DXFRawRecord] = []
     public var preservedACDSData: [DataTableRawDXFGroup] = []
+    public var revisionCloudApproxArcLength: Double?
 
     // Handle tracking
     private var nextHandle: UInt32 = 1
@@ -81,6 +82,8 @@ public class DXFWriter {
     private var entityOwnerBlockNames: [String?] = []
     private var rootDictionaryHandle: String = ""
     private var groupDictionaryHandle: String = ""
+    private var variableDictionaryHandle: String = ""
+    private var revisionCloudVariableHandle: String = ""
     private var layoutDictionaryHandle: String = ""
     private var plotStyleDictionaryHandle: String = ""
     private var plotStyleNormalHandle: String = ""
@@ -174,6 +177,8 @@ public class DXFWriter {
         layoutHandleByBlockName.removeAll(keepingCapacity: true)
         rootDictionaryHandle = ""
         groupDictionaryHandle = ""
+        variableDictionaryHandle = ""
+        revisionCloudVariableHandle = ""
         layoutDictionaryHandle = ""
         plotStyleDictionaryHandle = ""
         plotStyleNormalHandle = ""
@@ -457,6 +462,12 @@ public class DXFWriter {
         let rootEntries = dictionaryEntries(rawRoot)
         rootDictionaryHandle = preservedOrAllocatedHandle(rawRoot.flatMap { recordHandle($0) })
         groupDictionaryHandle = preservedOrAllocatedHandle(rootEntries["ACAD_GROUP"])
+        if let arcLength = revisionCloudApproxArcLength,
+           arcLength > 0,
+           rootEntries["ACDBVARIABLEDICTIONARY"] == nil {
+            variableDictionaryHandle = allocHandle()
+            revisionCloudVariableHandle = allocHandle()
+        }
         plotStyleDictionaryHandle = preservedOrAllocatedHandle(rootEntries["ACAD_PLOTSTYLENAME"])
         let plotStyleEntries = dictionaryEntries(preservedObject(withHandle: plotStyleDictionaryHandle))
         plotStyleNormalHandle = preservedOrAllocatedHandle(plotStyleEntries["NORMAL"])
@@ -2809,6 +2820,9 @@ public class DXFWriter {
         var generatedRootNames: Set<String> = [
             "ACAD_GROUP", "ACAD_LAYOUT", "ACAD_MATERIAL", "ACAD_PLOTSTYLENAME"
         ]
+        if !variableDictionaryHandle.isEmpty {
+            generatedRootNames.insert("ACDBVARIABLEDICTIONARY")
+        }
         if entities.contains(where: { $0.eType == .iMAGE }) {
             generatedRootNames.insert("ACAD_IMAGE_DICT")
         }
@@ -2849,6 +2863,8 @@ public class DXFWriter {
         var generatedHandles: Set<String> = [
             rootDictionaryHandle,
             groupDictionaryHandle,
+            variableDictionaryHandle,
+            revisionCloudVariableHandle,
             plotStyleDictionaryHandle,
             plotStyleNormalHandle
         ].reduce(into: Set<String>()) { result, value in
@@ -2898,6 +2914,9 @@ public class DXFWriter {
         out += "  0\r\nDICTIONARY\r\n  5\r\n\(rootDictionaryHandle)\r\n"
         out += "330\r\n0\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n"
         out += "  3\r\nACAD_GROUP\r\n350\r\n\(groupDictionaryHandle)\r\n"
+        if !variableDictionaryHandle.isEmpty {
+            out += "  3\r\nAcDbVariableDictionary\r\n350\r\n\(variableDictionaryHandle)\r\n"
+        }
         if !layoutDictionaryHandle.isEmpty {
             out += "  3\r\nACAD_LAYOUT\r\n350\r\n\(layoutDictionaryHandle)\r\n"
         }
@@ -2920,6 +2939,21 @@ public class DXFWriter {
 
         out += "  0\r\nDICTIONARY\r\n  5\r\n\(groupDictionaryHandle)\r\n"
         out += "330\r\n\(rootDictionaryHandle)\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n"
+
+        if !variableDictionaryHandle.isEmpty,
+           !revisionCloudVariableHandle.isEmpty,
+           let arcLength = revisionCloudApproxArcLength,
+           arcLength > 0 {
+            out += "  0\r\nDICTIONARY\r\n  5\r\n\(variableDictionaryHandle)\r\n"
+            out += "330\r\n\(rootDictionaryHandle)\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n"
+            writeStr(3, "#REVCLOUDAPPROXARCLEN", &out)
+            writeStr(350, revisionCloudVariableHandle, &out)
+
+            out += "  0\r\nDICTIONARYVAR\r\n  5\r\n\(revisionCloudVariableHandle)\r\n"
+            out += "330\r\n\(variableDictionaryHandle)\r\n100\r\nDictionaryVariables\r\n"
+            writeInt(280, 0, &out)
+            writeStr(1, String(format: "%.6f", arcLength), &out)
+        }
 
         writePlotStyleObjects(&out)
         if hasMaterials { writeMaterialObjects(&out) }

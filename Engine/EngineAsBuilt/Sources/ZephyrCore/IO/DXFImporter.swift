@@ -1506,6 +1506,79 @@ public enum DXFImporter {
         return (groupID, role, values.filter { $0.hasPrefix("D:") })
     }
 
+    private static func revisionCloudXData(
+        from entity: DXFEntity
+    ) -> [String: XDataValue] {
+        guard entity is DXFLWPolylineEntity || entity is DXFPolylineEntity else {
+            return [:]
+        }
+
+        var active = false
+        var found = false
+        var styleCode: Int?
+        var approximateArcLength: Double?
+
+        for pair in entity.extendedData {
+            if pair.code == 1001 {
+                active = (pair.value as? String)?.caseInsensitiveCompare(
+                    RevCloudDXFCodec.appID) == .orderedSame
+                if active { found = true }
+                continue
+            }
+            guard active else { continue }
+
+            switch pair.code {
+            case 1070 where styleCode == nil:
+                if let value = pair.value as? Int {
+                    styleCode = value
+                } else if let value = pair.value as? Int32 {
+                    styleCode = Int(value)
+                } else if let value = pair.value as? Double {
+                    styleCode = Int(value)
+                }
+
+            case 1040 where approximateArcLength == nil:
+                if let value = pair.value as? Double {
+                    approximateArcLength = value
+                } else if let value = pair.value as? Int {
+                    approximateArcLength = Double(value)
+                } else if let value = pair.value as? Int32 {
+                    approximateArcLength = Double(value)
+                }
+
+            default:
+                break
+            }
+        }
+
+        guard found else { return [:] }
+
+        var xdata: [String: XDataValue] = [
+            "zephyr.revcloud": .bool(true)
+        ]
+        if let styleCode {
+            xdata["zephyr.revcloud.dxfStyleCode"] = .int(styleCode)
+            xdata["zephyr.revcloud.style"] = .string(
+                RevCloudDXFCodec.style(for: styleCode).rawValue)
+        }
+        if let approximateArcLength, approximateArcLength > 0 {
+            xdata["zephyr.revcloud.arcLength"] = .double(approximateArcLength)
+        }
+
+        let isClosed: Bool
+        if let lw = entity as? DXFLWPolylineEntity {
+            isClosed = (lw.flags & 0x01) != 0
+        } else if let polyline = entity as? DXFPolylineEntity {
+            isClosed = (polyline.flags & 0x01) != 0
+        } else {
+            isClosed = false
+        }
+        if isClosed {
+            xdata["dxf.closed"] = .bool(true)
+        }
+        return xdata
+    }
+
     private static func entityStyleXData(
         from entity: DXFEntity,
         globalLineTypeScale: Double
@@ -1618,6 +1691,9 @@ public enum DXFImporter {
             }
         }
         for (key, value) in DXFEntityConverter.hatchXData(from: entity) {
+            xdata[key] = value
+        }
+        for (key, value) in revisionCloudXData(from: entity) {
             xdata[key] = value
         }
         return xdata

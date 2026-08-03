@@ -421,7 +421,10 @@ public final class EngineLoopController {
             let moved = interaction.dragTotalWorldX != 0 || interaction.dragTotalWorldY != 0
             switch interaction.gripType {
             case .vertex(let entityHandle, let index):
-                if CADLeaderGripIndex.target(for: index) != nil {
+                if RevCloudGripIndex.vertexIndex(from: index) != nil {
+                    engine.document.invalidateEntityGrid()
+                    engine.geometryManager.buildSpatialGridIfNeeded()
+                } else if CADLeaderGripIndex.target(for: index) != nil {
                     engine.document.invalidateEntityGrid()
                     engine.geometryManager.buildSpatialGridIfNeeded()
                 } else if index < 1000 {
@@ -431,10 +434,13 @@ public final class EngineLoopController {
                     engine.geometryManager.buildSpatialGridIfNeeded()
                 }
             case .midpoint(let entityHandle, let aIndex, let bIndex):
-                engine.cadBridge.vertexEditor.endVertexDirectEdit(
-                    handle: entityHandle, vertexIndex: aIndex)
-                engine.cadBridge.vertexEditor.endVertexDirectEdit(
-                    handle: entityHandle, vertexIndex: bIndex)
+                if RevCloudGripIndex.vertexIndex(from: aIndex) == nil
+                    || RevCloudGripIndex.vertexIndex(from: bIndex) == nil {
+                    engine.cadBridge.vertexEditor.endVertexDirectEdit(
+                        handle: entityHandle, vertexIndex: aIndex)
+                    engine.cadBridge.vertexEditor.endVertexDirectEdit(
+                        handle: entityHandle, vertexIndex: bIndex)
+                }
                 engine.document.invalidateEntityGrid()
                 engine.geometryManager.buildSpatialGridIfNeeded()
             default:
@@ -720,6 +726,14 @@ public final class EngineLoopController {
                 var updatedEntity = entity
                 updatedEntity.dimensionMetadata = CADDimensionMetadataBox(metadata)
                 engine.document.updateEntityLive(updatedEntity)
+                return
+            }
+
+            if applyRevisionCloudGripDrag(
+                worldX: snapWX,
+                worldY: snapWY,
+                deltaX: dx,
+                deltaY: dy) {
                 return
             }
 
@@ -1552,8 +1566,99 @@ public final class EngineLoopController {
         )
     }
 
+    private func applyRevisionCloudGripDrag(
+        worldX: Double,
+        worldY: Double,
+        deltaX: Double,
+        deltaY: Double
+    ) -> Bool {
+        let interaction = engine.interaction
+        guard let handle = interaction.gripHandle,
+              var entity = engine.document.entity(for: handle),
+              var localGeometry = entity.localGeometry,
+              let primitiveIndex = localGeometry.firstIndex(where: { primitive in
+                  if case .polyline = primitive { return true }
+                  return false
+              }),
+              case .polyline(let path, let color) = localGeometry[primitiveIndex],
+              path.isClosed,
+              RevCloudGeometry.isRevisionCloud(entity: entity, geometry: localGeometry),
+              var guide = RevCloudGeometry.guidePoints(of: entity, path: path)
+        else { return false }
 
+        let approximateArcLength: Double
+        if case .double(let value)? = entity.xdata["zephyr.revcloud.arcLength"], value > 0 {
+            approximateArcLength = value
+        } else {
+            approximateArcLength = max(RevCloudSettings.approximateArcLength, 1e-6)
+        }
+        let minimumArcLength = approximateArcLength * (2.0 / 3.0)
+        let maximumArcLength = approximateArcLength * (4.0 / 3.0)
+        let arcCount = RevCloudGeometry.storedArcCount(
+            of: entity,
+            fallback: path.vertices.count)
+        let randomSeed = RevCloudGeometry.randomSeed(
+            of: entity,
+            guide: guide,
+            arcCount: arcCount,
+            minimumArcLength: minimumArcLength,
+            maximumArcLength: maximumArcLength)
+        let variance = RevCloudGeometry.storedVariance(of: entity)
+        let style = RevCloudGeometry.style(of: entity, path: path)
+        let bulgeSign = path.vertices.first(where: { abs($0.bulge) > 1e-9 })?.bulge.sign == .minus
+            ? -1.0 : 1.0
 
+        switch interaction.gripType {
+        case .vertex(_, let encoded):
+            guard let guideIndex = RevCloudGripIndex.vertexIndex(from: encoded),
+                  guide.indices.contains(guideIndex)
+            else { return false }
+            guide[guideIndex] = entity.transform.inverse().transformPoint(
+                Vector3(x: worldX, y: worldY, z: guide[guideIndex].z))
+
+        case .midpoint(_, let encodedA, let encodedB):
+            guard let guideA = RevCloudGripIndex.vertexIndex(from: encodedA),
+                  let guideB = RevCloudGripIndex.vertexIndex(from: encodedB),
+                  guide.indices.contains(guideA),
+                  guide.indices.contains(guideB)
+            else { return false }
+
+            let inverse = entity.transform.inverse()
+            let localOrigin = inverse.transformPoint(Vector3(x: 0, y: 0, z: 0))
+            let localDeltaPoint = inverse.transformPoint(
+                Vector3(x: deltaX, y: deltaY, z: 0))
+            let localDelta = localDeltaPoint - localOrigin
+            guide[guideA] = guide[guideA] + localDelta
+            guide[guideB] = guide[guideB] + localDelta
+
+        default:
+            return false
+        }
+
+        guard let regenerated = RevCloudGeometry.makeCloud(
+            guide: guide,
+            closed: true,
+            minimumArcLength: minimumArcLength,
+            maximumArcLength: maximumArcLength,
+            variance: variance,
+            style: style,
+            forcedBulgeSign: bulgeSign,
+            randomSeed: randomSeed,
+            forcedArcCount: arcCount)
+        else { return true }
+
+        localGeometry[primitiveIndex] = .polyline(path: regenerated, color: color)
+        entity.localGeometry = localGeometry
+        RevCloudGeometry.storeGripState(
+            guide: guide,
+            randomSeed: randomSeed,
+            arcCount: arcCount,
+            variance: variance,
+            in: &entity)
+        engine.document.updateEntityLive(entity)
+        interaction.cachedGripGeneration = -1
+        return true
+    }
 
     private func applyRectangularArrayGripDrag(worldX: Double, worldY: Double) -> Bool {
         let interaction = engine.interaction

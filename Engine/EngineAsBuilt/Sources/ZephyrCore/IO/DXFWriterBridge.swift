@@ -345,6 +345,22 @@ public enum DXFWriterBridge {
         let arrayAppID = DXFAppIdEntry()
         arrayAppID.name = CADArrayDXFCodec.appID
         writer.addAppId(arrayAppID)
+        let revisionCloudAppID = DXFAppIdEntry()
+        revisionCloudAppID.name = RevCloudDXFCodec.appID
+        writer.addAppId(revisionCloudAppID)
+
+        revisionCloudArcLength: for view in orderedViews {
+            for entity in view.entities {
+                guard xdataInt(entity.xdata, "zephyr.revcloud") == 1,
+                      let arcLength = xdataDouble(
+                        entity.xdata, "zephyr.revcloud.arcLength"),
+                      arcLength > 0 else {
+                    continue
+                }
+                writer.revisionCloudApproxArcLength = arcLength
+                break revisionCloudArcLength
+            }
+        }
 
         addHeaderExtents(entities: modelView.entities, to: writer)
 
@@ -2289,7 +2305,9 @@ public enum DXFWriterBridge {
 
         case .polyline(let path, let color):
             guard !path.isHatchBoundaryCarrier else { return nil }
-            return polylineEntity(path, color: color, transform: transform)
+            let entity = polylineEntity(path, color: color, transform: transform)
+            appendRevisionCloudXData(xdata, to: entity)
+            return entity
 
         case .fillPolygon(let points, let color):
             guard !points.isEmpty else { return nil }
@@ -2654,6 +2672,33 @@ public enum DXFWriterBridge {
         }
         if let colorName = xdataString(xdata, "dxf.colorName") {
             entity.colorName = colorName
+        }
+    }
+
+    private static func appendRevisionCloudXData(
+        _ xdata: [String: XDataValue],
+        to entity: DXFEntity
+    ) {
+        guard entity is DXFLWPolylineEntity || entity is DXFPolylineEntity,
+              xdataInt(xdata, "zephyr.revcloud") == 1 else {
+            return
+        }
+
+        let styleCode: Int
+        if let importedCode = xdataInt(xdata, "zephyr.revcloud.dxfStyleCode") {
+            styleCode = importedCode
+        } else if xdataString(xdata, "zephyr.revcloud.style")?
+            .caseInsensitiveCompare(RevCloudStyle.calligraphy.rawValue) == .orderedSame {
+            styleCode = RevCloudDXFCodec.styleCode(for: .calligraphy)
+        } else {
+            styleCode = RevCloudDXFCodec.styleCode(for: .normal)
+        }
+
+        entity.extendedData.append((1001, RevCloudDXFCodec.appID))
+        entity.extendedData.append((1070, styleCode))
+        if let arcLength = xdataDouble(xdata, "zephyr.revcloud.arcLength"),
+           arcLength > 0 {
+            entity.extendedData.append((1040, arcLength))
         }
     }
 
