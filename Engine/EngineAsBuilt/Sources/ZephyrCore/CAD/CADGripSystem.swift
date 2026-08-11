@@ -737,7 +737,7 @@ public enum CADGripSystem {
         switch prim {
         case .table: return false
         case .line, .rect, .polygon, .polyline, .fillRect, .fillPolygon,
-             .fillComplexPolygon, .gradient, .hatch, .hatchPath, .ray:
+             .fillComplexPolygon, .gradient, .hatch, .hatchPath, .ray, .penStroke:
             return true
         case .point, .circle, .arc, .spline, .text, .ellipse, .image:
             return false

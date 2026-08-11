@@ -93,6 +93,7 @@ import SwiftSDL
         let color: (UInt8, UInt8, UInt8, UInt8)
         let lineWeight: Double
         let geomWidth: Double
+        let segmentLineWeights: [Double]
         let isHatchLine: Bool
         let hatchSpacing: Double
         let gradientData: RenderPrimitive.GradientData?
@@ -107,6 +108,7 @@ import SwiftSDL
             color: (UInt8, UInt8, UInt8, UInt8),
             lineWeight: Double = 0.0,
             geomWidth: Double = 0.0,
+            segmentLineWeights: [Double] = [],
             isHatchLine: Bool = false,
             hatchSpacing: Double = 0.0,
             gradientData: RenderPrimitive.GradientData? = nil,
@@ -120,6 +122,7 @@ import SwiftSDL
             self.color = color
             self.lineWeight = lineWeight
             self.geomWidth = geomWidth
+            self.segmentLineWeights = segmentLineWeights
             self.isHatchLine = isHatchLine
             self.hatchSpacing = hatchSpacing
             self.gradientData = gradientData
@@ -189,6 +192,7 @@ import SwiftSDL
             if let prim = gm.getPrimitive(id: id) {
                 prim.lineWeight = lineWeight
                 prim.geomWidth = geomWidth
+                prim.segmentLineWeights = segmentLineWeights
                 prim.isHatchLine = isHatchLine
                 prim.hatchSpacing = hatchSpacing
                 prim.usesViewportBackgroundColor = usesViewportBackground
@@ -334,6 +338,7 @@ public enum CADPrimitiveGenerator {
         textStyleFonts: [String: String] = [:],
         linetypePatterns: [String: [Double]] = [:],
         opacityMultiplier: Double = 1.0,
+        penStrokeBrushSettings: PenStrokeBrushSettings? = nil,
         renderOrigin: CADRenderOrigin = .zero,
         splineTessellationDivisor: Double = 5000.0
     ) -> [PrimitiveSpec] {
@@ -352,6 +357,7 @@ public enum CADPrimitiveGenerator {
         case .circle(_, _, let c): primColor = c
         case .arc(_, _, _, _, let c): primColor = c
         case .spline(_, _, _, _, let c): primColor = c
+        case .penStroke(_, _, let c): primColor = c
         case .text(_, _, _, _, _, _, _, _, let c): primColor = c
         case .ellipse(_, _, _, let c): primColor = c
         case .hatch(_, _, _, _, let c, _): primColor = c
@@ -776,6 +782,34 @@ public enum CADPrimitiveGenerator {
             guard evaluated.count >= 2 else { break }
             let pts = evaluated.map { renderPoint($0) }
             specs.append(contentsOf: makePathSpecs(points: pts, dashPattern: dashPattern, scale: lineTypeScale, weight: lineWeight, z: z, color: finalColor))
+
+        case .penStroke(let vertices, let baseLineWeight, _):
+            guard vertices.count >= 2 else { break }
+            let worldPoints = vertices.map { renderPoint(transform.transformPoint($0.position)) }
+            let brush = penStrokeBrushSettings ?? PenStrokeBrushSettings.defaults(baseLineWeight: baseLineWeight)
+            var segmentWeights: [Double] = []
+            segmentWeights.reserveCapacity(worldPoints.count - 1)
+            for i in 0..<(worldPoints.count - 1) {
+                let p0 = worldPoints[i]
+                let p1 = worldPoints[i + 1]
+                let dx = Double(p1.x - p0.x)
+                let dy = Double(p1.y - p0.y)
+                let segmentAngle = atan2(dy, dx)
+                segmentWeights.append(brush.lineWeight(
+                    from: vertices[i],
+                    to: vertices[i + 1],
+                    segmentAngle: segmentAngle))
+            }
+            specs.append(PrimitiveSpec(
+                type: .lines,
+                points: worldPoints,
+                rects: [],
+                corners: [],
+                z: z,
+                color: finalColor,
+                lineWeight: segmentWeights.max() ?? baseLineWeight,
+                geomWidth: 0.0,
+                segmentLineWeights: segmentWeights))
             
         case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):
             let fontFile = CADFontManager.resolveTextStyleFont(

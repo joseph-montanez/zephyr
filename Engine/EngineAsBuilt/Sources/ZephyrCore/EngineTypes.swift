@@ -184,6 +184,8 @@ public struct CADDrawBatch: Sendable {
     public var vertexCount: UInt32
     /// Drawn only while the camera is actively panning.
     public var isPanProxy: Bool
+    /// Line weight in mm for this batch (used to avoid merging segments of different widths).
+    public var lineWeight: Double
 
     /// Initializes a new drawing batch.
     ///
@@ -195,11 +197,13 @@ public struct CADDrawBatch: Sendable {
         pipelineType: CADPipelineType,
         firstVertex: UInt32,
         vertexCount: UInt32,
-        isPanProxy: Bool = false
+        isPanProxy: Bool = false,
+        lineWeight: Double = 0.0
     ) {
         self.pipelineType = pipelineType
         self.firstVertex = firstVertex
         self.vertexCount = vertexCount
         self.isPanProxy = isPanProxy
+        self.lineWeight = lineWeight
     }
 }

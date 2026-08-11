@@ -1036,6 +1036,17 @@ public final class MeasureGeomTool: FeatureCommand {
             }
             return nil
 
+        case .penStroke(let vertices, _, _):
+            guard vertices.count >= 2 else { return nil }
+            for i in 0..<(vertices.count - 1) {
+                let ws = transform.transformPoint(vertices[i].position)
+                let we = transform.transformPoint(vertices[i + 1].position)
+                if let h = CADGeometryMath.intersectRayLine(
+                    rayOrigin: rayOrigin, rayDir: rayDir, lineP1: ws, lineP2: we)
+                { return h }
+            }
+            return nil
+
         case .ray(let start, let direction, _):
             let ws = transform.transformPoint(start)
             let wd = transform.transformPoint(

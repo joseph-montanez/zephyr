@@ -70,6 +70,7 @@ struct GeometryPanelUI {
         case .circle: return "Circle"
         case .arc: return "Arc"
         case .spline: return "Spline"
+        case .penStroke: return "Pen Stroke"
         case .text: return "Text"
         case .ellipse: return "Ellipse"
         case .hatch, .hatchPath: return "Hatch"
@@ -147,6 +148,11 @@ struct GeometryPanelUI {
             return (
                 "Spline #\(i)",
                 "degree=\(degree)  \(wLabel)  \(controlPoints.count) control pts  \(color.map { UIFormatting.colorStr($0) } ?? "\u{2014}")"
+            )
+        case .penStroke(let vertices, let baseLineWeight, let color):
+            return (
+                "Pen Stroke #\(i)",
+                "\(vertices.count) vertices  \(String(format: "%.2f", baseLineWeight)) mm  \(color.map { UIFormatting.colorStr($0) } ?? "\u{2014}")"
             )
 
         case .text(_, let text, let height, let rotation, let style, let alignH, let alignV, _, let color):

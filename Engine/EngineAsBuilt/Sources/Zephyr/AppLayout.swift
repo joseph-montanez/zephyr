@@ -24,7 +24,8 @@ struct AppLayout {
         #if os(macOS)
         return 36.0
         #else
-        return 50.0
+        // Scale with font size so high-DPI displays get appropriately sized chrome.
+        return max(50.0, ImGuiGetFrameHeight() + 22.0)
         #endif
     }
     

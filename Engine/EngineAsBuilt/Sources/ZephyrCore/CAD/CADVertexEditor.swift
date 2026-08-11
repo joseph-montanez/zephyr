@@ -151,6 +151,15 @@ public final class CADVertexEditor {
                     prim = .spline(controlPoints: localPts, knots: knots,
                                    degree: degree, weights: weights, color: c)
                 }
+            case .penStroke(let vertices, let baseLineWeight, let c):
+                // Vertex positions are the grip points; update them directly
+                if !localPts.isEmpty {
+                    var newVertices = vertices
+                    for i in 0..<min(localPts.count, newVertices.count) {
+                        newVertices[i].position = localPts[i]
+                    }
+                    prim = .penStroke(vertices: newVertices, baseLineWeight: baseLineWeight, color: c)
+                }
             case .ellipse(_, _, let minorRatio, let c):
                 // localPts[0]=center, [1]=major+end, [2]=major-end, [3]=minor+end, [4]=minor-end
                 if localPts.count >= 5 {

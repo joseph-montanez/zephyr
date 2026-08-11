@@ -2458,6 +2458,8 @@ public enum DXFImporter {
             return .arc(center: p(center), radius: scalar(radius), startAngle: startAngle + transform.rotation, endAngle: endAngle + transform.rotation, color: color)
         case .spline(let controlPoints, let knots, let degree, let weights, let color):
             return .spline(controlPoints: controlPoints.map(p), knots: knots, degree: degree, weights: weights, color: color)
+        case .penStroke(let vertices, let baseLineWeight, let color):
+            return .penStroke(vertices: vertices.map { PenStrokeVertex(position: p($0.position), pressure: $0.pressure, xtilt: $0.xtilt, ytilt: $0.ytilt, rotation: $0.rotation) }, baseLineWeight: scalar(baseLineWeight), color: color)
         case .text(let position, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, let color):
             return .text(position: p(position), text: text, height: scalar(height), rotation: rotation + transform.rotation, style: style, alignH: alignH, alignV: alignV, mtextWidth: mtextWidth.map(scalar), color: color)
         case .ellipse(let center, let majorAxis, let minorRatio, let color):

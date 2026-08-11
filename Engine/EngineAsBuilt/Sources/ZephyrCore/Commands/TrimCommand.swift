@@ -164,6 +164,11 @@ public final class TrimCommand: FeatureCommand {
                     segs.append((t.transformPoint(evaluated[i]), t.transformPoint(evaluated[i+1])))
                 }
             }
+        case .penStroke(let vertices, _, _):
+            guard vertices.count >= 2 else { break }
+            for i in 0..<(vertices.count - 1) {
+                segs.append((t.transformPoint(vertices[i].position), t.transformPoint(vertices[i+1].position)))
+            }
         case .rect(let origin, let size, _), .fillRect(let origin, let size, _):
             // Four corners as closed polyline.
             let corners = [
@@ -233,6 +238,7 @@ public final class TrimCommand: FeatureCommand {
         case .circle(_, _, let c): return c
         case .ellipse(_, _, _, let c): return c
         case .spline(_, _, _, _, let c): return c
+        case .penStroke(_, _, let c): return c
         case .polygon(_, let c): return c
         case .polyline(_, let c): return c
         case .rect(_, _, let c): return c

@@ -492,6 +492,15 @@ public final class SnapEngine {
                     localNearest = CADGeometryMath.nearestPointOnPolyline(
                         to: localCursor, points: sampled)
 
+                case .penStroke(let vertices, _, _):
+                    guard vertices.count >= 2 else {
+                        localNearest = nil
+                        break
+                    }
+                    let positions = vertices.map { $0.position }
+                    localNearest = CADGeometryMath.nearestPointOnPolyline(
+                        to: localCursor, points: positions)
+
                 case .text(let position, _, _, _, _, _, _, _, _):
                     localNearest = position
 

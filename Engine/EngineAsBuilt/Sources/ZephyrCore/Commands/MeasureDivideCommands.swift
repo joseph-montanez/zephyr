@@ -529,6 +529,11 @@ public final class MeasureDivideCommand: FeatureCommand {
             let closed = endpointDistance <= max(1e-8, extent * 1e-8)
             return (points, closed, nil)
 
+        case .penStroke(let vertices, _, _):
+            guard vertices.count >= 2 else { return nil }
+            let points = vertices.map { $0.position }
+            return (points, false, nil)
+
         default:
             return nil
         }

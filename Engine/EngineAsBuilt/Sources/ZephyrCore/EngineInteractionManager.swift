@@ -214,5 +214,39 @@ public final class EngineInteractionManager {
     
     public var cachedGripGeneration: Int = -1
 
+    // MARK: - Pen / Tablet State
+    
+    /// Live pen state from SDL3 CategoryPen events. Updated every frame
+    /// by EngineInputHandler. The draw command reads this to capture
+    /// pressure, tilt, and rotation per vertex.
+    public var penState = PenState()
+
     public init() {}
+}
+
+// =========================================================================
+// MARK: - PenState
+// =========================================================================
+
+/// Live tablet pen state captured from SDL3 `SDL_EVENT_PEN_*` events.
+/// Updated unconditionally by `EngineInputHandler` — the active command
+/// decides whether to consume the values based on drawing state.
+public struct PenState: Sendable {
+    /// True when the pen is in proximity of the tablet (hovering or drawing).
+    public var penActive: Bool = false
+    /// True when the pen tip is touching the surface (actively drawing).
+    public var penDrawing: Bool = false
+    /// Whether the eraser tip is in use (SDL_PenTouchEvent.eraser).
+    public var isEraser: Bool = false
+    /// Normalised pen tip pressure: 0.0 (hovering) … 1.0 (full pressure).
+    public var pressure: Double = 0.0
+    /// Horizontal tilt angle in degrees: -90.0 … 90.0
+    public var xtilt: Double = 0.0
+    /// Vertical tilt angle in degrees: -90.0 … 90.0
+    public var ytilt: Double = 0.0
+    /// Barrel rotation in degrees: -180.0 … 179.9
+    public var rotation: Double = 0.0
+    /// World-space pen position (converted from SDL pen event coordinates).
+    public var worldX: Double = 0.0
+    public var worldY: Double = 0.0
 }

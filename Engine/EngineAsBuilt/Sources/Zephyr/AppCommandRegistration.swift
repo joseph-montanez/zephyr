@@ -213,6 +213,11 @@ struct AppCommandRegistration {
             factory: { SplineCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "PENSTROKE",
+            aliases: ["PSTROKE", "PS"],
+            factory: { PenStrokeCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "RAY",
             aliases: ["R"],
             factory: { RayCommand() }

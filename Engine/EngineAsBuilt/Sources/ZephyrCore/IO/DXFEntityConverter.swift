@@ -1613,6 +1613,7 @@ public enum DXFEntityConverter {
         case .circle(let center, let radius, _): return .circle(center: center, radius: radius, color: color)
         case .arc(let center, let radius, let start, let end, _): return .arc(center: center, radius: radius, startAngle: start, endAngle: end, color: color)
         case .spline(let points, let knots, let degree, let weights, _): return .spline(controlPoints: points, knots: knots, degree: degree, weights: weights, color: color)
+        case .penStroke: return primitive
         case .text(let position, let text, let height, let rotation, let style, let ah, let av, let width, _):
             return .text(position: position, text: text, height: height, rotation: rotation, style: style, alignH: ah, alignV: av, mtextWidth: width, color: color)
         default: return primitive

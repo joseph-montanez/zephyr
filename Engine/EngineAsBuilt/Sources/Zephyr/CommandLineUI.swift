@@ -311,7 +311,7 @@ struct CommandLineUI {
     ) {
         let promptW = min(Float(1000), max(Float(320), dw - 40))
         let x = (dw - promptW) * 0.5
-        let y = max(AppLayout.belowToolbarY + 8, Float(76))
+        let y = AppLayout.belowTabBarY + 8
         let flags: Int32 = 1 | 2 | 4 | 8 | 64 | 256 | 512 | 4096 | 8192
 
         ImGuiSetNextWindowPos(

@@ -24,6 +24,7 @@ public struct TessInput: Sendable {
     public let color: (UInt8, UInt8, UInt8, UInt8)
     public let lineWeight: Double
     public let geomWidth: Double
+    public let segmentLineWeights: [Double]
     public let entityIndex: UInt32
     public let isHatchLine: Bool
     public let hatchSpacing: Double
@@ -38,6 +39,7 @@ public struct TessInput: Sendable {
         color: (UInt8, UInt8, UInt8, UInt8),
         lineWeight: Double,
         geomWidth: Double,
+        segmentLineWeights: [Double] = [],
         entityIndex: UInt32,
         isHatchLine: Bool = false,
         hatchSpacing: Double = 0.0,
@@ -51,6 +53,7 @@ public struct TessInput: Sendable {
         self.color = color
         self.lineWeight = lineWeight
         self.geomWidth = geomWidth
+        self.segmentLineWeights = segmentLineWeights
         self.entityIndex = entityIndex
         self.isHatchLine = isHatchLine
         self.hatchSpacing = hatchSpacing
@@ -164,12 +167,12 @@ public final class CADVertexBufferBuilder {
             let outerHalfPixels: Float
         }
 
-        func lineRasterMetrics(for input: TessInput) -> LineRasterMetrics {
+        func lineRasterMetrics(lineWeight: Double, geomWidth: Double = 0.0) -> LineRasterMetrics {
             let corePixels: Float
-            if input.geomWidth > 0.0 {
-                corePixels = max(Float(input.geomWidth) * safePixelZoom, 0.000001)
-            } else if input.lineWeight > 0.25 {
-                corePixels = max(1.0, Float(input.lineWeight) * (96.0 / 25.4))
+            if geomWidth > 0.0 {
+                corePixels = max(Float(geomWidth) * safePixelZoom, 0.000001)
+            } else if lineWeight > 0.25 {
+                corePixels = max(1.0, Float(lineWeight) * (96.0 / 25.4))
             } else {
                 corePixels = 1.0
             }
@@ -183,6 +186,10 @@ public final class CADVertexBufferBuilder {
                 worldWidth: (outerHalfPixels * 2.0) / safePixelZoom,
                 coreHalfPixels: coreHalfPixels,
                 outerHalfPixels: outerHalfPixels)
+        }
+
+        func lineRasterMetrics(for input: TessInput) -> LineRasterMetrics {
+            lineRasterMetrics(lineWeight: input.lineWeight, geomWidth: input.geomWidth)
         }
 
         func appendLineVertex(_ p: SDL_FPoint, _ r: Float, _ g: Float, _ b: Float, _ a: Float) {
@@ -352,8 +359,159 @@ public final class CADVertexBufferBuilder {
             }
         }
 
+        func appendVariableWidthJoinedPath(
+            _ sourcePoints: [SDL_FPoint],
+            _ sourceSegmentWeights: [Double],
+            _ r: Float,
+            _ g: Float,
+            _ b: Float,
+            _ a: Float
+        ) {
+            guard sourcePoints.count >= 2,
+                  sourceSegmentWeights.count == sourcePoints.count - 1 else { return }
+
+            var points: [SDL_FPoint] = [sourcePoints[0]]
+            var segmentWeights: [Double] = []
+            points.reserveCapacity(sourcePoints.count)
+            segmentWeights.reserveCapacity(sourceSegmentWeights.count)
+
+            for i in 0..<sourceSegmentWeights.count {
+                let next = sourcePoints[i + 1]
+                let last = points[points.count - 1]
+                let dx = next.x - last.x
+                let dy = next.y - last.y
+                if dx * dx + dy * dy <= 1e-10 { continue }
+                points.append(next)
+                segmentWeights.append(sourceSegmentWeights[i])
+            }
+
+            guard points.count >= 2, segmentWeights.count == points.count - 1 else { return }
+            if points.count == 2 {
+                appendQuadSegment(
+                    points[0], points[1],
+                    lineRasterMetrics(lineWeight: segmentWeights[0]),
+                    r, g, b, a)
+                return
+            }
+
+            let segmentCount = points.count - 1
+            let segmentMetrics = segmentWeights.map { lineRasterMetrics(lineWeight: $0) }
+            var normals = [SDL_FPoint](
+                repeating: SDL_FPoint(x: 0, y: 0),
+                count: segmentCount)
+
+            for i in 0..<segmentCount {
+                let dx = points[i + 1].x - points[i].x
+                let dy = points[i + 1].y - points[i].y
+                let len = sqrt(dx * dx + dy * dy)
+                guard len > 1e-5 else { continue }
+                normals[i] = SDL_FPoint(x: -dy / len, y: dx / len)
+            }
+
+            var vertexMetrics: [LineRasterMetrics] = []
+            vertexMetrics.reserveCapacity(points.count)
+            for i in 0..<points.count {
+                if i == 0 {
+                    vertexMetrics.append(segmentMetrics[0])
+                } else if i == points.count - 1 {
+                    vertexMetrics.append(segmentMetrics[segmentCount - 1])
+                } else {
+                    let previous = segmentMetrics[i - 1]
+                    let next = segmentMetrics[i]
+                    let coreHalf = (previous.coreHalfPixels + next.coreHalfPixels) * 0.5
+                    let outerHalf = (previous.outerHalfPixels + next.outerHalfPixels) * 0.5
+                    vertexMetrics.append(LineRasterMetrics(
+                        worldWidth: (outerHalf * 2.0) / safePixelZoom,
+                        coreHalfPixels: coreHalf,
+                        outerHalfPixels: outerHalf))
+                }
+            }
+
+            var left = [SDL_FPoint](
+                repeating: SDL_FPoint(x: 0, y: 0),
+                count: points.count)
+            var right = left
+            let miterLimit: Float = 4.0
+
+            for i in 0..<points.count {
+                let halfW = vertexMetrics[i].worldWidth * 0.5
+                let offsetX: Float
+                let offsetY: Float
+
+                if i == 0 {
+                    offsetX = normals[0].x * halfW
+                    offsetY = normals[0].y * halfW
+                } else if i == points.count - 1 {
+                    offsetX = normals[segmentCount - 1].x * halfW
+                    offsetY = normals[segmentCount - 1].y * halfW
+                } else {
+                    let previousNormal = normals[i - 1]
+                    let nextNormal = normals[i]
+                    let sumX = previousNormal.x + nextNormal.x
+                    let sumY = previousNormal.y + nextNormal.y
+                    let sumLength = sqrt(sumX * sumX + sumY * sumY)
+
+                    if sumLength <= 1e-5 {
+                        offsetX = nextNormal.x * halfW
+                        offsetY = nextNormal.y * halfW
+                    } else {
+                        let miterX = sumX / sumLength
+                        let miterY = sumY / sumLength
+                        let denominator = miterX * nextNormal.x + miterY * nextNormal.y
+                        if abs(denominator) <= 1e-4 {
+                            offsetX = nextNormal.x * halfW
+                            offsetY = nextNormal.y * halfW
+                        } else {
+                            let unclampedLength = halfW / denominator
+                            let limitedLength = max(
+                                -halfW * miterLimit,
+                                min(halfW * miterLimit, unclampedLength))
+                            offsetX = miterX * limitedLength
+                            offsetY = miterY * limitedLength
+                        }
+                    }
+                }
+
+                left[i] = SDL_FPoint(
+                    x: points[i].x + offsetX,
+                    y: points[i].y + offsetY)
+                right[i] = SDL_FPoint(
+                    x: points[i].x - offsetX,
+                    y: points[i].y - offsetY)
+            }
+
+            for i in 0..<segmentCount {
+                let next = i + 1
+                let startMetrics = vertexMetrics[i]
+                let endMetrics = vertexMetrics[next]
+
+                vertices.append(CADVertex(
+                    x: left[i].x, y: left[i].y, r: r, g: g, b: b, a: a,
+                    u: startMetrics.coreHalfPixels, v: startMetrics.outerHalfPixels))
+                vertices.append(CADVertex(
+                    x: right[i].x, y: right[i].y, r: r, g: g, b: b, a: a,
+                    u: startMetrics.coreHalfPixels, v: -startMetrics.outerHalfPixels))
+                vertices.append(CADVertex(
+                    x: right[next].x, y: right[next].y, r: r, g: g, b: b, a: a,
+                    u: endMetrics.coreHalfPixels, v: -endMetrics.outerHalfPixels))
+
+                vertices.append(CADVertex(
+                    x: left[i].x, y: left[i].y, r: r, g: g, b: b, a: a,
+                    u: startMetrics.coreHalfPixels, v: startMetrics.outerHalfPixels))
+                vertices.append(CADVertex(
+                    x: right[next].x, y: right[next].y, r: r, g: g, b: b, a: a,
+                    u: endMetrics.coreHalfPixels, v: -endMetrics.outerHalfPixels))
+                vertices.append(CADVertex(
+                    x: left[next].x, y: left[next].y, r: r, g: g, b: b, a: a,
+                    u: endMetrics.coreHalfPixels, v: endMetrics.outerHalfPixels))
+            }
+        }
+
         func appendRenderablePath(_ points: [SDL_FPoint], _ input: TessInput, _ r: Float, _ g: Float, _ b: Float, _ a: Float) {
-            if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines || hairlineQuads {
+            if input.segmentLineWeights.count == points.count - 1 {
+                appendVariableWidthJoinedPath(
+                    points, input.segmentLineWeights, r, g, b, a)
+            } else if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines || hairlineQuads {
                 appendJoinedQuadPath(points, lineRasterMetrics(for: input), r, g, b, a)
             } else {
                 for i in 0..<(points.count - 1) {
@@ -564,7 +722,7 @@ public final class CADVertexBufferBuilder {
             case .fillRect, .fillRects:
                 pipeType = .triangle
             case .line, .lines:
-                if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines {
+                if !input.segmentLineWeights.isEmpty || input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines {
                     pipeType = antiAliasLines ? .aaLine : .triangle
                 } else if hairlineQuads {
                     pipeType = .triangle
@@ -578,6 +736,7 @@ public final class CADVertexBufferBuilder {
             if !batches.isEmpty
                 && batches.last!.pipelineType == pipeType
                 && batches.last!.isPanProxy == input.isPanProxy
+                && batches.last!.lineWeight == input.lineWeight
             {
                 batches[batches.count - 1].vertexCount += vtxCount
             } else {
@@ -585,7 +744,8 @@ public final class CADVertexBufferBuilder {
                     pipelineType: pipeType,
                     firstVertex: firstVtx,
                     vertexCount: vtxCount,
-                    isPanProxy: input.isPanProxy))
+                    isPanProxy: input.isPanProxy,
+                    lineWeight: input.lineWeight))
             }
         }
 

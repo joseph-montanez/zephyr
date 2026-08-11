@@ -939,6 +939,7 @@ public enum DXFExporter {
         case .circle(_, _, let c): primColor = c
         case .arc(_, _, _, _, let c): primColor = c
         case .spline(_, _, _, _, let c): primColor = c
+        case .penStroke(_, _, let c): primColor = c
         case .text(_, _, _, _, _, _, _, _, let c): primColor = c
         case .ellipse(_, _, _, let c): primColor = c
         case .hatch(_, _, _, _, let c, _): primColor = c
@@ -1206,6 +1207,31 @@ public enum DXFExporter {
                 for weight in w {
                     output += " 41\r\n\(dxfDouble(weight))\r\n"
                 }
+            }
+
+        case .penStroke(let vertices, _, _):
+            // Export pen stroke geometry as a DXF spline (pen metadata is discarded).
+            let positions = vertices.map { $0.position }
+            guard positions.count >= 2 else { break }
+            let nCtrl = positions.count
+            let degree = min(3, nCtrl - 1)
+            let knots = generateUniformKnots(controlPointCount: nCtrl, degree: degree)
+            writeEntityHeaderWithColor(entityType: "SPLINE", subclass: "AcDbSpline",
+                                        handle: handle, layerName: layer, color: primColor,
+                                        into: &output)
+            output += " 70\r\n\(degree == 3 ? 8 : 4)\r\n"
+            output += " 71\r\n\(degree)\r\n"
+            output += " 72\r\n\(knots.count)\r\n"
+            output += " 73\r\n\(nCtrl)\r\n"
+            output += " 74\r\n0\r\n"
+            for k in knots {
+                output += " 40\r\n\(dxfDouble(k))\r\n"
+            }
+            for cp in positions {
+                let wp = t.transformPoint(cp)
+                output += " 10\r\n\(dxfDouble(wp.x))\r\n"
+                output += " 20\r\n\(dxfDouble(-wp.y))\r\n"
+                output += " 30\r\n\(dxfDouble(wp.z))\r\n"
             }
 
         case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):

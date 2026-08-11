@@ -527,6 +527,7 @@ public enum CADPrimitive: Hashable, Sendable {
     case circle(center: Vector3, radius: Double, color: ColorRGBA? = nil)
     case arc(center: Vector3, radius: Double, startAngle: Double, endAngle: Double, color: ColorRGBA? = nil)
     case spline(controlPoints: [Vector3], knots: [Double], degree: Int, weights: [Double]?, color: ColorRGBA? = nil)
+    case penStroke(vertices: [PenStrokeVertex], baseLineWeight: Double, color: ColorRGBA? = nil)
     case text(
         position: Vector3,
         text: String,
@@ -794,6 +795,8 @@ public struct CADBlock: Hashable, Sendable {
             case .spline(let controlPoints, _, _, _, _):
                 // Conservative AABB from control points convex hull
                 points.append(contentsOf: controlPoints)
+            case .penStroke(let vertices, _, _):
+                points.append(contentsOf: vertices.map { $0.position })
             case .text(let pos, let text, let height, _, _, let alignH, let alignV, let mtextWidth, _):
                 let bounds = CADEntity.estimateTextLocalBounds(
                     text: text,
@@ -1223,6 +1226,9 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
                 // Control points are the grip points; for clamped NURBS the
                 // first and last lie on the curve.
                 for cp in controlPoints { addVertex(cp) }
+
+            case .penStroke(let vertices, _, _):
+                for v in vertices { addVertex(v.position) }
 
             case .text(let position, _, _, _, _, _, _, _, _):
                 pts.append(.insertionPoint(localPosition: position))

@@ -1070,6 +1070,10 @@ public final class CADDocument {
                 maxSegments: 4096)
             bounds.include(contentsOf: evaluated.isEmpty ? worldControlPoints : evaluated)
 
+        case .penStroke(let vertices, _, _):
+            let worldPoints = vertices.map { transform.transformPoint($0.position) }
+            bounds.include(contentsOf: worldPoints)
+
         case .text(
             let position, let text, let height, let rotation, let style,
             let alignH, let alignV, let mtextWidth, _

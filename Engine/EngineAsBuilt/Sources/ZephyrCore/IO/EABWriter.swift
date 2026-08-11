@@ -906,6 +906,11 @@ public enum EABWriter {
                 for pt in evaluated {
                     verts.append(PVAVertex(position: pt, color: c))
                 }
+            case .penStroke(let vertices, _, let color):
+                let c = color ?? .white
+                for v in vertices {
+                    verts.append(PVAVertex(position: v.position, color: c))
+                }
             case .ellipse(let center, let majorAxis, let minorRatio, let color):
                 let c = color ?? .white
                 let segments = 64
@@ -1332,6 +1337,18 @@ public enum EABWriter {
                 if let splineWeights = weights {
                     for weight in splineWeights { w.writeFloat64(weight) }
                 }
+                writeColor(color)
+            case .penStroke(let vertices, let baseLineWeight, let color):
+                w.writeUInt8(20)
+                w.writeUInt32(UInt32(vertices.count))
+                for v in vertices {
+                    w.writeFloat64(v.position.x); w.writeFloat64(v.position.y); w.writeFloat64(v.position.z)
+                    w.writeFloat64(v.pressure)
+                    w.writeFloat64(v.xtilt)
+                    w.writeFloat64(v.ytilt)
+                    w.writeFloat64(v.rotation)
+                }
+                w.writeFloat64(baseLineWeight)
                 writeColor(color)
             case .gradient(let outer, let holes, let name, let angle, let color1, let color2):
                 w.writeUInt8(10)

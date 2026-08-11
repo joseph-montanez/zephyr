@@ -414,6 +414,13 @@ public enum CADBoundaryDetector {
                     appendLoop(transformed(pts))
                 }
 
+            case .penStroke(let vertices, _, _):
+                guard vertices.count >= 2 else { break }
+                let pts = vertices.map { $0.position }
+                if endpointsCoincident(pts, epsilonSq: 1e-8) {
+                    appendLoop(transformed(pts))
+                }
+
             default:
                 break
             }
@@ -619,6 +626,16 @@ public enum CADBoundaryDetector {
                 // Only append closing edge if endpoints are not already coincident.
                 // Closed splines produce coincident start/end points via evaluateByKnotSpans;
                 // a zero-length edge would break the wall-follower's atan2 angle heuristic.
+                if let first = wpts.first, let last = wpts.last, first.distance(to: last) > 1e-6 {
+                    edges.append(Edge(a: last, b: first, entityHandle: handle))
+                }
+
+            case .penStroke(let vertices, _, _):
+                guard vertices.count >= 2 else { break }
+                let wpts = vertices.map { transform.transformPoint($0.position) }
+                for i in 0..<(wpts.count - 1) {
+                    edges.append(Edge(a: wpts[i], b: wpts[i + 1], entityHandle: handle))
+                }
                 if let first = wpts.first, let last = wpts.last, first.distance(to: last) > 1e-6 {
                     edges.append(Edge(a: last, b: first, entityHandle: handle))
                 }

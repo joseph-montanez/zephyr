@@ -265,6 +265,7 @@ public final class RenderPrimitive: @unchecked Sendable {
     public var isScreenSpace: Bool
     public var lineWeight: Double = 0.0
     public var geomWidth: Double = 0.0
+    public var segmentLineWeights: [Double] = []
     public var isHatchLine: Bool = false
     public var hatchSpacing: Double = 0.0
     public var gradientData: GradientData?

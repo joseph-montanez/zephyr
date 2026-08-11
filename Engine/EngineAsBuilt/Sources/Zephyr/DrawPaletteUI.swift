@@ -26,6 +26,7 @@ struct DrawPaletteUI {
             ("Ellipse", "ELLIPSE"),
             ("Hatch", "HATCH"),
             ("Spline", "SPLINE"),
+            ("Pen Stroke", "PENSTROKE"),
             ("Ray", "RAY"),
             ("Text", "TEXT"),
             ("Image", "IMAGE"),
@@ -46,7 +47,7 @@ struct DrawPaletteUI {
         let panelH = Float(tools.count) / cols * rowH + 40
 
         ImGuiSetNextWindowPos(
-            ImVec2(x: 4 + panelW + 8, y: AppLayout.belowToolbarY + 4),
+            ImVec2(x: 4 + panelW + 8, y: AppLayout.belowTabBarY + 4),
             Int32(ImGuiCond_FirstUseEver.rawValue),
             ImVec2(x: 0, y: 0))
         ImGuiSetNextWindowSize(
@@ -127,6 +128,7 @@ struct DrawPaletteUI {
         case "ELLIPSE": return cmd is EllipseCommand
         case "HATCH": return cmd is HatchCommand
         case "SPLINE": return cmd is SplineCommand
+        case "PENSTROKE": return cmd is PenStrokeCommand
         case "RAY": return cmd is RayCommand
         case "TEXT": return cmd is TextCommand
         case "IMAGE": return cmd is ImageCommand

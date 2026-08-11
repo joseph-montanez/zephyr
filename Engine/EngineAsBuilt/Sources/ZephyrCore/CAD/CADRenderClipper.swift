@@ -143,6 +143,7 @@ public enum CADRenderClipper {
             color: spec.color,
             lineWeight: spec.lineWeight,
             geomWidth: spec.geomWidth,
+            segmentLineWeights: points == nil ? spec.segmentLineWeights : [],
             isHatchLine: spec.isHatchLine,
             hatchSpacing: spec.hatchSpacing,
             gradientData: spec.gradientData,

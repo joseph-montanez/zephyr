@@ -30,6 +30,10 @@ internal final class EngineInputHandler {
         self.engine = engine
     }
 
+    private func sampleActivePenStroke() {
+        (engine.commandProcessor.activeFeatureCommand as? PenStrokeCommand)?.pollPenState(engine: engine)
+    }
+
     // MARK: - Event Polling
 
     /// Polls all pending SDL events and dispatches them to the appropriate
@@ -138,6 +142,87 @@ internal final class EngineInputHandler {
                         ? -wy : wy
                     let factor = dir > 0 ? 1.375 : 1.0 / 1.375
                     engine.camera.zoomView(factor: factor, screenX: engine.interaction.lastMouseX, screenY: engine.interaction.lastMouseY, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
+                }
+
+            // MARK: SDL3 Pen / Tablet events
+
+            case UInt32(SDL_EVENT_PEN_PROXIMITY_IN.rawValue):
+                engine.interaction.penState.penActive = true
+
+            case UInt32(SDL_EVENT_PEN_PROXIMITY_OUT.rawValue):
+                engine.interaction.penState.penActive = false
+                engine.interaction.penState.penDrawing = false
+                engine.interaction.penState.pressure = 0.0
+
+            case UInt32(SDL_EVENT_PEN_DOWN.rawValue):
+                engine.interaction.penState.penActive = true
+                engine.interaction.penState.penDrawing = true
+                engine.interaction.penState.isEraser = e.ptouch.eraser
+                let (wx, wy) = EngineCameraManager.screenToWorld(
+                    screenX: e.ptouch.x, screenY: e.ptouch.y,
+                    cam: engine.camera.currentTransform(windowWidth: engine.windowWidth, windowHeight: engine.windowHeight))
+                engine.interaction.penState.worldX = wx
+                engine.interaction.penState.worldY = wy
+                sampleActivePenStroke()
+                // Forward pen down as a left-click to the standard mouse handler
+                // so the active feature command receives it without special routing.
+                if !handledByImGui {
+                    handleMouseDown(x: e.ptouch.x, y: e.ptouch.y)
+                }
+
+            case UInt32(SDL_EVENT_PEN_UP.rawValue):
+                let (wx, wy) = EngineCameraManager.screenToWorld(
+                    screenX: e.ptouch.x, screenY: e.ptouch.y,
+                    cam: engine.camera.currentTransform(windowWidth: engine.windowWidth, windowHeight: engine.windowHeight))
+                engine.interaction.penState.worldX = wx
+                engine.interaction.penState.worldY = wy
+                sampleActivePenStroke()
+                engine.interaction.penState.penDrawing = false
+                sampleActivePenStroke()
+                if !handledByImGui {
+                    handleMouseUp(x: e.ptouch.x, y: e.ptouch.y)
+                }
+
+            case UInt32(SDL_EVENT_PEN_AXIS.rawValue):
+                engine.interaction.penState.penActive = true
+                // Accumulate axis values unconditionally — the active command
+                // decides whether to use them based on penDrawing state.
+                let axisRaw = e.paxis.axis.rawValue
+                switch axisRaw {
+                case 0:  // SDL_PEN_AXIS_PRESSURE
+                    engine.interaction.penState.pressure = max(0.0, min(1.0, Double(e.paxis.value)))
+                case 1:  // SDL_PEN_AXIS_XTILT
+                    engine.interaction.penState.xtilt = Double(e.paxis.value)
+                case 2:  // SDL_PEN_AXIS_YTILT
+                    engine.interaction.penState.ytilt = Double(e.paxis.value)
+                case 4:  // SDL_PEN_AXIS_ROTATION
+                    engine.interaction.penState.rotation = Double(e.paxis.value)
+                default:
+                    break
+                }
+                // Update world-space pen position from the axis event's screen coords.
+                let (wx, wy) = EngineCameraManager.screenToWorld(
+                    screenX: e.paxis.x, screenY: e.paxis.y,
+                    cam: engine.camera.currentTransform(windowWidth: engine.windowWidth, windowHeight: engine.windowHeight))
+                engine.interaction.penState.worldX = wx
+                engine.interaction.penState.worldY = wy
+                sampleActivePenStroke()
+                // Also forward pen axis as mouse motion for cursor update.
+                if !handledByImGui {
+                    handleMouseMotion(x: e.paxis.x, y: e.paxis.y, xrel: 0, yrel: 0)
+                }
+
+            case UInt32(SDL_EVENT_PEN_MOTION.rawValue):
+                engine.interaction.penState.penActive = true
+                // Pen moved while touching the surface.
+                let (wx, wy) = EngineCameraManager.screenToWorld(
+                    screenX: e.pmotion.x, screenY: e.pmotion.y,
+                    cam: engine.camera.currentTransform(windowWidth: engine.windowWidth, windowHeight: engine.windowHeight))
+                engine.interaction.penState.worldX = wx
+                engine.interaction.penState.worldY = wy
+                sampleActivePenStroke()
+                if !handledByImGui {
+                    handleMouseMotion(x: e.pmotion.x, y: e.pmotion.y, xrel: 0, yrel: 0)
                 }
 
             // MARK: Two-finger trackpad pan

@@ -509,6 +509,9 @@ struct PropertiesPanelUI {
         // Section 6b: Hatch / Gradient properties
         renderHatchSection(entity: entity, engine: engine, geometry: geometry)
 
+        // Section 6c: Pen Stroke vertex properties
+        renderPenStrokeVertices(entity: entity, engine: engine, geometry: geometry)
+
         // Section 7: Remaining XData entries not shown in the overrides section
         let shownOverrideKeys: Set<String> = [
             "dxf.lineType", "dxf.lineWeight", "dxf.lineTypeScale",
@@ -982,6 +985,136 @@ struct PropertiesPanelUI {
             break
         }
 
+        engine.document.updateEntity(updatedEntity)
+    }
+
+    private static func renderPenStrokeVertices(
+        entity: CADEntity,
+        engine: PhrostEngine,
+        geometry: [CADPrimitive]
+    ) {
+        for (primitiveIndex, prim) in geometry.enumerated() {
+            guard case .penStroke(let vertices, let baseLineWeight, let color) = prim else { continue }
+            guard ImGuiCollapsingHeader("Pen Stroke Vertices (\(vertices.count))", Int32(ImGuiTreeNodeFlags_DefaultOpen.rawValue)) else { continue }
+
+            ImGuiTextV("Base Line Weight: \(String(format: "%.2f", baseLineWeight)) mm")
+
+            var brush = PenStrokeBrushSettings.from(
+                xdata: entity.xdata,
+                fallbackBaseLineWeight: baseLineWeight)
+            var minWidth = Float(brush.minLineWeight)
+            var maxWidth = Float(brush.maxLineWeight)
+            var tiltPercent = Float(brush.tiltInfluence * 100.0)
+            var rotationPercent = Float(brush.rotationInfluence * 100.0)
+            var brushChanged = false
+
+            ImGuiTextV("Brush Min")
+            ImGuiSameLine(0, 6)
+            ImGuiPushItemWidth(ImGuiGetFontSize() * 5)
+            if ImGuiDragFloat("##PropsPenMinWidth", &minWidth, 0.01, 0.01, 5.0, "%.2f mm", 0) { brushChanged = true }
+            ImGuiPopItemWidth()
+            ImGuiSameLine(0, 10)
+            ImGuiTextV("Max")
+            ImGuiSameLine(0, 6)
+            ImGuiPushItemWidth(ImGuiGetFontSize() * 5)
+            if ImGuiDragFloat("##PropsPenMaxWidth", &maxWidth, 0.01, 0.01, 10.0, "%.2f mm", 0) { brushChanged = true }
+            ImGuiPopItemWidth()
+
+            ImGuiTextV("Tilt influence")
+            ImGuiSameLine(0, 6)
+            ImGuiPushItemWidth(ImGuiGetFontSize() * 7)
+            if ImGuiSliderFloat("##PropsPenTilt", &tiltPercent, 0.0, 100.0, "%.0f%%", 0) { brushChanged = true }
+            ImGuiPopItemWidth()
+            ImGuiSameLine(0, 10)
+            ImGuiTextV("Rotation")
+            ImGuiSameLine(0, 6)
+            ImGuiPushItemWidth(ImGuiGetFontSize() * 7)
+            if ImGuiSliderFloat("##PropsPenRotation", &rotationPercent, 0.0, 100.0, "%.0f%%", 0) { brushChanged = true }
+            ImGuiPopItemWidth()
+
+            if brushChanged {
+                brush = PenStrokeBrushSettings(
+                    minLineWeight: max(0.01, Double(minWidth)),
+                    maxLineWeight: max(max(0.01, Double(minWidth)), Double(maxWidth)),
+                    tiltInfluence: Double(tiltPercent) / 100.0,
+                    rotationInfluence: Double(rotationPercent) / 100.0)
+                var updatedEntity = entity
+                brush.apply(to: &updatedEntity)
+                engine.document.updateEntity(updatedEntity)
+                engine.tabManager.markActiveDirty()
+            }
+
+            // Per-vertex list (scrollable if > 10 vertices).
+            let maxShow = min(vertices.count, 100)
+            if ImGuiBeginChild("##PenVertList", ImVec2(x: 0, y: ImGuiGetFontSize() * 15), Int32(ImGuiChildFlags_Borders.rawValue), 0) {
+                for i in 0..<maxShow {
+                    let v = vertices[i]
+                    let label = "[\(i)]"
+                    ImGuiTextV(label)
+                    ImGuiSameLine(0, 8)
+
+                    // Position (read-only for now — use grip editing)
+                    ImGuiTextV("pos: (\(String(format: "%.2f", v.position.x)), \(String(format: "%.2f", v.position.y)))")
+
+                    var pressure = Float(v.pressure)
+                    ImGuiSameLine(0, 8)
+                    ImGuiTextV("P:")
+                    ImGuiSameLine(0, 2)
+                    ImGuiPushItemWidth(ImGuiGetFontSize() * 3)
+                    if ImGuiSliderFloat("##PropPSP\(i)", &pressure, 0.0, 1.0, "%.2f", 0) {
+                        var newVertices = vertices
+                        newVertices[i].pressure = Double(pressure)
+                        let newPrim = CADPrimitive.penStroke(vertices: newVertices, baseLineWeight: baseLineWeight, color: color)
+                        updatePenStrokePrimitive(entity: entity, geometry: geometry, index: primitiveIndex, primitive: newPrim, engine: engine)
+                    }
+                    ImGuiPopItemWidth()
+
+                    var xtilt = Float(v.xtilt)
+                    ImGuiSameLine(0, 4)
+                    ImGuiTextV("Tx:")
+                    ImGuiSameLine(0, 2)
+                    ImGuiPushItemWidth(ImGuiGetFontSize() * 3)
+                    if ImGuiDragFloat("##PropPSX\(i)", &xtilt, 0.5, -90.0, 90.0, "%.1f", 0) {
+                        var newVertices = vertices
+                        newVertices[i].xtilt = Double(xtilt)
+                        let newPrim = CADPrimitive.penStroke(vertices: newVertices, baseLineWeight: baseLineWeight, color: color)
+                        updatePenStrokePrimitive(entity: entity, geometry: geometry, index: primitiveIndex, primitive: newPrim, engine: engine)
+                    }
+                    ImGuiPopItemWidth()
+
+                    var ytilt = Float(v.ytilt)
+                    ImGuiSameLine(0, 4)
+                    ImGuiTextV("Ty:")
+                    ImGuiSameLine(0, 2)
+                    ImGuiPushItemWidth(ImGuiGetFontSize() * 3)
+                    if ImGuiDragFloat("##PropPSY\(i)", &ytilt, 0.5, -90.0, 90.0, "%.1f", 0) {
+                        var newVertices = vertices
+                        newVertices[i].ytilt = Double(ytilt)
+                        let newPrim = CADPrimitive.penStroke(vertices: newVertices, baseLineWeight: baseLineWeight, color: color)
+                        updatePenStrokePrimitive(entity: entity, geometry: geometry, index: primitiveIndex, primitive: newPrim, engine: engine)
+                    }
+                    ImGuiPopItemWidth()
+
+                    if i < maxShow - 1 { igSeparator() }
+                }
+            }
+            ImGuiEndChild()
+            break // Only handle the first penStroke primitive
+        }
+    }
+
+    private static func updatePenStrokePrimitive(
+        entity: CADEntity,
+        geometry: [CADPrimitive],
+        index: Int,
+        primitive: CADPrimitive,
+        engine: PhrostEngine
+    ) {
+        guard geometry.indices.contains(index) else { return }
+        var updatedGeometry = geometry
+        updatedGeometry[index] = primitive
+        var updatedEntity = entity
+        updatedEntity.localGeometry = updatedGeometry
         engine.document.updateEntity(updatedEntity)
     }
 

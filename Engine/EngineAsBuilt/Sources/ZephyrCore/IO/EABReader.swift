@@ -1321,6 +1321,20 @@ public enum EABReader {
                 let color = readColor()
                 prims.append(.spline(controlPoints: controlPoints, knots: knots,
                                      degree: degree, weights: weights, color: color))
+            case 20: // penStroke
+                let vertexCount = safeCount(r.readUInt32(), limit: maxSafeVertexCount, label: "penStrokeVerts")
+                var vertices: [PenStrokeVertex] = []
+                for _ in 0..<vertexCount {
+                    let pos = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                    let pressure = r.readFloat64()
+                    let xtilt = r.readFloat64()
+                    let ytilt = r.readFloat64()
+                    let rotation = r.readFloat64()
+                    vertices.append(PenStrokeVertex(position: pos, pressure: pressure, xtilt: xtilt, ytilt: ytilt, rotation: rotation))
+                }
+                let baseLineWeight = r.readFloat64()
+                let color = readColor()
+                prims.append(.penStroke(vertices: vertices, baseLineWeight: baseLineWeight, color: color))
             case 12: // ellipse
                 let center = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
                 let majorAxis = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())

@@ -317,6 +317,19 @@ public enum CADHitTesting {
             }
             return best <= t2 ? best : nil
 
+        case .penStroke(let vertices, _, _):
+            // AABB early exit — skip expensive segment iteration if the world BB
+            // doesn't intersect the search radius.
+            guard vertices.count >= 2 else { return nil }
+            var best: Double = .infinity
+            for i in 0..<(vertices.count - 1) {
+                let ws = transform.transformPoint(vertices[i].position)
+                let we = transform.transformPoint(vertices[i + 1].position)
+                let d = CADGeometryMath.pointToSegmentDistSq(point, ws, we)
+                if d < best { best = d }
+            }
+            return best <= t2 ? best : nil
+
         case .text(let pos, let text, let height, let rotation, _, let alignH, let alignV, let mtextWidth, _):
             var localToWorld = transform
             if rotation != 0 {

@@ -196,6 +196,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "ELLIPSE",    aliases: ["EL"],            category: .draw,    syntax: "", description: "Draw an ellipse by center and axes"),
         CommandDescriptor(canonicalName: "HATCH",      aliases: ["H", "BH"],       category: .draw,    syntax: "", description: "Fill a closed boundary with a hatch pattern"),
         CommandDescriptor(canonicalName: "SPLINE",     aliases: ["SPL"],           category: .draw,    syntax: "", description: "Draw a smooth spline curve through control points"),
+        CommandDescriptor(canonicalName: "PENSTROKE",  aliases: ["PSTROKE", "PS"], category: .draw,    syntax: "", description: "Draw with tablet pen capturing pressure and tilt per vertex"),
         CommandDescriptor(canonicalName: "RAY",        aliases: [],                category: .draw,    syntax: "", description: "Draw a ray from a start point in a direction"),
         CommandDescriptor(canonicalName: "DRAW",       aliases: ["D", "TOOLS"],    category: .draw,    syntax: "", description: "Open the draw tools palette"),
         CommandDescriptor(canonicalName: "TEXT",       aliases: ["T", "DTEXT", "MTEXT"], category: .draw, syntax: "", description: "Place a new text entity"),

@@ -26,7 +26,8 @@ public let EABArchiveMagic: UInt32 = 0x41424145  // "EABA" in little-endian
 /// Version 14 persists associative array parameters and overrides.
 /// Version 15 persists native leader metadata and named multileader styles.
 /// Version 16 persists analytic hatch spline data and associative source handles.
-public let EABVersion: UInt32 = 16
+/// Version 17 adds penStroke primitive with per-vertex pressure/tilt/rotation.
+public let EABVersion: UInt32 = 17
 
 /// Section type identifiers in the section table.
 public enum EABSectionType: UInt32, Sendable {

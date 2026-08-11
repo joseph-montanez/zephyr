@@ -200,6 +200,16 @@ public enum CADRectSelect {
             }
             return false
 
+        case .penStroke(let vertices, _, _):
+            guard vertices.count >= 2 else { return false }
+            for i in 0..<(vertices.count - 1) {
+                let p1 = transform.transformPoint(vertices[i].position)
+                let p2 = transform.transformPoint(vertices[i + 1].position)
+                if segmentIntersectsRect(p1: p1, p2: p2,
+                                         rectMin: rectMin, rectMax: rectMax) { return true }
+            }
+            return false
+
         case .text(let pos, let text, let height, let rotation, _, let alignH, let alignV, let mtextWidth, _):
             var localToWorld = transform
             if rotation != 0 {

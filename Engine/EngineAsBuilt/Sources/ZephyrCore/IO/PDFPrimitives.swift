@@ -249,6 +249,12 @@ enum PDFPrimitives {
             subpath(pts, close: false, to: cb)
             cb.raw("S\n")
 
+        case .penStroke(let vertices, _, _):
+            guard vertices.count >= 2 else { break }
+            let pts = vertices.map { $0.position }
+            subpath(pts, close: false, to: cb)
+            cb.raw("S\n")
+
         case .hatch(let boundary, let pat, let hatchScale, let hatchAngle, _, _):
             guard boundary.count >= 3 else { break }
             if pat.uppercased() == "SOLID" || pat.isEmpty {
@@ -428,6 +434,8 @@ enum PDFPrimitives {
         case .arc(_, _, _, _, let c):
             return c
         case .spline(_, _, _, _, let c):
+            return c
+        case .penStroke(_, _, let c):
             return c
         case .text(_, _, _, _, _, _, _, _, let c):
             return c

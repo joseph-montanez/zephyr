@@ -1797,6 +1797,10 @@ public final class EngineRenderer {
                 segmentsPerSpan: 12)
             drawPath(pts, closed: false)
 
+        case .penStroke(let vertices, _, _):
+            guard vertices.count >= 2 else { return }
+            drawPath(vertices.map { $0.position }, closed: false)
+
         case .text(let position, let text, let height, let rotation, _, let alignH, let alignV, let mtextWidth, _):
             let bounds = CADEntity.estimateTextLocalBounds(
                 text: text,

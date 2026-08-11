@@ -152,6 +152,7 @@ public final class CADRendererBridge {
         case .circle(_, _, let color): return color
         case .arc(_, _, _, _, let color): return color
         case .spline(_, _, _, _, let color): return color
+        case .penStroke(_, _, let color): return color
         case .text(_, _, _, _, _, _, _, _, let color): return color
         case .ellipse(_, _, _, let color): return color
         case .hatch(_, _, _, _, let color, _): return color
@@ -358,6 +359,7 @@ public final class CADRendererBridge {
                 lineWeight: Double,
                 lineTypeScale: Double,
                 geomWidth: Double,
+                penStrokeBrushSettings: PenStrokeBrushSettings,
                 layerOpacity: Double,
                 textBackgroundScale: Double?,
                 textBackgroundColor: ColorRGBA?,
@@ -623,6 +625,10 @@ public final class CADRendererBridge {
                 geomWidth = 0.0
             }
 
+            let penStrokeBrushSettings = PenStrokeBrushSettings.from(
+                xdata: entity.xdata,
+                fallbackBaseLineWeight: lineWeight)
+
             if let array = entity.arrayData {
                 let path = CADArrayPathResolver.points(
                     for: array,
@@ -632,7 +638,7 @@ public final class CADRendererBridge {
                     visible.append((index, entity.handle, geometry, primitiveStyles,
                                     primitiveXData, entity.transform.multiplying(by: instance.transform),
                                     entityColor, lineType, lineWeight, lineTypeScale, geomWidth,
-                                    combinedLayerOpacity, entityTextBackgroundScale,
+                                    penStrokeBrushSettings, combinedLayerOpacity, entityTextBackgroundScale,
                                     entityTextBackgroundColor, entityTextBackgroundUsesViewportColor,
                                     entityClipData, showEntityClipFrame))
                     index += 1
@@ -640,7 +646,7 @@ public final class CADRendererBridge {
             } else {
                 visible.append((index, entity.handle, geometry, primitiveStyles,
                                 primitiveXData, entity.transform, entityColor, lineType, lineWeight,
-                                lineTypeScale, geomWidth, combinedLayerOpacity,
+                                lineTypeScale, geomWidth, penStrokeBrushSettings, combinedLayerOpacity,
                                 entityTextBackgroundScale, entityTextBackgroundColor,
                                 entityTextBackgroundUsesViewportColor,
                                 entityClipData, showEntityClipFrame))
@@ -918,6 +924,7 @@ public final class CADRendererBridge {
                                     textStyleFonts: snapshot.textStyleFonts,
                                     linetypePatterns: snapshot.linetypePatterns,
                                     opacityMultiplier: drawStyle.opacityMultiplier,
+                                    penStrokeBrushSettings: v.penStrokeBrushSettings,
                                     renderOrigin: renderOrigin,
                                     splineTessellationDivisor: splineTessellationDivisor)
                                 if s.count > 10000 {
@@ -930,6 +937,7 @@ public final class CADRendererBridge {
                                     case .fillPolygon(let pts, _): typeStr = "fillPolygon(\(pts.count)pts)"
                                     case .hatch, .hatchPath: typeStr = "hatch"
                                     case .spline: typeStr = "spline"
+                                    case .penStroke: typeStr = "penStroke"
                                     case .circle: typeStr = "circle"
                                     case .arc: typeStr = "arc"
                                     case .text: typeStr = "text"
@@ -1208,6 +1216,7 @@ public final class CADRendererBridge {
                         case .fillPolygon(let pts, _): typeStr = "fillPolygon(\(pts.count)pts)"
                         case .hatch, .hatchPath: typeStr = "hatch"
                         case .spline: typeStr = "spline"
+                        case .penStroke: typeStr = "penStroke"
                         case .circle: typeStr = "circle"
                         case .arc: typeStr = "arc"
                         case .text: typeStr = "text"
@@ -1759,6 +1768,22 @@ public final class CADRendererBridge {
                     writeLiveGeometry(.spline(controlPoints: newLocalCPs, knots: knots, degree: degree, weights: weights, color: c))
                     return
 
+                case .penStroke(let vertices, let baseLineWeight, let c):
+                    guard localIdx < vertices.count else { return }
+                    var newVertices = vertices
+                    let wp = pts[localIdx]
+                    let newWP = Vector3(x: wp.x + Double(dx), y: wp.y + Double(dy), z: wp.z)
+                    newVertices[localIdx].position = invTransform.transformPoint(newWP)
+                    let worldPts = newVertices.map { entity.transform.transformPoint($0.position) }
+                    if let rp = rpForCurrentPrimitive() {
+                        rp.points = worldPts.map {
+                            SDL_FPoint(x: gm.renderOrigin.localX($0.x), y: gm.renderOrigin.localY($0.y))
+                        }
+                        markPrimitiveDirty(rp, in: gm)
+                    }
+                    writeLiveGeometry(.penStroke(vertices: newVertices, baseLineWeight: baseLineWeight, color: c))
+                    return
+
                 case .text:
                     var t = entity.transform
                     t.position = Vector3(
@@ -2158,6 +2183,9 @@ public final class CADRendererBridge {
             geomWidth: style.geomWidth,
             linetypePatterns: document.linetypePatterns,
             opacityMultiplier: style.layerOpacity,
+            penStrokeBrushSettings: PenStrokeBrushSettings.from(
+                xdata: entity.xdata,
+                fallbackBaseLineWeight: style.lineWeight),
             renderOrigin: gm.renderOrigin,
             splineTessellationDivisor: 5000.0
         )

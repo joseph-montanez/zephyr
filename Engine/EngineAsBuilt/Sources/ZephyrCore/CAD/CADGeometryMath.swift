@@ -560,6 +560,8 @@ public enum CADGeometryMath {
             ]
         case .spline(let controlPoints, _, _, _, _):
             return controlPoints.map { transform.transformPoint($0) }
+        case .penStroke(let vertices, _, _):
+            return vertices.map { transform.transformPoint($0.position) }
         case .text(let pos, _, _, _, _, _, _, _, _):
             return [transform.transformPoint(pos)]
         case .ellipse(let center, let majorAxis, let minorRatio, _):
@@ -694,6 +696,9 @@ public enum CADGeometryMath {
                                   imageName: imageName, clipBoundary: clipBoundary?.map(tp), tint: tint))
             case .table:
                 out.append(p)
+            case let .penStroke(vertices, baseLineWeight, color):
+                let newVertices = vertices.map { PenStrokeVertex(position: tp($0.position), pressure: $0.pressure, xtilt: $0.xtilt, ytilt: $0.ytilt, rotation: $0.rotation) }
+                out.append(.penStroke(vertices: newVertices, baseLineWeight: baseLineWeight, color: color))
             }
         }
         return out

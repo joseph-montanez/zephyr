@@ -250,7 +250,7 @@ public final class CleanSpecklesCommand: FeatureCommand {
         case .table: return false
         case .point, .line, .rect, .polygon, .polyline, .fillRect, .fillPolygon:
             return true
-        case .fillComplexPolygon, .gradient, .circle, .arc, .text, .spline, .ellipse, .hatch, .hatchPath, .ray, .image:
+        case .penStroke, .fillComplexPolygon, .gradient, .circle, .arc, .text, .spline, .ellipse, .hatch, .hatchPath, .ray, .image:
             return false
         }
     }

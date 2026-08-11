@@ -541,6 +541,8 @@ public enum CADArrayPathResolver {
                 controlPoints: controlPoints,
                 weights: weights,
                 segmentsPerSpan: 24)
+        case .penStroke(let vertices, _, _):
+            return vertices.map { $0.position }
         default:
             return []
         }
@@ -548,7 +550,7 @@ public enum CADArrayPathResolver {
 
     private static func isSupportedPath(_ primitive: CADPrimitive) -> Bool {
         switch primitive {
-        case .line, .polyline, .polygon, .arc, .circle, .ellipse, .spline:
+        case .line, .polyline, .polygon, .arc, .circle, .ellipse, .spline, .penStroke:
             return true
         default:
             return false

@@ -1197,6 +1197,9 @@ public final class RevCloudCommand: FeatureCommand {
             else { return nil }
             return RevCloudGeometry.resampleClosedPath(points, targetLength: target)
 
+        case .penStroke:
+            return nil  // pen strokes are open paths, not convertible to revision clouds
+
         default:
             return nil
         }

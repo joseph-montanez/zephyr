@@ -464,6 +464,8 @@ public enum PDFExporter {
                 grow(Vector3(x: c.x + r, y: c.y + r, z: c.z))
             case .spline(let cps, _, _, _, _):
                 for pt in cps { grow(pt) }
+            case .penStroke(let vertices, _, _):
+                for v in vertices { grow(v.position) }
             case .ellipse(let c, let major, _, _):
                 let m = major.magnitude
                 grow(Vector3(x: c.x - m, y: c.y - m, z: c.z))
