@@ -39,18 +39,40 @@ if (-not (Test-Path $DevRoot)) {
     New-Item -ItemType Directory -Force -Path $DevRoot | Out-Null
 }
 
-# 2. Locate Visual Studio Build Tools
-Write-Host "`n--- Locating Build Tools ---" -ForegroundColor Yellow
-$vsInstallerPath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-if (-not (Test-Path $vsInstallerPath)) { throw "Visual Studio Installer not found." }
+# 2. Install / Locate Visual Studio Build Tools
+Write-Host "`n--- Installing Visual Studio Build Tools ---" -ForegroundColor Yellow
 
-$vsPath = & $vsInstallerPath -latest -property installationPath
+$vsComponents = @(
+    "Microsoft.VisualStudio.Component.Windows11SDK.22621",
+    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+    "Microsoft.VisualStudio.Component.VC.CMake.Project"
+)
+$vsCustomArgs = ($vsComponents | ForEach-Object { "--add $_" }) -join " "
+
+Write-Host "Installing Visual Studio 2022 Community with required components via winget..."
+winget install --id Microsoft.VisualStudio.2022.Community --exact --force --custom $vsCustomArgs --source winget
+
+if ($LASTEXITCODE -ne 0) {
+    throw "winget install of Visual Studio 2022 Community failed with exit code $LASTEXITCODE"
+}
+
+# Refresh environment PATH (winget may have added vswhere)
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+
+$vsInstallerPath = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+if (-not (Test-Path $vsInstallerPath)) { throw "Visual Studio Installer (vswhere) not found after installation." }
+
+$vsPath = & $vsInstallerPath -latest -products "Microsoft.VisualStudio.Product.Community" -version "[17.0,18.0)" -property installationPath
+if (-not $vsPath) { throw "Could not locate Visual Studio 2022 Community installation." }
+
 $cmakeExe = "$vsPath\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 $vcvarsPath = "$vsPath\VC\Auxiliary\Build\vcvarsall.bat"
 
 if (-not (Test-Path $cmakeExe) -or -not (Test-Path $vcvarsPath)) {
-    throw "Required Visual Studio tools missing. Ensure C++ CMake tools are installed."
+    throw "Required Visual Studio tools missing after install. Check that C++ CMake tools were included."
 }
+Write-Host "Found Visual Studio at: $vsPath" -ForegroundColor Cyan
 Write-Host "Found vcvarsall.bat at: $vcvarsPath" -ForegroundColor Cyan
 
 
@@ -86,40 +108,7 @@ $srcLib = Get-ChildItem -Path "$env:TEMP\zlib_ext" -Recurse -Directory -Filter "
 if ($srcLib) { Copy-Item -Path "$($srcLib.FullName)\*" -Destination "$zlibRoot\lib" -Recurse -Force }
 
 
-# 5. Build LibDXFRW
-Write-Host "`n--- Building LibDXFRW ---" -ForegroundColor Yellow
-$dxfrwDir = "$DevRoot\libdxfrw"
-if (-not (Test-Path $dxfrwDir)) {
-    Set-Location $DevRoot
-    git clone https://github.com/joseph-montanez/libdxfrw
-}
-Set-Location $dxfrwDir
-$dxfrwBuildDir = "$dxfrwDir\build"
-if (-not (Test-Path $dxfrwBuildDir)) { New-Item -ItemType Directory -Force -Path $dxfrwBuildDir | Out-Null }
-Set-Location $dxfrwBuildDir
-
-& $cmakeExe .. -G "Visual Studio 17 2022" -A $cmakeArch "-DCMAKE_TOOLCHAIN_FILE=$vcpkgDir\scripts\buildsystems\vcpkg.cmake" "-DVCPKG_TARGET_TRIPLET=$vcpkgTriplet" "-DICONV_ROOT=$vcpkgDir\installed\$vcpkgTriplet"
-& $cmakeExe --build . --config Release
-
-
-# 6. Build LibreDWG
-Write-Host "`n--- Building LibreDWG ---" -ForegroundColor Yellow
-$dwgDir = "$DevRoot\libredwg"
-if (-not (Test-Path $dwgDir)) {
-    Set-Location $DevRoot
-    git clone https://github.com/LibreDWG/libredwg.git
-}
-Set-Location $dwgDir
-git submodule update --init --recursive
-$dwgBuildDir = "$dwgDir\build"
-if (-not (Test-Path $dwgBuildDir)) { New-Item -ItemType Directory -Force -Path $dwgBuildDir | Out-Null }
-Set-Location $dwgBuildDir
-
-& $cmakeExe .. -G "Visual Studio 17 2022" -A $cmakeArch "-DCMAKE_TOOLCHAIN_FILE=$vcpkgDir\scripts\buildsystems\vcpkg.cmake" "-DVCPKG_TARGET_TRIPLET=$vcpkgTriplet" -DCMAKE_BUILD_TYPE=Release
-& $cmakeExe --build . --config Release
-
-
-# 7. Setup SDL3 (Core, TTF, Image) and Generate Import Libs
+# 5. Setup SDL3 (Core, TTF, Image) and Generate Import Libs
 Write-Host "`n--- Setting up SDL3 ---" -ForegroundColor Yellow
 $sdlRoot = "$DevRoot\SDL3"
 $sdlInclude = "$sdlRoot\include"
@@ -207,7 +196,7 @@ tar -xzf $pdfiumTgz -C $pdfiumRoot
 Remove-Item $pdfiumTgz -Force -ErrorAction SilentlyContinue
 
 
-# 8. Build Zephyr
+# 6. Build Zephyr
 Write-Host "`n--- Compiling Zephyr ---" -ForegroundColor Yellow
 $zephyrDir = "$DevRoot\zephyr"
 if (-not (Test-Path $zephyrDir)) {
@@ -226,12 +215,6 @@ $env:SDL3_IMAGE_INCLUDE = $env:SDL3_INCLUDE
 $env:SDL3_IMAGE_LIB     = $env:SDL3_LIB
 $env:SDL3_TTF_INCLUDE   = $env:SDL3_INCLUDE
 $env:SDL3_TTF_LIB       = $env:SDL3_LIB
-
-$env:DXFRW_INCLUDE      = "$DevRoot\libdxfrw\src" -replace '\\', '/'
-$env:DXFRW_LIB          = "$DevRoot\libdxfrw\build\Release" -replace '\\', '/'
-
-$env:DWG_INCLUDE        = "$DevRoot\libredwg\include" -replace '\\', '/'
-$env:DWG_LIB            = "$DevRoot\libredwg\build" -replace '\\', '/'
 
 $env:ZLIB_NG_INCLUDE    = "$DevRoot\zlib-ng\include" -replace '\\', '/'
 $env:ZLIB_NG_LIB        = "$DevRoot\zlib-ng\lib" -replace '\\', '/'
@@ -258,7 +241,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 
-# 9. Stage DLLs and Compile Shaders
+# 7. Stage DLLs and Compile Shaders
 $config = "release"
 $dllDest = "$swiftBuildDir\.build\$swiftTriple\$config"
 New-Item -ItemType Directory -Path $dllDest -Force | Out-Null
@@ -295,8 +278,6 @@ Copy-Item -Path "$DevRoot\SDL3\lib\SDL3_ttf.dll"   -Destination $dllDest -Force
 
 if (Test-Path "$DevRoot\pdfium\bin\pdfium.dll") { Copy-Item -LiteralPath "$DevRoot\pdfium\bin\pdfium.dll" -Destination $dllDest -Force }
 
-Copy-Item -Path "$DevRoot\libdxfrw\build\Release\dxfrw.dll" -Destination $dllDest -Force -ErrorAction SilentlyContinue
-Copy-Item -Path "$DevRoot\libredwg\build\libredwg.dll" -Destination $dllDest -Force -ErrorAction SilentlyContinue
 Copy-Item -Path "$DevRoot\vcpkg\installed\$vcpkgTriplet\bin\iconv-2.dll" -Destination $dllDest -Force -ErrorAction SilentlyContinue
 
 # Assets
@@ -308,4 +289,5 @@ foreach ($asset in @("Fonts", "Plot Styles")) {
     }
 }
 
+Set-Location $zephyrDir
 Write-Host "`nZephyr build completed successfully! Run with: .\$dllDest\Zephyr.exe" -ForegroundColor Green
