@@ -45,7 +45,12 @@ public enum CADHitTesting {
         var bestDist: Double = .infinity
 
         forEachCandidate(in: document, near: point, threshold: threshold) { entity, geometry in
-            var hitDist: Double? = nil
+            let frameDistance = CADClipFrameSettings.isVisible(for: entity)
+                ? CADClipMetadata.boundaryDistanceSquared(worldPoint: point, entity: entity)
+                : nil
+            guard CADClipMetadata.accepts(worldPoint: point, entity: entity)
+                    || frameDistance.map({ $0 <= t2 }) == true else { return }
+            var hitDist: Double? = frameDistance.flatMap { $0 <= t2 ? $0 : nil }
             
             let transforms = instanceTransforms(for: entity, document: document)
             if simplifyComplexBlocks && geometry.count > 50 {
@@ -60,7 +65,7 @@ public enum CADHitTesting {
                         }
                     }
                 }
-                if minDist <= t2 { hitDist = minDist }
+                if minDist <= t2 { hitDist = min(hitDist ?? .infinity, minDist) }
             } else {
                 var minDist: Double = .infinity
                 for transform in transforms {
@@ -70,7 +75,7 @@ public enum CADHitTesting {
                         }
                     }
                 }
-                if minDist <= t2 { hitDist = minDist }
+                if minDist <= t2 { hitDist = min(hitDist ?? .infinity, minDist) }
             }
             
             if let d = hitDist {
@@ -160,6 +165,11 @@ public enum CADHitTesting {
         simplifyComplexBlocks: Bool = true,
         geometry: [CADPrimitive]? = nil
     ) -> Bool {
+        let frameDistance = CADClipFrameSettings.isVisible(for: entity)
+            ? CADClipMetadata.boundaryDistanceSquared(worldPoint: point, entity: entity)
+            : nil
+        if frameDistance.map({ $0 <= threshold * threshold }) == true { return true }
+        guard CADClipMetadata.accepts(worldPoint: point, entity: entity) else { return false }
         guard let wbb = entity.worldBoundingBox else { return false }
         let expanded = wbb.expanded(by: threshold)
         guard expanded.contains(point) else { return false }

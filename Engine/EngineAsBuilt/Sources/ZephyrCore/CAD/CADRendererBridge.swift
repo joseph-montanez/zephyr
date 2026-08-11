@@ -361,7 +361,9 @@ public final class CADRendererBridge {
                 layerOpacity: Double,
                 textBackgroundScale: Double?,
                 textBackgroundColor: ColorRGBA?,
-                textBackgroundUsesViewportColor: Bool
+                textBackgroundUsesViewportColor: Bool,
+                clipData: CADClipData?,
+                showClipFrame: Bool
             )] = []
         var visibleText: [(index: Int, handle: UUID, text: String, height: Double,
                             heightOverride: Bool, textStyle: String?,
@@ -426,6 +428,9 @@ public final class CADRendererBridge {
             } else {
                 entityTextBackgroundUsesViewportColor = false
             }
+            let entityClipData = CADClipMetadata.value(from: entity)
+            let showEntityClipFrame = entityClipData != nil && CADClipFrameSettings.isVisible(for: entity)
+
             let entityTextBackgroundColor: ColorRGBA?
             if let value = entity.xdata["dxf.mtextBackgroundColor"],
                case .string(let hex) = value,
@@ -628,7 +633,8 @@ public final class CADRendererBridge {
                                     primitiveXData, entity.transform.multiplying(by: instance.transform),
                                     entityColor, lineType, lineWeight, lineTypeScale, geomWidth,
                                     combinedLayerOpacity, entityTextBackgroundScale,
-                                    entityTextBackgroundColor, entityTextBackgroundUsesViewportColor))
+                                    entityTextBackgroundColor, entityTextBackgroundUsesViewportColor,
+                                    entityClipData, showEntityClipFrame))
                     index += 1
                 }
             } else {
@@ -636,7 +642,8 @@ public final class CADRendererBridge {
                                 primitiveXData, entity.transform, entityColor, lineType, lineWeight,
                                 lineTypeScale, geomWidth, combinedLayerOpacity,
                                 entityTextBackgroundScale, entityTextBackgroundColor,
-                                entityTextBackgroundUsesViewportColor))
+                                entityTextBackgroundUsesViewportColor,
+                                entityClipData, showEntityClipFrame))
                 index += 1
             }
         }
@@ -967,7 +974,36 @@ public final class CADRendererBridge {
                                 }
                             }
 
-                            chunkResults.append((v.handle, specs, textSprites, imageSpecs))
+                            var clipPolygonWorld: [Vector3]? = nil
+                            var clipInverted = false
+                            if let clip = v.clipData, clip.isEnabled, clip.boundary.count >= 3 {
+                                let world = clip.boundary.map(v.transform.transformPoint)
+                                let renderPolygon = world.map {
+                                    SDL_FPoint(x: renderOrigin.localX($0.x), y: renderOrigin.localY($0.y))
+                                }
+                                specs = CADRenderClipper.clip(
+                                    specs: specs,
+                                    polygon: renderPolygon,
+                                    inverted: clip.isInverted)
+                                clipPolygonWorld = world
+                                clipInverted = clip.isInverted
+                                if v.showClipFrame {
+                                    let frame = renderPolygon + [renderPolygon[0]]
+                                    specs.append(PrimitiveSpec(
+                                        type: .lines,
+                                        points: frame,
+                                        rects: [],
+                                        corners: [],
+                                        z: baseZ + 1_500_000.0,
+                                        color: (v.color.r, v.color.g, v.color.b, v.color.a),
+                                        lineWeight: 0.0,
+                                        geomWidth: 0.0))
+                                }
+                            }
+
+                            chunkResults.append((
+                                v.handle, specs, textSprites, imageSpecs,
+                                clipPolygonWorld, clipInverted))
                         }
                         return chunkResults
                     }
@@ -1135,7 +1171,7 @@ public final class CADRendererBridge {
                                 )
                                 textSprites.append(spec)
                             }
-                            chunkResults.append((vt.handle, specs, textSprites, [ImageSpec]()))
+                            chunkResults.append((vt.handle, specs, textSprites, [ImageSpec](), nil, false))
                         }
                         return chunkResults
                     }
@@ -1285,6 +1321,15 @@ public final class CADRendererBridge {
 
                 spriteIDs.append(contentsOf: rendered.spriteIDs)
                 primIDs.append(contentsOf: rendered.primitiveIDs)
+                if let clipPolygon = res.clipPolygon {
+                    for spriteID in rendered.spriteIDs {
+                        if let sprite = engine.spriteManager.getSprite(for: spriteID) {
+                            sprite.clipPolygon = clipPolygon
+                            sprite.clipInverted = res.clipInverted
+                            sprite.clipBasePosition = (sprite.position.0, sprite.position.1)
+                        }
+                    }
+                }
             }
             if !spriteIDs.isEmpty {
                 entitySpriteMap[res.handle, default: []].append(contentsOf: spriteIDs)
@@ -1326,6 +1371,25 @@ public final class CADRendererBridge {
                 // bounding box is drawn by the CAD selection highlight.
                 if let sprite = engine.spriteManager.getSprite(for: spriteID) {
                     sprite.useBoundsWhilePanning = true
+                    let q0 = Vector3(
+                        x: geometryManager.renderOrigin.worldX(imgSpec.c0.x),
+                        y: geometryManager.renderOrigin.worldY(imgSpec.c0.y), z: imgSpec.z)
+                    let q1 = Vector3(
+                        x: geometryManager.renderOrigin.worldX(imgSpec.c1.x),
+                        y: geometryManager.renderOrigin.worldY(imgSpec.c1.y), z: imgSpec.z)
+                    let q2 = Vector3(
+                        x: geometryManager.renderOrigin.worldX(imgSpec.c2.x),
+                        y: geometryManager.renderOrigin.worldY(imgSpec.c2.y), z: imgSpec.z)
+                    let q3 = Vector3(
+                        x: geometryManager.renderOrigin.worldX(imgSpec.c3.x),
+                        y: geometryManager.renderOrigin.worldY(imgSpec.c3.y), z: imgSpec.z)
+                    sprite.worldQuad = [q0, q1, q2, q3]
+                    sprite.worldQuadBasePosition = (q0.x, q0.y)
+                    sprite.clipPolygon = res.clipPolygon ?? imgSpec.clipPolygon
+                    sprite.clipInverted = res.clipPolygon == nil
+                        ? imgSpec.clipInverted
+                        : res.clipInverted
+                    sprite.clipBasePosition = (sprite.position.0, sprite.position.1)
                 }
                 spriteIDs.append(spriteID)
             }

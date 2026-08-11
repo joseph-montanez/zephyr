@@ -183,6 +183,9 @@ struct ToolbarUI {
             if let cmd = engine.commandProcessor.activeCommand {
                 let prompt = engine.commandProcessor.commandPrompt ?? cmd
                 ImGuiTextV("\(cmd): \(prompt)  (Esc to cancel)")
+            } else if engine.commandProcessor.activeFeatureCommand != nil {
+                let prompt = engine.commandProcessor.commandPrompt ?? "Command active"
+                ImGuiTextV("\(prompt)  (Esc to cancel)")
             } else {
                 let selCount = engine.cadSelection.selectedCount
                 if selCount == 1 {

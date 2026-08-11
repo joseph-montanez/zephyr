@@ -1915,18 +1915,32 @@ public final class EngineRenderer {
         let px = sprite.position.0 + hw
         let py = sprite.position.1 + hh
 
-        let topShift = sprite.shearX * h
-        func transformedCorner(_ localX: Double, _ localY: Double) -> SDL_FPoint {
-            let shiftedX = localX + (localY > 0 ? topShift : 0)
-            return engine.camera.transformWorldToScreen(
-                worldX: px + shiftedX * c - localY * s,
-                worldY: py + shiftedX * s + localY * c,
-                cam: cam)
+        let p1: SDL_FPoint
+        let p2: SDL_FPoint
+        let p3: SDL_FPoint
+        let p4: SDL_FPoint
+        if let quad = sprite.worldQuad, quad.count == 4 {
+            let base = sprite.worldQuadBasePosition ?? (sprite.position.0, sprite.position.1)
+            let dx = sprite.position.0 - base.0
+            let dy = sprite.position.1 - base.1
+            p1 = engine.camera.transformWorldToScreen(worldX: quad[0].x + dx, worldY: quad[0].y + dy, cam: cam)
+            p2 = engine.camera.transformWorldToScreen(worldX: quad[1].x + dx, worldY: quad[1].y + dy, cam: cam)
+            p3 = engine.camera.transformWorldToScreen(worldX: quad[2].x + dx, worldY: quad[2].y + dy, cam: cam)
+            p4 = engine.camera.transformWorldToScreen(worldX: quad[3].x + dx, worldY: quad[3].y + dy, cam: cam)
+        } else {
+            let topShift = sprite.shearX * h
+            func transformedCorner(_ localX: Double, _ localY: Double) -> SDL_FPoint {
+                let shiftedX = localX + (localY > 0 ? topShift : 0)
+                return engine.camera.transformWorldToScreen(
+                    worldX: px + shiftedX * c - localY * s,
+                    worldY: py + shiftedX * s + localY * c,
+                    cam: cam)
+            }
+            p1 = transformedCorner(-hw, -hh)
+            p2 = transformedCorner(hw, -hh)
+            p3 = transformedCorner(hw, hh)
+            p4 = transformedCorner(-hw, hh)
         }
-        let p1 = transformedCorner(-hw, -hh)
-        let p2 = transformedCorner(hw, -hh)
-        let p3 = transformedCorner(hw, hh)
-        let p4 = transformedCorner(-hw, hh)
 
         // AABB culling: only skip if the entire quad is off-screen
         let margin: Float = 0
@@ -1960,18 +1974,65 @@ public final class EngineRenderer {
             return
         }
 
+        let clipOffset: (Double, Double)
+        if let base = sprite.clipBasePosition {
+            clipOffset = (sprite.position.0 - base.0, sprite.position.1 - base.1)
+        } else {
+            clipOffset = (0, 0)
+        }
+        let clipScreen = sprite.clipPolygon?.map {
+            engine.camera.transformWorldToScreen(
+                worldX: $0.x + clipOffset.0,
+                worldY: $0.y + clipOffset.1,
+                cam: cam)
+        }
+        let clippedTriangles: [CADRenderClipper.TexturedTriangle]?
+        if let clipScreen, clipScreen.count >= 3 {
+            clippedTriangles = CADRenderClipper.texturedTriangles(
+                quad: [p1, p2, p3, p4],
+                polygon: clipScreen,
+                inverted: sprite.clipInverted)
+        } else {
+            clippedTriangles = nil
+        }
+
         if let tex = sprite.texture {
             let texRefPtr = ImTextureRef_ImTextureRef_TextureID(UInt64(UInt(bitPattern: tex)))
             defer { ImTextureRef_destroy(texRefPtr) }
             let texRef = texRefPtr!.pointee
 
-            ImDrawListAddImageQuad(
-                drawList,
-                texRef,
-                ip1, ip2, ip3, ip4,
-                ImVec2(x: 0, y: 0), ImVec2(x: 1, y: 0), ImVec2(x: 1, y: 1), ImVec2(x: 0, y: 1),
-                col
-            )
+            if let clippedTriangles {
+                for triangle in clippedTriangles {
+                    let a = ImVec2(x: triangle.a.point.x, y: triangle.a.point.y)
+                    let b = ImVec2(x: triangle.b.point.x, y: triangle.b.point.y)
+                    let c = ImVec2(x: triangle.c.point.x, y: triangle.c.point.y)
+                    let auv = ImVec2(x: triangle.a.uv.x, y: triangle.a.uv.y)
+                    let buv = ImVec2(x: triangle.b.uv.x, y: triangle.b.uv.y)
+                    let cuv = ImVec2(x: triangle.c.uv.x, y: triangle.c.uv.y)
+                    ImDrawListAddImageQuad(
+                        drawList, texRef,
+                        a, b, c, c,
+                        auv, buv, cuv, cuv,
+                        col)
+                }
+            } else {
+                ImDrawListAddImageQuad(
+                    drawList,
+                    texRef,
+                    ip1, ip2, ip3, ip4,
+                    ImVec2(x: 0, y: 0), ImVec2(x: 1, y: 0), ImVec2(x: 1, y: 1), ImVec2(x: 0, y: 1),
+                    col
+                )
+            }
+        } else if let clippedTriangles {
+            for triangle in clippedTriangles {
+                ImDrawListAddTriangleFilled(
+                    drawList,
+                    ImVec2(x: triangle.a.point.x, y: triangle.a.point.y),
+                    ImVec2(x: triangle.b.point.x, y: triangle.b.point.y),
+                    ImVec2(x: triangle.c.point.x, y: triangle.c.point.y),
+                    col)
+            }
         } else {
             ImDrawListAddQuadFilled(drawList, ip1, ip2, ip3, ip4, col)
         }

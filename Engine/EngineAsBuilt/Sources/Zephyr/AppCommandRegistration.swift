@@ -127,6 +127,27 @@ struct AppCommandRegistration {
             aliases: ["SPE"],
             factory: { SplineEditCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "CLIP",
+            aliases: ["CL"],
+            descriptor: CommandDescriptor(
+                canonicalName: "CLIP",
+                aliases: ["CL"],
+                category: .modify,
+                description: "Clip blocks, raster images, and PDF underlays"),
+            factory: { ClipCommand() }
+        )
+        for variable in ["FRAME", "XCLIPFRAME", "IMAGEFRAME", "PDFFRAME"] {
+            engine.commandProcessor.registerFeatureCommand(
+                name: variable,
+                descriptor: CommandDescriptor(
+                    canonicalName: variable,
+                    category: .settings,
+                    syntax: "<0|1|2>",
+                    description: "Control clipping boundary frame visibility"),
+                factory: { ClipFrameVariableCommand(variable) }
+            )
+        }
 
         // --- Drawing commands ---
         // Each is a "feature command" that stays active for multi-step input

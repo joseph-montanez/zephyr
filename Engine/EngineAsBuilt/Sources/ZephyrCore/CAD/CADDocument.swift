@@ -1475,6 +1475,19 @@ public final class CADDocument {
         invalidateEntityGrid()
     }
 
+    public func updateEntities(_ entities: [CADEntity]) {
+        let existing = entities.filter { entityRegistry[$0.handle] != nil }
+        guard !existing.isEmpty else { return }
+        pushUndo()
+        for entity in existing {
+            let updated = preparedEntityForStorage(entity)
+            entityRegistry[updated.handle] = updated
+            refreshPathArrays(dependingOn: updated.handle)
+        }
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+    }
+
     /// Update entity geometry without pushing undo — for live grip editing.
     /// The caller (finalizeVertexDrag) will push a single undo entry on mouse-up.
     public func updateEntityGeometryLive(for handle: UUID, geometry: [CADPrimitive]) {

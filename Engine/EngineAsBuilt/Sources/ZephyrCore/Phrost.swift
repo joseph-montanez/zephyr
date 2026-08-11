@@ -36,6 +36,11 @@ public final class Sprite: @unchecked Sendable {
     public var text: String?
     public var font: OpaquePointer?
     public var sourceRect: SDL_FRect? = nil
+    public var clipPolygon: [Vector3]? = nil
+    public var clipInverted: Bool = false
+    public var clipBasePosition: (Double, Double)? = nil
+    public var worldQuad: [Vector3]? = nil
+    public var worldQuadBasePosition: (Double, Double)? = nil
     /// CAD TTF text may use a lightweight outline while the camera is panning.
     /// This avoids a visible phase difference between ImGui texture quads and
     /// CAD geometry rendered through the GPU camera matrix.

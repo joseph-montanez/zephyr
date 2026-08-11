@@ -873,31 +873,48 @@ public final class CADCommandProcessor {
             }
             clearCommand()
         case "BLOCK", "BMAKE":
-            // BLOCK command: create a new block from selected entities.
-            // Syntax: BLOCK <name>
-            if let engine = engine {
-                guard engine.cadSelection.hasSelection else {
-                    print("[CAD] BLOCK requires entities to be selected.")
-                    clearCommand()
-                    break
-                }
-                // The name is the rest of the command text
-                let namePart = String(text.dropFirst(upper.count)).trimmingCharacters(in: .whitespaces)
-                if namePart.isEmpty {
-                    // No name provided — prompt via command line
-                    startCommand("BLOCK", prompt: "Enter block name")
-                } else {
-                    let block = engine.document.createBlockFromEntities(
-                        handles: engine.cadSelection.selectedHandles, name: namePart)
-                    if block != nil {
-                        print("[CAD] Block '\(namePart)' created with \(engine.cadSelection.selectedHandles.count) entities.")
-                        engine.cadSelection.clearSelection()
-                    } else {
-                        print("[CAD] Failed to create block '\(namePart)'.")
-                    }
-                    clearCommand()
-                }
+            guard let engine = engine else {
+                clearCommand()
+                break
             }
+            guard engine.cadSelection.hasSelection else {
+                print("[CAD] BLOCK requires entities to be selected.")
+                clearCommand()
+                break
+            }
+            startCommand("BLOCK", prompt: "Enter block name")
+
+        case _ where upper.hasPrefix("BLOCK ") || upper.hasPrefix("BMAKE "):
+            guard let engine = engine else {
+                clearCommand()
+                break
+            }
+            guard engine.cadSelection.hasSelection else {
+                print("[CAD] BLOCK requires entities to be selected.")
+                clearCommand()
+                break
+            }
+
+            let parts = text.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+            let namePart = parts.count > 1
+                ? String(parts[1]).trimmingCharacters(in: .whitespaces)
+                : ""
+            guard !namePart.isEmpty else {
+                startCommand("BLOCK", prompt: "Enter block name")
+                break
+            }
+
+            let selectedCount = engine.cadSelection.selectedHandles.count
+            let block = engine.document.createBlockFromEntities(
+                handles: engine.cadSelection.selectedHandles,
+                name: namePart)
+            if block != nil {
+                print("[CAD] Block '\(namePart)' created with \(selectedCount) entities.")
+                engine.cadSelection.clearSelection()
+            } else {
+                print("[CAD] Failed to create block '\(namePart)'.")
+            }
+            clearCommand()
         case "BLOCKS", "BLOCKPANEL":
             if let engine = engine {
                 engine.ui.blockPanelVisible.toggle()

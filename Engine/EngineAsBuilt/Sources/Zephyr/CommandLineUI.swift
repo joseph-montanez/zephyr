@@ -40,15 +40,21 @@ struct CommandLineUI {
     static func render(engine: PhrostEngine, dw: Float, dh: Float) {
         let isCommandLineActive = engine.commandProcessor.commandLineActive
 
-        // When the command line first opens, we must clear any default text selection
-        // (e.g., from ImGui auto-selecting the injected first character like 't').
-        if isCommandLineActive && !_wasCommandLineActive {
+        if !isCommandLineActive {
+            _wasCommandLineActive = false
+            if engine.commandProcessor.activeFeatureCommand != nil,
+               let prompt = engine.commandProcessor.commandPrompt,
+               !prompt.isEmpty {
+                renderPassiveFeaturePrompt(engine: engine, prompt: prompt, dw: dw)
+            }
+            return
+        }
+
+        if !_wasCommandLineActive {
             _needsClearSelection = true
             _needsFocus = true
         }
-        _wasCommandLineActive = isCommandLineActive
-
-        guard isCommandLineActive else { return }
+        _wasCommandLineActive = true
 
         let cmdW: Float = 1000 // Centered fixed width
         let winX = (dw - cmdW) / 2.0
@@ -108,6 +114,15 @@ struct CommandLineUI {
         ImGuiSetNextWindowSizeConstraints(ImVec2(x: cmdW, y: 0), ImVec2(x: cmdW, y: dh * 0.6), { _ in }, nil)
         
         if igBegin("##CmdLine", nil, wflags) {
+            if featureInputActive,
+               let commandPrompt = engine.commandProcessor.commandPrompt,
+               !commandPrompt.isEmpty {
+                ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textPrimary)
+                ImGuiTextWrappedV(commandPrompt)
+                ImGuiPopStyleColor(1)
+                ImGuiDummy(ImVec2(x: 0, y: 8))
+            }
+
             if let titleFont = engine.ui.titleFont { ImGuiPushFont(titleFont, 0.0) }
             ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.brandGold)
             ImGuiTextV("›")
@@ -287,6 +302,47 @@ struct CommandLineUI {
 
         ImGuiPopStyleVar(4)
         ImGuiPopStyleColor(3)
+    }
+
+    private static func renderPassiveFeaturePrompt(
+        engine: PhrostEngine,
+        prompt: String,
+        dw: Float
+    ) {
+        let promptW = min(Float(1000), max(Float(320), dw - 40))
+        let x = (dw - promptW) * 0.5
+        let y = max(AppLayout.belowToolbarY + 8, Float(76))
+        let flags: Int32 = 1 | 2 | 4 | 8 | 64 | 256 | 512 | 4096 | 8192
+
+        ImGuiSetNextWindowPos(
+            ImVec2(x: x, y: y),
+            Int32(ImGuiCond_Always.rawValue),
+            ImVec2(x: 0, y: 0))
+        ImGuiSetNextWindowSizeConstraints(
+            ImVec2(x: promptW, y: 0),
+            ImVec2(x: promptW, y: 120),
+            { _ in }, nil)
+
+        ImGuiPushStyleVarX(Int32(ImGuiStyleVar_WindowPadding.rawValue), 14)
+        ImGuiPushStyleVarY(Int32(ImGuiStyleVar_WindowPadding.rawValue), 10)
+        ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowRounding.rawValue), 8.0)
+        ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowBorderSize.rawValue), 1.0)
+        ImGuiPushStyleColor(Int32(ImGuiCol_WindowBg.rawValue), engine.ui.theme.panelBg)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Border.rawValue), engine.ui.theme.brandGold)
+
+        if igBegin("##FeatureCommandPrompt", nil, flags) {
+            ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.brandGold)
+            ImGuiTextV("›")
+            ImGuiPopStyleColor(1)
+            ImGuiSameLine(0, 10)
+            ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textPrimary)
+            ImGuiTextWrappedV(prompt)
+            ImGuiPopStyleColor(1)
+        }
+        igEnd()
+
+        ImGuiPopStyleColor(2)
+        ImGuiPopStyleVar(4)
     }
 
     /// Completes a command that still needs arguments and keeps the text field

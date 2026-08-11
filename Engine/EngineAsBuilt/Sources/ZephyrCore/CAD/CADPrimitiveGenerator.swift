@@ -211,17 +211,23 @@ import SwiftSDL
         public let c3: SDL_FPoint  // insertion + vAxis
         public let z: Double
         public let tint: (UInt8, UInt8, UInt8, UInt8)?
+        public let clipPolygon: [Vector3]?
+        public let clipInverted: Bool
 
         public init(
             imageName: String,
             c0: SDL_FPoint, c1: SDL_FPoint, c2: SDL_FPoint, c3: SDL_FPoint,
             z: Double,
-            tint: (UInt8, UInt8, UInt8, UInt8)? = nil
+            tint: (UInt8, UInt8, UInt8, UInt8)? = nil,
+            clipPolygon: [Vector3]? = nil,
+            clipInverted: Bool = false
         ) {
             self.imageName = imageName
             self.c0 = c0; self.c1 = c1; self.c2 = c2; self.c3 = c3
             self.z = z
             self.tint = tint
+            self.clipPolygon = clipPolygon
+            self.clipInverted = clipInverted
         }
     }
 
@@ -232,7 +238,9 @@ import SwiftSDL
         handle: UUID,
         specs: [PrimitiveSpec],
         textSprites: [TextSpriteSpec],
-        imageSpecs: [ImageSpec]
+        imageSpecs: [ImageSpec],
+        clipPolygon: [Vector3]?,
+        clipInverted: Bool
     )
 
 
@@ -1125,7 +1133,7 @@ public enum CADPrimitiveGenerator {
         tint: ColorRGBA?,
         renderOrigin: CADRenderOrigin = .zero
     ) -> ImageSpec? {
-        guard case .image(let insertion, let uAxis, let vAxis, let imageName, _, let primTint) = primitive else {
+        guard case .image(let insertion, let uAxis, let vAxis, let imageName, let clipBoundary, let primTint) = primitive else {
             return nil
         }
         let c0 = transform.transformPoint(insertion)
@@ -1152,7 +1160,9 @@ public enum CADPrimitiveGenerator {
             c2: renderPoint(c2),
             c3: renderPoint(c3),
             z: z,
-            tint: effectiveTint
+            tint: effectiveTint,
+            clipPolygon: clipBoundary?.map(transform.transformPoint),
+            clipInverted: false
         )
     }
 }

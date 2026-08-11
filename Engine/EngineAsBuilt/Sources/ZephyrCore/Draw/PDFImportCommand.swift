@@ -427,7 +427,8 @@ public final class PDFImportCommand: FeatureCommand {
         let entity = CADEntity(
             layerID: layerID,
             localGeometry: [prim],
-            transform: .identity
+            transform: .identity,
+            xdata: [CADClipMetadata.underlayTypeKey: .string("PDF")]
         )
 
         engine.document.addEntity(entity)
