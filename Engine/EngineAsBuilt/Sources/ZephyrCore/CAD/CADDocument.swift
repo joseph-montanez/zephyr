@@ -644,9 +644,70 @@ public final class CADDocument {
                 result.updateAnchorCache(from: block.geometry)
             }
         } else if result.arrayData == nil {
+            // Migrate legacy/raw pen samples to the current stabilized fit-point
+            // representation the next time the entity is stored or loaded.
+            var penStabilization = PenStrokeStabilizationSettings.from(xdata: result.xdata)
+            if penStabilization.useSpline,
+               !penStabilization.fitPointsStored,
+               let geometry = result.localGeometry {
+                var updatedGeometry = geometry
+                var migrated = false
+                for index in updatedGeometry.indices {
+                    guard case .penStroke(let vertices, let baseLineWeight, let color) = updatedGeometry[index],
+                          let fit = PenStrokeSplineFitter.fit(
+                            vertices: vertices,
+                            settings: penStabilization,
+                            simplifyInput: true)
+                    else { continue }
+                    updatedGeometry[index] = .penStroke(
+                        vertices: fit.fitVertices,
+                        baseLineWeight: baseLineWeight,
+                        color: color)
+                    migrated = true
+                }
+                if migrated {
+                    result.localGeometry = updatedGeometry
+                    penStabilization.fitPointsStored = true
+                    penStabilization.apply(to: &result)
+                }
+            }
+
             result.localBoundingBox = CADEntity.computeLocalBoundingBox(
                 blockID: result.blockID,
                 localGeometry: result.localGeometry) ?? result.localBoundingBox
+
+            // A pen stroke stores sparse on-curve fit points. Its solved NURBS
+            // controls can extend outside that fit-point box, so include them in
+            // the cached AABB to keep spatial queries conservative.
+            if let geometry = result.localGeometry {
+                let stabilization = PenStrokeStabilizationSettings.from(xdata: result.xdata)
+                var penControlPoints: [Vector3] = []
+                for primitive in geometry {
+                    guard case .penStroke(let vertices, _, _) = primitive else { continue }
+                    if stabilization.useSpline,
+                       let fit = PenStrokeSplineFitter.fit(
+                        vertices: vertices,
+                        settings: stabilization) {
+                        penControlPoints.append(contentsOf: fit.controlVertices.map(\.position))
+                    } else {
+                        penControlPoints.append(contentsOf: vertices.map(\.position))
+                    }
+                }
+                if !penControlPoints.isEmpty {
+                    let penBox = BoundingBox3D(from: penControlPoints)
+                    if var box = result.localBoundingBox {
+                        box.min.x = min(box.min.x, penBox.min.x)
+                        box.min.y = min(box.min.y, penBox.min.y)
+                        box.min.z = min(box.min.z, penBox.min.z)
+                        box.max.x = max(box.max.x, penBox.max.x)
+                        box.max.y = max(box.max.y, penBox.max.y)
+                        box.max.z = max(box.max.z, penBox.max.z)
+                        result.localBoundingBox = box
+                    } else {
+                        result.localBoundingBox = penBox
+                    }
+                }
+            }
             result.updateAnchorCache()
         }
         return result
@@ -739,6 +800,44 @@ public final class CADDocument {
         entityRegistry.removeValue(forKey: handle)
         markEdited(regenerate: true)
         invalidateEntityGrid()
+    }
+
+    /// Remove an entity without pushing undo or invalidating the spatial grid.
+    /// Intended for an interactive edit that captures one undo snapshot up front
+    /// and deliberately keeps the old grid as a conservative broad-phase until
+    /// the gesture ends.
+    public func removeEntityLive(handle: UUID) {
+        guard entityRegistry.removeValue(forKey: handle) != nil else { return }
+        refreshPathArrays(dependingOn: handle)
+        markEdited(regenerate: true)
+    }
+
+    /// Batch live geometry edits under one regeneration. Interactive tools such
+    /// as the pen eraser may touch several entities during one motion event; doing
+    /// one `markEdited(regenerate:)` here avoids rebuilding render state once per
+    /// entity while the spatial index deliberately remains a conservative snapshot.
+    public func applyLiveEntityEdits(
+        removing handles: Set<UUID>,
+        updating entities: [CADEntity]
+    ) {
+        var changedHandles = Set<UUID>()
+
+        for handle in handles {
+            if entityRegistry.removeValue(forKey: handle) != nil {
+                changedHandles.insert(handle)
+            }
+        }
+
+        for entity in entities {
+            guard entityRegistry[entity.handle] != nil else { continue }
+            let updated = preparedEntityForStorage(entity)
+            entityRegistry[updated.handle] = updated
+            changedHandles.insert(updated.handle)
+        }
+
+        guard !changedHandles.isEmpty else { return }
+        for handle in changedHandles { refreshPathArrays(dependingOn: handle) }
+        markEdited(regenerate: true)
     }
 
     // MARK: - Entity Duplication (for COPY / PASTE commands)
@@ -965,7 +1064,9 @@ public final class CADDocument {
                     includePrimitiveRenderBounds(
                         primitive,
                         transform: transform,
-                        textXData: primitiveXData[index] ?? [:],
+                        textXData: entity.blockID == nil
+                            ? entity.xdata
+                            : (primitiveXData[index] ?? [:]),
                         backgroundScale: backgroundScale,
                         hasVisibleBackground: hasVisibleBackground,
                         into: &bounds)
@@ -1071,8 +1172,19 @@ public final class CADDocument {
             bounds.include(contentsOf: evaluated.isEmpty ? worldControlPoints : evaluated)
 
         case .penStroke(let vertices, _, _):
-            let worldPoints = vertices.map { transform.transformPoint($0.position) }
-            bounds.include(contentsOf: worldPoints)
+            let stabilization = PenStrokeStabilizationSettings.from(xdata: textXData)
+            if stabilization.useSpline,
+               let fit = PenStrokeSplineFitter.fit(
+                vertices: vertices,
+                settings: stabilization) {
+                let worldControls = fit.controlVertices.map {
+                    transform.transformPoint($0.position)
+                }
+                bounds.include(contentsOf: worldControls)
+            } else {
+                let worldPoints = vertices.map { transform.transformPoint($0.position) }
+                bounds.include(contentsOf: worldPoints)
+            }
 
         case .text(
             let position, let text, let height, let rotation, let style,

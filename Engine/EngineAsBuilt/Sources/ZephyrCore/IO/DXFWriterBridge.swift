@@ -2395,15 +2395,28 @@ public enum DXFWriterBridge {
             return entity
 
         case .penStroke(let vertices, _, let strokeColor):
-            // Convert pen stroke geometry to a DXF spline (pen metadata discarded)
-            let positions = vertices.map { toDXF(transform.transformPoint($0.position)) }
-            guard positions.count >= 2 else { return DXFPointEntity() }
-            let degree = min(3, positions.count - 1)
-            let knots = generateUniformKnots(controlPointCount: positions.count, degree: degree)
+            let stabilization = PenStrokeStabilizationSettings.from(xdata: xdata)
             let entity = DXFSplineEntity()
-            entity.controlPoints = positions
-            entity.knots = knots
-            entity.degree = degree
+            if stabilization.useSpline,
+               let fit = PenStrokeSplineFitter.fit(vertices: vertices, settings: stabilization) {
+                entity.controlPoints = fit.controlVertices.map {
+                    toDXF(transform.transformPoint($0.position))
+                }
+                entity.knots = fit.knots
+                entity.degree = fit.degree
+                entity.weights = fit.weights
+                if !entity.weights.isEmpty { entity.flags |= 4 }
+            } else {
+                let positions = vertices.map {
+                    toDXF(transform.transformPoint($0.position))
+                }
+                guard positions.count >= 2 else { return DXFPointEntity() }
+                entity.controlPoints = positions
+                entity.degree = min(3, positions.count - 1)
+                entity.knots = generateUniformKnots(
+                    controlPointCount: positions.count,
+                    degree: entity.degree)
+            }
             entity.nControl = Int32(entity.controlPoints.count)
             entity.nKnots = Int32(entity.knots.count)
             applyColor(strokeColor, to: entity)

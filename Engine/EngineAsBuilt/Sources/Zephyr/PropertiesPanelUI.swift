@@ -1002,11 +1002,15 @@ struct PropertiesPanelUI {
             var brush = PenStrokeBrushSettings.from(
                 xdata: entity.xdata,
                 fallbackBaseLineWeight: baseLineWeight)
+            var stabilization = PenStrokeStabilizationSettings.from(xdata: entity.xdata)
             var minWidth = Float(brush.minLineWeight)
             var maxWidth = Float(brush.maxLineWeight)
             var tiltPercent = Float(brush.tiltInfluence * 100.0)
             var rotationPercent = Float(brush.rotationInfluence * 100.0)
+            var stabilizationPercent = Float(stabilization.amount * 100.0)
+            var splineFinal = stabilization.useSpline
             var brushChanged = false
+            var stabilizationChanged = false
 
             ImGuiTextV("Brush Min")
             ImGuiSameLine(0, 6)
@@ -1032,14 +1036,70 @@ struct PropertiesPanelUI {
             if ImGuiSliderFloat("##PropsPenRotation", &rotationPercent, 0.0, 100.0, "%.0f%%", 0) { brushChanged = true }
             ImGuiPopItemWidth()
 
-            if brushChanged {
-                brush = PenStrokeBrushSettings(
-                    minLineWeight: max(0.01, Double(minWidth)),
-                    maxLineWeight: max(max(0.01, Double(minWidth)), Double(maxWidth)),
-                    tiltInfluence: Double(tiltPercent) / 100.0,
-                    rotationInfluence: Double(rotationPercent) / 100.0)
+            ImGuiTextV("Stabilization")
+            ImGuiSameLine(0, 6)
+            ImGuiPushItemWidth(ImGuiGetFontSize() * 7)
+            if ImGuiSliderFloat("##PropsPenStabilization", &stabilizationPercent, 0.0, 100.0, "%.0f%%", 0) {
+                stabilizationChanged = true
+            }
+            ImGuiPopItemWidth()
+            ImGuiSameLine(0, 10)
+            if ImGuiCheckbox("Spline final##PropsPenSpline", &splineFinal) {
+                stabilizationChanged = true
+            }
+
+            let previewStabilization = PenStrokeStabilizationSettings(
+                amount: Double(stabilizationPercent) / 100.0,
+                useSpline: true,
+                fitPointsStored: stabilization.fitPointsStored && !stabilizationChanged)
+            if splineFinal, let fit = PenStrokeSplineFitter.fit(
+                vertices: vertices,
+                settings: previewStabilization) {
+                ImGuiTextV("Final path: \(vertices.count) stored points → \(fit.fitVertices.count) fit points / \(fit.controlVertices.count) NURBS controls (degree \(fit.degree))")
+            } else {
+                ImGuiTextV("Final path: raw stabilized line samples")
+            }
+
+            if brushChanged || stabilizationChanged {
+                if brushChanged {
+                    brush = PenStrokeBrushSettings(
+                        minLineWeight: max(0.01, Double(minWidth)),
+                        maxLineWeight: max(max(0.01, Double(minWidth)), Double(maxWidth)),
+                        tiltInfluence: Double(tiltPercent) / 100.0,
+                        rotationInfluence: Double(rotationPercent) / 100.0)
+                }
+                if stabilizationChanged {
+                    stabilization = PenStrokeStabilizationSettings(
+                        amount: Double(stabilizationPercent) / 100.0,
+                        useSpline: splineFinal,
+                        fitPointsStored: stabilization.fitPointsStored)
+                }
                 var updatedEntity = entity
+
+                // Increasing stabilization on an existing pen entity should also
+                // reduce its editable fit points, not merely change hidden render
+                // weights. This makes the visible grips match the chosen setting.
+                if stabilizationChanged,
+                   geometry.indices.contains(primitiveIndex),
+                   case .penStroke(let currentVertices, let currentBaseWeight, let currentColor) = geometry[primitiveIndex],
+                   stabilization.useSpline,
+                   let fit = PenStrokeSplineFitter.fit(
+                    vertices: currentVertices,
+                    settings: stabilization,
+                    simplifyInput: true) {
+                    var updatedGeometry = geometry
+                    updatedGeometry[primitiveIndex] = .penStroke(
+                        vertices: fit.fitVertices,
+                        baseLineWeight: currentBaseWeight,
+                        color: currentColor)
+                    updatedEntity.localGeometry = updatedGeometry
+                    stabilization.fitPointsStored = true
+                } else if stabilizationChanged && !stabilization.useSpline {
+                    stabilization.fitPointsStored = false
+                }
+
                 brush.apply(to: &updatedEntity)
+                stabilization.apply(to: &updatedEntity)
                 engine.document.updateEntity(updatedEntity)
                 engine.tabManager.markActiveDirty()
             }

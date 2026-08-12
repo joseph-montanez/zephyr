@@ -12,14 +12,27 @@ import SwiftSDL
 /// via SDL3 `CategoryPen` events, with automatic fallback to mouse input
 /// using dummy pen values.
 ///
-/// **Stabilization:** Screen-space distance threshold (4 pixels default)
-/// combined with exponential moving average smoothing on position, pressure,
-/// and tilt, prevents high-frequency jitter and vertex flooding.
+/// **Stabilization:** A user-controlled amount drives screen-space sampling,
+/// exponential smoothing, and the final rational-spline simplification pass.
 @MainActor
 public final class PenStrokeCommand: FeatureCommand {
 
     private static var rememberedBrushSettings: PenStrokeBrushSettings?
+    private static var rememberedStabilizationSettings: PenStrokeStabilizationSettings?
+    private static var rememberedEraserDiameterPixels: Double = 36.0
     private var brushSettings = PenStrokeBrushSettings.defaults(baseLineWeight: 0.25)
+    private var stabilizationSettings = PenStrokeStabilizationSettings.defaults
+    private var thresholdPixelsOverride: Double?
+
+    // MARK: - Eraser State
+
+    private var eraseMode = false
+    private var eraserDiameterPixels: Double = 36.0
+    private var isErasingDrag = false
+    private var eraseUndoSnapshot: CADDocumentSnapshot?
+    private var eraseDidModify = false
+    private var lastEraseWorld: Vector3?
+    private var eraserCursorWorld: Vector3?
 
     // MARK: - Drawing State
 
@@ -54,12 +67,6 @@ public final class PenStrokeCommand: FeatureCommand {
     /// Whether we have seeded the first vertex for this stroke.
     private var hasFirstVertex: Bool = false
 
-    /// EMA smoothing factor (0.0 = no smoothing, 1.0 = no response).
-    private let alpha: Double = 0.4
-
-    /// Screen-space distance threshold in pixels before a new vertex is emitted.
-    private var thresholdPixels: Double = 4.0
-
     // MARK: - Initialization
 
     public init() {}
@@ -84,12 +91,24 @@ public final class PenStrokeCommand: FeatureCommand {
             .flatMap { engine.document.layer(for: $0)?.lineWeight } ?? 0.25
         brushSettings = Self.rememberedBrushSettings
             ?? PenStrokeBrushSettings.defaults(baseLineWeight: baseLineWeight)
-        processor.commandPrompt = "PenStroke: draw with pen and release to create. Mouse: drag, then Enter to finish."
+        stabilizationSettings = Self.rememberedStabilizationSettings
+            ?? PenStrokeStabilizationSettings.defaults
+        thresholdPixelsOverride = nil
+        eraseMode = false
+        eraserDiameterPixels = Self.rememberedEraserDiameterPixels
+        isErasingDrag = false
+        eraseUndoSnapshot = nil
+        eraseDidModify = false
+        lastEraseWorld = nil
+        eraserCursorWorld = nil
+        processor.commandPrompt = "PenStroke: draw with pen. E toggles vector eraser; Enter/Esc ends the command."
     }
 
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
+        finishEraseSession(engine: engine)
         vertices.removeAll()
         isDrawingDrag = false
+        isErasingDrag = false
     }
 
     public func getDrawingSnapPoints() -> [Vector3] {
@@ -104,6 +123,17 @@ public final class PenStrokeCommand: FeatureCommand {
         worldX: Double, worldY: Double,
         engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
+        eraserCursorWorld = Vector3(x: worldX, y: worldY, z: 0)
+        if eraseMode && !(engine.interaction.penState.penActive && engine.interaction.penState.penDrawing) {
+            resetCurrentStroke()
+            usingPenHardware = false
+            isErasingDrag = true
+            beginEraseSession(engine: engine)
+            eraseAlongSweep(to: Vector3(x: worldX, y: worldY, z: 0), engine: engine)
+            processor.commandPrompt = "PenStroke Erase: drag across vectors. Release pauses; E returns to Draw."
+            return .handled
+        }
+
         // Only process mouse clicks if pen hardware is NOT active.
         // If the pen is in proximity, pen events take precedence.
         if engine.interaction.penState.penActive && engine.interaction.penState.penDrawing {
@@ -137,6 +167,12 @@ public final class PenStrokeCommand: FeatureCommand {
     ) {
         currentMouseScreenX = Float(worldX)
         currentMouseScreenY = Float(worldY)
+        eraserCursorWorld = Vector3(x: worldX, y: worldY, z: 0)
+
+        if eraseMode && isErasingDrag && !usingPenHardware {
+            eraseAlongSweep(to: Vector3(x: worldX, y: worldY, z: 0), engine: engine)
+            return
+        }
 
         // If pen hardware is active, ignore standard mouse motion
         // (pen axis/motion events are handled via the pen state path below).
@@ -155,12 +191,24 @@ public final class PenStrokeCommand: FeatureCommand {
         scancode: SDL_Scancode, engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
         switch scancode {
-        case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER, SDL_SCANCODE_SPACE:
-            return finalize(engine: engine, processor: processor)
-        case SDL_SCANCODE_ESCAPE:
+        case SDL_SCANCODE_E:
+            finishEraseSession(engine: engine)
+            resetCurrentStroke()
+            eraseMode.toggle()
+            processor.commandPrompt = eraseMode
+                ? "PenStroke Erase: drag the eraser circle across vectors. E returns to Draw."
+                : "PenStroke Draw: draw with pen. E toggles vector eraser; Enter/Esc ends command."
+            return .handled
+        case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER:
+            finishEraseSession(engine: engine)
             if vertices.count >= 2 {
-                return finalize(engine: engine, processor: processor)
+                _ = commitCurrentStroke(engine: engine, processor: processor)
             }
+            processor.commandPrompt = "PenStroke finished."
+            return .finished
+        case SDL_SCANCODE_ESCAPE:
+            finishEraseSession(engine: engine)
+            resetCurrentStroke()
             processor.commandPrompt = "PenStroke cancelled."
             return .finished
         default:
@@ -171,10 +219,9 @@ public final class PenStrokeCommand: FeatureCommand {
     public func handleCommandText(
         _ text: String, engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
-        // Allow the user to type a pixel threshold override.
         if let pixels = Double(text), pixels > 0 {
-            thresholdPixels = pixels
-            processor.commandPrompt = "PenStroke: threshold set to \(Int(pixels)) px. Draw or Enter to finish."
+            thresholdPixelsOverride = pixels
+            processor.commandPrompt = "PenStroke: sampling threshold override set to \(String(format: "%.1f", pixels)) px."
             return .continue
         }
         return .continue
@@ -186,6 +233,34 @@ public final class PenStrokeCommand: FeatureCommand {
     /// the latest pen state and accumulate vertices during an active drag.
     public func pollPenState(engine: PhrostEngine) {
         let pen = engine.interaction.penState
+        if pen.penActive {
+            eraserCursorWorld = Vector3(x: pen.worldX, y: pen.worldY, z: 0)
+        }
+
+        let wantsErase = eraseMode || pen.isEraser
+        if pen.penActive && pen.penDrawing && wantsErase {
+            if !isErasingDrag {
+                resetCurrentStroke()
+                isErasingDrag = true
+                lastEraseWorld = nil
+                beginEraseSession(engine: engine)
+            }
+            usingPenHardware = true
+            isEraser = true
+            eraseAlongSweep(
+                to: Vector3(x: pen.worldX, y: pen.worldY, z: 0),
+                engine: engine)
+            engine.commandProcessor.commandPrompt = "PenStroke Erase: release pauses; continue erasing or press E/Enter/Esc."
+            return
+        }
+
+        if !pen.penDrawing && isErasingDrag && usingPenHardware {
+            finishEraseSession(engine: engine)
+            usingPenHardware = false
+            isEraser = false
+            engine.commandProcessor.commandPrompt = "PenStroke: erase pass complete. Erase again, press E to draw, or Enter/Esc to finish."
+            return
+        }
 
         // Detect pen-based draw start. If a synthetic mouse event reached us first,
         // promote that fallback drag to a real pen drag instead of locking pressure at 1.0.
@@ -217,7 +292,7 @@ public final class PenStrokeCommand: FeatureCommand {
             lastEmitted = firstVertex.position
             hasFirstVertex = true
 
-            engine.commandProcessor.commandPrompt = "PenStroke: drawing with pen. Release to create stroke."
+            engine.commandProcessor.commandPrompt = "PenStroke: drawing with pen. Release creates stroke; Enter/Esc ends command."
             return
         }
 
@@ -237,11 +312,11 @@ public final class PenStrokeCommand: FeatureCommand {
             }
             isDrawingDrag = false
 
-            if vertices.count >= 2 {
-                let result = finalize(engine: engine, processor: engine.commandProcessor)
-                if result == .finished {
-                    engine.commandProcessor.finishFeatureCommand(engine: engine)
-                }
+            if commitCurrentStroke(engine: engine, processor: engine.commandProcessor) {
+                engine.commandProcessor.commandPrompt = "PenStroke: stroke created. Draw another or press Enter/Esc to finish."
+            } else {
+                resetCurrentStroke()
+                engine.commandProcessor.commandPrompt = "PenStroke: draw another stroke or press Enter/Esc to finish."
             }
             return
         }
@@ -257,6 +332,8 @@ public final class PenStrokeCommand: FeatureCommand {
     /// Apply EMA smoothing and distance filtering, then conditionally emit a vertex.
     private func accumulatePoint(worldX: Double, worldY: Double, engine: PhrostEngine) {
         let pen = engine.interaction.penState
+
+        let alpha = stabilizationSettings.inputAlpha
 
         // EMA smoothing on position.
         if hasFirstVertex {
@@ -282,7 +359,8 @@ public final class PenStrokeCommand: FeatureCommand {
         let candidate = Vector3(x: smoothedX, y: smoothedY, z: 0)
 
         // Screen-space distance threshold → world-space.
-        let thresholdWorld = thresholdPixels / engine.camera.zoom
+        let thresholdPixels = thresholdPixelsOverride ?? stabilizationSettings.inputThresholdPixels
+        let thresholdWorld = thresholdPixels / max(engine.camera.zoom, 0.001)
 
         // Only emit if distance > threshold.
         if candidate.distance(to: lastEmitted) > thresholdWorld {
@@ -297,32 +375,104 @@ public final class PenStrokeCommand: FeatureCommand {
         }
     }
 
+    // MARK: - Vector Eraser
+
+    private func beginEraseSession(engine: PhrostEngine) {
+        guard eraseUndoSnapshot == nil else { return }
+        eraseUndoSnapshot = engine.document.snapshot()
+        eraseDidModify = false
+        lastEraseWorld = nil
+        if !engine.document.entityGridBuilt {
+            engine.document.rebuildEntityGrid()
+        }
+    }
+
+    private func eraseAlongSweep(to worldPoint: Vector3, engine: PhrostEngine) {
+        beginEraseSession(engine: engine)
+        eraserCursorWorld = worldPoint
+
+        let radiusWorld = max(1e-9, (eraserDiameterPixels * 0.5) / max(engine.camera.zoom, 0.001))
+        let start = lastEraseWorld ?? worldPoint
+        let modified = PenVectorEraser.eraseSweep(
+            from: start,
+            to: worldPoint,
+            radius: radiusWorld,
+            document: engine.document)
+
+        lastEraseWorld = worldPoint
+        if modified {
+            eraseDidModify = true
+            engine.cadSelection.clearSelection()
+            engine.tabManager.markActiveDirty()
+        }
+    }
+
+    private func finishEraseSession(engine: PhrostEngine) {
+        if eraseDidModify, let snapshot = eraseUndoSnapshot {
+            engine.document.pushUndo(snapshot)
+            engine.document.invalidateEntityGrid()
+            engine.tabManager.markActiveDirty()
+        }
+        eraseUndoSnapshot = nil
+        eraseDidModify = false
+        lastEraseWorld = nil
+        isErasingDrag = false
+    }
+
     // MARK: - Finalize
 
-    private func finalize(engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult {
+    private func resetCurrentStroke() {
+        vertices.removeAll(keepingCapacity: true)
+        isDrawingDrag = false
+        usingPenHardware = false
+        isEraser = false
+        hasFirstVertex = false
+        lastEmitted = .zero
+        smoothedPressure = 1.0
+        smoothedXtilt = 0.0
+        smoothedYtilt = 0.0
+    }
+
+    @discardableResult
+    private func commitCurrentStroke(engine: PhrostEngine, processor: CADCommandProcessor) -> Bool {
         guard vertices.count >= 2 else {
-            processor.commandPrompt = "PenStroke: need at least 2 vertices to create a stroke."
-            return .continue
+            resetCurrentStroke()
+            return false
         }
 
         let layerID = engine.document.activeLayerID ?? UUID()
         let layer = engine.document.layer(for: layerID)
         let baseLineWeight = layer?.lineWeight ?? 0.25
 
-        let prim: CADPrimitive = .penStroke(
+        // Store the simplified fit points, not the dense tablet samples. The
+        // spline renderer solves its own NURBS control polygon from these points,
+        // so selection grips reflect the actual stabilization level as well.
+        let storedVertices: [PenStrokeVertex]
+        if stabilizationSettings.useSpline,
+           let fit = PenStrokeSplineFitter.fit(
             vertices: vertices,
+            settings: stabilizationSettings,
+            simplifyInput: true) {
+            storedVertices = fit.fitVertices
+        } else {
+            storedVertices = vertices
+        }
+
+        let prim: CADPrimitive = .penStroke(
+            vertices: storedVertices,
             baseLineWeight: baseLineWeight,
             color: nil)
         var entity = CADEntity(
             layerID: layerID,
             localGeometry: [prim])
         brushSettings.apply(to: &entity)
+        var storedStabilization = stabilizationSettings
+        storedStabilization.fitPointsStored = stabilizationSettings.useSpline
+        storedStabilization.apply(to: &entity)
         engine.document.addEntity(entity)
         engine.tabManager.markActiveDirty()
-
-        let mode = usingPenHardware ? "pen" : "mouse"
-        processor.commandPrompt = "PenStroke created (\(vertices.count) vertices, \(mode) input)."
-        return .finished
+        resetCurrentStroke()
+        return true
     }
 
     // MARK: - Overlay Rendering
@@ -330,6 +480,22 @@ public final class PenStrokeCommand: FeatureCommand {
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {
         let drawList = igGetForegroundDrawList_ViewportPtr(nil)
         let strokeCol = makeCol32(0, 200, 255, 220)
+
+        let pen = engine.interaction.penState
+        let showingEraser = eraseMode || (pen.penActive && pen.isEraser)
+        if showingEraser, let cursor = eraserCursorWorld {
+            let screen = EngineCameraManager.worldToScreen(
+                worldX: cursor.x, worldY: cursor.y, cam: cam)
+            let eraseColor = makeCol32(255, 120, 80, 235)
+            ImDrawListAddCircle(
+                drawList,
+                ImVec2(x: screen.x, y: screen.y),
+                Float(eraserDiameterPixels * 0.5),
+                eraseColor,
+                48,
+                2.0)
+            return
+        }
 
         if vertices.count >= 2 {
             for i in 0..<(vertices.count - 1) {
@@ -385,6 +551,11 @@ public final class PenStrokeCommand: FeatureCommand {
 
     public func renderImGui(engine: PhrostEngine) {
         pollPenState(engine: engine)
+        if isErasingDrag && !usingPenHardware,
+           let io = ImGuiGetIO(), !io.pointee.MouseDown.0 {
+            finishEraseSession(engine: engine)
+            engine.commandProcessor.commandPrompt = "PenStroke: erase pass complete. Erase again, press E to draw, or Enter/Esc to finish."
+        }
         guard engine.commandProcessor.activeFeatureCommand === self else { return }
         renderBrushSettings(engine: engine)
     }
@@ -425,7 +596,13 @@ public final class PenStrokeCommand: FeatureCommand {
         var maxWidth = Float(brushSettings.maxLineWeight)
         var tiltPercent = Float(brushSettings.tiltInfluence * 100.0)
         var rotationPercent = Float(brushSettings.rotationInfluence * 100.0)
+        var stabilizationPercent = Float(stabilizationSettings.amount * 100.0)
+        var splineFinal = stabilizationSettings.useSpline
+        var eraseEnabled = eraseMode
+        var eraserSize = Float(eraserDiameterPixels)
         var changed = false
+        var stabilizationChanged = false
+        var eraserChanged = false
 
         ImGuiTextV("Pen Brush")
         ImGuiSameLine(0, 16.0 * scale)
@@ -458,6 +635,34 @@ public final class PenStrokeCommand: FeatureCommand {
         if ImGuiSliderFloat("##PenRotationInfluence", &rotationPercent, 0.0, 100.0, "%.0f%%", 0) { changed = true }
         ImGuiPopItemWidth()
 
+        ImGuiTextV("Stabilize")
+        ImGuiSameLine(0, 4.0 * scale)
+        ImGuiPushItemWidth(180.0 * scale)
+        if ImGuiSliderFloat("##PenStabilization", &stabilizationPercent, 0.0, 100.0, "%.0f%%", 0) {
+            stabilizationChanged = true
+        }
+        ImGuiPopItemWidth()
+        ImGuiSameLine(0, 16.0 * scale)
+        if ImGuiCheckbox("Spline final", &splineFinal) {
+            stabilizationChanged = true
+        }
+        ImGuiSameLine(0, 12.0 * scale)
+        ImGuiTextV("Live: lines  Final: simplified rational spline")
+
+        if ImGuiCheckbox("Erase (E)", &eraseEnabled) {
+            eraserChanged = true
+        }
+        ImGuiSameLine(0, 12.0 * scale)
+        ImGuiTextV("Size")
+        ImGuiSameLine(0, 4.0 * scale)
+        ImGuiPushItemWidth(120.0 * scale)
+        if ImGuiSliderFloat("##PenEraserSize", &eraserSize, 6.0, 192.0, "%.0f px", 0) {
+            eraserChanged = true
+        }
+        ImGuiPopItemWidth()
+        ImGuiSameLine(0, 12.0 * scale)
+        ImGuiTextV("Vector eraser splits lines, paths, pen strokes, and native splines")
+
         if engine.interaction.penState.penActive {
             let pen = engine.interaction.penState
             ImGuiSameLine(0, 16.0 * scale)
@@ -474,6 +679,27 @@ public final class PenStrokeCommand: FeatureCommand {
                 tiltInfluence: Double(tiltPercent) / 100.0,
                 rotationInfluence: Double(rotationPercent) / 100.0)
             Self.rememberedBrushSettings = brushSettings
+        }
+
+        if stabilizationChanged {
+            stabilizationSettings = PenStrokeStabilizationSettings(
+                amount: Double(stabilizationPercent) / 100.0,
+                useSpline: splineFinal)
+            thresholdPixelsOverride = nil
+            Self.rememberedStabilizationSettings = stabilizationSettings
+        }
+
+        if eraserChanged {
+            if eraseEnabled != eraseMode {
+                finishEraseSession(engine: engine)
+                resetCurrentStroke()
+                eraseMode = eraseEnabled
+                engine.commandProcessor.commandPrompt = eraseMode
+                    ? "PenStroke Erase: drag the eraser circle across vectors. E returns to Draw."
+                    : "PenStroke Draw: draw with pen. E toggles vector eraser; Enter/Esc ends command."
+            }
+            eraserDiameterPixels = max(6.0, min(192.0, Double(eraserSize)))
+            Self.rememberedEraserDiameterPixels = eraserDiameterPixels
         }
     }
 }

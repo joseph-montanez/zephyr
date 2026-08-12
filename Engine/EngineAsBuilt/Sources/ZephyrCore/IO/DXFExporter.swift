@@ -649,7 +649,7 @@ public enum DXFExporter {
             )
             if !wrote {
                 writePrimitive(prim, ctx: ctx, transform: entity.transform,
-                               layerName: layerName, into: &output)
+                               layerName: layerName, xdata: entity.xdata, into: &output)
             }
             return
         }
@@ -669,7 +669,7 @@ public enum DXFExporter {
                 }
             } else {
                 writePrimitive(primitive, ctx: ctx, transform: entity.transform,
-                               layerName: layerName, into: &output)
+                               layerName: layerName, xdata: entity.xdata, into: &output)
             }
         }
     }
@@ -920,6 +920,7 @@ public enum DXFExporter {
     private static func writePrimitive(_ p: CADPrimitive, ctx: ExportContext,
                                        transform: Transform3D? = nil,
                                        layerName: String = "0",
+                                       xdata: [String: XDataValue] = [:],
                                        into output: inout String) {
         let t = transform ?? .identity
         let layer = layerName
@@ -1210,28 +1211,39 @@ public enum DXFExporter {
             }
 
         case .penStroke(let vertices, _, _):
-            // Export pen stroke geometry as a DXF spline (pen metadata is discarded).
-            let positions = vertices.map { $0.position }
-            guard positions.count >= 2 else { break }
-            let nCtrl = positions.count
-            let degree = min(3, nCtrl - 1)
-            let knots = generateUniformKnots(controlPointCount: nCtrl, degree: degree)
+            let stabilization = PenStrokeStabilizationSettings.from(xdata: xdata)
+            let fit = stabilization.useSpline
+                ? PenStrokeSplineFitter.fit(vertices: vertices, settings: stabilization)
+                : nil
+            let controlVertices = fit?.controlVertices ?? vertices
+            guard controlVertices.count >= 2 else { break }
+            let degree = fit?.degree ?? min(3, controlVertices.count - 1)
+            let knots = fit?.knots
+                ?? generateUniformKnots(controlPointCount: controlVertices.count, degree: degree)
+            let weights = fit?.weights
             writeEntityHeaderWithColor(entityType: "SPLINE", subclass: "AcDbSpline",
                                         handle: handle, layerName: layer, color: primColor,
                                         into: &output)
-            output += " 70\r\n\(degree == 3 ? 8 : 4)\r\n"
+            var splineFlags = degree == 3 ? 8 : 4
+            if weights != nil { splineFlags |= 4 }
+            output += " 70\r\n\(splineFlags)\r\n"
             output += " 71\r\n\(degree)\r\n"
             output += " 72\r\n\(knots.count)\r\n"
-            output += " 73\r\n\(nCtrl)\r\n"
+            output += " 73\r\n\(controlVertices.count)\r\n"
             output += " 74\r\n0\r\n"
             for k in knots {
                 output += " 40\r\n\(dxfDouble(k))\r\n"
             }
-            for cp in positions {
-                let wp = t.transformPoint(cp)
+            for vertex in controlVertices {
+                let wp = t.transformPoint(vertex.position)
                 output += " 10\r\n\(dxfDouble(wp.x))\r\n"
                 output += " 20\r\n\(dxfDouble(-wp.y))\r\n"
                 output += " 30\r\n\(dxfDouble(wp.z))\r\n"
+            }
+            if let weights {
+                for weight in weights {
+                    output += " 41\r\n\(dxfDouble(weight))\r\n"
+                }
             }
 
         case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):

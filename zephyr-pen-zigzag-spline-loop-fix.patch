@@ -1,0 +1,429 @@
+diff --git a/Engine/EngineAsBuilt/Sources/ZephyrCore/CAD/CADPenStroke.swift b/Engine/EngineAsBuilt/Sources/ZephyrCore/CAD/CADPenStroke.swift
+index ed2a1f5..2e800dc 100644
+--- a/Engine/EngineAsBuilt/Sources/ZephyrCore/CAD/CADPenStroke.swift
++++ b/Engine/EngineAsBuilt/Sources/ZephyrCore/CAD/CADPenStroke.swift
+@@ -209,9 +209,9 @@ public struct PenStrokeSplineFit: Hashable, Sendable {
+     /// fit points and are deliberately much fewer than the raw tablet samples.
+     public var fitVertices: [PenStrokeVertex]
+ 
+-    /// Actual NURBS control vertices. Their positions are solved so the rational
+-    /// spline interpolates `fitVertices` rather than merely treating the sampled
+-    /// stroke as a control polygon.
++    /// Actual NURBS control vertices. The fitter builds a local piecewise-cubic
++    /// spline through `fitVertices`; this avoids the global interpolation overshoot
++    /// that can create loops on fast zig-zag pen motion.
+     public var controlVertices: [PenStrokeVertex]
+     public var degree: Int
+     public var knots: [Double]
+@@ -240,40 +240,65 @@ public enum PenStrokeSplineFitter {
+     ) -> PenStrokeSplineFit? {
+         guard vertices.count >= 2 else { return nil }
+         let shouldSimplify = simplifyInput ?? !settings.fitPointsStored
+-        let fitVertices = settings.useSpline && shouldSimplify
++        let simplified = settings.useSpline && shouldSimplify
+             ? simplify(vertices: vertices, amount: settings.amount)
+             : vertices
++        let fitVertices = removeConsecutiveDuplicates(simplified)
+         guard fitVertices.count >= 2 else { return nil }
+ 
+-        let degree = min(3, fitVertices.count - 1)
+-        let parameters = chordLengthParameters(for: fitVertices)
+-        let knots = interpolationKnots(parameters: parameters, degree: degree)
+-        let weights = rationalWeights(for: fitVertices, amount: settings.amount)
+-        let fitPositions = fitVertices.map(\.position)
+-        let solvedPositions = interpolatingControlPoints(
+-            fitPoints: fitPositions,
+-            parameters: parameters,
+-            degree: degree,
+-            knots: knots,
+-            weights: weights) ?? fitPositions
+-
+-        // Keep brush metadata aligned by index with the simplified fit points.
+-        // Width/tilt/rotation are re-interpolated along the evaluated curve later;
+-        // only the geometric positions are the solved NURBS controls here.
+-        let controlVertices = solvedPositions.enumerated().map { index, position in
+-            let source = fitVertices[min(index, fitVertices.count - 1)]
+-            return PenStrokeVertex(
+-                position: position,
+-                pressure: source.pressure,
+-                xtilt: source.xtilt,
+-                ytilt: source.ytilt,
+-                rotation: source.rotation)
++        // A two-point stroke is exactly a line. Do not inflate it into a cubic.
++        if fitVertices.count == 2 {
++            return PenStrokeSplineFit(
++                fitVertices: fitVertices,
++                controlVertices: fitVertices,
++                degree: 1,
++                knots: [0.0, 0.0, 1.0, 1.0],
++                weights: [1.0, 1.0])
++        }
++
++        // Do not use a single global interpolation solve here. A sparse global
++        // cubic can develop huge control vectors when the user reverses direction
++        // quickly, which is exactly how zig-zags turn into loops. Instead build a
++        // chain of local centripetal Catmull-Rom segments and encode each segment
++        // as a cubic Bezier span in one degree-3 NURBS. Each span only depends on
++        // neighboring fit points, so a sharp turn cannot destabilize the rest of
++        // the stroke.
++        let segmentCount = fitVertices.count - 1
++        var controls: [PenStrokeVertex] = []
++        controls.reserveCapacity(segmentCount * 3 + 1)
++        controls.append(fitVertices[0])
++
++        for segment in 0..<segmentCount {
++            let start = fitVertices[segment]
++            let end = fitVertices[segment + 1]
++            let bezier = shapePreservingBezierControls(
++                vertices: fitVertices,
++                segment: segment)
++
++            controls.append(interpolatedControlVertex(
++                from: start, to: end, t: 1.0 / 3.0, position: bezier.0))
++            controls.append(interpolatedControlVertex(
++                from: start, to: end, t: 2.0 / 3.0, position: bezier.1))
++            controls.append(end)
+         }
+ 
++        var knots = [Double](repeating: 0.0, count: 4)
++        if segmentCount > 1 {
++            for boundary in 1..<segmentCount {
++                let value = Double(boundary) / Double(segmentCount)
++                knots.append(contentsOf: [value, value, value])
++            }
++        }
++        knots.append(contentsOf: [1.0, 1.0, 1.0, 1.0])
++
++        // Unit geometric weights are intentional. Pressure/tilt/rotation still
++        // drive brush width independently. Non-unit rational geometry weights at
++        // sharp turns amplify overshoot and are inappropriate for freehand fitting.
++        let weights = [Double](repeating: 1.0, count: controls.count)
+         return PenStrokeSplineFit(
+             fitVertices: fitVertices,
+-            controlVertices: controlVertices,
+-            degree: degree,
++            controlVertices: controls,
++            degree: 3,
+             knots: knots,
+             weights: weights)
+     }
+@@ -476,224 +501,111 @@ public enum PenStrokeSplineFitter {
+         return result
+     }
+ 
+-    /// Chord-length parameterization keeps interpolation stable across uneven
+-    /// tablet sample spacing and makes each fit point lie on the final curve.
+-    private static func chordLengthParameters(for vertices: [PenStrokeVertex]) -> [Double] {
+-        guard vertices.count > 1 else { return [0.0] }
+-        var parameters = [Double](repeating: 0.0, count: vertices.count)
+-        var total = 0.0
+-        for index in 1..<vertices.count {
+-            total += vertices[index - 1].position.distance(to: vertices[index].position)
+-            parameters[index] = total
+-        }
+-        guard total > 1e-12 else {
+-            let denominator = Double(vertices.count - 1)
+-            return vertices.indices.map { Double($0) / denominator }
+-        }
+-
+-        for index in 1..<vertices.count {
+-            parameters[index] /= total
+-        }
+-        parameters[0] = 0.0
+-        parameters[vertices.count - 1] = 1.0
+-
+-        // Consecutive identical points can produce repeated parameters and a
+-        // singular interpolation matrix. Give the interior a tiny monotonic nudge.
+-        let epsilon = 1e-7 / Double(max(1, vertices.count - 1))
+-        for index in 1..<(vertices.count - 1) {
+-            parameters[index] = max(parameters[index], parameters[index - 1] + epsilon)
+-        }
+-        if vertices.count > 2, parameters[vertices.count - 2] >= 1.0 {
+-            let denominator = Double(vertices.count - 1)
+-            return vertices.indices.map { Double($0) / denominator }
+-        }
+-        return parameters
+-    }
+-
+-    /// Averaged clamped knot vector for global B-spline interpolation.
+-    private static func interpolationKnots(parameters: [Double], degree: Int) -> [Double] {
+-        let controlCount = parameters.count
+-        guard controlCount >= 2 else { return [0.0, 1.0] }
+-        let n = controlCount - 1
+-        let p = max(1, min(degree, n))
+-        var knots = [Double](repeating: 0.0, count: controlCount + p + 1)
+-
+-        for index in 0...p { knots[index] = 0.0 }
+-        for index in controlCount..<knots.count { knots[index] = 1.0 }
+-
+-        if n - p >= 1 {
+-            for j in 1...(n - p) {
+-                var sum = 0.0
+-                for i in j..<(j + p) { sum += parameters[i] }
+-                knots[j + p] = sum / Double(p)
+-            }
+-        }
+-        return knots
+-    }
+-
+-    /// Solve rational B-spline control positions so the curve passes through the
+-    /// simplified fit points. The previous implementation used the fit points as
+-    /// control points directly, which is why the rendered white spline cut away
+-    /// from the selected pen vertices.
+-    private static func interpolatingControlPoints(
+-        fitPoints: [Vector3],
+-        parameters: [Double],
+-        degree: Int,
+-        knots: [Double],
+-        weights: [Double]
+-    ) -> [Vector3]? {
+-        let count = fitPoints.count
+-        guard count >= 2,
+-              parameters.count == count,
+-              weights.count == count,
+-              knots.count == count + degree + 1
+-        else { return nil }
+-
+-        var matrix = [[Double]](
+-            repeating: [Double](repeating: 0.0, count: count + 3),
+-            count: count)
+-
+-        for row in 0..<count {
+-            let basis = basisValues(
+-                controlCount: count,
+-                degree: degree,
+-                knots: knots,
+-                parameter: parameters[row])
+-            var denominator = 0.0
+-            for column in 0..<count {
+-                denominator += basis[column] * weights[column]
+-            }
+-            guard abs(denominator) > 1e-14 else { return nil }
+-
+-            for column in 0..<count {
+-                matrix[row][column] = basis[column] * weights[column] / denominator
+-            }
+-            matrix[row][count] = fitPoints[row].x
+-            matrix[row][count + 1] = fitPoints[row].y
+-            matrix[row][count + 2] = fitPoints[row].z
+-        }
+-
+-        // Gauss-Jordan elimination with partial pivoting. Pen fits are deliberately
+-        // capped to a small number of points, so this tiny dense solve is cheap.
+-        for column in 0..<count {
+-            var pivotRow = column
+-            var pivotMagnitude = abs(matrix[column][column])
+-            if column + 1 < count {
+-                for row in (column + 1)..<count {
+-                    let magnitude = abs(matrix[row][column])
+-                    if magnitude > pivotMagnitude {
+-                        pivotMagnitude = magnitude
+-                        pivotRow = row
+-                    }
+-                }
+-            }
+-            guard pivotMagnitude > 1e-11 else { return nil }
+-            if pivotRow != column { matrix.swapAt(pivotRow, column) }
+-
+-            let pivot = matrix[column][column]
+-            for j in column..<(count + 3) { matrix[column][j] /= pivot }
+-
+-            for row in 0..<count where row != column {
+-                let factor = matrix[row][column]
+-                if abs(factor) <= 1e-15 { continue }
+-                for j in column..<(count + 3) {
+-                    matrix[row][j] -= factor * matrix[column][j]
+-                }
++    /// Remove only consecutive coincident points. Besides reducing redundant
++    /// controls, this prevents zero Catmull-Rom parameter intervals after erasing
++    /// or when the tablet reports the same position for several events.
++    private static func removeConsecutiveDuplicates(
++        _ vertices: [PenStrokeVertex]
++    ) -> [PenStrokeVertex] {
++        guard let first = vertices.first else { return [] }
++        var result = [first]
++        result.reserveCapacity(vertices.count)
++        for vertex in vertices.dropFirst() {
++            if vertex.position.distance(to: result[result.count - 1].position) > 1e-9 {
++                result.append(vertex)
++            } else {
++                // Keep the newest tablet metadata even when geometry did not move.
++                result[result.count - 1].pressure = vertex.pressure
++                result[result.count - 1].xtilt = vertex.xtilt
++                result[result.count - 1].ytilt = vertex.ytilt
++                result[result.count - 1].rotation = vertex.rotation
+             }
+         }
+-
+-        return (0..<count).map { row in
+-            Vector3(
+-                x: matrix[row][count],
+-                y: matrix[row][count + 1],
+-                z: matrix[row][count + 2])
+-        }
++        return result
+     }
+ 
+-    private static func basisValues(
+-        controlCount: Int,
+-        degree: Int,
+-        knots: [Double],
+-        parameter: Double
+-    ) -> [Double] {
+-        let n = controlCount - 1
+-        let p = max(1, min(degree, n))
+-        let u = max(knots[p], min(knots[n + 1], parameter))
+-        let span = findSpan(n: n, degree: p, parameter: u, knots: knots)
+-
+-        var local = [Double](repeating: 0.0, count: p + 1)
+-        var left = [Double](repeating: 0.0, count: p + 1)
+-        var right = [Double](repeating: 0.0, count: p + 1)
+-        local[0] = 1.0
+-
+-        if p > 0 {
+-            for j in 1...p {
+-                left[j] = u - knots[span + 1 - j]
+-                right[j] = knots[span + j] - u
+-                var saved = 0.0
+-                for r in 0..<j {
+-                    let denominator = right[r + 1] + left[j - r]
+-                    let temp = abs(denominator) > 1e-15 ? local[r] / denominator : 0.0
+-                    local[r] = saved + right[r + 1] * temp
+-                    saved = left[j - r] * temp
+-                }
+-                local[j] = saved
+-            }
++    /// Build the two interior Bezier controls for one fit-point interval.
++    ///
++    /// This starts from a centripetal Catmull-Rom tangent (alpha = 0.5), then
++    /// applies two safety constraints:
++    ///   - a handle may not point backward relative to this interval;
++    ///   - a handle may not exceed 45% of the interval chord.
++    ///
++    /// With the Bezier control projections therefore ordered 0, <=0.45,
++    /// >=0.55, 1 along the interval chord, a single span cannot fold back on
++    /// itself and form the loops seen with the old global interpolation solve.
++    private static func shapePreservingBezierControls(
++        vertices: [PenStrokeVertex],
++        segment: Int
++    ) -> (Vector3, Vector3) {
++        let p1 = vertices[segment].position
++        let p2 = vertices[segment + 1].position
++        let chord = p2 - p1
++        let chordLength = chord.magnitude
++        guard chordLength > 1e-12 else { return (p1, p2) }
++
++        let p0 = segment > 0
++            ? vertices[segment - 1].position
++            : p1 * 2.0 - p2
++        let p3 = segment + 2 < vertices.count
++            ? vertices[segment + 2].position
++            : p2 * 2.0 - p1
++
++        let alpha = 0.5
++        func nextParameter(_ value: Double, _ a: Vector3, _ b: Vector3) -> Double {
++            value + pow(max(a.distance(to: b), 1e-9), alpha)
+         }
+ 
+-        var row = [Double](repeating: 0.0, count: controlCount)
+-        let first = span - p
+-        for index in 0...p {
+-            let controlIndex = first + index
+-            if controlIndex >= 0 && controlIndex < controlCount {
+-                row[controlIndex] = local[index]
+-            }
++        let t0 = 0.0
++        let t1 = nextParameter(t0, p0, p1)
++        let t2 = nextParameter(t1, p1, p2)
++        let t3 = nextParameter(t2, p2, p3)
++        let interval = max(t2 - t1, 1e-9)
++
++        var tangent1 = interval * (
++            (p1 - p0) / max(t1 - t0, 1e-9)
++            - (p2 - p0) / max(t2 - t0, 1e-9)
++            + (p2 - p1) / max(t2 - t1, 1e-9))
++        var tangent2 = interval * (
++            (p2 - p1) / max(t2 - t1, 1e-9)
++            - (p3 - p1) / max(t3 - t1, 1e-9)
++            + (p3 - p2) / max(t3 - t2, 1e-9))
++
++        let chordDirection = chord / chordLength
++        let maximumTangentMagnitude = chordLength * 1.35 // /3 = 45% Bezier handle
++
++        func safeTangent(_ tangent: Vector3) -> Vector3 {
++            // Backward handles are what allow a cubic span to double back.
++            guard tangent.x * chordDirection.x
++                    + tangent.y * chordDirection.y
++                    + tangent.z * chordDirection.z > 0.0
++            else { return .zero }
++
++            let magnitude = tangent.magnitude
++            guard magnitude > 1e-12 else { return .zero }
++            if magnitude <= maximumTangentMagnitude { return tangent }
++            return tangent * (maximumTangentMagnitude / magnitude)
+         }
+-        return row
+-    }
+ 
+-    private static func findSpan(
+-        n: Int,
+-        degree: Int,
+-        parameter: Double,
+-        knots: [Double]
+-    ) -> Int {
+-        if parameter >= knots[n + 1] - 1e-14 { return n }
+-        if parameter <= knots[degree] + 1e-14 { return degree }
+-
+-        var low = degree
+-        var high = n + 1
+-        var mid = (low + high) / 2
+-        while parameter < knots[mid] || parameter >= knots[mid + 1] {
+-            if parameter < knots[mid] {
+-                high = mid
+-            } else {
+-                low = mid
+-            }
+-            mid = (low + high) / 2
+-        }
+-        return mid
++        tangent1 = safeTangent(tangent1)
++        tangent2 = safeTangent(tangent2)
++        return (
++            p1 + tangent1 / 3.0,
++            p2 - tangent2 / 3.0)
+     }
+ 
+-    private static func rationalWeights(
+-        for vertices: [PenStrokeVertex],
+-        amount: Double
+-    ) -> [Double] {
+-        guard vertices.count > 2 else { return Array(repeating: 1.0, count: vertices.count) }
+-        let preservation = 1.0 - max(0.0, min(1.0, amount))
+-        var weights = Array(repeating: 1.0, count: vertices.count)
+-        for i in 1..<(vertices.count - 1) {
+-            let a = vertices[i].position - vertices[i - 1].position
+-            let b = vertices[i + 1].position - vertices[i].position
+-            let la = a.magnitude
+-            let lb = b.magnitude
+-            guard la > 1e-12, lb > 1e-12 else { continue }
+-            let cosine = max(-1.0, min(1.0, (a.x * b.x + a.y * b.y + a.z * b.z) / (la * lb)))
+-            let turn = acos(cosine)
+-            let sharpness = min(1.0, turn / (.pi * 0.5))
+-            weights[i] = 1.0 + 2.0 * preservation * sharpness
+-        }
+-        return weights
++    private static func interpolatedControlVertex(
++        from first: PenStrokeVertex,
++        to second: PenStrokeVertex,
++        t: Double,
++        position: Vector3
++    ) -> PenStrokeVertex {
++        PenStrokeVertex(
++            position: position,
++            pressure: lerp(first.pressure, second.pressure, t),
++            xtilt: lerp(first.xtilt, second.xtilt, t),
++            ytilt: lerp(first.ytilt, second.ytilt, t),
++            rotation: first.rotation + shortestAngleDelta(second.rotation, first.rotation) * t)
+     }
+ 
+     private static func pointToSegmentDistance(_ p: Vector3, _ a: Vector3, _ b: Vector3) -> Double {

@@ -360,6 +360,7 @@ public final class CADRendererBridge {
                 lineTypeScale: Double,
                 geomWidth: Double,
                 penStrokeBrushSettings: PenStrokeBrushSettings,
+                penStrokeStabilizationSettings: PenStrokeStabilizationSettings,
                 layerOpacity: Double,
                 textBackgroundScale: Double?,
                 textBackgroundColor: ColorRGBA?,
@@ -628,6 +629,8 @@ public final class CADRendererBridge {
             let penStrokeBrushSettings = PenStrokeBrushSettings.from(
                 xdata: entity.xdata,
                 fallbackBaseLineWeight: lineWeight)
+            let penStrokeStabilizationSettings = PenStrokeStabilizationSettings.from(
+                xdata: entity.xdata)
 
             if let array = entity.arrayData {
                 let path = CADArrayPathResolver.points(
@@ -638,7 +641,8 @@ public final class CADRendererBridge {
                     visible.append((index, entity.handle, geometry, primitiveStyles,
                                     primitiveXData, entity.transform.multiplying(by: instance.transform),
                                     entityColor, lineType, lineWeight, lineTypeScale, geomWidth,
-                                    penStrokeBrushSettings, combinedLayerOpacity, entityTextBackgroundScale,
+                                    penStrokeBrushSettings, penStrokeStabilizationSettings,
+                                    combinedLayerOpacity, entityTextBackgroundScale,
                                     entityTextBackgroundColor, entityTextBackgroundUsesViewportColor,
                                     entityClipData, showEntityClipFrame))
                     index += 1
@@ -646,7 +650,8 @@ public final class CADRendererBridge {
             } else {
                 visible.append((index, entity.handle, geometry, primitiveStyles,
                                 primitiveXData, entity.transform, entityColor, lineType, lineWeight,
-                                lineTypeScale, geomWidth, penStrokeBrushSettings, combinedLayerOpacity,
+                                lineTypeScale, geomWidth, penStrokeBrushSettings,
+                                penStrokeStabilizationSettings, combinedLayerOpacity,
                                 entityTextBackgroundScale, entityTextBackgroundColor,
                                 entityTextBackgroundUsesViewportColor,
                                 entityClipData, showEntityClipFrame))
@@ -925,6 +930,7 @@ public final class CADRendererBridge {
                                     linetypePatterns: snapshot.linetypePatterns,
                                     opacityMultiplier: drawStyle.opacityMultiplier,
                                     penStrokeBrushSettings: v.penStrokeBrushSettings,
+                                    penStrokeStabilizationSettings: v.penStrokeStabilizationSettings,
                                     renderOrigin: renderOrigin,
                                     splineTessellationDivisor: splineTessellationDivisor)
                                 if s.count > 10000 {
@@ -2186,6 +2192,8 @@ public final class CADRendererBridge {
             penStrokeBrushSettings: PenStrokeBrushSettings.from(
                 xdata: entity.xdata,
                 fallbackBaseLineWeight: style.lineWeight),
+            penStrokeStabilizationSettings: PenStrokeStabilizationSettings.from(
+                xdata: entity.xdata),
             renderOrigin: gm.renderOrigin,
             splineTessellationDivisor: 5000.0
         )
