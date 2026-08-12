@@ -244,12 +244,10 @@ struct RadialNavUI {
                 } else if currentZone == 3 {
                     // Pan
                     if !isHugeDelta && wasDragged {
-                        let worldPanX = dx / engine.camera.zoom
-                        let worldPanY = dy / engine.camera.zoom
-                        let rot = -engine.camera.rotation
-                        let dx_rot = worldPanX * cos(rot) - worldPanY * sin(rot)
-                        let dy_rot = worldPanX * sin(rot) + worldPanY * cos(rot)
-                        engine.camera.move(dx: -dx_rot, dy: -dy_rot)
+                        // Pan in the currently displayed (rotated) view axes.
+                        // The camera manager owns the screen→world delta transform so
+                        // NAV behaves identically to middle-mouse, touch, and PAN.
+                        engine.camera.panByScreenDelta(dx: dx, dy: dy)
                     }
                 } else if currentZone == 2 {
                     // Right - Zoom In

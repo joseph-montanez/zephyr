@@ -252,13 +252,7 @@ internal final class EngineInputHandler {
                         let dx = Double(curX - engine.interaction.lastTouchAvgX) * Double(engine.windowWidth)
                         let dy = Double(curY - engine.interaction.lastTouchAvgY) * Double(engine.windowHeight)
                         if abs(dx) > 0.5 || abs(dy) > 0.5 {
-                            let cr = -engine.camera.rotation
-                            let cosR = cos(cr)
-                            let sinR = sin(cr)
-                            let dCamX = (-cosR * dx - sinR * dy) / engine.camera.zoom
-                            let dCamY = (sinR * dx - cosR * dy) / engine.camera.zoom
-                            engine.camera.offset.x += dCamX
-                            engine.camera.offset.y += dCamY
+                            engine.camera.panByScreenDelta(dx: dx, dy: dy)
                         }
                         engine.interaction.lastTouchAvgX = curX
                         engine.interaction.lastTouchAvgY = curY
@@ -664,13 +658,7 @@ internal final class EngineInputHandler {
         if engine.interaction.panActive {
             let screenDx = Double(xrel)
             let screenDy = Double(yrel)
-            let cr = -engine.camera.rotation
-            let cosR = cos(cr)
-            let sinR = sin(cr)
-            let dCamX = (-cosR * screenDx - sinR * screenDy) / engine.camera.zoom
-            let dCamY = (sinR * screenDx - cosR * screenDy) / engine.camera.zoom
-            engine.camera.offset.x += dCamX
-            engine.camera.offset.y += dCamY
+            engine.camera.panByScreenDelta(dx: screenDx, dy: screenDy)
         } else {
             engine.loopController.handleToolMouseMotion(x: x, y: y)
         }

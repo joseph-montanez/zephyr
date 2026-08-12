@@ -134,6 +134,22 @@ public final class EngineCameraManager {
         offset.y += dy
     }
 
+    /// Pan the camera by a drag expressed in screen pixels.
+    ///
+    /// Camera `offset` is stored in world coordinates, so a screen-space drag must
+    /// be transformed through the current view rotation before it is applied.
+    /// Keeping this conversion here ensures PAN, middle-mouse/touch panning, and
+    /// the radial NAV control all follow the currently rotated view axes.
+    public func panByScreenDelta(dx: Double, dy: Double) {
+        let cr = -rotation
+        let cosR = cos(cr)
+        let sinR = sin(cr)
+        let dCamX = (-cosR * dx - sinR * dy) / zoom
+        let dCamY = (sinR * dx - cosR * dy) / zoom
+        offset.x += dCamX
+        offset.y += dCamY
+    }
+
     public func setZoom(_ newZoom: Double) {
         zoom = max(0.000001, min(newZoom, 1e15))
     }

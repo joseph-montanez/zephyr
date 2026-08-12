@@ -55,14 +55,8 @@ public final class PanCommand: FeatureCommand {
         lastScreenX = curX
         lastScreenY = curY
 
-        // Convert screen delta to world delta (accounting for camera rotation + zoom)
-        let cr = -engine.camera.rotation
-        let cosR = cos(cr)
-        let sinR = sin(cr)
-        let dCamX = (-cosR * dx - sinR * dy) / engine.camera.zoom
-        let dCamY = (sinR * dx - cosR * dy) / engine.camera.zoom
-        engine.camera.offset.x += dCamX
-        engine.camera.offset.y += dCamY
+        // Convert the screen drag through the current view rotation + zoom.
+        engine.camera.panByScreenDelta(dx: dx, dy: dy)
     }
 
     public func handleKeyDown(
