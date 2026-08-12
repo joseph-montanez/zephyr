@@ -340,6 +340,7 @@ public enum CADPrimitiveGenerator {
         opacityMultiplier: Double = 1.0,
         penStrokeBrushSettings: PenStrokeBrushSettings? = nil,
         penStrokeStabilizationSettings: PenStrokeStabilizationSettings? = nil,
+        penStrokeUnitScaleFromMM: Double = 1.0,
         renderOrigin: CADRenderOrigin = .zero,
         splineTessellationDivisor: Double = 5000.0
     ) -> [PrimitiveSpec] {
@@ -828,18 +829,24 @@ public enum CADPrimitiveGenerator {
             }
 
             let worldPoints = renderVertices.map { renderPoint($0.position) }
-            var segmentWeights: [Double] = []
-            segmentWeights.reserveCapacity(worldPoints.count - 1)
+            // Pen widths are geometric model widths, not plot/screen lineweights.
+            // Convert the brush's millimeter values into the drawing's base unit,
+            // then apply the entity's planar transform scale. This makes the stroke
+            // naturally get thinner as the user zooms out, just like other model
+            // geometry with an explicit width.
+            let penWidthScale = max(1e-12, penStrokeUnitScaleFromMM) * geometryScale
+            var segmentWidths: [Double] = []
+            segmentWidths.reserveCapacity(worldPoints.count - 1)
             for i in 0..<(worldPoints.count - 1) {
                 let p0 = worldPoints[i]
                 let p1 = worldPoints[i + 1]
                 let dx = Double(p1.x - p0.x)
                 let dy = Double(p1.y - p0.y)
                 let segmentAngle = atan2(dy, dx)
-                segmentWeights.append(brush.lineWeight(
+                segmentWidths.append(brush.lineWeight(
                     from: renderVertices[i],
                     to: renderVertices[i + 1],
-                    segmentAngle: segmentAngle))
+                    segmentAngle: segmentAngle) * penWidthScale)
             }
             specs.append(PrimitiveSpec(
                 type: .lines,
@@ -848,9 +855,12 @@ public enum CADPrimitiveGenerator {
                 corners: [],
                 z: z,
                 color: finalColor,
-                lineWeight: segmentWeights.max() ?? baseLineWeight,
+                // Keep the ordinary lineWeight at the entity/layer value for metadata
+                // and plot behavior. segmentLineWeights carries per-segment geometric
+                // widths for pen strokes; CADVertexBufferBuilder recognizes this path.
+                lineWeight: baseLineWeight,
                 geomWidth: 0.0,
-                segmentLineWeights: segmentWeights))
+                segmentLineWeights: segmentWidths))
             
         case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):
             let fontFile = CADFontManager.resolveTextStyleFont(

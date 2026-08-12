@@ -1210,41 +1210,31 @@ public enum DXFExporter {
                 }
             }
 
-        case .penStroke(let vertices, _, _):
-            let stabilization = PenStrokeStabilizationSettings.from(xdata: xdata)
-            let fit = stabilization.useSpline
-                ? PenStrokeSplineFitter.fit(vertices: vertices, settings: stabilization)
-                : nil
-            let controlVertices = fit?.controlVertices ?? vertices
-            guard controlVertices.count >= 2 else { break }
-            let degree = fit?.degree ?? min(3, controlVertices.count - 1)
-            let knots = fit?.knots
-                ?? generateUniformKnots(controlPointCount: controlVertices.count, degree: degree)
-            let weights = fit?.weights
-            writeEntityHeaderWithColor(entityType: "SPLINE", subclass: "AcDbSpline",
+        case .penStroke(let vertices, let baseLineWeight, _):
+            guard let outline = PenStrokeDXFOutlineBuilder.outline(
+                vertices: vertices,
+                baseLineWeight: baseLineWeight,
+                xdata: xdata,
+                transform: t,
+                unitScaleFromMM: ctx.document.unit.scaleFromMM),
+                outline.count >= 3 else { break }
+
+            // A pen stroke is a filled brush footprint, not a stroked DXF centerline.
+            // Export a single non-associative SOLID HATCH whose internal polyline
+            // boundary is the pressure/tilt-aware outline. No separate visible
+            // LWPOLYLINE is emitted, so the DXF contains one filled vector entity.
+            writeEntityHeaderWithColor(entityType: "HATCH", subclass: "AcDbHatch",
                                         handle: handle, layerName: layer, color: primColor,
                                         into: &output)
-            var splineFlags = degree == 3 ? 8 : 4
-            if weights != nil { splineFlags |= 4 }
-            output += " 70\r\n\(splineFlags)\r\n"
-            output += " 71\r\n\(degree)\r\n"
-            output += " 72\r\n\(knots.count)\r\n"
-            output += " 73\r\n\(controlVertices.count)\r\n"
-            output += " 74\r\n0\r\n"
-            for k in knots {
-                output += " 40\r\n\(dxfDouble(k))\r\n"
-            }
-            for vertex in controlVertices {
-                let wp = t.transformPoint(vertex.position)
-                output += " 10\r\n\(dxfDouble(wp.x))\r\n"
-                output += " 20\r\n\(dxfDouble(-wp.y))\r\n"
-                output += " 30\r\n\(dxfDouble(wp.z))\r\n"
-            }
-            if let weights {
-                for weight in weights {
-                    output += " 41\r\n\(dxfDouble(weight))\r\n"
-                }
-            }
+            output += " 10\r\n0.0\r\n 20\r\n0.0\r\n 30\r\n0.0\r\n"
+            output += "210\r\n0.0\r\n220\r\n0.0\r\n230\r\n1.0\r\n"
+            output += "  2\r\nSOLID\r\n"
+            output += " 70\r\n1\r\n"
+            output += " 71\r\n0\r\n"
+            output += " 91\r\n1\r\n"
+            writeHatchPolylineLoop(points: outline, isOuter: true, into: &output)
+            writeHatchPatternData(pattern: "SOLID", scale: 1.0, angle: 0.0, into: &output)
+            output += " 98\r\n0\r\n"
 
         case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):
             let wp = t.transformPoint(pos)

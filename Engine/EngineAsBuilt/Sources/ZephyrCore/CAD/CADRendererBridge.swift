@@ -931,6 +931,7 @@ public final class CADRendererBridge {
                                     opacityMultiplier: drawStyle.opacityMultiplier,
                                     penStrokeBrushSettings: v.penStrokeBrushSettings,
                                     penStrokeStabilizationSettings: v.penStrokeStabilizationSettings,
+                                    penStrokeUnitScaleFromMM: snapshot.unit.scaleFromMM,
                                     renderOrigin: renderOrigin,
                                     splineTessellationDivisor: splineTessellationDivisor)
                                 if s.count > 10000 {
@@ -2194,6 +2195,7 @@ public final class CADRendererBridge {
                 fallbackBaseLineWeight: style.lineWeight),
             penStrokeStabilizationSettings: PenStrokeStabilizationSettings.from(
                 xdata: entity.xdata),
+            penStrokeUnitScaleFromMM: document.unit.scaleFromMM,
             renderOrigin: gm.renderOrigin,
             splineTessellationDivisor: 5000.0
         )

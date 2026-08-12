@@ -444,7 +444,8 @@ public enum DXFWriterBridge {
                     primitiveStyles: block.primitiveStyles,
                     primitiveXData: block.primitiveXData,
                     xdata: [:],
-                    transform: .identity)
+                    transform: .identity,
+                    unitScaleFromMM: modelView.unit.scaleFromMM)
                 var consumedHatchIndices = Set<Int>()
                 for hatchExport in blockHatches {
                     let hatch = hatchExport.entity
@@ -787,7 +788,8 @@ public enum DXFWriterBridge {
                     primitiveStyles: [:],
                     primitiveXData: [:],
                     xdata: entity.xdata,
-                    transform: entity.transform)
+                    transform: entity.transform,
+                    unitScaleFromMM: view.unit.scaleFromMM)
 
                 var consumedHatchIndices = Set<Int>()
                 for hatchExport in hatchExports {
@@ -1409,18 +1411,47 @@ public enum DXFWriterBridge {
         primitiveStyles: [Int: CADPrimitiveStyle],
         primitiveXData: [Int: [String: XDataValue]],
         xdata: [String: XDataValue],
-        transform: Transform3D
+        transform: Transform3D,
+        unitScaleFromMM: Double
     ) -> [HatchEntityExport] {
         var result: [HatchEntityExport] = []
         var index = 0
 
         while index < primitives.count {
             let style = primitiveStyles[index]
+            let groupXData = primitiveXData[index] ?? xdata
+
+            // Pen strokes are filled brush footprints. Export one SOLID HATCH whose
+            // internal polyline loop is the generated pressure/tilt-aware outline.
+            // Mark the source primitive consumed so no duplicate visible boundary
+            // LWPOLYLINE is emitted by the ordinary primitive pass.
+            if case .penStroke(let vertices, let baseLineWeight, let color) = primitives[index],
+               let outline = PenStrokeDXFOutlineBuilder.outline(
+                    vertices: vertices,
+                    baseLineWeight: baseLineWeight,
+                    xdata: groupXData,
+                    transform: transform,
+                    unitScaleFromMM: unitScaleFromMM),
+               outline.count >= 3,
+               let hatch = combinedHatchEntity(
+                    primitives: [.fillComplexPolygon(
+                        outer: outline,
+                        holes: [],
+                        color: color)],
+                    xdata: [:],
+                    transform: .identity) {
+                result.append(HatchEntityExport(
+                    entity: hatch,
+                    primitiveIndices: [index],
+                    style: style))
+                index += 1
+                continue
+            }
+
             guard let key = hatchGroupKey(primitives[index], style: style) else {
                 index += 1
                 continue
             }
-            let groupXData = primitiveXData[index] ?? xdata
 
             var groupedPrimitives = [primitives[index]]
             var groupedIndices = [index]
@@ -2394,33 +2425,10 @@ public enum DXFWriterBridge {
             applyColor(color, to: entity)
             return entity
 
-        case .penStroke(let vertices, _, let strokeColor):
-            let stabilization = PenStrokeStabilizationSettings.from(xdata: xdata)
-            let entity = DXFSplineEntity()
-            if stabilization.useSpline,
-               let fit = PenStrokeSplineFitter.fit(vertices: vertices, settings: stabilization) {
-                entity.controlPoints = fit.controlVertices.map {
-                    toDXF(transform.transformPoint($0.position))
-                }
-                entity.knots = fit.knots
-                entity.degree = fit.degree
-                entity.weights = fit.weights
-                if !entity.weights.isEmpty { entity.flags |= 4 }
-            } else {
-                let positions = vertices.map {
-                    toDXF(transform.transformPoint($0.position))
-                }
-                guard positions.count >= 2 else { return DXFPointEntity() }
-                entity.controlPoints = positions
-                entity.degree = min(3, positions.count - 1)
-                entity.knots = generateUniformKnots(
-                    controlPointCount: positions.count,
-                    degree: entity.degree)
-            }
-            entity.nControl = Int32(entity.controlPoints.count)
-            entity.nKnots = Int32(entity.knots.count)
-            applyColor(strokeColor, to: entity)
-            return entity
+        case .penStroke:
+            // Pen strokes are emitted by hatchEntities(...) as SOLID HATCH objects
+            // so their variable brush thickness is represented by filled geometry.
+            return nil
 
         case .text(
             let position, let text, let height, let rotation, let style,

@@ -359,6 +359,9 @@ public final class CADVertexBufferBuilder {
             }
         }
 
+        // Variable-width pen paths use geometric widths in world units. Unlike
+        // CAD lineWeight (a plot/screen-space width), these widths must scale with
+        // camera zoom so a zoomed-out freehand drawing does not turn into a blob.
         func appendVariableWidthJoinedPath(
             _ sourcePoints: [SDL_FPoint],
             _ sourceSegmentWeights: [Double],
@@ -389,13 +392,15 @@ public final class CADVertexBufferBuilder {
             if points.count == 2 {
                 appendQuadSegment(
                     points[0], points[1],
-                    lineRasterMetrics(lineWeight: segmentWeights[0]),
+                    lineRasterMetrics(lineWeight: 0.0, geomWidth: segmentWeights[0]),
                     r, g, b, a)
                 return
             }
 
             let segmentCount = points.count - 1
-            let segmentMetrics = segmentWeights.map { lineRasterMetrics(lineWeight: $0) }
+            let segmentMetrics = segmentWeights.map {
+                lineRasterMetrics(lineWeight: 0.0, geomWidth: $0)
+            }
             var normals = [SDL_FPoint](
                 repeating: SDL_FPoint(x: 0, y: 0),
                 count: segmentCount)

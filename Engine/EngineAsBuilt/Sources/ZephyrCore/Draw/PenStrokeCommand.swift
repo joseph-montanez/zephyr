@@ -508,10 +508,14 @@ public final class PenStrokeCommand: FeatureCommand {
                 let segmentAngle = atan2(
                     second.position.y - first.position.y,
                     second.position.x - first.position.x)
-                let thickness = brushSettings.pixelWidth(
-                    from: first,
-                    to: second,
-                    segmentAngle: segmentAngle)
+                let thickness = max(
+                    1.0,
+                    Float(brushSettings.lineWeight(
+                        from: first,
+                        to: second,
+                        segmentAngle: segmentAngle)
+                        * engine.document.unit.scaleFromMM
+                        * cam.camZoom))
                 ImDrawListAddLine(
                     drawList,
                     ImVec2(x: p1.x, y: p1.y),
@@ -536,10 +540,14 @@ public final class PenStrokeCommand: FeatureCommand {
             let segmentAngle = atan2(
                 current.position.y - lastV.position.y,
                 current.position.x - lastV.position.x)
-            let thickness = brushSettings.pixelWidth(
-                from: lastV,
-                to: current,
-                segmentAngle: segmentAngle)
+            let thickness = max(
+                1.0,
+                Float(brushSettings.lineWeight(
+                    from: lastV,
+                    to: current,
+                    segmentAngle: segmentAngle)
+                    * engine.document.unit.scaleFromMM
+                    * cam.camZoom))
             ImDrawListAddLine(
                 drawList,
                 ImVec2(x: lp.x, y: lp.y),
