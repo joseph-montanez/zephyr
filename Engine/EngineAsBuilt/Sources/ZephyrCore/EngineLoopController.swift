@@ -457,6 +457,28 @@ public final class EngineLoopController {
 
     internal func handleToolMouseUp(x: Float, y: Float) {
         let interaction = engine.interaction
+        if interaction.rectSelectActive, !interaction.dragActive, !interaction.gripActive {
+            interaction.rectSelectActive = false
+            interaction.rectSelectPreviewHandles.removeAll()
+            let (releaseWX, releaseWY) = engine.camera.screenToWorld(screenX: x, screenY: y, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
+            if let commit = CADRectSelect.commitRect(
+                startX: interaction.rectSelectStartX, startY: interaction.rectSelectStartY,
+                currentX: releaseWX, currentY: releaseWY,
+                screenStartX: interaction.rectSelectScreenStartX, screenX: x) {
+                engine.cadSelection.selectInRect(
+                    worldX: commit.minX,
+                    worldY: commit.minY,
+                    worldW: commit.worldW,
+                    worldH: commit.worldH,
+                    document: engine.document,
+                    mode: interaction.cadRectSelectMode,
+                    style: commit.style)
+                if engine.commandProcessor.isSelectingObjects {
+                    engine.commandProcessor.updateObjectSelectionPrompt()
+                }
+            }
+            return
+        }
         if let tableDrag = interaction.tableBoundaryDrag {
             if tableDrag.moved {
                 engine.document.pushUndo(tableDrag.undoSnapshot)

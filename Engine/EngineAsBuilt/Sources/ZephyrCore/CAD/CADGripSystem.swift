@@ -27,13 +27,15 @@ public enum CADGripSystem {
         cam: CameraTransform,
         simplifyComplexBlocks: Bool = true,
         selectedHandles: Set<UUID>? = nil,
-        selectedLeaderContentHandle: UUID? = nil
+        selectedLeaderContentHandle: UUID? = nil,
+        gripObjectLimit: Int = .max
     ) -> CADSelectionManager.CadGripInfo? {
         let grips = getAllGrips(
             document: document, cam: cam,
             simplifyComplexBlocks: simplifyComplexBlocks,
             selectedHandles: selectedHandles,
-            selectedLeaderContentHandle: selectedLeaderContentHandle)
+            selectedLeaderContentHandle: selectedLeaderContentHandle,
+            gripObjectLimit: gripObjectLimit)
         let threshold: Float = 10.0
         var bestDist: Float = threshold * 2
         var best: CADSelectionManager.CadGripInfo? = nil
@@ -59,9 +61,15 @@ public enum CADGripSystem {
         cam: CameraTransform,
         simplifyComplexBlocks: Bool = true,
         selectedHandles: Set<UUID>? = nil,
-        selectedLeaderContentHandle: UUID? = nil
+        selectedLeaderContentHandle: UUID? = nil,
+        gripObjectLimit: Int = .max
     ) -> [CADSelectionManager.CadGripInfo] {
-        let handles = selectedHandles ?? []
+        // GRIPOBJLIMIT: over the limit no grips are generated at all —
+        // they must not exist for hover/drag either. Selection display
+        // falls back to geometry highlight (CADSelectionDisplayPolicy).
+        let handles = CADSelectionDisplayPolicy.gripHandles(
+            selectedHandles: selectedHandles ?? [],
+            gripObjectLimit: gripObjectLimit)
         guard !handles.isEmpty else { return [] }
 
         var results: [CADSelectionManager.CadGripInfo] = []

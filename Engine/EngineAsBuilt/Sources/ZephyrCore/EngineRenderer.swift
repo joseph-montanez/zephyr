@@ -681,11 +681,12 @@ public final class EngineRenderer {
             || engine.interaction.gripActive
             || engine.interaction.dragActive
         {
-            // Respect gripObjectMax: if too many entities are selected, suppress
-            // all grips and show only selection outlines.
-            let gripHandles: Set<UUID>
-            if engine.cadSelection.selectedHandles.count > engine.gripObjectMax {
+            // GRIPOBJLIMIT: when too many entities are selected, suppress grips.
+            // Entities retain their geometry highlight; no per-entity boxes.
+            var gripHandles = engine.cadSelection.selectedHandles
+            if CADSelectionDisplayPolicy.gripsSuppressed(selectedCount: gripHandles.count, gripObjectLimit: engine.gripObjectMax) {
                 gripHandles = []
+                
             } else {
                 gripHandles = engine.cadSelection.selectedHandles
             }
@@ -693,7 +694,8 @@ public final class EngineRenderer {
                 document: engine.document, cam: transform,
                 simplifyComplexBlocks: true,
                 selectedHandles: gripHandles,
-                selectedLeaderContentHandle: engine.cadSelection.selectedLeaderContentHandle)
+                selectedLeaderContentHandle: engine.cadSelection.selectedLeaderContentHandle,
+                gripObjectLimit: engine.gripObjectMax)
             engine.interaction.cachedGripGeneration = engine.camera.renderGeneration
             engine._cachedSelectionGen = engine.cadSelection._selectionGeneration
             engine._cachedApplyGen = (engine.tabManager.activeTab.map { tabCtx(for: $0.id) } ?? primaryCtx).appliedGeneration
@@ -2289,7 +2291,7 @@ public final class EngineRenderer {
     /// Passive feedback for a secondary (non-active-tab) view: crosshair at
     /// this window's own mouse position, hover highlight via a
     /// document-scoped CPU hit test, and this document's persisted
-    /// selection (bounding boxes + grip squares). Mirrors the primary
+    /// selection (geometry/frame highlights plus grip squares). Mirrors the primary
     /// overlay colors, minus drag/edit state, which belongs to the
     /// window showing the active tab.
     private func renderSecondaryOverlays(
@@ -2308,7 +2310,9 @@ public final class EngineRenderer {
             pushBackgroundClip(vp)
             let drawList = igGetBackgroundDrawList(nil)
             let selColor = igGetColorU32_Vec4(engine.ui.theme.brandGold)
-            for handle in handles {
+            var secondaryHighlightSegments = 0
+            CADSelectionHighlightRenderer.drawGeometryHighlights(handles: handles, document: doc, cam: transform, vertexEditor: engine.cadBridge.vertexEditor, geometry: ctx.geometry, drawList: drawList, color: selColor, lineWidth: 2.0, maxSegments: 4096, segmentsDrawn: &secondaryHighlightSegments)
+            for handle in handles where CADSelectionHighlightRenderer.frameRequired(handle: handle, document: doc) {
                 guard let entity = doc.entity(for: handle),
                       let layer = doc.layer(for: entity.layerID), layer.isVisible,
                       let wbb = entity.worldBoundingBox else { continue }
@@ -2321,11 +2325,12 @@ public final class EngineRenderer {
                 ImDrawListAddLine(drawList, ImVec2(x: s2.x, y: s2.y), ImVec2(x: s3.x, y: s3.y), selColor, 2.0)
                 ImDrawListAddLine(drawList, ImVec2(x: s3.x, y: s3.y), ImVec2(x: s0.x, y: s0.y), selColor, 2.0)
             }
-            if handles.count <= engine.gripObjectMax {
+            if !CADSelectionDisplayPolicy.gripsSuppressed(selectedCount: handles.count, gripObjectLimit: engine.gripObjectMax) {
                 let grips = CADGripSystem.getAllGrips(
                     document: doc, cam: transform, simplifyComplexBlocks: true,
                     selectedHandles: handles,
-                    selectedLeaderContentHandle: tab.selectionState.selectedLeaderContentHandle)
+                    selectedLeaderContentHandle: tab.selectionState.selectedLeaderContentHandle,
+                    gripObjectLimit: engine.gripObjectMax)
                 var drawn = 0
                 for grip in grips {
                     if drawn >= engine.gripMax { break }
@@ -2619,10 +2624,10 @@ public final class EngineRenderer {
 
 
     private func renderCadSelectionHighlight(cam: CameraTransform) {
-        // Selection highlight: for image entities and block references, redraw
-        // geometry outlines in a bright highlight colour so the selected state
-        // is visually distinct from both unselected geometry and the hover state.
-        // Falls back to a bounding box for entities with many primitives.
+        // AutoCAD selection highlight: selected entities are redrawn in gold.
+        // Images and complex block references use one bounding frame each;
+        // loose entities keep their geometry highlight (never per-entity boxes).
+        // Grips are suppressed over GRIPOBJLIMIT; the highlight remains.
         let selColor = igGetColorU32_Vec4(engine.ui.theme.brandGold)
         let lineWidth: Float = 2.0
         let maxSegments = (_foregroundVertexLimit - _foregroundVertexEstimate) / 6
@@ -2638,13 +2643,15 @@ public final class EngineRenderer {
             let geom = entity.localGeometry ?? engine.document.resolvedGeometry(for: entity)
             let isImage = geom?.contains(where: { if case .image = $0 { return true }; return false }) ?? false
             let isBlock = entity.blockID != nil
+            let highlightStyle = CADSelectionDisplayPolicy.highlightStyle(isImage: isImage, isBlockReference: isBlock, primitiveCount: geom?.count ?? 0)
 
-            if isImage || isBlock {
+            if highlightStyle == .boundingFrame || highlightStyle == .geometry {
                 let drawList = igGetBackgroundDrawList(nil)
 
                 // For image entities or complex blocks, just draw the bounding box.
-                let primitiveCount = geom?.count ?? 0
-                if isImage || primitiveCount > 50 || segmentsDrawn >= maxSegments {
+
+                if highlightStyle == .boundingFrame || segmentsDrawn >= maxSegments {
+                    guard highlightStyle == .boundingFrame else { continue }
                     guard let wbb = entity.worldBoundingBox else { continue }
                     let s0 = EngineCameraManager.worldToScreen(worldX: wbb.min.x, worldY: wbb.min.y, cam: cam)
                     let s1 = EngineCameraManager.worldToScreen(worldX: wbb.max.x, worldY: wbb.min.y, cam: cam)
@@ -2658,7 +2665,7 @@ public final class EngineRenderer {
                 } else {
                     // For simple block entities, redraw each geometry segment so the
                     // selection highlight matches the geometry shape (same as hover).
-                    engine.cadBridge.vertexEditor.forEachWorldSegment(handle: handle, in: engine.geometryManager) { x1, y1, x2, y2 in
+                    engine.cadBridge.vertexEditor.forEachWorldSegment(handle: handle, in: engine.geometryManager, maxSegments: max(0, maxSegments - segmentsDrawn)) { x1, y1, x2, y2 in
                         guard segmentsDrawn < maxSegments else { return }
                         let s0 = EngineCameraManager.worldToScreen(worldX: x1, worldY: y1, cam: cam)
                         let s1 = EngineCameraManager.worldToScreen(worldX: x2, worldY: y2, cam: cam)
@@ -2667,10 +2674,10 @@ public final class EngineRenderer {
                     }
                     _foregroundVertexEstimate += segmentsDrawn * 2
                 }
-            } else if overGripLimit {
-                // When selection exceeds gripObjectMax, grips are suppressed.
-                // Draw gold bounding boxes for non-image, non-block entities
-                // so users can still see what is selected.
+            } else if overGripLimit, CADSelectionHighlightRenderer.frameRequired(handle: handle, document: engine.document) {
+                // Legacy over-limit box path: AutoCAD suppresses grips but
+                // keeps the geometry highlight, so this frame only draws if
+                // a frame is still required (see frameRequired).
                 guard let wbb = entity.worldBoundingBox else { continue }
                 let drawList = igGetBackgroundDrawList(nil)
                 let s0 = EngineCameraManager.worldToScreen(worldX: wbb.min.x, worldY: wbb.min.y, cam: cam)
@@ -2758,7 +2765,17 @@ public final class EngineRenderer {
     /// the rect select is finalized. Draws geometry outlines like hover,
     /// capped to stay under ImGui's 16-bit index limit (65535 vertices).
     private func renderRectSelectPreview(cam: CameraTransform) {
-        guard engine.interaction.rectSelectActive, !engine.interaction.rectSelectPreviewHandles.isEmpty else { return }
+        guard engine.interaction.rectSelectActive else { return }
+        let previewStyle: CADSelectionManager.RectSelectStyle = (engine.interaction.lastMouseX >= engine.interaction.rectSelectScreenStartX) ? .window : .crossing
+        let previewMinX = min(engine.interaction.rectSelectStartX, engine.interaction.rectSelectCurrentX)
+        let previewMaxX = max(engine.interaction.rectSelectStartX, engine.interaction.rectSelectCurrentX)
+        let previewMinY = min(engine.interaction.rectSelectStartY, engine.interaction.rectSelectCurrentY)
+        let previewMaxY = max(engine.interaction.rectSelectStartY, engine.interaction.rectSelectCurrentY)
+        guard previewMaxX > previewMinX || previewMaxY > previewMinY else { return }
+        let previewHandles = engine.cadSelection.handlesInRect(worldX: previewMinX, worldY: previewMinY, worldW: previewMaxX - previewMinX, worldH: previewMaxY - previewMinY, document: engine.document, style: previewStyle)
+        guard !previewHandles.isEmpty else { return }
+        guard !CADSelectionDisplayPolicy.previewSuppressed(previewCount: previewHandles.count, selectionPreviewLimit: engine.selectionPreviewLimit) else { return }
+
 
         let addColor = makeImCol32(r: 64, g: 180, b: 255, a: 180)
         let removeColor = makeImCol32(r: 255, g: 80, b: 80, a: 180)
@@ -2768,8 +2785,8 @@ public final class EngineRenderer {
         let maxSegments = min(baseMaxSegments, max(0, budgetMaxSegments))
         var segmentsDrawn = 0
 
-        let toAdd = engine.interaction.rectSelectPreviewHandles.subtracting(engine.cadSelection.selectedHandles)
-        let toRemove = engine.cadSelection.selectedHandles.subtracting(engine.interaction.rectSelectPreviewHandles)
+        let toAdd = previewHandles.subtracting(engine.cadSelection.selectedHandles)
+        let toRemove = engine.cadSelection.selectedHandles.subtracting(previewHandles)
 
         func drawGeometry(for handle: UUID, color: UInt32) {
             guard segmentsDrawn < maxSegments else { return }

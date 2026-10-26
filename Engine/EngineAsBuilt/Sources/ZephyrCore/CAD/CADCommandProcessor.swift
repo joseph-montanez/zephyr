@@ -1553,6 +1553,21 @@ public final class CADCommandProcessor {
             print("[CAD] Grip max set to \(val) (total grip squares drawn)")
             engine.interaction.cachedGripGeneration = -1
             clearCommand()
+        case "SELECTIONPREVIEWLIMIT":
+            guard let engine = engine else { clearCommand(); return }
+            print("[CAD] Selection preview limit: \(engine.selectionPreviewLimit) (entities)")
+            clearCommand()
+        case _ where upper.hasPrefix("SELECTIONPREVIEWLIMIT "):
+            guard let engine = engine else { clearCommand(); return }
+            let arg = String(text.dropFirst(22)).trimmingCharacters(in: .whitespaces) // "SELECTIONPREVIEWLIMIT "
+            guard let val = Int(arg), val >= 1 else {
+                print("[CAD] SELECTIONPREVIEWLIMIT requires a positive integer.")
+                clearCommand()
+                return
+            }
+            engine.selectionPreviewLimit = val
+            print("[CAD] Selection preview limit set to \(val) (preview highlight disabled when a drag preview exceeds \(val))")
+            clearCommand()
         // --- Spline Tessellation ---
         case "SPLINETESS", "SPLINESEGS":
             guard let engine = engine else { clearCommand(); return }

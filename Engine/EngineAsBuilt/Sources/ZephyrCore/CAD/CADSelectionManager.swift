@@ -23,7 +23,7 @@ public final class CADSelectionManager {
     // MARK: - Shared Enums
 
     public enum RectSelectMode { case replace, add, subtract }
-    public enum RectSelectStyle { case window, crossing }
+    public enum RectSelectStyle: Equatable, Sendable { case window, crossing }
     public enum GripType: Equatable {
         case center, rotation
         case corner(index: Int)
@@ -312,14 +312,16 @@ public final class CADSelectionManager {
         screenX: Float, screenY: Float,
         document: CADDocument,
         cam: CameraTransform,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        gripObjectLimit: Int = .max
     ) -> CadGripInfo? {
         return CADGripSystem.gripHitTest(
             screenX: screenX, screenY: screenY,
             document: document, cam: cam,
             simplifyComplexBlocks: simplifyComplexBlocks,
             selectedHandles: self.selectedHandles,
-            selectedLeaderContentHandle: selectedLeaderContentHandle)
+            selectedLeaderContentHandle: selectedLeaderContentHandle,
+            gripObjectLimit: gripObjectLimit)
     }
 
     /// Returns world-space vertex arrays for an entity's geometry (for hover
@@ -335,13 +337,15 @@ public final class CADSelectionManager {
     public func getAllGrips(
         document: CADDocument,
         cam: CameraTransform,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        gripObjectLimit: Int = .max
     ) -> [CadGripInfo] {
         return CADGripSystem.getAllGrips(
             document: document, cam: cam,
             simplifyComplexBlocks: simplifyComplexBlocks,
             selectedHandles: selectedHandles,
-            selectedLeaderContentHandle: selectedLeaderContentHandle)
+            selectedLeaderContentHandle: selectedLeaderContentHandle,
+            gripObjectLimit: gripObjectLimit)
     }
 
     /// Same as `getAllGrips` but uses pre-computed world-space points.

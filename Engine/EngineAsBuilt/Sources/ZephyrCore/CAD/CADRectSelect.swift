@@ -39,6 +39,34 @@ public enum CADRectSelect {
         return result
     }
 
+    /// Normalized parameters for committing a rect drag (two-click second
+    /// click or drag release). `nil` for a zero-size rect so plain clicks
+    /// and the two-click flow keep working. Left-to-right commits as
+    /// `.window`, right-to-left as `.crossing`.
+    public struct RectCommit: Equatable, Sendable {
+        public var minX: Double
+        public var minY: Double
+        public var worldW: Double
+        public var worldH: Double
+        public var style: CADSelectionManager.RectSelectStyle
+    }
+
+    public static func commitRect(
+        startX: Double, startY: Double,
+        currentX: Double, currentY: Double,
+        screenStartX: Float, screenX: Float
+    ) -> RectCommit? {
+        let minX = min(startX, currentX)
+        let maxX = max(startX, currentX)
+        let minY = min(startY, currentY)
+        let maxY = max(startY, currentY)
+        let w = maxX - minX, h = maxY - minY
+        guard w > 0 || h > 0 else { return nil }
+        return RectCommit(
+            minX: minX, minY: minY, worldW: w, worldH: h,
+            style: (screenX >= screenStartX) ? .window : .crossing)
+    }
+
     /// Modifies the selection set based on a rectangle selection. The caller
     /// is responsible for clearing the selection beforehand for `.replace` mode.
     public static func selectInRect(

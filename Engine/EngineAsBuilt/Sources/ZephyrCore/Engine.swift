@@ -319,12 +319,17 @@ public final class PhrostEngine {
         print("[Engine] simplifyComplexBlocks: \(simplifyComplexBlocks)")
     }
 
-    /// When more than this many entities are selected, suppress all grips and
-    /// show only selection outlines (mirrors AutoCAD GRIPOBJLIMIT).
+    /// When more than this many entities are selected, suppress all grips
+    /// (mirrors AutoCAD GRIPOBJLIMIT). Entities keep geometry highlight.
     public var gripObjectMax: Int = 100
     /// Maximum number of grip squares drawn on screen (prevents ImGui 16-bit
     /// index buffer overflow). Default 1000 grips across all entities.
     public var gripMax: Int = 1000
+    /// When a window/crossing drag preview exceeds this many entities,
+    /// live preview highlighting is disabled for the whole set (mirrors
+    /// AutoCAD SELECTIONPREVIEWLIMIT).
+    public var selectionPreviewLimit: Int =
+        CADSelectionDisplayPolicy.defaultSelectionPreviewLimit
 
     /// Divisor for adaptive spline tessellation chord tolerance.
     /// Chord tolerance = max(0.001, splineDiagonal / divisor).

@@ -28,7 +28,8 @@ final class CADHoverCoordinator {
             screenY: screenY,
             document: engine.document,
             cam: camera,
-            simplifyComplexBlocks: engine.simplifyComplexBlocks)
+            simplifyComplexBlocks: engine.simplifyComplexBlocks,
+            gripObjectLimit: engine.gripObjectMax)
         interaction.hoveredGrip = hit?.grip
         interaction.hoveredGripHandle = hit?.handle
     }
