@@ -330,6 +330,12 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "LAYER RENAME", aliases: ["LA RENAME"],   category: .layer,   syntax: "<oldName> <newName>", description: "Rename an existing layer"),
         CommandDescriptor(canonicalName: "LAYERSORT", aliases: ["LASORT", "LAYER SORT", "LA SORT"], category: .layer, syntax: "[Name|On|Color|Linetype|Lineweight|Opacity|Plot|Used] [Asc|Desc]", description: "Sort layers in the Layers panel by property; repeat a key to toggle direction"),
         CommandDescriptor(canonicalName: "LAYERMOVE",    aliases: ["LM", "LAYMOVE"], category: .layer, syntax: "", description: "Move selected entities to a different layer (autocomplete prompt)"),
+        CommandDescriptor(canonicalName: "LAYOFF",     aliases: [],                category: .layer,   syntax: "", description: "Turn off the layer of a selected object (pick-driven)"),
+        CommandDescriptor(canonicalName: "LAYON",      aliases: [],                category: .layer,   syntax: "", description: "Turn on the layer of a selected object (pick-driven)"),
+        CommandDescriptor(canonicalName: "LAYISO",     aliases: [],                category: .layer,   syntax: "[Settings]", description: "Isolate the layer of a selected object; others hidden or faded"),
+        CommandDescriptor(canonicalName: "LAYUNISO",   aliases: [],                category: .layer,   syntax: "", description: "Restore layers hidden by the most recent LAYISO"),
+        CommandDescriptor(canonicalName: "LAYMCUR",    aliases: ["AI_MOLC"],        category: .layer,   syntax: "", description: "Make the layer of a selected object current"),
+        CommandDescriptor(canonicalName: "LAYMCH",     aliases: [],                category: .layer,   syntax: "", description: "Change selected entities to the layer of a picked destination object"),
         // --- Block ---
         CommandDescriptor(canonicalName: "BLOCK",      aliases: ["B", "BMAKE"],     category: .block,   syntax: "<name>", description: "Create a new block from selected entities"),
         CommandDescriptor(canonicalName: "WBLOCK",     aliases: ["W"],             category: .block,   syntax: "", description: "Write a block or entities to a drawing file"),
@@ -1868,6 +1874,20 @@ public final class CADCommandProcessor {
                 commandLineActive = false
             } else {
                 print("[CAD] LM requires entities to be selected.")
+            }
+            clearCommand()
+        case "LAYMCH":
+            // Same destination popup as LAYERMOVE: requires a selection,
+            // then Enter applies the highlighted layer to it.
+            guard let engine = engine else { clearCommand(); return }
+            if engine.cadSelection.hasSelection {
+                engine.ui.layerMoveActive = true
+                engine.ui.layerMoveBuffer = ""
+                engine.ui.layerMoveSelectionIndex = 0
+                engine.ui.layerMoveMatches = engine.document.allLayers.sorted { $0.name < $1.name }
+                commandLineActive = false
+            } else {
+                print("[CAD] LAYMCH requires entities to be selected.")
             }
             clearCommand()
         default:

@@ -216,6 +216,12 @@
           (zr-item "LAYER" "Layers" nil)
           (zr-item "LAYERSORT" "Sort Layers" nil)
           (zr-item "LAYERMOVE" "Move to Layer" (list (zr-enable (zr-sel 1))))
+          (zr-item "LAYMCH" "Change to Layer" (list (zr-enable (zr-sel 1))))
+          (zr-item "LAYMCUR" "Make Layer Current" nil)
+          (zr-item "LAYISO" "Isolate Layer" nil)
+          (zr-item "LAYUNISO" "Restore Layers" nil)
+          (zr-item "LAYOFF" "Turn Layer Off" nil)
+          (zr-item "LAYON" "Turn Layer On" nil)
           (zr-sep)
           (zr-sub "AutoLISP"
             (list

@@ -831,6 +831,62 @@ public final class CADDocument {
         markEdited(regenerate: true)
     }
 
+    /// Isolation save stack for LAYISO/LAYUNISO (session state, not
+    /// snapshotted: isolation is a working state, never undoable).
+    public var layerIsolationStack: [[UUID: Layer]] = []
+    /// LAYISO hides other layers (false) or lock-fades them (true).
+    /// Fade stands in for locking until the 1C frozen/locked model lands.
+    public var layisoFadeOthers = false
+
+    /// Set visibility on many layers in exactly one undo step.
+    public func setLayersVisible(_ handles: [UUID], visible: Bool) {
+        pushUndo()
+        for h in handles {
+            if var layer = layerTable[h] {
+                layer.isVisible = visible
+                layerTable[h] = layer
+            }
+        }
+        markEdited(regenerate: true)
+    }
+
+    /// Isolate: kept layers are forced visible; every other layer is
+    /// hidden (or faded to 0.3 opacity when `layisoFadeOthers`).
+    /// Pushes the prior state for LAYUNISO. Exactly one undo step.
+    public func isolateLayers(keeping: Set<UUID>) {
+        pushUndo()
+        var saved: [UUID: Layer] = [:]
+        for h in Array(layerTable.keys) {
+            guard var layer = layerTable[h] else { continue }
+            saved[h] = layer
+            if keeping.contains(h) {
+                // Isolated layers are forced visible (AutoCAD behavior):
+                // a kept layer hidden by an earlier isolation comes back.
+                layer.isVisible = true
+            } else if layisoFadeOthers {
+                layer.opacity = 0.3
+            } else {
+                layer.isVisible = false
+            }
+            layerTable[h] = layer
+        }
+        layerIsolationStack.append(saved)
+        markEdited(regenerate: true)
+    }
+
+    /// Restore the most recent isolation. Returns false (and pushes no
+    /// undo) when the stack is empty.
+    @discardableResult
+    public func unisolateLayers() -> Bool {
+        guard let saved = layerIsolationStack.popLast() else { return false }
+        pushUndo()
+        for (h, layer) in saved where layerTable[h] != nil {
+            layerTable[h] = layer
+        }
+        markEdited(regenerate: true)
+        return true
+    }
+
     public func setLayerLineType(_ handle: UUID, lineType: String) {
         pushUndo()
         guard var layer = layerTable[handle] else { return }

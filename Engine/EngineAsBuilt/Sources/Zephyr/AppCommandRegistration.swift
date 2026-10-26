@@ -417,6 +417,27 @@ struct AppCommandRegistration {
             factory: { ListCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "LAYOFF",
+            factory: { LayerPickCommand(mode: .off) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYON",
+            factory: { LayerPickCommand(mode: .on) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYISO",
+            factory: { LayerPickCommand(mode: .isolate) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYUNISO",
+            factory: { LayerPickCommand(mode: .unisolate) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYMCUR",
+            aliases: ["AI_MOLC"],
+            factory: { LayerPickCommand(mode: .makeCurrent) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "GRADIENT",
             aliases: ["GD"],
             factory: { HatchCommand() }

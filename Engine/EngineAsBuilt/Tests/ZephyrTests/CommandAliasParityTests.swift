@@ -62,6 +62,10 @@ final class CommandAliasParityTests: XCTestCase {
         ("ID", "ID"),
         ("LIST", "LIST"), ("LI", "LIST"), ("LS", "LIST"),
         ("AREA", "AREA"), ("AA", "AREA"),
+        ("LAYOFF", "LAYOFF"), ("LAYON", "LAYON"),
+        ("LAYISO", "LAYISO"), ("LAYUNISO", "LAYUNISO"),
+        ("LAYMCUR", "LAYMCUR"), ("AI_MOLC", "LAYMCUR"),
+        ("LAYMCH", "LAYMCH"),
     ]
 
     func testGoldenLTAliasesResolveToCanonical() {
