@@ -20,8 +20,23 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **UNDO / REDO** — registered, with ribbon buttons
 - **VPEQUAL** (`EQUALIZE`) — resize all split panes to equal sizes across nested layouts
 - **VPRESIZE** — grow (`+`) or shrink (`-`) the focused pane by a percentage of its parent split
+- **REDRAW** (`R`) / **REGEN** — viewport refresh and full database regeneration from the command line
+- **AREA** (`AA`) — opens the measure tool directly in area mode (full `AREA` with Object/Add/Subtract tallies follows in Phase 1)
+- **GRADIENT** (`GD`) — gradient-fill entry into the hatch command
+- **DRAWORDER** (`DR`) — Above/Under/Front/Back umbrella over the existing draw-order commands, with reference-pick handoff for Above/Under
+- **HATCHEDIT** (`HE`) — edit the selected hatch in place, picking up its pattern, scale, and angle
+- **-HATCH** — command-line hatch (`-HATCH [pattern] [scale] [angle]`) with pattern validation against the known catalog
+- **-TEXT** — prompt-driven single-line text (height, rotation, style, insertion, value) without the modal dialog; writes identical entity data to `TEXT`
+- **-LAYER** (`-LA`) — Make/Set/New/On/Off/Color/Ltype/LWeight from the command line (lock/freeze verbs report as pending Phase 1C instead of failing silently)
+- **CHPROP / CHANGE** — interactive property editing (Color/LAyer/LType/LTScale/LWeight) with single-undo application and scripted-compatible entity data
+- **OSNAP** (F3) — master running-osnap switch that skips entity snaps while leaving grid snap independent; `OSMODE` keeps selecting which modes run
+- **COMMANDLINE** (`CLI`, Ctrl+9) — show/hide the command line
+- **CLEANSCREENON / CLEANSCREENOFF** (Ctrl+0) — hide all chrome with save/restore
+- **TOOLBAR** (`TO`) — ribbon visibility toggle
 
 ### Improvements
+- **AutoCAD LT alias alignment (breaking)** — Zephyr-only aliases that shadowed LT meanings now resolve to LT: `AA`→`AREA`, `DT`→`TEXT`, `R`→`REDRAW`, and `S`/`D`/`PS`/`CL` are reserved for `STRETCH`/`DIMSTYLE`/`PSPACE`/`CENTERLINE` (honest not-implemented-yet feedback until those phases land); canonical spellings flipped to `PLINE`, `RECTANG`, `SPLINEDIT`, `PROPERTIES`, `EXPORTPDF`, `TEXTEDIT`, `MTEXT`, `LAYOUT`, with the old spellings kept as aliases; displaced commands keep `RO`, `SC`, `TB`, `TOOLS`, `PSTROKE`, `TOR`. Full command names (`AALINES`, `TABLE`, `RAY`, `SCALE`, `DRAW`, `PENSTROKE`, `CLIP`, `TORIENT`) are unaffected, as are ribbon buttons and AutoLISP scripts using full names. Enforced by a new `CommandAliasParityTests` golden table so the four dispatch surfaces cannot drift apart again
+- **Function and Ctrl shortcuts** — `F3` OSNAP, `F7` grid, `F8` ortho (now with sysvar sync), `F9` snap (now syncs `SNAPMODE`), `F10` polar, `F11` OTRACK, plus `Ctrl+F/G/L/B` alternates, `Ctrl+1` properties, and bare `Ctrl+P` routing to PDF export until the plot dialog lands
 - **Verb/Noun modify workflow** — `MOVE`, `ROTATE`, `SCALE`, `COPY`, `ERASE`, `COPYCLIP`, and `COPYBASE` now accept a selection made *after* the command is invoked ("Select objects..."), with click, window/crossing rectangle selection and Enter/Space/Right-click confirmation; command prompt banners render for active modify commands
 - **TRIM** — AutoCAD-style options: cutting-edge selection, box and fence batch trimming, eRase sub-mode, and in-session undo
 - **Tab management** — tab reorder, split panes, and tabs that follow the window they belong to
