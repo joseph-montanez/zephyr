@@ -183,6 +183,15 @@ public enum CADCommandAliasTable {
             canonicalName: "GRADIENT", aliases: ["GD"], category: .draw,
             description: "Fill a closed boundary with a gradient"),
         CADCommandAliasEntry(
+            canonicalName: "DIST", aliases: ["DI"], category: .draw,
+            description: "Report distance, angles, and deltas between two points"),
+        CADCommandAliasEntry(
+            canonicalName: "ID", category: .draw,
+            description: "Report the coordinates of a picked point"),
+        CADCommandAliasEntry(
+            canonicalName: "LIST", aliases: ["LI", "LS"], category: .draw,
+            description: "List type, layer, and geometry of selected entities"),
+        CADCommandAliasEntry(
             canonicalName: "GROUP", aliases: ["G"], category: .modify,
             description: "Create a lightweight named or unnamed object group",
             isReservedStub: true),

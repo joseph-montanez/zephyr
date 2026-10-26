@@ -400,7 +400,21 @@ struct AppCommandRegistration {
         engine.commandProcessor.registerFeatureCommand(
             name: "AREA",
             aliases: ["AA"],
-            factory: { MeasureGeomTool(initialMode: .area) }
+            factory: { AreaCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIST",
+            aliases: ["DI"],
+            factory: { DistanceCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ID",
+            factory: { IdCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LIST",
+            aliases: ["LI", "LS"],
+            factory: { ListCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "GRADIENT",

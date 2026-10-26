@@ -457,6 +457,22 @@ public final class CADDocument {
         didSet { xrefFadePercent = max(0, min(90, xrefFadePercent)) }
     }
 
+    /// Display precision for inquiry output (LUPREC/AUPREC sysvars, live
+    /// through LispVarStore like LTSCALE). Session state, not snapshotted:
+    /// precision changes are never undoable, matching AutoCAD.
+    public var lengthPrecision: Int = 4 {
+        didSet { lengthPrecision = max(0, min(8, lengthPrecision)) }
+    }
+    public var anglePrecision: Int = 0 {
+        didSet { anglePrecision = max(0, min(8, anglePrecision)) }
+    }
+
+    /// Last inquiry results (AREA/PERIMETER/LASTPOINT sysvars, live reads).
+    /// Written by DIST/AREA/ID; session state, not snapshotted.
+    public var lastArea: Double = 0
+    public var lastPerimeter: Double = 0
+    public var lastPoint: Vector3?
+
     /// Bumped whenever rendering must refresh, including non-dirty
     /// changes (xref load/unload/reload, fade). Secondary render
     /// contexts (floated windows, split panes) compare against this —

@@ -58,6 +58,10 @@ final class CommandAliasParityTests: XCTestCase {
         ("-TEXT", "-TEXT"),
         ("-LAYER", "-LAYER"), ("-LA", "-LAYER"),
         ("CHPROP", "CHPROP"), ("CHANGE", "CHANGE"),
+        ("DIST", "DIST"), ("DI", "DIST"),
+        ("ID", "ID"),
+        ("LIST", "LIST"), ("LI", "LIST"), ("LS", "LIST"),
+        ("AREA", "AREA"), ("AA", "AREA"),
     ]
 
     func testGoldenLTAliasesResolveToCanonical() {

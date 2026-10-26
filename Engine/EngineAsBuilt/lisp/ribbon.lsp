@@ -353,7 +353,11 @@
             (list
               (zr-big   "MEASUREGEOM" "Measure" "measure" nil)
               (zr-small "MEASURE"     "Divide"  "measure" nil)
-              (zr-small "DIVIDE"      "Points"  "measure" nil)))))
+              (zr-small "DIVIDE"      "Points"  "measure" nil)
+              (zr-small "DIST"        "Distance" "measure" nil)
+              (zr-small "AREA"        "Area"     "measure" nil)
+              (zr-small "LIST"        "List"     "measure" nil)
+              (zr-small "ID"          "Locate Pt" "measure" nil)))))
 
       ;; =================================================================
       (zr-tab "View"
