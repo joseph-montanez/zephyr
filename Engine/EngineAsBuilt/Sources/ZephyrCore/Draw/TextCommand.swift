@@ -165,12 +165,42 @@ public final class TextCommand: FeatureCommand {
 
         let styleName = engine.document.resolvedTextStyleName(editorState.styleName)
         let style = engine.document.textStyle(named: styleName) ?? .standard
-        let height = max(editorState.height, 1e-9)
-        let rotation = editorState.rotation
-        let fontName = style.fontFile
-        let alignH = editorState.alignH
-        let alignV = editorState.alignV
-        let mtextWidth = editorState.mtextWidth
+        let layerID = engine.document.activeLayerID ?? engine.document.allLayers.first?.handle ?? UUID()
+        let insertPos = Vector3(x: insertWorldX, y: insertWorldY, z: 0)
+        let entity = Self.makeTextEntity(
+            text: text,
+            styleName: style.name,
+            fontName: style.fontFile,
+            height: editorState.height,
+            rotation: editorState.rotation,
+            alignH: editorState.alignH,
+            alignV: editorState.alignV,
+            mtextWidth: editorState.mtextWidth,
+            insertPos: insertPos,
+            layerID: layerID)
+
+        engine.document.addEntity(entity)
+        engine.tabManager.markActiveDirty()
+        processor.commandPrompt = "Text created."
+    }
+
+    /// Build a single-line text entity without any UI. Shared by the modal
+    /// `TextCommand` flow and the command-line `-TEXT` form so both write
+    /// identical xdata (`-TEXT` is the scriptable equivalent of typing at
+    /// the prompts instead of using the dialog).
+    public static func makeTextEntity(
+        text: String,
+        styleName: String,
+        fontName: String,
+        height: Double,
+        rotation: Double,
+        alignH: Int,
+        alignV: Int,
+        mtextWidth: Double,
+        insertPos: Vector3,
+        layerID: UUID
+    ) -> CADEntity {
+        let height = max(height, 1e-9)
 
         // Build the CADPrimitive for rendering
         let prim: CADPrimitive = .text(
@@ -185,8 +215,6 @@ public final class TextCommand: FeatureCommand {
         )
 
         // Create entity with text in xdata and the primitive as local geometry
-        let layerID = engine.document.activeLayerID ?? engine.document.allLayers.first?.handle ?? UUID()
-        let insertPos = Vector3(x: insertWorldX, y: insertWorldY, z: 0)
         var entityTransform = Transform3D.translated(by: insertPos)
         if rotation != 0 {
             entityTransform = entityTransform.multiplying(by: .rotated(by: rotation))
@@ -215,9 +243,144 @@ public final class TextCommand: FeatureCommand {
            let jsonStr = String(data: jsonData, encoding: .utf8) {
             entity.xdata["dxf.formattedText"] = .string(jsonStr)
         }
+        return entity
+    }
 
-        engine.document.addEntity(entity)
-        engine.tabManager.markActiveDirty()
-        processor.commandPrompt = "Text created."
+}
+
+
+// =========================================================================
+// MARK: - DashTextCommand (-TEXT)
+// =========================================================================
+
+/// Command-line `-TEXT` form: the scriptable equivalent of `TEXT` without
+/// the modal dialog. Prompts for height, rotation, and style at the command
+/// line, then an insertion click, then the text value itself.
+///
+/// Each answered prompt advances one step; empty input keeps the default.
+/// The finished entity is identical in xdata to a `TextCommand` one
+/// (both go through `TextCommand.makeTextEntity`).
+@MainActor
+public final class DashTextCommand: FeatureCommand {
+
+    private enum Step {
+        case height
+        case rotation
+        case style
+        case insertion
+        case value
+    }
+
+    private var step: Step = .height
+    private var height: Double = 2.5
+    private var rotation: Double = 0
+    private var styleName: String = "Standard"
+    private var insertX: Double = 0
+    private var insertY: Double = 0
+
+    public init() {}
+
+    public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
+        step = .height
+        let style = engine.document.textStyle(named: "Standard") ?? .standard
+        styleName = style.name
+        height = style.fixedHeight > 0 ? style.fixedHeight : 2.5
+        rotation = 0
+        processor.commandPrompt = "Enter text height <\(formatHeight(height))>:"
+    }
+
+    public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {}
+
+    public func handleCommandText(
+        _ text: String,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch step {
+        case .height:
+            if !input.isEmpty {
+                guard let h = Double(input), h > 0 else {
+                    processor.commandPrompt = "Invalid height. Enter text height <\(formatHeight(height))>:"
+                    return .handled
+                }
+                height = h
+            }
+            step = .rotation
+            processor.commandPrompt = "Enter text rotation <0>:"
+            return .handled
+        case .rotation:
+            if !input.isEmpty {
+                guard let r = Double(input) else {
+                    processor.commandPrompt = "Invalid rotation. Enter text rotation <0>:"
+                    return .handled
+                }
+                rotation = r
+            }
+            step = .style
+            processor.commandPrompt = "Enter text style <\(styleName)>:"
+            return .handled
+        case .style:
+            if !input.isEmpty {
+                styleName = engine.document.resolvedTextStyleName(input)
+            }
+            step = .insertion
+            processor.commandPrompt = "Specify insertion point for text (Esc to cancel)."
+            return .handled
+        case .insertion:
+            // Insertion comes from a click, not typed text.
+            return .continue
+        case .value:
+            guard !input.isEmpty else {
+                processor.commandPrompt = "Text cancelled (empty)."
+                return .finished
+            }
+            let style = engine.document.textStyle(named: styleName) ?? .standard
+            let layerID = engine.document.activeLayerID
+                ?? engine.document.allLayers.first?.handle ?? UUID()
+            let entity = TextCommand.makeTextEntity(
+                text: input,
+                styleName: style.name,
+                fontName: style.fontFile,
+                height: height,
+                rotation: rotation,
+                alignH: 0,
+                alignV: 0,
+                mtextWidth: 0,
+                insertPos: Vector3(x: insertX, y: insertY, z: 0),
+                layerID: layerID)
+            engine.document.addEntity(entity)
+            engine.tabManager.markActiveDirty()
+            processor.commandPrompt = "Text created."
+            return .finished
+        }
+    }
+
+    public func handleMouseClick(
+        worldX: Double, worldY: Double,
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult {
+        guard step == .insertion else { return .continue }
+        insertX = worldX
+        insertY = worldY
+        step = .value
+        processor.commandPrompt = "Enter text:"
+        return .continue
+    }
+
+    public func handleMouseMotion(
+        worldX: Double, worldY: Double,
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) {}
+
+    public func handleKeyDown(
+        scancode: SDL_Scancode, engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult { .continue }
+
+    public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
+
+    private func formatHeight(_ h: Double) -> String {
+        h.truncatingRemainder(dividingBy: 1) == 0 ? "\(Int(h))" : "\(h)"
     }
 }

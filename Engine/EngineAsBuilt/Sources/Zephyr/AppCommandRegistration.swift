@@ -142,6 +142,14 @@ struct AppCommandRegistration {
             factory: { MatchPropCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "CHPROP",
+            factory: { ChangePropertiesCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "CHANGE",
+            factory: { ChangePropertiesCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "TORIENT",
             aliases: ["TOR", "TEXTO"],
             factory: { TextOrientCommand() }
@@ -364,6 +372,10 @@ struct AppCommandRegistration {
             name: "TEXT",
             aliases: ["DTEXT", "DT"],
             factory: { TextCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-TEXT",
+            factory: { DashTextCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "IMAGE",

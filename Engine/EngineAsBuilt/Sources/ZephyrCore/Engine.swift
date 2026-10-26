@@ -625,6 +625,10 @@ public final class PhrostEngine {
             name: "HATCHTOBACK", aliases: ["HTB"],
             descriptor: DrawOrderDescriptors.hatchToBack,
             factory: { HatchToBackCommand() })
+        commandProcessor.registerFeatureCommand(
+            name: "DRAWORDER", aliases: ["DR"],
+            descriptor: DrawOrderDescriptors.drawOrder,
+            factory: { DrawOrderUmbrellaCommand() })
 
         // Register AutoLISP entry points (LOAD / EVAL / SCRIPT).
         commandProcessor.registerFeatureCommand(

@@ -225,6 +225,9 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "RECTANG",    aliases: ["RECTANGLE", "REC", "RECT"], category: .draw, syntax: "", description: "Draw a rectangle by two opposite corners"),
         CommandDescriptor(canonicalName: "ELLIPSE",    aliases: ["EL"],            category: .draw,    syntax: "", description: "Draw an ellipse by center and axes"),
         CommandDescriptor(canonicalName: "HATCH",      aliases: ["H", "BH"],       category: .draw,    syntax: "", description: "Fill a closed boundary with a hatch pattern"),
+        CommandDescriptor(canonicalName: "HATCHEDIT",  aliases: ["HE"],            category: .draw,    syntax: "", description: "Edit the selected hatch"),
+        CommandDescriptor(canonicalName: "-HATCH",     aliases: [],                category: .draw,    syntax: "[pattern] [scale] [angle]", description: "Fill a closed boundary from the command line"),
+        CommandDescriptor(canonicalName: "-TEXT",      aliases: [],                category: .draw,    syntax: "", description: "Place single-line text from the command line"),
         CommandDescriptor(canonicalName: "SPLINE",     aliases: ["SPL"],           category: .draw,    syntax: "", description: "Draw a smooth spline curve through control points"),
         CommandDescriptor(canonicalName: "PENSTROKE",  aliases: ["PSTROKE"],      category: .draw,    syntax: "", description: "Draw with tablet pen capturing pressure and tilt per vertex"),
         CommandDescriptor(canonicalName: "RAY",        aliases: [],                category: .draw,    syntax: "", description: "Draw a ray from a start point in a direction"),
@@ -266,6 +269,9 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "PASTEBLOCK", aliases: [],                category: .modify,  syntax: "", description: "Paste clipboard entities as a new block"),
         CommandDescriptor(canonicalName: "CLEANSPECKLES", aliases: ["CS", "SPECKLES"], category: .modify, syntax: "", description: "Remove tiny/speckle entities from the drawing"),
         CommandDescriptor(canonicalName: "TEXTEDIT",   aliases: ["DDEDIT", "ED", "TEDIT"], category: .modify, syntax: "", description: "Edit text, multiline text, and attribute values"),
+        CommandDescriptor(canonicalName: "DRAWORDER",  aliases: ["DR"],            category: .modify,  syntax: "[Above/Under/Front/Back]", description: "Change the draw order of selected entities"),
+        CommandDescriptor(canonicalName: "CHPROP",     aliases: [],                category: .modify,  syntax: "", description: "Change color, layer, linetype, or lineweight of selected entities"),
+        CommandDescriptor(canonicalName: "CHANGE",     aliases: [],                category: .modify,  syntax: "", description: "Change properties of selected entities (legacy form)"),
         CommandDescriptor(canonicalName: "JOIN",       aliases: ["J"],             category: .modify,  syntax: "", description: "Join selected line entities into polylines"),
         CommandDescriptor(canonicalName: "TRIM",       aliases: ["TR"],            category: .modify,  syntax: "", description: "Trim lines at intersections — click the side to remove"),
         CommandDescriptor(canonicalName: "FILLET",     aliases: ["F"],            category: .modify,  syntax: "", description: "Round corners between objects using an exact tangent arc"),
@@ -315,6 +321,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SNAPANG",    aliases: [],                category: .settings, syntax: "<degrees>", description: "Set the crosshair and ortho rotation angle"),
         // --- Layer ---
         CommandDescriptor(canonicalName: "LAYER",      aliases: ["LA"],            category: .layer,   syntax: "", description: "Show/hide the layer panel"),
+        CommandDescriptor(canonicalName: "-LAYER",     aliases: ["-LA"],           category: .layer,   syntax: "Make/Set/New/On/Off/Color/Ltype/LWeight <args>", description: "Manage layers from the command line"),
         CommandDescriptor(canonicalName: "LAYER NEW",  aliases: ["LA NEW"],        category: .layer,   syntax: "<name>", description: "Create a new layer with an optional name"),
         CommandDescriptor(canonicalName: "LAYER DELETE", aliases: ["LAYER DEL", "LA DELETE", "LA DEL"], category: .layer, syntax: "<name>", description: "Delete a layer by name"),
         CommandDescriptor(canonicalName: "LAYER RENAME", aliases: ["LA RENAME"],   category: .layer,   syntax: "<oldName> <newName>", description: "Rename an existing layer"),
@@ -785,6 +792,34 @@ public final class CADCommandProcessor {
             engine?.document.markEdited(regenerate: true)
             print("[CAD] Drawing regenerated.")
             clearCommand()
+        case "HATCHEDIT", "HE":
+            guard let engine = engine else { clearCommand(); return }
+            guard let handle = engine.cadSelection.lastSelectedHandle,
+                  let entity = engine.document.entity(for: handle),
+                  let geometry = engine.document.resolvedGeometry(for: entity),
+                  geometry.contains(where: { prim in
+                      switch prim {
+                      case .hatch, .hatchPath, .fillPolygon, .fillComplexPolygon, .gradient:
+                          return true
+                      default:
+                          return false
+                      }
+                  }) else {
+                print("[CAD] HATCHEDIT requires a single selected hatch.")
+                clearCommand()
+                return
+            }
+            // HatchCommand.start() picks up the selected hatch (pattern,
+            // scale, angle) via initFromEntity, so editing starts in place.
+            let hatchCmd = HatchCommand()
+            activeFeatureCommand = hatchCmd
+            hatchCmd.start(engine: engine, processor: self)
+        case "-HATCH":
+            guard let engine = engine else { clearCommand(); return }
+            startDashHatchCommand(text: text, upper: upper, engine: engine)
+        case _ where upper.hasPrefix("-HATCH "):
+            guard let engine = engine else { clearCommand(); return }
+            startDashHatchCommand(text: text, upper: upper, engine: engine)
         // --- File Commands ---
         case "N", "NEW":
             _ = engine?.tabManager.newTab()
@@ -1396,6 +1431,12 @@ public final class CADCommandProcessor {
             engine.document.addLayer(layer)
             print("[CAD] Layer '\(name)' created.")
             clearCommand()
+        case "-LAYER", "-LA":
+            print("[CAD] -LAYER Make/Set/New/On/Off/Color/Ltype/LWeight <args>")
+            clearCommand()
+        case _ where upper.hasPrefix("-LAYER ") || upper.hasPrefix("-LA "):
+            guard let engine = engine else { clearCommand(); return }
+            runDashLayerCommand(text: text, upper: upper, engine: engine)
         case _ where upper.hasPrefix("LAYER DELETE ") || upper.hasPrefix("LAYER DEL ") || upper.hasPrefix("LA DELETE ") || upper.hasPrefix("LA DEL "):
             guard let engine = engine else { clearCommand(); return }
             let prefixLen: Int
@@ -2048,6 +2089,197 @@ public final class CADCommandProcessor {
         _moveGhostWorldY = 0
         _moveCursorWorldX = 0
         _moveCursorWorldY = 0
+    }
+
+    // MARK: - Dash-command helpers (-HATCH / -LAYER)
+
+    /// Interactive `-HATCH [pattern] [scale] [angle]`: bare starts the
+    /// hatch picker; with args the values are validated, preset on a fresh
+    /// `HatchCommand`, and the same pick flow starts.
+    private func startDashHatchCommand(text: String, upper: String, engine: PhrostEngine) {
+        let tokens = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        var pattern: String? = nil
+        var scale: Float? = nil
+        var angle: Float? = nil
+        if tokens.count > 1 {
+            pattern = tokens[1]
+            let key = pattern!.uppercased()
+            let known = key == "SOLID"
+                || DXFHatchGenerator.patternDefinition(for: key) != nil
+            guard known else {
+                print("[CAD] Unknown hatch pattern '\(tokens[1])'.")
+                clearCommand()
+                return
+            }
+        }
+        if tokens.count > 2 {
+            guard let s = Float(tokens[2]), s > 0 else {
+                print("[CAD] -HATCH scale must be a positive number.")
+                clearCommand()
+                return
+            }
+            scale = s
+        }
+        if tokens.count > 3 {
+            guard let a = Float(tokens[3]) else {
+                print("[CAD] -HATCH angle must be a number.")
+                clearCommand()
+                return
+            }
+            angle = a
+        }
+        if tokens.count > 4 {
+            print("[CAD] Usage: -HATCH [pattern] [scale] [angle]")
+            clearCommand()
+            return
+        }
+        let cmd = HatchCommand()
+        cmd.preset(pattern: pattern, scale: scale, angle: angle)
+        activeFeatureCommand = cmd
+        cmd.start(engine: engine, processor: self)
+    }
+
+    /// Interactive `-LAYER` sub-keywords over the document layer APIs.
+    /// Lock/Freeze/Thaw/Unlock wait for the 1C layer model (reported, not silent).
+    private func runDashLayerCommand(text: String, upper: String, engine: PhrostEngine) {
+        let args = String(text.dropFirst(upper.hasPrefix("-LAYER ") ? 7 : 4))
+            .trimmingCharacters(in: .whitespaces)
+        let tokens = args.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let verb = tokens.first?.uppercased() else {
+            print("[CAD] -LAYER Make/Set/New/On/Off/Color/Ltype/LWeight <args>")
+            clearCommand()
+            return
+        }
+        let doc = engine.document
+        func needName(_ i: Int) -> String? {
+            guard tokens.count > i, !tokens[i].isEmpty else {
+                print("[CAD] -LAYER \(verb) requires a layer name.")
+                clearCommand()
+                return nil
+            }
+            return tokens[i]
+        }
+        switch verb {
+        case "M", "MAKE":
+            guard let name = needName(1) else { return }
+            guard doc.findLayer(named: name) == nil else {
+                print("[CAD] A layer named '\(name)' already exists.")
+                clearCommand()
+                return
+            }
+            let layer = Layer(name: name)
+            doc.addLayer(layer)
+            doc.activeLayerID = layer.handle
+            print("[CAD] Layer '\(name)' created and set current.")
+            clearCommand()
+        case "S", "SET":
+            guard let name = needName(1) else { return }
+            guard let layer = doc.findLayer(named: name) else {
+                print("[CAD] Layer '\(name)' not found.")
+                clearCommand()
+                return
+            }
+            doc.activeLayerID = layer.handle
+            print("[CAD] Current layer set to '\(layer.name)'.")
+            clearCommand()
+        case "N", "NEW":
+            guard let name = needName(1) else { return }
+            guard doc.findLayer(named: name) == nil else {
+                print("[CAD] A layer named '\(name)' already exists.")
+                clearCommand()
+                return
+            }
+            doc.addLayer(Layer(name: name))
+            print("[CAD] Layer '\(name)' created.")
+            clearCommand()
+        case "ON":
+            guard let name = needName(1) else { return }
+            guard let layer = doc.findLayer(named: name) else {
+                print("[CAD] Layer '\(name)' not found.")
+                clearCommand()
+                return
+            }
+            doc.setLayerVisible(layer.handle, visible: true)
+            print("[CAD] Layer '\(layer.name)' turned on.")
+            clearCommand()
+        case "OFF":
+            guard let name = needName(1) else { return }
+            guard let layer = doc.findLayer(named: name) else {
+                print("[CAD] Layer '\(name)' not found.")
+                clearCommand()
+                return
+            }
+            doc.setLayerVisible(layer.handle, visible: false)
+            print("[CAD] Layer '\(layer.name)' turned off.")
+            clearCommand()
+        case "C", "COLOR":
+            guard tokens.count >= 3 else {
+                print("[CAD] -LAYER Color <aci|r,g,b> <name>")
+                clearCommand()
+                return
+            }
+            guard let layer = doc.findLayer(named: tokens[2]) else {
+                print("[CAD] Layer '\(tokens[2])' not found.")
+                clearCommand()
+                return
+            }
+            let spec = tokens[1].uppercased()
+            let color: ColorRGBA
+            if spec.contains(",") {
+                let parts = spec.split(separator: ",").compactMap {
+                    UInt8($0.trimmingCharacters(in: .whitespaces))
+                }
+                guard parts.count == 3 else {
+                    print("[CAD] Color must be ACI 1-255 or R,G,B.")
+                    clearCommand()
+                    return
+                }
+                color = ColorRGBA(r: parts[0], g: parts[1], b: parts[2])
+            } else if let aci = Int32(spec), aci >= 1, aci <= 255 {
+                color = DXFColorTable.aciToRGBA(aci, color24: -1)
+            } else {
+                print("[CAD] Color must be ACI 1-255 or R,G,B.")
+                clearCommand()
+                return
+            }
+            doc.setLayerColor(layer.handle, color: color)
+            print("[CAD] Layer '\(layer.name)' color updated.")
+            clearCommand()
+        case "LT", "LTYPE":
+            guard tokens.count >= 3 else {
+                print("[CAD] -LAYER Ltype <linetype> <name>")
+                clearCommand()
+                return
+            }
+            guard let layer = doc.findLayer(named: tokens[2]) else {
+                print("[CAD] Layer '\(tokens[2])' not found.")
+                clearCommand()
+                return
+            }
+            doc.setLayerLineType(layer.handle, lineType: tokens[1].uppercased())
+            print("[CAD] Layer '\(layer.name)' linetype set to '\(tokens[1].uppercased())'.")
+            clearCommand()
+        case "LW", "LWEIGHT":
+            guard tokens.count >= 3, let weight = Double(tokens[1]), weight >= 0 else {
+                print("[CAD] -LAYER LWeight <mm> <name>")
+                clearCommand()
+                return
+            }
+            guard let layer = doc.findLayer(named: tokens[2]) else {
+                print("[CAD] Layer '\(tokens[2])' not found.")
+                clearCommand()
+                return
+            }
+            doc.setLayerLineWeight(layer.handle, lineWeight: weight)
+            print("[CAD] Layer '\(layer.name)' lineweight set to \(weight) mm.")
+            clearCommand()
+        case "LCK", "ULK", "LOCK", "UNLOCK", "FRZ", "THW", "FREEZE", "THAW":
+            print("[CAD] -LAYER \(verb) needs layer lock/freeze (Phase 1C).")
+            clearCommand()
+        default:
+            print("[CAD] -LAYER Make/Set/New/On/Off/Color/Ltype/LWeight <args>")
+            clearCommand()
+        }
     }
 
     // MARK: - Command Helpers

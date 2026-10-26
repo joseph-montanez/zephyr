@@ -52,6 +52,12 @@ final class CommandAliasParityTests: XCTestCase {
         ("COMMANDLINE", "COMMANDLINE"), ("CLI", "COMMANDLINE"),
         ("CLEANSCREENON", "CLEANSCREENON"),
         ("CLEANSCREENOFF", "CLEANSCREENOFF"),
+        ("DRAWORDER", "DRAWORDER"), ("DR", "DRAWORDER"),
+        ("HATCHEDIT", "HATCHEDIT"), ("HE", "HATCHEDIT"),
+        ("-HATCH", "-HATCH"),
+        ("-TEXT", "-TEXT"),
+        ("-LAYER", "-LAYER"), ("-LA", "-LAYER"),
+        ("CHPROP", "CHPROP"), ("CHANGE", "CHANGE"),
     ]
 
     func testGoldenLTAliasesResolveToCanonical() {
@@ -86,10 +92,10 @@ final class CommandAliasParityTests: XCTestCase {
     func testScriptedSetCoveredByDescriptors() {
         let canonicals = Set(CommandDescriptor.allCommands.map { $0.canonicalName })
         let aliases = Set(CommandDescriptor.allCommands.flatMap { $0.aliases })
-        // Audited scripted-only surface: SELECT/CHPROP/CHANGE have no
-        // interactive command; -HATCH/-TEXT gain interactive forms in 0.5.
+        // Audited scripted-only surface: SELECT has no interactive command.
+        // CHPROP/CHANGE/-HATCH/-TEXT gained interactive forms in 0.5.
         let scriptedOnly: Set<String> = [
-            "SELECT", "CHPROP", "CHANGE", "-HATCH", "-TEXT",
+            "SELECT",
         ]
         for name in LispScriptedCommands.scripted {
             XCTAssertTrue(

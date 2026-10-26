@@ -56,6 +56,38 @@ private func isHatchEntity(_ entity: CADEntity, document: CADDocument) -> Bool {
     return false
 }
 
+/// Shared bring-to-front reorder used by `BringToFrontCommand` and the
+/// `DRAWORDER` umbrella's Front option. Returns the placed count.
+@discardableResult
+fileprivate func applyBringToFront(handles: Set<UUID>, document: CADDocument) -> Int {
+    guard !handles.isEmpty else { return 0 }
+    let doc = document
+    let range = collectDrawOrderRange(from: doc)
+    // Place above existing max, or start at 0 if no entities have explicit orders.
+    let newBase = (range.max ?? -1) + 1
+    for (i, handle) in handles.enumerated() {
+        doc.setDrawOrder(for: handle, to: newBase + i)
+    }
+    return handles.count
+}
+
+/// Shared send-to-back reorder used by `SendToBackCommand` and the
+/// `DRAWORDER` umbrella's Back option. Returns the placed count.
+@discardableResult
+fileprivate func applySendToBack(handles: Set<UUID>, document: CADDocument) -> Int {
+    guard !handles.isEmpty else { return 0 }
+    let doc = document
+    let range = collectDrawOrderRange(from: doc)
+    // Place below existing min, or start at -1 if no entities have explicit orders.
+    let newBase = (range.min ?? 1) - 1
+    // Assign in reverse so the first selected gets the lowest (newBase - count + 1).
+    let sorted = handles.sorted { $0.uuidString < $1.uuidString }
+    for (i, handle) in sorted.enumerated() {
+        doc.setDrawOrder(for: handle, to: newBase - (handles.count - 1) + i)
+    }
+    return handles.count
+}
+
 // =========================================================================
 // MARK: - BringToFrontCommand
 // =========================================================================
@@ -71,15 +103,8 @@ final class BringToFrontCommand: FeatureCommand {
             return
         }
 
-        let doc = engine.document
-        let range = collectDrawOrderRange(from: doc)
-        // Place above existing max, or start at 0 if no entities have explicit orders.
-        let newBase = (range.max ?? -1) + 1
-
-        for (i, handle) in handles.enumerated() {
-            doc.setDrawOrder(for: handle, to: newBase + i)
-        }
-        processor.commandPrompt = "\(handles.count) entity(s) brought to front."
+        let count = applyBringToFront(handles: handles, document: engine.document)
+        processor.commandPrompt = "\(count) entity(s) brought to front."
     }
 
     func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {}
@@ -105,17 +130,8 @@ final class SendToBackCommand: FeatureCommand {
             return
         }
 
-        let doc = engine.document
-        let range = collectDrawOrderRange(from: doc)
-        // Place below existing min, or start at -1 if no entities have explicit orders.
-        let newBase = (range.min ?? 1) - 1
-
-        // Assign in reverse so the first selected gets the lowest (newBase - count + 1).
-        let sorted = handles.sorted { $0.uuidString < $1.uuidString }
-        for (i, handle) in sorted.enumerated() {
-            doc.setDrawOrder(for: handle, to: newBase - (handles.count - 1) + i)
-        }
-        processor.commandPrompt = "\(handles.count) entity(s) sent to back."
+        let count = applySendToBack(handles: handles, document: engine.document)
+        processor.commandPrompt = "\(count) entity(s) sent to back."
     }
 
     func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {}
@@ -396,4 +412,99 @@ enum DrawOrderDescriptors {
         syntax: "",
         description: "Send all hatches and solid fills to the back"
     )
+
+    static let drawOrder = CommandDescriptor(
+        canonicalName: "DRAWORDER",
+        aliases: ["DR"],
+        category: .modify,
+        syntax: "[Above/Under/Front/Back]",
+        description: "Change the draw order of selected entities"
+    )
+}
+
+// =========================================================================
+// MARK: - DrawOrderUmbrellaCommand (DRAWORDER)
+// =========================================================================
+
+/// AutoCAD `DRAWORDER` umbrella: one command with Above/Under/Front/Back
+/// options over the current selection. Front/Back reuse the shared
+/// `applyBringToFront`/`applySendToBack` reorder (same math as BTF/STB);
+/// Above/Under hand off to `DrawOrderReferenceCommand` for the reference
+/// pick, so no reorder logic is duplicated.
+@MainActor
+final class DrawOrderUmbrellaCommand: FeatureCommand {
+
+    func start(engine: PhrostEngine, processor: CADCommandProcessor) {
+        guard engine.cadSelection.hasSelection else {
+            processor.commandPrompt = "No entities selected. Select entities first, then run DRAWORDER."
+            processor.finishFeatureCommand(engine: engine)
+            return
+        }
+        processor.commandPrompt = "DRAWORDER [Above/Under/Front/Back]:"
+    }
+
+    func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {}
+
+    func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        [
+            .init(value: "A", title: "Above", aliases: ["ABOVE"], description: "Place selection above a reference entity"),
+            .init(value: "U", title: "Under", aliases: ["UNDER"], description: "Place selection under a reference entity"),
+            .init(value: "F", title: "Front", aliases: ["FRONT"], description: "Bring selection to the front"),
+            .init(value: "B", title: "Back", aliases: ["BACK"], description: "Send selection to the back"),
+        ]
+    }
+
+    func handleCommandText(
+        _ text: String,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        let upper = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let handles = engine.cadSelection.selectedHandles
+        switch upper {
+        case "F", "FRONT":
+            let count = applyBringToFront(handles: handles, document: engine.document)
+            processor.commandPrompt = "\(count) entity(s) brought to front."
+            return .finished
+        case "B", "BACK":
+            let count = applySendToBack(handles: handles, document: engine.document)
+            processor.commandPrompt = "\(count) entity(s) sent to back."
+            return .finished
+        case "A", "ABOVE":
+            chainReferenceCommand(mode: .bringAbove, engine: engine, processor: processor)
+            return .finished
+        case "U", "UNDER":
+            chainReferenceCommand(mode: .sendUnder, engine: engine, processor: processor)
+            return .finished
+        default:
+            processor.commandPrompt = "Unknown option. DRAWORDER [Above/Under/Front/Back]:"
+            return .handled
+        }
+    }
+
+    private func chainReferenceCommand(
+        mode: DrawOrderReferenceCommand.Mode,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) {
+        processor.finishFeatureCommand(engine: engine)
+        let ref = DrawOrderReferenceCommand(mode: mode)
+        processor.activeFeatureCommand = ref
+        ref.start(engine: engine, processor: processor)
+    }
+
+    func handleMouseClick(
+        worldX: Double, worldY: Double,
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult { .continue }
+    func handleMouseMotion(
+        worldX: Double, worldY: Double,
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) {}
+    func handleKeyDown(
+        scancode: SDL_Scancode, engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult { .continue }
+    func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
+    var isSnappingEnabled: Bool { false }
 }

@@ -53,6 +53,21 @@ public final class HatchCommand: FeatureCommand {
 
     public init() {}
 
+    /// Preset pattern/scale/angle before `start` (used by the `-HATCH`
+    /// command-line form). Callers validate the pattern name first
+    /// (`DXFHatchGenerator.patternDefinition(for:)` or SOLID).
+    public func preset(pattern: String? = nil, scale: Float? = nil, angle: Float? = nil) {
+        if let pattern {
+            let key = pattern.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if !key.isEmpty {
+                patternName = key
+                fillType = 0
+            }
+        }
+        if let scale, scale > 0 { hatchScale = scale }
+        if let angle { hatchAngle = angle }
+    }
+
     internal var currentBackgroundColor: ColorRGBA? { backgroundColor }
     internal var currentFillType: Int32 { fillType }
     internal var currentIslandStyle: Int32 { islandStyle }

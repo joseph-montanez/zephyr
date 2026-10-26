@@ -209,6 +209,30 @@ public enum CADCommandAliasTable {
         CADCommandAliasEntry(
             canonicalName: "CLEANSCREENOFF", category: .view,
             description: "Restore ribbon and panels hidden by CLEANSCREENON"),
+        CADCommandAliasEntry(
+            canonicalName: "DRAWORDER", aliases: ["DR"], category: .modify,
+            syntax: "[Above/Under/Front/Back]",
+            description: "Change the draw order of selected entities"),
+        CADCommandAliasEntry(
+            canonicalName: "HATCHEDIT", aliases: ["HE"], category: .draw,
+            description: "Edit the selected hatch"),
+        CADCommandAliasEntry(
+            canonicalName: "-HATCH", category: .draw,
+            syntax: "[pattern] [scale] [angle]",
+            description: "Fill a closed boundary from the command line"),
+        CADCommandAliasEntry(
+            canonicalName: "-TEXT", category: .draw,
+            description: "Place single-line text from the command line"),
+        CADCommandAliasEntry(
+            canonicalName: "-LAYER", aliases: ["-LA"], category: .layer,
+            syntax: "Make/Set/New/On/Off/Color/Ltype/LWeight <args>",
+            description: "Manage layers from the command line"),
+        CADCommandAliasEntry(
+            canonicalName: "CHPROP", category: .modify,
+            description: "Change color, layer, linetype, or lineweight of selected entities"),
+        CADCommandAliasEntry(
+            canonicalName: "CHANGE", category: .modify,
+            description: "Change properties of selected entities (legacy form)"),
     ]
 
     /// Entry for a canonical name (case-insensitive), if tabled.
