@@ -182,6 +182,10 @@ public extension CADPrimitive {
         case .ray(let r):
             return .ray(start: Vector3(r.origin),
                         direction: Vector3(x: r.direction.x, y: r.direction.y, z: 0), color: color)
+        case .xline(let x):
+            return .xline(point: Vector3(x.origin, z: lineZ(of: source)),
+                          direction: Vector3(x: x.direction.x, y: x.direction.y, z: 0),
+                          color: color)
         case .arc(let arc):
             // DXF arcs are CCW: emit normalized positive sweep.
             var sweep = arc.sweep.truncatingRemainder(dividingBy: 2.0 * .pi)
@@ -210,7 +214,7 @@ public extension CADPrimitive {
                 return .arc(center: Vector3(a.center, z: z), radius: a.radius,
                             startAngle: start, endAngle: start + sweep, color: color)
             }
-        case .xline, .ellipse, .spline:
+        case .ellipse, .spline:
             return nil
         }
     }
@@ -231,6 +235,7 @@ public extension CADPrimitive {
         case .fillPolygon(_, let c): return c
         case .fillRect(_, _, let c): return c
         case .ray(_, _, let c): return c
+        case .xline(_, _, let c): return c
         default: return nil
         }
     }
@@ -242,6 +247,7 @@ public extension CADPrimitive {
         case .arc(let c, _, _, _, _): return c.z
         case .circle(let c, _, _): return c.z
         case .ray(let s, _, _): return s.z
+        case .xline(let p, _, _): return p.z
         case .polyline(let p, _): return p.vertices.first?.position.z ?? 0
         default: return 0
         }

@@ -234,7 +234,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SPLINE",     aliases: ["SPL"],           category: .draw,    syntax: "", description: "Draw a smooth spline curve through control points"),
         CommandDescriptor(canonicalName: "PENSTROKE",  aliases: ["PSTROKE"],      category: .draw,    syntax: "", description: "Draw with tablet pen capturing pressure and tilt per vertex"),
         CommandDescriptor(canonicalName: "RAY",        aliases: [],                category: .draw,    syntax: "", description: "Draw a ray from a start point in a direction"),
-        CommandDescriptor(canonicalName: "XLINE",      aliases: ["XL"],            category: .draw,    syntax: "", description: "Draw an infinite construction line through a point"),
+        CommandDescriptor(canonicalName: "XLINE",      aliases: ["XL"],            category: .draw,    syntax: "[Hor/Ver/Ang/Bisect/Offset]", description: "Draw an infinite construction line through a point"),
         CommandDescriptor(canonicalName: "POLYGON",    aliases: ["POL"],           category: .draw,    syntax: "[Inscribed/Circumscribed/Edge]", description: "Draw a regular polygon (sides, center, radius or edge)"),
         CommandDescriptor(canonicalName: "BOUNDARY",   aliases: ["BO"],            category: .draw,    syntax: "", description: "Create a closed region from an interior pick point"),
         CommandDescriptor(canonicalName: "-BOUNDARY",  aliases: [],                category: .draw,    syntax: "", description: "Create a closed region from an interior pick point (command line)"),

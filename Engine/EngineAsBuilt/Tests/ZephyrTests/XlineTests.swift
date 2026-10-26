@@ -1,5 +1,6 @@
 import XCTest
 @testable import ZephyrCore
+import ZephyrKernel
 
 /// Phase 1A-3 tests: the `.xline` vertical slice — infinite-both-ways
 /// hit-testing, the native kernel curve mapping, DXF XLINE conversion,
@@ -78,6 +79,58 @@ final class XlineTests: XCTestCase {
         XCTAssertEqual(point.y, 4, accuracy: 1e-9)
         XCTAssertEqual(direction.x, 0, accuracy: 1e-9)
         XCTAssertEqual(direction.y, -2, accuracy: 1e-9)
+    }
+
+    func testBisectorRightAngle() {
+        let dir = XlineMath.bisector(
+            vertex: Vector3(x: 0, y: 0, z: 0),
+            start: Vector3(x: 1, y: 0, z: 0),
+            end: Vector3(x: 0, y: 1, z: 0))
+        let d = try? XCTUnwrap(dir)
+        // Unnormalized leg sum (1,1): direction only, commit sites use it raw.
+        XCTAssertEqual(d?.x ?? 0, 1, accuracy: 1e-9)
+        XCTAssertEqual(d?.y ?? 0, 1, accuracy: 1e-9)
+    }
+
+    func testBisectorOppositeRaysGoesPerpendicular() {
+        let dir = XlineMath.bisector(
+            vertex: Vector3(x: 0, y: 0, z: 0),
+            start: Vector3(x: 1, y: 0, z: 0),
+            end: Vector3(x: -1, y: 0, z: 0))
+        let d = try? XCTUnwrap(dir)
+        XCTAssertEqual(abs(d?.x ?? 1), 0, accuracy: 1e-9)
+        XCTAssertEqual(abs(d?.y ?? 0), 1, accuracy: 1e-9)
+    }
+
+    func testBisectorCoincidentPointsReturnNil() {
+        XCTAssertNil(XlineMath.bisector(
+            vertex: Vector3(x: 0, y: 0, z: 0),
+            start: Vector3(x: 0, y: 0, z: 0),
+            end: Vector3(x: 1, y: 0, z: 0)))
+    }
+
+    func testOffsetXlineRoundTripsThroughKernel() {
+        let source = CADPrimitive.xline(
+            point: Vector3(x: 0, y: 0, z: 0),
+            direction: Vector3(x: 1, y: 0, z: 0))
+        guard let curve = source.toKernelCurves().first else {
+            return XCTFail("no kernel curve for xline")
+        }
+        guard let moved = Offset2D.offsetSingleCurve(
+            curve, distance: 2, sidePoint: Point2d(x: 0, y: -1))
+        else {
+            return XCTFail("offset failed")
+        }
+        guard let rebuilt = CADPrimitive.fromKernelCurve(
+            moved, preservingColorFrom: source),
+            case .xline(let base, let dir, _) = rebuilt
+        else {
+            return XCTFail("offset did not rebuild an xline, got \(moved)")
+        }
+        XCTAssertEqual(base.x, 0, accuracy: 1e-9)
+        XCTAssertEqual(base.y, -2, accuracy: 1e-9)
+        XCTAssertEqual(dir.x, 1, accuracy: 1e-9)
+        XCTAssertEqual(dir.y, 0, accuracy: 1e-9)
     }
 
     func testInquiryTypeNameLengthAndDescribe() {
