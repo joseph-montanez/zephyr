@@ -237,6 +237,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "XLINE",      aliases: ["XL"],            category: .draw,    syntax: "", description: "Draw an infinite construction line through a point"),
         CommandDescriptor(canonicalName: "POLYGON",    aliases: ["POL"],           category: .draw,    syntax: "[Inscribed/Circumscribed/Edge]", description: "Draw a regular polygon (sides, center, radius or edge)"),
         CommandDescriptor(canonicalName: "BOUNDARY",   aliases: ["BO"],            category: .draw,    syntax: "", description: "Create a closed region from an interior pick point"),
+        CommandDescriptor(canonicalName: "-BOUNDARY",  aliases: [],                category: .draw,    syntax: "", description: "Create a closed region from an interior pick point (command line)"),
         CommandDescriptor(canonicalName: "DRAW",       aliases: ["TOOLS"],         category: .draw,    syntax: "", description: "Open the draw tools palette"),
         CommandDescriptor(canonicalName: "MTEXT",      aliases: ["MT", "T"],       category: .draw,    syntax: "", description: "Place multiline text"),
         CommandDescriptor(canonicalName: "TEXT",       aliases: ["DTEXT", "DT"],   category: .draw,    syntax: "", description: "Place single-line text"),

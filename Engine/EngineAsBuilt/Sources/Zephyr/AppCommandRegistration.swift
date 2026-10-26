@@ -339,6 +339,11 @@ struct AppCommandRegistration {
             factory: { BoundaryCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "-BOUNDARY",
+            aliases: [],
+            factory: { BoundaryCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "DRAW",
             aliases: ["TOOLS"],
             factory: { DrawPaletteCommand() }

@@ -6,8 +6,8 @@ import SwiftSDL
 // MARK: - BoundaryCommand (BOUNDARY / BO)
 // =========================================================================
 
-/// Create a `.polygon` region from an interior pick point, reusing the
-/// hatch engine's wall-following boundary detection
+/// Create a closed-polyline region from an interior pick point, reusing
+/// the hatch engine's wall-following boundary detection
 /// (`CADBoundaryDetector.findEnclosingPolygon`). Repeats so several
 /// regions can be created per session; Esc finishes. Only the outer loop
 /// is kept in this slice (island holes arrive with the hatch-style
@@ -37,7 +37,7 @@ public final class BoundaryCommand: FeatureCommand {
         }
         let entity = CADEntity(
             layerID: engine.document.activeLayerID ?? UUID(),
-            localGeometry: [.polygon(points: loop)])
+            localGeometry: [.polyline(path: CADPolyline(points: loop, isClosed: true))])
         engine.document.addEntity(entity)
         engine.tabManager.markActiveDirty()
         processor.commandPrompt = "Boundary created. Pick another point (Esc to finish)."

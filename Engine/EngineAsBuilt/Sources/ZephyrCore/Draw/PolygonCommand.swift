@@ -1,5 +1,6 @@
 import Foundation
 import CSDL3
+import ImGui
 import SwiftSDL
 
 // =========================================================================
@@ -73,8 +74,8 @@ public enum PolygonMath {
 // =========================================================================
 
 /// Draw a regular polygon: sides → center → Inscribed/Circumscribed/Edge →
-/// radius (click or typed) or two edge points. Commits one `.polygon`
-/// entity in a single undo step.
+/// radius (click or typed) or two edge points. Commits one closed
+/// `.polyline` entity in a single undo step.
 @MainActor
 public final class PolygonCommand: FeatureCommand {
 
@@ -88,6 +89,7 @@ public final class PolygonCommand: FeatureCommand {
     }
 
     private var state: State = .sides
+    private var mouseWorld = Vector3(x: 0, y: 0, z: 0)
 
     public init() {}
 
@@ -227,7 +229,9 @@ public final class PolygonCommand: FeatureCommand {
     public func handleMouseMotion(
         worldX: Double, worldY: Double,
         engine: PhrostEngine, processor: CADCommandProcessor
-    ) {}
+    ) {
+        mouseWorld = Vector3(x: worldX, y: worldY, z: 0)
+    }
 
     public func handleKeyDown(
         scancode: SDL_Scancode, engine: PhrostEngine,
@@ -237,7 +241,42 @@ public final class PolygonCommand: FeatureCommand {
         return .continue
     }
 
-    public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
+    public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {
+        // Live outline preview once a center exists; the radius/edge
+        // follows the mouse. Click points already snap via the engine.
+        let preview: [Vector3]?
+        switch state {
+        case .mode(let sides, let center):
+            let r = hypot(mouseWorld.x - center.x, mouseWorld.y - center.y)
+            guard r > 1e-9 else { return }
+            let a = atan2(mouseWorld.y - center.y, mouseWorld.x - center.x)
+            preview = PolygonMath.vertices(
+                sides: sides, center: center, radius: r,
+                startAngle: a, mode: .inscribed)
+        case .radius(let sides, let center, let mode):
+            let r = hypot(mouseWorld.x - center.x, mouseWorld.y - center.y)
+            guard r > 1e-9 else { return }
+            let a = atan2(mouseWorld.y - center.y, mouseWorld.x - center.x)
+            preview = PolygonMath.vertices(
+                sides: sides, center: center, radius: r,
+                startAngle: a, mode: mode)
+        case .edgeSecond(let sides, _, let first):
+            guard hypot(mouseWorld.x - first.x, mouseWorld.y - first.y) > 1e-9 else { return }
+            preview = PolygonMath.verticesFromEdge(
+                sides: sides, first: first, second: mouseWorld)
+        case .sides, .center, .edgeFirst:
+            return
+        }
+        guard let verts = preview, verts.count >= 3 else { return }
+        let drawList = igGetForegroundDrawList_ViewportPtr(nil)
+        let col = makeCol32(0, 255, 128, 200)
+        for i in verts.indices {
+            let a = verts[i], b = verts[(i + 1) % verts.count]
+            let pa = EngineCameraManager.worldToScreen(worldX: a.x, worldY: a.y, cam: cam)
+            let pb = EngineCameraManager.worldToScreen(worldX: b.x, worldY: b.y, cam: cam)
+            ImDrawListAddLine(drawList, ImVec2(x: pa.x, y: pa.y), ImVec2(x: pb.x, y: pb.y), col, 1.5)
+        }
+    }
 
     private func commit(
         vertices: [Vector3],
@@ -245,7 +284,8 @@ public final class PolygonCommand: FeatureCommand {
     ) {
         let entity = CADEntity(
             layerID: engine.document.activeLayerID ?? UUID(),
-            localGeometry: [.polygon(points: vertices)])
+            localGeometry: [.polyline(
+                path: CADPolyline(points: vertices, isClosed: true))])
         engine.document.addEntity(entity)
         engine.tabManager.markActiveDirty()
         processor.commandPrompt = "Polygon created (\(vertices.count) sides)."
