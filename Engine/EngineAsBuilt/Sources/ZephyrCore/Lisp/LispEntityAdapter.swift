@@ -104,6 +104,7 @@ enum LispEntityAdapter {
         case .ellipse: return "ELLIPSE"
         case .hatch, .hatchPath: return "HATCH"
         case .ray: return "RAY"
+        case .xline: return "XLINE"
         case .image: return "IMAGE"
         case .table: return "ACAD_TABLE"
         }
@@ -188,6 +189,8 @@ enum LispEntityAdapter {
                 backgroundColor: background)
         case let .ray(start, direction, _):
             return .ray(start: start, direction: direction, color: color)
+        case let .xline(point, direction, _):
+            return .xline(point: point, direction: direction, color: color)
         case let .image(insertion, uAxis, vAxis, imageName, clipBoundary, _):
             return .image(
                 insertion: insertion, uAxis: uAxis, vAxis: vAxis,
@@ -216,6 +219,7 @@ enum LispEntityAdapter {
         case let .hatch(_, _, _, _, c, _): return c
         case let .hatchPath(_, _, _, _, _, c, _): return c
         case let .ray(_, _, c): return c
+        case let .xline(_, _, c): return c
         case .image(_, _, _, _, _, let tint): return tint
         case let .table(_, _, c): return c
         }
@@ -361,6 +365,11 @@ enum LispEntityAdapter {
             return [
                 dotted(.int(10), pointValue(world(start, t))),
                 dotted(.int(11), pointValue(worldVector(direction, at: start, t))),
+            ]
+        case let .xline(point, direction, _):
+            return [
+                dotted(.int(10), pointValue(world(point, t))),
+                dotted(.int(11), pointValue(worldVector(direction, at: point, t))),
             ]
         case let .image(insertion, _, _, imageName, _, _):
             return [
@@ -664,6 +673,11 @@ enum LispEntityAdapter {
                 throw LispError.hostError("\(name): RAY needs (10 . start) and (11 . direction) groups")
             }
             return .ray(start: start, direction: dir, color: color)
+        case "XLINE":
+            guard let point = assoc.point(10), let dir = assoc.point(11) else {
+                throw LispError.hostError("\(name): XLINE needs (10 . point) and (11 . direction) groups")
+            }
+            return .xline(point: point, direction: dir, color: color)
         case "SOLID":
             let corners = [assoc.point(10), assoc.point(11), assoc.point(12), assoc.point(13)]
                 .compactMap { $0 }

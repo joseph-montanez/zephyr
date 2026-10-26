@@ -2584,6 +2584,13 @@ public enum DXFWriterBridge {
             applyColor(color, to: entity)
             return entity
 
+        case .xline(let point, let direction, let color):
+            let xlineEntity = DXFXLineEntity()
+            xlineEntity.basePoint = toDXF(transform.transformPoint(point))
+            xlineEntity.secPoint = toDXFVector(transformedVector(direction, by: transform))
+            applyColor(color, to: xlineEntity)
+            return xlineEntity
+
         case .image(let insertion, let uAxis, let vAxis, let imageName, let clipBoundary, _):
             return mediaEntity(
                 insertion: insertion, uAxis: uAxis, vAxis: vAxis,

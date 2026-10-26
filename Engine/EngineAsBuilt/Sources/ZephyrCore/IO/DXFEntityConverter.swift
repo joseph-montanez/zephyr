@@ -77,7 +77,7 @@ public enum DXFEntityConverter {
         case .xLINE:
             guard let x = e as? DXFXLineEntity else { return [] }
             let base = yflip(x.basePoint); let dir = yflip(x.secPoint)
-            return [.line(start: base, end: Vector3(x: base.x + dir.x, y: base.y + dir.y, z: base.z + dir.z), color: primColor)]
+            return [.xline(point: base, direction: dir, color: primColor)]
         case .rAY:
             guard let r = e as? DXFRayEntity else { return [] }
             return [.ray(start: yflip(r.basePoint), direction: yflip(r.secPoint), color: primColor)]

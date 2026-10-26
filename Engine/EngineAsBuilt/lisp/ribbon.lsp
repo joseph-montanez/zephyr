@@ -163,6 +163,7 @@
           (zr-item "SPLINE" "Spline" nil)
           (zr-item "PENSTROKE" "Pen Stroke" nil)
           (zr-item "RAY" "Ray" nil)
+          (zr-item "XLINE" "Construction Line" nil)
           (zr-sep)
           (zr-item "TEXT" "Single Line Text" nil)
           (zr-item "TABLE" "Table" nil)
@@ -261,7 +262,8 @@
                   (zr-item "HATCH"     "Hatch"      nil)
                   (zr-item "SPLINE"    "Spline"     nil)
                   (zr-item "PENSTROKE" "Pen Stroke" nil)
-                  (zr-item "RAY"       "Ray"        nil)))))
+                  (zr-item "RAY"       "Ray"        nil)
+                  (zr-item "XLINE"     "Xline"      nil)))))
 
           (zr-panel "Modify"
             (list

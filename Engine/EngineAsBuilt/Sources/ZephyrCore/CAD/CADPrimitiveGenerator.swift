@@ -375,6 +375,7 @@ public enum CADPrimitiveGenerator {
         case .hatch(_, _, _, _, let c, _): primColor = c
         case .hatchPath(_, _, _, _, _, let c, _): primColor = c
         case .ray(_, _, let c): primColor = c
+        case .xline(_, _, let c): primColor = c
         case .image(_, _, _, _, _, let c): primColor = c
         case .table(_, _, let c): primColor = c
         }
@@ -1133,6 +1134,18 @@ public enum CADPrimitiveGenerator {
             let unitDir = Vector3(x: direction.x / dirNorm, y: direction.y / dirNorm, z: 0)
             let farEndWorld = Vector3(x: ws.x + unitDir.x * 100_000, y: ws.y + unitDir.y * 100_000, z: ws.z)
             let p1 = renderPoint(ws)
+            let p2 = renderPoint(farEndWorld)
+            specs.append(makeLineSpec(p1: p1, p2: p2, weight: lineWeight, z: z, color: finalColor))
+
+        case .xline(let point, let direction, _):
+            let ws = transform.transformPoint(point)
+            // Extend the construction line both directions (±100,000 units)
+            let dirNorm = direction.magnitude
+            guard dirNorm > 1e-12 else { break }
+            let unitDir = Vector3(x: direction.x / dirNorm, y: direction.y / dirNorm, z: 0)
+            let farEndWorld = Vector3(x: ws.x + unitDir.x * 100_000, y: ws.y + unitDir.y * 100_000, z: ws.z)
+            let backEndWorld = Vector3(x: ws.x - unitDir.x * 100_000, y: ws.y - unitDir.y * 100_000, z: ws.z)
+            let p1 = renderPoint(backEndWorld)
             let p2 = renderPoint(farEndWorld)
             specs.append(makeLineSpec(p1: p1, p2: p2, weight: lineWeight, z: z, color: finalColor))
 

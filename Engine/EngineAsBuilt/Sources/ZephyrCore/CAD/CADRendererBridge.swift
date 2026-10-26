@@ -173,6 +173,7 @@ public final class CADRendererBridge {
         case .hatch(_, _, _, _, let color, _): return color
         case .hatchPath(_, _, _, _, _, let color, _): return color
         case .ray(_, _, let color): return color
+        case .xline(_, _, let color): return color
         case .image(_, _, _, _, _, let color): return color
         case .table(_, _, let color): return color
         }
@@ -1052,6 +1053,7 @@ public final class CADRendererBridge {
                                     case .point: typeStr = "point"
                                     case .gradient: typeStr = "gradient"
                                     case .ray: typeStr = "ray"
+                                    case .xline: typeStr = "xline"
                                     case .rect: typeStr = "rect"
                                     case .fillRect: typeStr = "fillRect"
                                     case .image: typeStr = "image"
@@ -1339,6 +1341,7 @@ public final class CADRendererBridge {
                         case .point: typeStr = "point"
                         case .gradient: typeStr = "gradient"
                         case .ray: typeStr = "ray"
+                        case .xline: typeStr = "xline"
                         case .rect: typeStr = "rect"
                         case .fillRect: typeStr = "fillRect"
                         case .image: typeStr = "image"
@@ -2025,6 +2028,32 @@ public final class CADRendererBridge {
                         let newDir = invTransform.transformPoint(Vector3(x: start.x + nd.x, y: start.y + nd.y, z: 0))
                         let dirVec = Vector3(x: newDir.x - start.x, y: newDir.y - start.y, z: 0)
                         writeLiveGeometry(.ray(start: start, direction: dirVec, color: c))
+                        if let rp = rpForCurrentPrimitive(), localIdx < rp.points.count {
+                            rp.points[localIdx].x += dx
+                            rp.points[localIdx].y += dy
+                            markPrimitiveDirty(rp, in: gm)
+                        }
+                    }
+                    return
+                case .xline(let point, let direction, let c):
+                    var newWorldPts = pts
+                    newWorldPts[localIdx].x += Double(dx)
+                    newWorldPts[localIdx].y += Double(dy)
+                    if localIdx == 0 {
+                        let newPoint = invTransform.transformPoint(newWorldPts[0])
+                        writeLiveGeometry(.xline(point: newPoint, direction: direction, color: c))
+                        if let rp = rpForCurrentPrimitive(), 0 < rp.points.count {
+                            rp.points[0].x += dx
+                            rp.points[0].y += dy
+                            markPrimitiveDirty(rp, in: gm)
+                        }
+                    } else {
+                        let ws = newWorldPts[0]
+                        let wp = newWorldPts[localIdx]
+                        let nd = Vector3(x: wp.x - ws.x, y: wp.y - ws.y, z: 0)
+                        let newDir = invTransform.transformPoint(Vector3(x: point.x + nd.x, y: point.y + nd.y, z: 0))
+                        let dirVec = Vector3(x: newDir.x - point.x, y: newDir.y - point.y, z: 0)
+                        writeLiveGeometry(.xline(point: point, direction: dirVec, color: c))
                         if let rp = rpForCurrentPrimitive(), localIdx < rp.points.count {
                             rp.points[localIdx].x += dx
                             rp.points[localIdx].y += dy

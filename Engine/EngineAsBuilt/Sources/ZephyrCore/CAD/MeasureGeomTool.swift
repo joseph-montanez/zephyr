@@ -1070,6 +1070,18 @@ public final class MeasureGeomTool: FeatureCommand {
             return CADGeometryMath.intersectRayLine(
                 rayOrigin: rayOrigin, rayDir: rayDir, lineP1: ws, lineP2: wd)
 
+        case .xline(let point, let direction, _):
+            let ws = transform.transformPoint(point)
+            let wd = transform.transformPoint(
+                Vector3(x: point.x + direction.x, y: point.y + direction.y, z: point.z))
+            let dx = wd.x - ws.x, dy = wd.y - ws.y
+            let mag = sqrt(dx * dx + dy * dy)
+            guard mag > 1e-12 else { return nil }
+            let back = Vector3(x: ws.x - dx / mag * 100_000, y: ws.y - dy / mag * 100_000, z: ws.z)
+            let far = Vector3(x: ws.x + dx / mag * 100_000, y: ws.y + dy / mag * 100_000, z: ws.z)
+            return CADGeometryMath.intersectRayLine(
+                rayOrigin: rayOrigin, rayDir: rayDir, lineP1: back, lineP2: far)
+
         default:
             return nil
         }

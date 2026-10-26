@@ -144,6 +144,7 @@ public enum InquiryMath {
         case .text: return "TEXT"
         case .ellipse: return "ELLIPSE"
         case .ray: return "RAY"
+        case .xline: return "XLINE"
         case .image: return "IMAGE"
         case .table: return "TABLE"
         }
@@ -638,6 +639,10 @@ public final class ListCommand: FeatureCommand {
             if let area = InquiryMath.entityArea(entity) { lines.append(areaLine(area)) }
         case let .ray(start, direction, _):
             lines.append(pointLine("base point", t.transformPoint(start), luprec: luprec))
+            lines.append(
+                "direction \(InquiryMath.formatAngleDeg(atan2(direction.y, direction.x) + t.rotation, precision: auprec))°")
+        case let .xline(point, direction, _):
+            lines.append(pointLine("through point", t.transformPoint(point), luprec: luprec))
             lines.append(
                 "direction \(InquiryMath.formatAngleDeg(atan2(direction.y, direction.x) + t.rotation, precision: auprec))°")
         case let .spline(controlPoints, _, degree, _, _):

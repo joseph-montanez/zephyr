@@ -545,6 +545,7 @@ public enum CADPrimitive: Hashable, Sendable {
     case hatch(boundary: [Vector3], pattern: String, scale: Double, angle: Double, color: ColorRGBA? = nil, backgroundColor: ColorRGBA? = nil)
     case hatchPath(boundary: CADPolyline, holes: [CADPolyline], pattern: String, scale: Double, angle: Double, color: ColorRGBA? = nil, backgroundColor: ColorRGBA? = nil)
     case ray(start: Vector3, direction: Vector3, color: ColorRGBA? = nil)
+    case xline(point: Vector3, direction: Vector3, color: ColorRGBA? = nil)
     case image(
         insertion: Vector3,
         uAxis: Vector3,
@@ -863,6 +864,8 @@ public struct CADBlock: Hashable, Sendable {
                 for hole in holes { points.append(contentsOf: hole.boundingPoints()) }
             case .ray(let start, _, _):
                 points.append(start)
+            case .xline(let point, _, _):
+                points.append(point)
             case .image(let insertion, let uAxis, let vAxis, _, _, _):
                 points.append(insertion)
                 points.append(Vector3(x: insertion.x + uAxis.x, y: insertion.y + uAxis.y, z: insertion.z + uAxis.z))
@@ -1294,6 +1297,8 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
 
             case .ray(let start, _, _):
                 addVertex(start)
+            case .xline(let point, _, _):
+                addVertex(point)
             case .image(let insertion, let uAxis, let vAxis, _, _, _):
                 pts.append(.insertionPoint(localPosition: insertion))
                 // 4 corners

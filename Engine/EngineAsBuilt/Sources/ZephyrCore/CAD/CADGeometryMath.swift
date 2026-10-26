@@ -586,6 +586,10 @@ public enum CADGeometryMath {
             let ws = transform.transformPoint(start)
             let wd = transform.transformPoint(Vector3(x: start.x + direction.x, y: start.y + direction.y, z: start.z))
             return [ws, wd]
+        case .xline(let point, let direction, _):
+            let ws = transform.transformPoint(point)
+            let wd = transform.transformPoint(Vector3(x: point.x + direction.x, y: point.y + direction.y, z: point.z))
+            return [ws, wd]
         case .image(let insertion, let uAxis, let vAxis, _, _, _):
             let c0 = transform.transformPoint(insertion)
             let c1 = transform.transformPoint(Vector3(x: insertion.x + uAxis.x, y: insertion.y + uAxis.y, z: insertion.z + uAxis.z))
@@ -691,6 +695,8 @@ public enum CADGeometryMath {
                 out.append(.hatchPath(boundary: boundary.transformed(by: t), holes: holes.map { $0.transformed(by: t) }, pattern: pattern, scale: scale, angle: angle + rot, color: color, backgroundColor: backgroundColor))
             case let .ray(start, direction, color):
                 out.append(.ray(start: tp(start), direction: tv(direction), color: color))
+            case let .xline(point, direction, color):
+                out.append(.xline(point: tp(point), direction: tv(direction), color: color))
             case let .image(insertion, uAxis, vAxis, imageName, clipBoundary, tint):
                 out.append(.image(insertion: tp(insertion), uAxis: tv(uAxis), vAxis: tv(vAxis),
                                   imageName: imageName, clipBoundary: clipBoundary?.map(tp), tint: tint))

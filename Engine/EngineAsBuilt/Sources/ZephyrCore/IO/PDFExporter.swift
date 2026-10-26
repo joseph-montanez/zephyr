@@ -541,6 +541,8 @@ public enum PDFExporter {
                 grow(Vector3(x: pos.x + h, y: pos.y + h, z: pos.z))
             case .ray(let start, _, _):
                 grow(start)
+            case .xline(let point, _, _):
+                grow(point)
             case .table: break
             case .image(let insertion, let uAxis, let vAxis, _, _, _):
                 grow(insertion)

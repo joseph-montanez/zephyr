@@ -183,6 +183,9 @@ public enum CADCommandAliasTable {
             canonicalName: "GRADIENT", aliases: ["GD"], category: .draw,
             description: "Fill a closed boundary with a gradient"),
         CADCommandAliasEntry(
+            canonicalName: "XLINE", aliases: ["XL"], category: .draw,
+            description: "Draw an infinite construction line through a point"),
+        CADCommandAliasEntry(
             canonicalName: "DIST", aliases: ["DI"], category: .draw,
             description: "Report distance, angles, and deltas between two points"),
         CADCommandAliasEntry(

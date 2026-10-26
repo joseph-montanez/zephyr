@@ -324,6 +324,11 @@ struct AppCommandRegistration {
             factory: { RayCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "XLINE",
+            aliases: ["XL"],
+            factory: { XlineCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "DRAW",
             aliases: ["TOOLS"],
             factory: { DrawPaletteCommand() }

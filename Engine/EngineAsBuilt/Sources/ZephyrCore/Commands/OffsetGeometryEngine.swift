@@ -96,7 +96,7 @@ public enum OffsetGeometryEngine {
 
     public static func isOffsettable(primitive: CADPrimitive) -> Bool {
         switch primitive {
-        case .line, .ray, .circle, .arc, .ellipse, .spline, .rect, .polygon:
+        case .line, .ray, .xline, .circle, .arc, .ellipse, .spline, .rect, .polygon:
             return true
         case .polyline(let path, _):
             return path.hatchEdges.isEmpty && !path.isHatchBoundaryCarrier
@@ -132,6 +132,9 @@ public enum OffsetGeometryEngine {
         case .ray(let start, let direction, let color):
             return offsetRay(start: start, direction: direction, color: color,
                              transform: transform, mode: mode)
+        case .xline(let point, let direction, let color):
+            return offsetXLine(point: point, direction: direction, color: color,
+                               transform: transform, mode: mode)
         case .circle(let center, let radius, let color):
             return offsetCircle(center: center, radius: radius, color: color,
                                 transform: transform, mode: mode, gapType: gapType)
@@ -245,6 +248,20 @@ public enum OffsetGeometryEngine {
         else { return nil }
         let delta = Vector3(x: normal.x * shift, y: normal.y * shift, z: 0)
         return .ray(start: a + delta, direction: worldDirection, color: color)
+    }
+
+    private static func offsetXLine(
+        point: Vector3, direction: Vector3, color: ColorRGBA?,
+        transform: Transform3D, mode: OffsetMode
+    ) -> CADPrimitive? {
+        let a = transform.transformPoint(point)
+        let worldDirection = transform.transformPoint(point + direction) - a
+        guard let dir = unit2(worldDirection) else { return nil }
+        let normal = leftNormal(dir)
+        guard let shift = lineShift(origin: a, normal: normal, mode: mode)
+        else { return nil }
+        let delta = Vector3(x: normal.x * shift, y: normal.y * shift, z: 0)
+        return .xline(point: a + delta, direction: worldDirection, color: color)
     }
 
     // MARK: - Circle / Arc

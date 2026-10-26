@@ -268,10 +268,11 @@ public enum PenVectorEraser {
                 center: center,
                 radius: radius)
 
-        // Filled primitives, annotation, images, rays, hatches and tables are not
-        // vector-eraser targets. TRIM-style editing of these remains separate.
+        // Filled primitives, annotation, images, rays, xlines, hatches and
+        // tables are not vector-eraser targets. TRIM-style editing of these
+        // remains separate.
         case .point, .fillRect, .fillPolygon, .fillComplexPolygon, .gradient,
-             .text, .hatch, .hatchPath, .ray, .image, .table:
+             .text, .hatch, .hatchPath, .ray, .xline, .image, .table:
             return .unchanged
         }
     }

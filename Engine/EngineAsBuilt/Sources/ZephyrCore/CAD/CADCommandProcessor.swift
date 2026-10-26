@@ -234,6 +234,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SPLINE",     aliases: ["SPL"],           category: .draw,    syntax: "", description: "Draw a smooth spline curve through control points"),
         CommandDescriptor(canonicalName: "PENSTROKE",  aliases: ["PSTROKE"],      category: .draw,    syntax: "", description: "Draw with tablet pen capturing pressure and tilt per vertex"),
         CommandDescriptor(canonicalName: "RAY",        aliases: [],                category: .draw,    syntax: "", description: "Draw a ray from a start point in a direction"),
+        CommandDescriptor(canonicalName: "XLINE",      aliases: ["XL"],            category: .draw,    syntax: "", description: "Draw an infinite construction line through a point"),
         CommandDescriptor(canonicalName: "DRAW",       aliases: ["TOOLS"],         category: .draw,    syntax: "", description: "Open the draw tools palette"),
         CommandDescriptor(canonicalName: "MTEXT",      aliases: ["MT", "T"],       category: .draw,    syntax: "", description: "Place multiline text"),
         CommandDescriptor(canonicalName: "TEXT",       aliases: ["DTEXT", "DT"],   category: .draw,    syntax: "", description: "Place single-line text"),

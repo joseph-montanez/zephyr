@@ -127,8 +127,9 @@ public extension CADPolyline {
 
 public extension CADPrimitive {
     /// Local-space analytical curves for this primitive. Arcs, circles,
-    /// ellipses, rays, and bulged polyline edges map exactly; polygon-like
-    /// and text/hatch/pen types return [] so callers keep existing paths.
+    /// ellipses, rays, xlines, and bulged polyline edges map exactly;
+    /// polygon-like and text/hatch/pen types return [] so callers keep
+    /// existing paths.
     func toKernelCurves() -> [Curve2d] {
         switch self {
         case .line(let start, let end, _):
@@ -136,6 +137,9 @@ public extension CADPrimitive {
         case .ray(let start, let direction, _):
             return [.ray(Ray2d(origin: start.point2d,
                                direction: Vec2d(x: direction.x, y: direction.y)))]
+        case .xline(let point, let direction, _):
+            return [.xline(XLine2d(origin: point.point2d,
+                                   direction: Vec2d(x: direction.x, y: direction.y)))]
         case .circle(let center, let radius, _):
             return [.circle(Circle2d(center: center.point2d, radius: radius))]
         case .arc(let center, let radius, let startAngle, let endAngle, _):

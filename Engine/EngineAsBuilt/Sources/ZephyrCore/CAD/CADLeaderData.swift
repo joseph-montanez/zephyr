@@ -296,7 +296,7 @@ public enum CADLeaderBlockPrimitive: Sendable, Hashable, Codable {
                 majorAxis: majorAxis,
                 minorRatio: minorRatio,
                 color: color)
-        case .gradient, .hatch, .hatchPath, .ray, .image, .table, .penStroke:
+        case .gradient, .hatch, .hatchPath, .ray, .xline, .image, .table, .penStroke:
             return nil
         }
     }

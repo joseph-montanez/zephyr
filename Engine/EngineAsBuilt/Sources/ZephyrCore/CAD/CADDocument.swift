@@ -1856,6 +1856,9 @@ public final class CADDocument {
         case .ray(let start, _, _):
             bounds.include(transform.transformPoint(start))
 
+        case .xline(let point, _, _):
+            bounds.include(transform.transformPoint(point))
+
         case .image(let insertion, let uAxis, let vAxis, let imageName, let clipBoundary, _):
             // Unresolved raster (missing file) renders nothing, so it must
             // not stretch zoom extents either. Repair via the xref palette.

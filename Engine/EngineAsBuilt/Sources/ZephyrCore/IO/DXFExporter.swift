@@ -946,6 +946,7 @@ public enum DXFExporter {
         case .hatch(_, _, _, _, let c, _): primColor = c
         case .hatchPath(_, _, _, _, _, let c, _): primColor = c
         case .ray(_, _, let c): primColor = c
+        case .xline(_, _, let c): primColor = c
         case .image(_, _, _, _, _, let c): primColor = c
         case .table(_, _, let c): primColor = c
         }
@@ -1338,6 +1339,19 @@ public enum DXFExporter {
         case .ray(let start, let direction, _):
             let ws = t.transformPoint(start)
             let wd = t.transformPoint(Vector3(x: start.x + direction.x, y: start.y + direction.y, z: start.z))
+            writeEntityHeaderWithColor(entityType: "XLINE", subclass: "AcDbXline",
+                                        handle: handle, layerName: layer, color: primColor,
+                                        into: &output)
+            output += " 10\r\n\(dxfDouble(ws.x))\r\n"
+            output += " 20\r\n\(dxfDouble(-ws.y))\r\n"
+            output += " 30\r\n\(dxfDouble(ws.z))\r\n"
+            output += " 11\r\n\(dxfDouble(wd.x))\r\n"
+            output += " 21\r\n\(dxfDouble(-wd.y))\r\n"
+            output += " 31\r\n\(dxfDouble(wd.z))\r\n"
+
+        case .xline(let point, let direction, _):
+            let ws = t.transformPoint(point)
+            let wd = t.transformPoint(Vector3(x: point.x + direction.x, y: point.y + direction.y, z: point.z))
             writeEntityHeaderWithColor(entityType: "XLINE", subclass: "AcDbXline",
                                         handle: handle, layerName: layer, color: primColor,
                                         into: &output)
