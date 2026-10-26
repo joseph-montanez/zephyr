@@ -57,6 +57,8 @@ public final class CADRendererBridge {
         generation: Int,
         renderOrigin: CADRenderOrigin,
         autoContrastTrueColor: Bool,
+        pointDisplayMode: Int,
+        pointDisplaySize: Double,
         results: [EntityResult]
     )? = nil
     private let pendingLock = NSLock()
@@ -93,7 +95,9 @@ public final class CADRendererBridge {
             // Never let an older generation overwrite results from a newer one that already
             // landed (tasks can finish out of order; the newest generation always wins).
             if let existing = pendingResults, existing.generation >= generation { return }
-            pendingResults = (generation, renderOrigin, snapshot.autoContrastTrueColor, results)
+            pendingResults = (
+                generation, renderOrigin, snapshot.autoContrastTrueColor,
+                snapshot.pointDisplayMode, snapshot.pointDisplaySize, results)
         }
     }
 
@@ -112,7 +116,7 @@ public final class CADRendererBridge {
         splineTessellationDivisor: Double = 5000.0,
         engine: PhrostEngine
     ) -> Bool {
-        let applied = pendingLock.withLock { () -> (CADRenderOrigin, Bool, [EntityResult])? in
+        let applied = pendingLock.withLock { () -> (CADRenderOrigin, Bool, Int, Double, [EntityResult])? in
             guard let p = pendingResults else { return nil }
             if p.generation != wantGen {
                 // Stale: drop older generations so they can't linger and be applied later.
@@ -122,11 +126,13 @@ public final class CADRendererBridge {
                 return nil
             }
             pendingResults = nil
-            return (p.renderOrigin, p.autoContrastTrueColor, p.results)
+            return (p.renderOrigin, p.autoContrastTrueColor, p.pointDisplayMode, p.pointDisplaySize, p.results)
         }
-        guard let (renderOrigin, autoContrastTrueColor, results) = applied else { return false }
+        guard let (renderOrigin, autoContrastTrueColor, pointDisplayMode, pointDisplaySize, results) = applied else { return false }
         geometryManager.renderOrigin = renderOrigin
         geometryManager.autoContrastTrueColor = autoContrastTrueColor
+        geometryManager.pointDisplayMode = pointDisplayMode
+        geometryManager.pointDisplaySize = pointDisplaySize
         applySpecs(
             results, into: geometryManager, spriteManager: spriteManager,
             imageStore: imageStore, viewportBackground: viewportBackground,

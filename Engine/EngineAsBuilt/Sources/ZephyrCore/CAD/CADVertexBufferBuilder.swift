@@ -30,6 +30,12 @@ public struct TessInput: Sendable {
     public let hatchSpacing: Double
     public let isPanProxy: Bool
     public let gradientData: RenderPrimitive.GradientData?
+    /// PDMODE glyph style + raw PDSIZE for `.point` inputs. The size is
+    /// resolved to world units in `tessellate` (which knows the region
+    /// height): PDSIZE > 0 absolute, == 0 → 5% of region height,
+    /// < 0 → -PDSIZE percent of region height.
+    public let pointStyle: Int
+    public let pointSize: Double
 
     public init(
         type: PrimitiveType,
@@ -44,7 +50,9 @@ public struct TessInput: Sendable {
         isHatchLine: Bool = false,
         hatchSpacing: Double = 0.0,
         isPanProxy: Bool = false,
-        gradientData: RenderPrimitive.GradientData? = nil
+        gradientData: RenderPrimitive.GradientData? = nil,
+        pointStyle: Int = 0,
+        pointSize: Double = 0
     ) {
         self.type = type
         self.points = points
@@ -59,6 +67,16 @@ public struct TessInput: Sendable {
         self.hatchSpacing = hatchSpacing
         self.isPanProxy = isPanProxy
         self.gradientData = gradientData
+        self.pointStyle = pointStyle
+        self.pointSize = pointSize
+    }
+
+    /// Resolve a raw PDSIZE to world units against the region height.
+    public static func resolvePointSize(_ pdsize: Double, regionHeight: Double) -> Double {
+        let h = regionHeight.isFinite && regionHeight > 0 ? regionHeight : 1.0
+        if pdsize > 0 { return pdsize }
+        if pdsize < 0 { return -pdsize / 100.0 * h }
+        return 0.05 * h
     }
 }
 
@@ -541,23 +559,72 @@ public final class CADVertexBufferBuilder {
 
             switch input.type {
             case .point, .points:
-                let pointPixels: Float = input.isHatchLine
-                    ? lineRasterMetrics(for: input).coreHalfPixels * 2.0
-                    : 4.0
-                let halfW: Float = (pointPixels * 0.5) / safePixelZoom
+                let base = input.pointStyle % 32
+                if input.pointStyle == 1 {
+                    break  // PDMODE 1 = none: emit nothing.
+                }
+                guard base != 0 else {
+                    let pointPixels: Float = input.isHatchLine
+                        ? lineRasterMetrics(for: input).coreHalfPixels * 2.0
+                        : 4.0
+                    let halfW: Float = (pointPixels * 0.5) / safePixelZoom
+                    for p in input.points {
+                        let x0 = p.x - halfW
+                        let x1 = p.x + halfW
+                        let y0 = p.y - halfW
+                        let y1 = p.y + halfW
+
+                        vertices.append(CADVertex(x: x0, y: y0, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: x1, y: y0, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+
+                        vertices.append(CADVertex(x: x0, y: y0, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                        vertices.append(CADVertex(x: x0, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    }
+                    break
+                }
+                // PDMODE 2/3/4 glyphs (+32 circle / +64 square): hairline
+                // world-space segments sized by the resolved PDSIZE.
+                let size = TessInput.resolvePointSize(
+                    input.pointSize, regionHeight: region.maxY - region.minY)
+                let h = Float(size * 0.5)
+                func glyphSeg(_ x0: Float, _ y0: Float, _ x1: Float, _ y1: Float) {
+                    appendRenderableSegment(
+                        SDL_FPoint(x: x0, y: y0), SDL_FPoint(x: x1, y: y1),
+                        input, r, g, b, a)
+                }
                 for p in input.points {
-                    let x0 = p.x - halfW
-                    let x1 = p.x + halfW
-                    let y0 = p.y - halfW
-                    let y1 = p.y + halfW
-
-                    vertices.append(CADVertex(x: x0, y: y0, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
-                    vertices.append(CADVertex(x: x1, y: y0, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
-                    vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
-
-                    vertices.append(CADVertex(x: x0, y: y0, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
-                    vertices.append(CADVertex(x: x1, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
-                    vertices.append(CADVertex(x: x0, y: y1, r: r, g: g, b: b, a: a, u: 0.0, v: 0.0))
+                    switch base {
+                    case 2:  // plus
+                        glyphSeg(p.x - h, p.y, p.x + h, p.y)
+                        glyphSeg(p.x, p.y - h, p.x, p.y + h)
+                    case 3:  // X
+                        glyphSeg(p.x - h, p.y - h, p.x + h, p.y + h)
+                        glyphSeg(p.x - h, p.y + h, p.x + h, p.y - h)
+                    case 4:  // tick
+                        glyphSeg(p.x, p.y - h, p.x, p.y + h)
+                    default:
+                        break
+                    }
+                    let extra = input.pointStyle - base
+                    if extra == 32 || extra == 96 {
+                        // Surrounding circle (24-gon outline, radius h).
+                        let n = 24
+                        for k in 0..<n {
+                            let a0 = Float(k) * 2.0 * .pi / Float(n)
+                            let a1 = Float(k + 1) * 2.0 * .pi / Float(n)
+                            glyphSeg(p.x + h * cos(a0), p.y + h * sin(a0),
+                                     p.x + h * cos(a1), p.y + h * sin(a1))
+                        }
+                    }
+                    if extra == 64 || extra == 96 {
+                        // Surrounding square (side 2h).
+                        glyphSeg(p.x - h, p.y - h, p.x + h, p.y - h)
+                        glyphSeg(p.x + h, p.y - h, p.x + h, p.y + h)
+                        glyphSeg(p.x + h, p.y + h, p.x - h, p.y + h)
+                        glyphSeg(p.x - h, p.y + h, p.x - h, p.y - h)
+                    }
                 }
 
             case .line:

@@ -91,7 +91,9 @@ extension EngineRenderer {
                     isHatchLine: p.isHatchLine,
                     hatchSpacing: p.hatchSpacing,
                     isPanProxy: p.isPanProxy,
-                    gradientData: adjustedGradient(p.gradientData)
+                    gradientData: adjustedGradient(p.gradientData),
+                    pointStyle: geometryManager.pointDisplayMode,
+                    pointSize: geometryManager.pointDisplaySize
                 ))
             }
         } else {
@@ -113,7 +115,9 @@ extension EngineRenderer {
                     isHatchLine: p.isHatchLine,
                     hatchSpacing: p.hatchSpacing,
                     isPanProxy: p.isPanProxy,
-                    gradientData: adjustedGradient(p.gradientData)
+                    gradientData: adjustedGradient(p.gradientData),
+                    pointStyle: geometryManager.pointDisplayMode,
+                    pointSize: geometryManager.pointDisplaySize
                 ))
             }
         }

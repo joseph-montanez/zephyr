@@ -39,6 +39,9 @@ public struct CADDocumentSnapshot: Sendable {
     public let linetypePatterns: [String: [Double]]
     public let globalLineTypeScale: Double
     public let autoContrastTrueColor: Bool
+    public let pointDisplayMode: Int
+    public let pointDisplaySize: Double
+    public let fillMode: Bool
     public let dxfRoundTripPayload: DXFRoundTripPayload?
     /// Names of image assets currently referenced by entities (not the raw Data blobs).
     /// The actual `imageStore` lives on `CADDocument` and persists across undo/redo.
@@ -69,6 +72,9 @@ public struct CADDocumentSnapshot: Sendable {
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
+        pointDisplayMode: Int = 0,
+        pointDisplaySize: Double = 0,
+        fillMode: Bool = true,
         dxfRoundTripPayload: DXFRoundTripPayload? = nil,
         imageAssetNames: Set<String> = [],
         xrefFadePercent: Int = 50,
@@ -96,6 +102,9 @@ public struct CADDocumentSnapshot: Sendable {
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
         self.autoContrastTrueColor = autoContrastTrueColor
+        self.pointDisplayMode = pointDisplayMode
+        self.pointDisplaySize = pointDisplaySize
+        self.fillMode = fillMode
         self.dxfRoundTripPayload = dxfRoundTripPayload
         self.imageAssetNames = imageAssetNames
     }
@@ -115,6 +124,9 @@ public struct CADDocumentSnapshot: Sendable {
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
+        pointDisplayMode: Int = 0,
+        pointDisplaySize: Double = 0,
+        fillMode: Bool = true,
         dxfRoundTripPayload: DXFRoundTripPayload? = nil,
         imageAssetNames: Set<String> = [],
         layoutSettings: CADLayoutSettings? = nil
@@ -137,6 +149,9 @@ public struct CADDocumentSnapshot: Sendable {
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
+            pointDisplayMode: pointDisplayMode,
+            pointDisplaySize: pointDisplaySize,
+            fillMode: fillMode,
             dxfRoundTripPayload: dxfRoundTripPayload,
             imageAssetNames: imageAssetNames,
             layoutSettings: layoutSettings)
@@ -465,6 +480,37 @@ public final class CADDocument {
     }
     public var anglePrecision: Int = 0 {
         didSet { anglePrecision = max(0, min(8, anglePrecision)) }
+    }
+
+    /// Point display style/size (PDMODE/PDSIZE sysvars, live through
+    /// LispVarStore like LTSCALE). Session state, not snapshotted:
+    /// style changes retessellate but are never undoable, matching AutoCAD.
+    /// PDMODE base: 0 dot, 1 none, 2 plus, 3 X, 4 tick; +32 circle,
+    /// +64 square around the glyph.
+    public var pointDisplayMode: Int = 0 {
+        didSet {
+            if !Self.isValidPointDisplayMode(pointDisplayMode) {
+                pointDisplayMode = oldValue
+                return
+            }
+            markNeedsRegeneration()
+        }
+    }
+    public var pointDisplaySize: Double = 0 {
+        didSet { markNeedsRegeneration() }
+    }
+
+    public static func isValidPointDisplayMode(_ v: Int) -> Bool {
+        guard v >= 0 else { return false }
+        let base = v % 32
+        let extra = v - base
+        return (0...4).contains(base) && [0, 32, 64, 96].contains(extra)
+    }
+
+    /// Fill display (FILLMODE sysvar, live through LispVarStore).
+    /// Wide polylines and hatches render filled when true.
+    public var fillMode: Bool = true {
+        didSet { markNeedsRegeneration() }
     }
 
     /// Last inquiry results (AREA/PERIMETER/LASTPOINT sysvars, live reads).
@@ -3560,6 +3606,9 @@ public final class CADDocument {
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
+            pointDisplayMode: pointDisplayMode,
+            pointDisplaySize: pointDisplaySize,
+            fillMode: fillMode,
             dxfRoundTripPayload: dxfRoundTripPayload ?? dxfRoundTripPayloadFallback,
             imageAssetNames: names,
             xrefFadePercent: xrefFadePercent,
@@ -3608,6 +3657,9 @@ public final class CADDocument {
             linetypePatterns: base.linetypePatterns,
             globalLineTypeScale: base.globalLineTypeScale,
             autoContrastTrueColor: base.autoContrastTrueColor,
+            pointDisplayMode: base.pointDisplayMode,
+            pointDisplaySize: base.pointDisplaySize,
+            fillMode: base.fillMode,
             dxfRoundTripPayload: base.dxfRoundTripPayload,
             imageAssetNames: base.imageAssetNames,
             xrefFadePercent: base.xrefFadePercent,

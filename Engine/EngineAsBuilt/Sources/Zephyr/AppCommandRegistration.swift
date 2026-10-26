@@ -344,6 +344,21 @@ struct AppCommandRegistration {
             factory: { BoundaryCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "POINT",
+            aliases: ["PO"],
+            factory: { PointCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PTYPE",
+            aliases: ["DDPTYPE"],
+            factory: { PTypeCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DONUT",
+            aliases: ["DO"],
+            factory: { DonutCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "DRAW",
             aliases: ["TOOLS"],
             factory: { DrawPaletteCommand() }

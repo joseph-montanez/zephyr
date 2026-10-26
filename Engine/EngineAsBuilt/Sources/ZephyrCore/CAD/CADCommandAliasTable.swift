@@ -192,6 +192,15 @@ public enum CADCommandAliasTable {
             canonicalName: "BOUNDARY", aliases: ["BO"], category: .draw,
             description: "Create a closed region from an interior pick point"),
         CADCommandAliasEntry(
+            canonicalName: "POINT", aliases: ["PO"], category: .draw,
+            description: "Place point entities (display follows PDMODE/PDSIZE)"),
+        CADCommandAliasEntry(
+            canonicalName: "PTYPE", aliases: ["DDPTYPE"], category: .settings,
+            description: "Set point display style (PDMODE) and size (PDSIZE)"),
+        CADCommandAliasEntry(
+            canonicalName: "DONUT", aliases: ["DO"], category: .draw,
+            description: "Draw a filled ring (inside/outside diameters, FILLMODE honored)"),
+        CADCommandAliasEntry(
             canonicalName: "DIST", aliases: ["DI"], category: .draw,
             description: "Report distance, angles, and deltas between two points"),
         CADCommandAliasEntry(
