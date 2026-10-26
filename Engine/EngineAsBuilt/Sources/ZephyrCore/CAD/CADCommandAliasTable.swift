@@ -197,6 +197,18 @@ public enum CADCommandAliasTable {
             canonicalName: "TORIENT", aliases: ["TOR", "TEXTO"],
             category: .modify,
             description: "Rotate text individually to an absolute or most-readable angle"),
+        CADCommandAliasEntry(
+            canonicalName: "OSNAP", category: .settings,
+            description: "Toggle running object snaps on/off (F3)"),
+        CADCommandAliasEntry(
+            canonicalName: "COMMANDLINE", aliases: ["CLI"], category: .view,
+            description: "Show or hide the command line"),
+        CADCommandAliasEntry(
+            canonicalName: "CLEANSCREENON", category: .view,
+            description: "Hide ribbon and panels to maximize the canvas"),
+        CADCommandAliasEntry(
+            canonicalName: "CLEANSCREENOFF", category: .view,
+            description: "Restore ribbon and panels hidden by CLEANSCREENON"),
     ]
 
     /// Entry for a canonical name (case-insensitive), if tabled.

@@ -1057,6 +1057,26 @@ public final class EngineLoopController {
         let now = SDL_GetTicks()
         let cursorWorld = Vector3(x: worldX, y: worldY, z: 0)
 
+        // F3 / OSNAP off: skip every entity snap query below, but keep
+        // grid snap (F9) working — it has its own independent toggle.
+        if !snapMgr.objectSnapEnabled {
+            snapMgr.currentSnapResult = nil
+            snapMgr.lastPolarResult = nil
+            snapMgr.lockedSnap = nil
+            if engine.snap.gridSnapEnabled {
+                if let gridSnap = SnapEngine.nearestGridSnap(
+                    worldX: worldX, worldY: worldY,
+                    originX: engine.snap.gridOriginX, originY: engine.snap.gridOriginY,
+                    spacing: engine.snap.effectiveGridSpacing(windowWidth: engine.windowWidth, cameraZoom: engine.camera.zoom),
+                    threshold: acquireThreshold)
+                {
+                    snapMgr.currentSnapResult = gridSnap
+                    snapMgr.applyStickyLockIfNeeded(gridSnap)
+                }
+            }
+            return
+        }
+
         snapMgr.currentSnapResult = nil
         snapMgr.lastPolarResult = nil
 

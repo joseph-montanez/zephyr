@@ -18,8 +18,14 @@ public final class EngineSnapManager {
     /// Whether the background grid is visible (toggled via "GRID" command).
     public var gridVisible: Bool = false
     /// Whether snapping to grid intersections is enabled (toggled via "GRID SNAP" command).
-    /// Independent from entity anchor snapping (which is always active).
+    /// Independent from entity anchor snapping (gated by `objectSnapEnabled`).
     public var gridSnapEnabled: Bool = false
+    /// Master switch for running object snaps (toggled via "OSNAP" / F3).
+    /// When false, entity anchor/extension/nearest-curve snaps are skipped;
+    /// grid snap (F9), polar, ortho, and OTRACK keep their own toggles.
+    /// `OSMODE` is deliberately untouched: it selects *which* modes run,
+    /// while this flag selects *whether* any run (AutoCAD F3 semantics).
+    public var objectSnapEnabled: Bool = true
     /// Base grid spacing in world units. The visual spacing adapts to zoom;
     /// this is the minimum (finest) grid step. Configured via "GRID SPACING".
     public var gridBaseSpacing: Double = 10.0

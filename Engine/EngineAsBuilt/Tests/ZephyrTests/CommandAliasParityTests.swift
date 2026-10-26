@@ -48,6 +48,10 @@ final class CommandAliasParityTests: XCTestCase {
         ("PROPS", "PROPERTIES"), ("PROPERTIES", "PROPERTIES"),
         ("AALINES", "AALINES"), ("RAY", "RAY"),
         ("PSTROKE", "PENSTROKE"),
+        ("OSNAP", "OSNAP"),
+        ("COMMANDLINE", "COMMANDLINE"), ("CLI", "COMMANDLINE"),
+        ("CLEANSCREENON", "CLEANSCREENON"),
+        ("CLEANSCREENOFF", "CLEANSCREENOFF"),
     ]
 
     func testGoldenLTAliasesResolveToCanonical() {

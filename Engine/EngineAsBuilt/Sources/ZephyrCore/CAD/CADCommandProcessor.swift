@@ -353,6 +353,10 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "POLAR",           aliases: [],                category: .settings, syntax: "", description: "Toggle polar tracking on/off"),
         CommandDescriptor(canonicalName: "POLARANG",        aliases: [],                category: .settings, syntax: "<degrees>", description: "Set polar angle increment (e.g. 15, 30, 45, 90)"),
         CommandDescriptor(canonicalName: "OTRACK",          aliases: [],                category: .settings, syntax: "", description: "Toggle object snap tracking on/off"),
+        CommandDescriptor(canonicalName: "OSNAP",           aliases: [],                category: .settings, syntax: "", description: "Toggle running object snaps on/off (F3)"),
+        CommandDescriptor(canonicalName: "COMMANDLINE",     aliases: ["CLI"],           category: .view,     syntax: "", description: "Show or hide the command line"),
+        CommandDescriptor(canonicalName: "CLEANSCREENON",   aliases: [],                category: .view,     syntax: "", description: "Hide ribbon and panels to maximize the canvas"),
+        CommandDescriptor(canonicalName: "CLEANSCREENOFF",  aliases: [],                category: .view,     syntax: "", description: "Restore ribbon and panels hidden by CLEANSCREENON"),
         CommandDescriptor(canonicalName: "EXTENSION",       aliases: ["EXT"],           category: .settings, syntax: "", description: "Toggle extension snapping on/off"),
         CommandDescriptor(canonicalName: "ORTHO",          aliases: [],                category: .settings, syntax: "", description: "Toggle ortho mode (F8) — constrain cursor to cardinal axes"),
         CommandDescriptor(canonicalName: "UNITS",          aliases: ["UN", "UNIT", "DDUNITS"], category: .settings, syntax: "[mm|cm|m|in|ft|yd]", description: "Set or display the drawing base unit"),
@@ -1645,7 +1649,41 @@ public final class CADCommandProcessor {
         case "GRID SNAP":
             guard let engine = engine else { clearCommand(); return }
             engine.snap.gridSnapEnabled.toggle()
+            syncToggleSysvar(
+                "SNAPMODE", on: engine.snap.gridSnapEnabled, engine: engine)
             print("[CAD] Grid Snap: \(engine.snap.gridSnapEnabled ? "ON" : "OFF")")
+            clearCommand()
+        case "OSNAP":
+            guard let engine = engine else { clearCommand(); return }
+            // Master running-osnap switch (F3). OSMODE is untouched: it
+            // selects which modes run; this selects whether any run.
+            engine.snap.objectSnapEnabled.toggle()
+            if !engine.snap.objectSnapEnabled {
+                engine.snap.lockedSnap = nil
+                engine.snap.currentSnapResult = nil
+            }
+            print("[CAD] Object Snap: \(engine.snap.objectSnapEnabled ? "ON" : "OFF")")
+            clearCommand()
+        case "COMMANDLINE", "CLI":
+            guard let engine = engine else { clearCommand(); return }
+            // clearCommand() closes the command line, so set visibility after.
+            if engine.commandProcessor.commandLineActive {
+                clearCommand()
+                print("[CAD] Command line hidden.")
+            } else {
+                clearCommand()
+                engine.commandProcessor.commandLineActive = true
+                print("[CAD] Type a command.")
+            }
+        case "CLEANSCREENON":
+            guard let engine = engine else { clearCommand(); return }
+            engine.ui.enterCleanScreen()
+            print("[CAD] Clean screen on (Ctrl+0 toggles).")
+            clearCommand()
+        case "CLEANSCREENOFF":
+            guard let engine = engine else { clearCommand(); return }
+            engine.ui.exitCleanScreen()
+            print("[CAD] Clean screen off.")
             clearCommand()
         case _ where upper.hasPrefix("GRID SPACING "):
             guard let engine = engine else { clearCommand(); return }

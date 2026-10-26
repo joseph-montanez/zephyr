@@ -740,9 +740,28 @@ internal final class EngineInputHandler {
                     } else {
                     handleClipboardPaste()
                     }
+                case SDL_SCANCODE_F:
+                    engine.commandProcessor.executeCommand("OSNAP")
+                case SDL_SCANCODE_G:
+                    engine.commandProcessor.executeCommand("GRID")
+                case SDL_SCANCODE_L:
+                    engine.commandProcessor.executeCommand("ORTHO")
+                case SDL_SCANCODE_B:
+                    engine.commandProcessor.executeCommand("GRID SNAP")
+                case SDL_SCANCODE_1:
+                    engine.commandProcessor.executeCommand("PROPERTIES")
+                case SDL_SCANCODE_9:
+                    engine.commandProcessor.executeCommand("COMMANDLINE")
+                case SDL_SCANCODE_0:
+                    engine.commandProcessor.executeCommand(
+                        engine.ui.cleanScreenActive ? "CLEANSCREENOFF" : "CLEANSCREENON")
                 case SDL_SCANCODE_P:
                     if engine.io.pointee.KeyShift {
                         engine.commandProcessor.executeCommand("PDFIMPORT")
+                    } else {
+                        // No plot dialog yet (Phase 3A): route to the PDF
+                        // export flow rather than swallowing the keystroke.
+                        engine.commandProcessor.executeCommand("EXPORTPDF")
                     }
                 // ── Ctrl/Cmd+Alt+Arrow nudges the focused pane's divider ──
                 case SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN:
@@ -792,9 +811,18 @@ internal final class EngineInputHandler {
                         engine.deleteSelected()
                         engine.interaction.clearDataTableEditingState()
                     }
+                case SDL_SCANCODE_F3:
+                    engine.commandProcessor.executeCommand("OSNAP")
+                case SDL_SCANCODE_F7:
+                    engine.commandProcessor.executeCommand("GRID")
                 case SDL_SCANCODE_F8:
-                    engine.snap.orthoEnabled.toggle()
-                    print("[CAD] Ortho: \(engine.snap.orthoEnabled ? "ON" : "OFF")")
+                    engine.commandProcessor.executeCommand("ORTHO")
+                case SDL_SCANCODE_F9:
+                    engine.commandProcessor.executeCommand("GRID SNAP")
+                case SDL_SCANCODE_F10:
+                    engine.commandProcessor.executeCommand("POLAR")
+                case SDL_SCANCODE_F11:
+                    engine.commandProcessor.executeCommand("OTRACK")
                 case SDL_SCANCODE_UP:
                     handleArrowUp()
                 case SDL_SCANCODE_DOWN:

@@ -289,6 +289,66 @@ public final class EngineUIManager {
 
     /// Whether the ribbon window is shown (toggled via "RIBBON"/"RIBBONCLOSE").
     public var ribbonVisible: Bool = true
+    /// Clean-screen mode (CLEANSCREENON/OFF, Ctrl+0): chrome hidden to
+    /// maximize the canvas, with the pre-hide state saved for restore.
+    public var cleanScreenActive: Bool = false
+    private var savedChromeForCleanScreen: CleanScreenChrome?
+
+    /// Snapshot of hideable chrome, for CLEANSCREENON → CLEANSCREENOFF.
+    public struct CleanScreenChrome: Sendable {
+        public var ribbonVisible: Bool
+        public var showPropertiesPanel: Bool
+        public var drawPaletteVisible: Bool
+        public var blockPanelVisible: Bool
+        public var xrefPanelVisible: Bool
+        public var dataTablePanelVisible: Bool
+        public var layersPanelVisible: Bool
+        public var fileTabsVisible: Bool
+        public var radialNavVisible: Bool
+    }
+
+    /// Hide all chrome for clean-screen mode, remembering prior state.
+    public func enterCleanScreen() {
+        guard !cleanScreenActive else { return }
+        savedChromeForCleanScreen = CleanScreenChrome(
+            ribbonVisible: ribbonVisible,
+            showPropertiesPanel: showPropertiesPanel,
+            drawPaletteVisible: drawPaletteVisible,
+            blockPanelVisible: blockPanelVisible,
+            xrefPanelVisible: xrefPanelVisible,
+            dataTablePanelVisible: dataTablePanelVisible,
+            layersPanelVisible: layersPanelVisible,
+            fileTabsVisible: fileTabsVisible,
+            radialNavVisible: radialNavVisible)
+        ribbonVisible = false
+        showPropertiesPanel = false
+        drawPaletteVisible = false
+        blockPanelVisible = false
+        xrefPanelVisible = false
+        dataTablePanelVisible = false
+        layersPanelVisible = false
+        fileTabsVisible = false
+        radialNavVisible = false
+        cleanScreenActive = true
+    }
+
+    /// Restore chrome hidden by `enterCleanScreen()`.
+    public func exitCleanScreen() {
+        guard cleanScreenActive else { return }
+        if let saved = savedChromeForCleanScreen {
+            ribbonVisible = saved.ribbonVisible
+            showPropertiesPanel = saved.showPropertiesPanel
+            drawPaletteVisible = saved.drawPaletteVisible
+            blockPanelVisible = saved.blockPanelVisible
+            xrefPanelVisible = saved.xrefPanelVisible
+            dataTablePanelVisible = saved.dataTablePanelVisible
+            layersPanelVisible = saved.layersPanelVisible
+            fileTabsVisible = saved.fileTabsVisible
+            radialNavVisible = saved.radialNavVisible
+        }
+        savedChromeForCleanScreen = nil
+        cleanScreenActive = false
+    }
     /// Ribbon presentation: classic menu bar, labels-only, or icons + labels.
     /// Cycled by the ribbon's own mode button; persisted as its raw value.
     public var ribbonMode: RibbonDisplayMode = .full
