@@ -143,20 +143,20 @@ struct AppCommandRegistration {
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "TORIENT",
-            aliases: ["TO", "TEXTO"],
+            aliases: ["TOR", "TEXTO"],
             factory: { TextOrientCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
-            name: "SPLINEEDIT",
-            aliases: ["SPE"],
+            name: "SPLINEDIT",
+            aliases: ["SPLINEEDIT", "SPE"],
             factory: { SplineEditCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "INSERT",
-            aliases: ["I", "-INSERT"],
+            aliases: ["I", "-I", "-INSERT"],
             descriptor: CommandDescriptor(
                 canonicalName: "INSERT",
-                aliases: ["I", "-INSERT"],
+                aliases: ["I", "-I", "-INSERT"],
                 category: .block,
                 description: "Insert a block or drawing file as a block reference"),
             factory: { InsertCommand() }
@@ -181,6 +181,7 @@ struct AppCommandRegistration {
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "IMAGEATTACH",
+            aliases: ["IAT"],
             descriptor: CommandDescriptor(
                 canonicalName: "IMAGEATTACH",
                 category: .block,
@@ -221,10 +222,10 @@ struct AppCommandRegistration {
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "CLIP",
-            aliases: ["CL"],
+            aliases: [],
             descriptor: CommandDescriptor(
                 canonicalName: "CLIP",
-                aliases: ["CL"],
+                aliases: [],
                 category: .modify,
                 description: "Clip blocks, raster images, and PDF underlays"),
             factory: { ClipCommand() }
@@ -250,8 +251,8 @@ struct AppCommandRegistration {
             factory: { LineCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
-            name: "POLYLINE",
-            aliases: ["PL", "PLINE"],
+            name: "PLINE",
+            aliases: ["POLYLINE", "PL"],
             factory: { PolylineCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
@@ -265,8 +266,8 @@ struct AppCommandRegistration {
             factory: { ArcCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
-            name: "RECTANGLE",
-            aliases: ["REC", "RECT"],
+            name: "RECTANG",
+            aliases: ["RECTANGLE", "REC", "RECT"],
             factory: { RectangleCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
@@ -306,17 +307,17 @@ struct AppCommandRegistration {
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "PENSTROKE",
-            aliases: ["PSTROKE", "PS"],
+            aliases: ["PSTROKE"],
             factory: { PenStrokeCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "RAY",
-            aliases: ["R"],
+            aliases: [],
             factory: { RayCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "DRAW",
-            aliases: ["D", "TOOLS"],
+            aliases: ["TOOLS"],
             factory: { DrawPaletteCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
@@ -355,8 +356,13 @@ struct AppCommandRegistration {
             factory: { MLeaderStyleCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "MTEXT",
+            aliases: ["MT", "T"],
+            factory: { TextCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "TEXT",
-            aliases: ["T", "DTEXT", "MTEXT"],
+            aliases: ["DTEXT", "DT"],
             factory: { TextCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
@@ -365,8 +371,8 @@ struct AppCommandRegistration {
             factory: { ImageCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
-            name: "DDEDIT",
-            aliases: ["ED"],
+            name: "TEXTEDIT",
+            aliases: ["DDEDIT", "ED", "TEDIT"],
             factory: { DDEditCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
@@ -376,11 +382,22 @@ struct AppCommandRegistration {
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "TABLE",
-            aliases: ["DT", "DATATABLE"],
+            aliases: ["TB", "DATATABLE"],
             factory: { DataTableCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "AREA",
+            aliases: ["AA"],
+            factory: { MeasureGeomTool(initialMode: .area) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "GRADIENT",
+            aliases: ["GD"],
+            factory: { HatchCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "MEASURE",
+            aliases: ["ME"],
             factory: { MeasureDivideCommand(operation: .measure) }
         )
         engine.commandProcessor.registerFeatureCommand(
@@ -478,7 +495,7 @@ struct AppCommandRegistration {
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "DIMJOGGED",
-            aliases: ["DJO", "DIMJOG"],
+            aliases: ["DJO", "DIMJOG", "JOG"],
             factory: { DimJoggedCommand() }
         )
 

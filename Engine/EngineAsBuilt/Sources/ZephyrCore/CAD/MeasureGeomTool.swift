@@ -91,13 +91,29 @@ public final class MeasureGeomTool: FeatureCommand {
 
     // MARK: - Init
 
-    public init() {}
+    /// Mode the tool opens in. `AREA` starts directly in `.area`;
+    /// everything else keeps the LT default Quick mode.
+    private let initialMode: MeasureMode
+
+    public init(initialMode: MeasureMode = .quick) {
+        self.initialMode = initialMode
+    }
 
     // MARK: - FeatureCommand Conformance
 
     public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
         resetState()
-        processor.commandPrompt = "MEASUREGEOM [Distance/Area/Quick/eXit] <Quick>:"
+        currentMode = initialMode
+        switch initialMode {
+        case .area:
+            processor.commandPrompt = "Area - click inside enclosed region"
+        case .distance:
+            processor.commandPrompt = "Distance - pick first point"
+        case .angle:
+            processor.commandPrompt = "Angle - pick vertex point"
+        case .quick:
+            processor.commandPrompt = "MEASUREGEOM [Distance/Area/Quick/eXit] <Quick>:"
+        }
     }
 
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {

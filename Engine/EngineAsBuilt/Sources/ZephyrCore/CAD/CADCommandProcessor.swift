@@ -193,7 +193,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SAVE",       aliases: ["QSAVE"],          category: .draw,    syntax: "", description: "Save the current drawing to its file"),
         CommandDescriptor(canonicalName: "SAVEAS",     aliases: [],                category: .draw,    syntax: "", description: "Save the current drawing as a new file"),
         CommandDescriptor(canonicalName: "DXFVERSION", aliases: ["DXFVER"],        category: .settings, syntax: "[2018|2013|2010|2007|2004|2000|R14|R13|R12|R10]", description: "Set the DXF version used by Save and Save As"),
-        CommandDescriptor(canonicalName: "PDFEXPORT",  aliases: ["EXPORTPDF"],     category: .draw,    syntax: "", description: "Export the current drawing to a PDF file"),
+        CommandDescriptor(canonicalName: "EXPORTPDF",  aliases: ["PDFEXPORT", "EPDF"], category: .draw, syntax: "", description: "Export the current drawing to a PDF file"),
         CommandDescriptor(canonicalName: "PDFIMPORT",  aliases: ["PDFI", "PDF"],   category: .draw,    syntax: "", description: "Import a PDF page as an image underlay"),
         CommandDescriptor(canonicalName: "TABLEFT",    aliases: ["TABL"],          category: .draw,    syntax: "", description: "Move the active drawing tab one position left"),
         CommandDescriptor(canonicalName: "TABRIGHT",   aliases: ["TABR"],          category: .draw,    syntax: "", description: "Move the active drawing tab one position right"),
@@ -217,21 +217,26 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "VPRESIZE",   aliases: [],                category: .view,    syntax: "[+|-]percent", description: "Grow (+) or shrink (-) the focused pane by a percentage of its parent split", bareEnterExecutes: true),
         // --- Draw ---
         CommandDescriptor(canonicalName: "LINE",       aliases: ["L"],             category: .draw,    syntax: "", description: "Draw a line segment by picking two points"),
-        CommandDescriptor(canonicalName: "POLYLINE",   aliases: ["PL", "PLINE"],   category: .draw,    syntax: "", description: "Draw a multi-segment polyline"),
+        CommandDescriptor(canonicalName: "PLINE",      aliases: ["POLYLINE", "PL"], category: .draw, syntax: "", description: "Draw a multi-segment polyline"),
+        CommandDescriptor(canonicalName: "AREA",       aliases: ["AA"],            category: .draw,    syntax: "", description: "Calculate area and perimeter of closed regions"),
+        CommandDescriptor(canonicalName: "GRADIENT",   aliases: ["GD"],            category: .draw,    syntax: "", description: "Fill a closed boundary with a gradient"),
         CommandDescriptor(canonicalName: "CIRCLE",     aliases: ["C"],             category: .draw,    syntax: "", description: "Draw a circle by center and radius"),
         CommandDescriptor(canonicalName: "ARC",        aliases: ["A"],             category: .draw,    syntax: "", description: "Draw an arc by center, radius, and angles"),
-        CommandDescriptor(canonicalName: "RECTANGLE",  aliases: ["REC", "RECT"],   category: .draw,    syntax: "", description: "Draw a rectangle by two opposite corners"),
+        CommandDescriptor(canonicalName: "RECTANG",    aliases: ["RECTANGLE", "REC", "RECT"], category: .draw, syntax: "", description: "Draw a rectangle by two opposite corners"),
         CommandDescriptor(canonicalName: "ELLIPSE",    aliases: ["EL"],            category: .draw,    syntax: "", description: "Draw an ellipse by center and axes"),
         CommandDescriptor(canonicalName: "HATCH",      aliases: ["H", "BH"],       category: .draw,    syntax: "", description: "Fill a closed boundary with a hatch pattern"),
         CommandDescriptor(canonicalName: "SPLINE",     aliases: ["SPL"],           category: .draw,    syntax: "", description: "Draw a smooth spline curve through control points"),
-        CommandDescriptor(canonicalName: "PENSTROKE",  aliases: ["PSTROKE", "PS"], category: .draw,    syntax: "", description: "Draw with tablet pen capturing pressure and tilt per vertex"),
+        CommandDescriptor(canonicalName: "PENSTROKE",  aliases: ["PSTROKE"],      category: .draw,    syntax: "", description: "Draw with tablet pen capturing pressure and tilt per vertex"),
         CommandDescriptor(canonicalName: "RAY",        aliases: [],                category: .draw,    syntax: "", description: "Draw a ray from a start point in a direction"),
-        CommandDescriptor(canonicalName: "DRAW",       aliases: ["D", "TOOLS"],    category: .draw,    syntax: "", description: "Open the draw tools palette"),
-        CommandDescriptor(canonicalName: "TEXT",       aliases: ["T", "DTEXT", "MTEXT"], category: .draw, syntax: "", description: "Place a new text entity"),
+        CommandDescriptor(canonicalName: "DRAW",       aliases: ["TOOLS"],         category: .draw,    syntax: "", description: "Open the draw tools palette"),
+        CommandDescriptor(canonicalName: "MTEXT",      aliases: ["MT", "T"],       category: .draw,    syntax: "", description: "Place multiline text"),
+        CommandDescriptor(canonicalName: "TEXT",       aliases: ["DTEXT", "DT"],   category: .draw,    syntax: "", description: "Place single-line text"),
         CommandDescriptor(canonicalName: "LEADER",     aliases: ["LEAD"], category: .draw, syntax: "", description: "Create a classic leader with text or block content"),
         CommandDescriptor(canonicalName: "QLEADER",    aliases: ["LE"], category: .draw, syntax: "", description: "Create a prompted quick leader"),
         CommandDescriptor(canonicalName: "MLEADER",    aliases: ["MLD"], category: .draw, syntax: "", description: "Create an associative multileader"),
-        CommandDescriptor(canonicalName: "MEASURE",    aliases: [], category: .draw, syntax: "", description: "Place points or blocks at measured intervals along an object"),
+        CommandDescriptor(canonicalName: "MEASURE",    aliases: ["ME"], category: .draw, syntax: "", description: "Place points or blocks at measured intervals along an object"),
+        CommandDescriptor(canonicalName: "TABLE",      aliases: ["TB", "DATATABLE"], category: .draw, syntax: "", description: "Insert a data table"),
+        CommandDescriptor(canonicalName: "CLIP",       aliases: [], category: .modify, syntax: "", description: "Clip blocks, raster images, and PDF underlays"),
         CommandDescriptor(canonicalName: "DIVIDE",     aliases: ["DIV"], category: .draw, syntax: "", description: "Place points or blocks at equal divisions along an object"),
         CommandDescriptor(canonicalName: "MEASUREGEOM", aliases: ["MEASUREGEOMETRY", "MEA", "MG"], category: .draw, syntax: "", description: "Measure geometry: quick measure, distance, area, and angle"),
         CommandDescriptor(canonicalName: "DIMLINEAR",  aliases: ["DLI", "DIMLIN"], category: .draw, syntax: "", description: "Horizontal or vertical dimension between two points"),
@@ -241,14 +246,16 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "DIMANGULAR", aliases: ["DAN", "DIMANG"], category: .draw, syntax: "", description: "Angle dimension between two lines or an arc"),
         CommandDescriptor(canonicalName: "DIMARC",     aliases: ["DAR", "DIMARCLENGTH"], category: .draw, syntax: "", description: "Arc length dimension along a curve"),
         CommandDescriptor(canonicalName: "DIMORDINATE",aliases: ["DOR", "DIMORD"], category: .draw, syntax: "", description: "X or Y ordinate dimension from origin"),
-        CommandDescriptor(canonicalName: "DIMJOGGED",  aliases: ["DJO", "DIMJOG"], category: .draw, syntax: "", description: "Jogged radius dimension for large radii"),
+        CommandDescriptor(canonicalName: "DIMJOGGED",  aliases: ["DJO", "DIMJOG", "JOG"], category: .draw, syntax: "", description: "Jogged radius dimension for large radii"),
+        CommandDescriptor(canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw, syntax: "", description: "Draw a centerline between two lines"),
         // --- History ---
         CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)", bareEnterExecutes: true),
         CommandDescriptor(canonicalName: "REDO",       aliases: [],                category: .modify,  syntax: "[<count>]", description: "Re-apply the last undone change (Cmd/Ctrl+Y)", bareEnterExecutes: true),
         // --- Modify ---
         CommandDescriptor(canonicalName: "MOVE",       aliases: ["M"],             category: .modify,  syntax: "", description: "Move selected entities by picking two points"),
-        CommandDescriptor(canonicalName: "ROTATE",     aliases: ["R"],             category: .modify,  syntax: "", description: "Rotate selected entities around their collective center"),
-        CommandDescriptor(canonicalName: "SCALE",      aliases: ["S"],             category: .modify,  syntax: "", description: "Scale selected entities around their collective center"),
+        CommandDescriptor(canonicalName: "ROTATE",     aliases: ["RO"],            category: .modify,  syntax: "", description: "Rotate selected entities around their collective center"),
+        CommandDescriptor(canonicalName: "SCALE",      aliases: ["SC"],            category: .modify,  syntax: "", description: "Scale selected entities around their collective center"),
+        CommandDescriptor(canonicalName: "STRETCH",    aliases: ["S"],             category: .modify,  syntax: "", description: "Stretch vertices inside a crossing window"),
         CommandDescriptor(canonicalName: "ALIGN",      aliases: ["AL"],             category: .modify,  syntax: "", description: "Align objects by matching two pairs of points (move, rotate, optionally scale)"),
         CommandDescriptor(canonicalName: "ERASE",      aliases: ["E"],             category: .modify,  syntax: "", description: "Delete all currently selected entities"),
         CommandDescriptor(canonicalName: "COPY",       aliases: ["CO", "CP"],      category: .modify,  syntax: "", description: "Duplicate selected entities within the drawing"),
@@ -258,7 +265,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "PASTEORIG",  aliases: [],                category: .modify,  syntax: "", description: "Paste clipboard entities at original coordinates"),
         CommandDescriptor(canonicalName: "PASTEBLOCK", aliases: [],                category: .modify,  syntax: "", description: "Paste clipboard entities as a new block"),
         CommandDescriptor(canonicalName: "CLEANSPECKLES", aliases: ["CS", "SPECKLES"], category: .modify, syntax: "", description: "Remove tiny/speckle entities from the drawing"),
-        CommandDescriptor(canonicalName: "DDEDIT",     aliases: ["ED"],            category: .modify,  syntax: "", description: "Edit the selected text entity"),
+        CommandDescriptor(canonicalName: "TEXTEDIT",   aliases: ["DDEDIT", "ED", "TEDIT"], category: .modify, syntax: "", description: "Edit text, multiline text, and attribute values"),
         CommandDescriptor(canonicalName: "JOIN",       aliases: ["J"],             category: .modify,  syntax: "", description: "Join selected line entities into polylines"),
         CommandDescriptor(canonicalName: "TRIM",       aliases: ["TR"],            category: .modify,  syntax: "", description: "Trim lines at intersections — click the side to remove"),
         CommandDescriptor(canonicalName: "FILLET",     aliases: ["F"],            category: .modify,  syntax: "", description: "Round corners between objects using an exact tangent arc"),
@@ -279,8 +286,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "ARRAYTYPE", aliases: [], category: .settings, syntax: "[0|1|2]", description: "Set the default array type: rectangular, path, or polar"),
         CommandDescriptor(canonicalName: "EXPLODE", aliases: ["X"], category: .modify, syntax: "", description: "Break a compound object into its component elements"),
         CommandDescriptor(canonicalName: "MATCHPROP",   aliases: ["MA", "MATCH"],  category: .modify,  syntax: "", description: "Copy properties from one entity to others"),
-        CommandDescriptor(canonicalName: "TORIENT",    aliases: ["TO", "TEXTO"], category: .modify, syntax: "", description: "Rotate text individually to an absolute or most-readable angle"),
-        CommandDescriptor(canonicalName: "SPLINEEDIT", aliases: ["SPE"],           category: .modify,  syntax: "", description: "Edit an existing spline (reverse, convert to polyline, etc.)"),
+        CommandDescriptor(canonicalName: "TORIENT",    aliases: ["TOR", "TEXTO"], category: .modify, syntax: "", description: "Rotate text individually to an absolute or most-readable angle"),
+        CommandDescriptor(canonicalName: "SPLINEDIT",  aliases: ["SPLINEEDIT", "SPE"], category: .modify, syntax: "", description: "Edit an existing spline (reverse, convert to polyline, etc.)"),
         CommandDescriptor(canonicalName: "MLEADEREDIT", aliases: ["MLE"], category: .modify, syntax: "", description: "Add or remove leader branches and edit multileader content"),
         CommandDescriptor(canonicalName: "MLEADERALIGN", aliases: ["MLA"], category: .modify, syntax: "", description: "Align and distribute selected multileader content"),
         CommandDescriptor(canonicalName: "MLEADERCOLLECT", aliases: ["MLC"], category: .modify, syntax: "", description: "Collect selected block multileaders into one multileader"),
@@ -288,13 +295,18 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SELECTALL",  aliases: ["SELALL"],        category: .view,    syntax: "", description: "Select all entities in the active layer"),
         CommandDescriptor(canonicalName: "ZOOM",        aliases: ["Z"],             category: .view,    syntax: "", description: "Zoom: All/Center/Dynamic/Extents/Left/Previous/Right/Scale/Object/Window"),
         CommandDescriptor(canonicalName: "ZOOMEXTENTS",aliases: ["ZOOME"],         category: .view,    syntax: "", description: "Zoom to fit all entities in the viewport"),
-        CommandDescriptor(canonicalName: "VIEW",       aliases: ["VIEWS"],         category: .view,    syntax: "[name|index]", description: "List, select, or cycle model and sheet views"),
-        CommandDescriptor(canonicalName: "SHEET",      aliases: ["LAYOUT"],        category: .view,    syntax: "[name|index]", description: "Select or cycle imported DXF sheet layouts"),
+        CommandDescriptor(canonicalName: "VIEW",       aliases: ["V", "VIEWS"],     category: .view,    syntax: "[name|index]", description: "List, select, or cycle model and sheet views"),
+        CommandDescriptor(canonicalName: "LAYOUT",     aliases: ["SHEET", "LO"],   category: .view,    syntax: "[name|index]", description: "Select or cycle imported DXF sheet layouts"),
         CommandDescriptor(canonicalName: "MODEL",      aliases: ["2DVIEW"],        category: .view,    syntax: "", description: "Switch to the DXF 2D model-space view"),
         CommandDescriptor(canonicalName: "NEXTVIEW",   aliases: ["VIEWNEXT"],      category: .view,    syntax: "", description: "Switch to the next model or sheet view"),
         CommandDescriptor(canonicalName: "PREVIOUSVIEW", aliases: ["PREVVIEW", "VIEWPREV"], category: .view, syntax: "", description: "Switch to the previous model or sheet view"),
-        CommandDescriptor(canonicalName: "AALINES",    aliases: ["AA"],            category: .view,    syntax: "", description: "Toggle anti-aliased line rendering on/off"),
-        CommandDescriptor(canonicalName: "PROPS",      aliases: ["PROPERTIES", "PR"], category: .view, syntax: "", description: "Show/hide the properties panel"),
+        CommandDescriptor(canonicalName: "AALINES",    aliases: [],                category: .view,    syntax: "", description: "Toggle anti-aliased line rendering on/off"),
+        CommandDescriptor(canonicalName: "REDRAW",     aliases: ["R"],             category: .view,    syntax: "", description: "Refresh the viewport display"),
+        CommandDescriptor(canonicalName: "REGEN",      aliases: [],                category: .view,    syntax: "", description: "Regenerate the drawing from its database"),
+        CommandDescriptor(canonicalName: "TOOLBAR",    aliases: ["TO"],            category: .view,    syntax: "", description: "Show or hide the toolbar (ribbon)"),
+        CommandDescriptor(canonicalName: "PSPACE",     aliases: ["PS"],            category: .view,    syntax: "", description: "Switch to paper space"),
+        CommandDescriptor(canonicalName: "PROPERTIES", aliases: ["PROPS", "PR", "CH", "MO"], category: .view, syntax: "", description: "Show/hide the properties panel"),
+        CommandDescriptor(canonicalName: "GROUP",      aliases: ["G"],             category: .modify,  syntax: "", description: "Create a lightweight named or unnamed object group"),
         CommandDescriptor(canonicalName: "NAV",        aliases: ["RADIALNAV"],     category: .view,    syntax: "", description: "Show/hide the radial navigation tool"),
         CommandDescriptor(canonicalName: "PAN",        aliases: ["P"],             category: .view,    syntax: "", description: "Pan the view by clicking and dragging"),
         CommandDescriptor(canonicalName: "-PAN",       aliases: [],                category: .view,    syntax: "", description: "Pan the view by specifying a displacement vector"),
@@ -309,15 +321,16 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "LAYERSORT", aliases: ["LASORT", "LAYER SORT", "LA SORT"], category: .layer, syntax: "[Name|On|Color|Linetype|Lineweight|Opacity|Plot|Used] [Asc|Desc]", description: "Sort layers in the Layers panel by property; repeat a key to toggle direction"),
         CommandDescriptor(canonicalName: "LAYERMOVE",    aliases: ["LM", "LAYMOVE"], category: .layer, syntax: "", description: "Move selected entities to a different layer (autocomplete prompt)"),
         // --- Block ---
-        CommandDescriptor(canonicalName: "BLOCK",      aliases: ["BMAKE"],         category: .block,   syntax: "<name>", description: "Create a new block from selected entities"),
+        CommandDescriptor(canonicalName: "BLOCK",      aliases: ["B", "BMAKE"],     category: .block,   syntax: "<name>", description: "Create a new block from selected entities"),
+        CommandDescriptor(canonicalName: "WBLOCK",     aliases: ["W"],             category: .block,   syntax: "", description: "Write a block or entities to a drawing file"),
         CommandDescriptor(canonicalName: "BEDIT",      aliases: ["EDITBLOCK", "BE"], category: .block,  syntax: "", description: "Edit the selected block reference in-place"),
         CommandDescriptor(canonicalName: "BCLOSE",     aliases: [],                category: .block,   syntax: "", description: "Close the block editor and save changes"),
         CommandDescriptor(canonicalName: "BLOCKS",     aliases: ["BLOCKPANEL"],    category: .block,   syntax: "", description: "Show/hide the block panel"),
-        CommandDescriptor(canonicalName: "INSERT",     aliases: ["I", "-INSERT"],  category: .block,   syntax: "", description: "Insert a block or drawing file as a block reference"),
+        CommandDescriptor(canonicalName: "INSERT",     aliases: ["I", "-I", "-INSERT"], category: .block, syntax: "", description: "Insert a block or drawing file as a block reference"),
         CommandDescriptor(canonicalName: "XATTACH",    aliases: ["XA"],            category: .block,   syntax: "", description: "Attach a drawing as an external reference"),
-        CommandDescriptor(canonicalName: "XREF",       aliases: ["EXTERNALREFERENCES", "ER"], category: .block, syntax: "", description: "Show/hide the External References palette"),
+        CommandDescriptor(canonicalName: "XREF",       aliases: ["XR", "ER", "EXTERNALREFERENCES"], category: .block, syntax: "", description: "Show/hide the External References palette"),
         CommandDescriptor(canonicalName: "ATTACH",     aliases: [],                category: .block,   syntax: "", description: "Attach a drawing, image, or PDF as a live reference"),
-        CommandDescriptor(canonicalName: "IMAGEATTACH", aliases: [],               category: .block,   syntax: "", description: "Attach a raster image as a live reference"),
+        CommandDescriptor(canonicalName: "IMAGEATTACH", aliases: ["IAT"],          category: .block,   syntax: "", description: "Attach a raster image as a live reference"),
         CommandDescriptor(canonicalName: "PDFATTACH",  aliases: [],                category: .block,   syntax: "", description: "Attach a PDF page as a live underlay reference"),
         CommandDescriptor(canonicalName: "-ATTACH",    aliases: [],                category: .block,   syntax: "", description: "Attach a reference file from the command line"),
         CommandDescriptor(canonicalName: "-XREF",      aliases: [],                category: .block,   syntax: "", description: "Manage external references from the command line"),
@@ -342,7 +355,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "OTRACK",          aliases: [],                category: .settings, syntax: "", description: "Toggle object snap tracking on/off"),
         CommandDescriptor(canonicalName: "EXTENSION",       aliases: ["EXT"],           category: .settings, syntax: "", description: "Toggle extension snapping on/off"),
         CommandDescriptor(canonicalName: "ORTHO",          aliases: [],                category: .settings, syntax: "", description: "Toggle ortho mode (F8) — constrain cursor to cardinal axes"),
-        CommandDescriptor(canonicalName: "UNITS",          aliases: ["UNIT", "DDUNITS"], category: .settings, syntax: "[mm|cm|m|in|ft|yd]", description: "Set or display the drawing base unit"),
+        CommandDescriptor(canonicalName: "UNITS",          aliases: ["UN", "UNIT", "DDUNITS"], category: .settings, syntax: "[mm|cm|m|in|ft|yd]", description: "Set or display the drawing base unit"),
+        CommandDescriptor(canonicalName: "DIMSTYLE",       aliases: ["D", "DST"], category: .settings, syntax: "", description: "Manage dimension styles"),
         CommandDescriptor(canonicalName: "SETUISCALE",     aliases: ["ZOOMUI", "UISCALE"], category: .settings, syntax: "[scale|AUTO]", description: "Override UI zoom (1.0=100%, 1.5=150%, AUTO=system DPI)"),
         CommandDescriptor(canonicalName: "LANGUAGE",       aliases: ["LANG", "UILANGUAGE", "FONTLANG"], category: .settings, syntax: "<profile>", description: "Set the UI font glyph profile without translating UI text"),
 
@@ -429,6 +443,15 @@ public final class CADCommandProcessor {
     /// Registry of feature command factories, keyed by canonical name and aliases.
     public typealias FeatureCommandFactory = () -> any FeatureCommand
     private var featureCommandRegistry: [String: FeatureCommandFactory] = [:]
+    /// Canonical command owning each registry key. Two different canonicals
+    /// must never share one key (the `R` → ROTATE-vs-RAY class of bug);
+    /// registration asserts in debug and the parity tests pin the table.
+    private var featureCommandCanonicalByKey: [String: String] = [:]
+
+    /// Key → canonical-name map of the feature registry (parity-test seam).
+    public var featureCommandKeys: [String: String] {
+        featureCommandCanonicalByKey
+    }
 
     /// Backing store for `lispInvocationDepth` (see LispInvocationContext.swift).
     var _lispInvocationDepth: Int = 0
@@ -575,12 +598,29 @@ public final class CADCommandProcessor {
         descriptor: CommandDescriptor? = nil,
         factory: @escaping FeatureCommandFactory
     ) {
-        featureCommandRegistry[name.uppercased()] = factory
+        let canonical = name.uppercased()
+        featureCommandRegistry[canonical] = factory
+        assert(
+            featureCommandCanonicalByKey[canonical] == nil
+                || featureCommandCanonicalByKey[canonical] == canonical,
+            "Feature command key '\(canonical)' claimed by two canonicals")
+        featureCommandCanonicalByKey[canonical] = canonical
         for alias in aliases {
-            featureCommandRegistry[alias.uppercased()] = factory
+            let key = alias.uppercased()
+            assert(
+                featureCommandCanonicalByKey[key] == nil
+                    || featureCommandCanonicalByKey[key] == canonical,
+                "Feature command alias '\(key)' claimed by "
+                    + "'\(featureCommandCanonicalByKey[key] ?? "?")' and '\(canonical)'")
+            featureCommandRegistry[key] = factory
+            featureCommandCanonicalByKey[key] = canonical
         }
         // Register in the autocomplete descriptor list if not already present.
-        if let desc = descriptor {
+        // When no explicit descriptor is passed, synthesize one from the
+        // canonical alias table so executable commands stay discoverable
+        // (TABLE, MEASURE, and CLIP were invisible to autocomplete).
+        let desc = descriptor ?? CADCommandAliasTable.entry(canonicalName: canonical)?.descriptor
+        if let desc {
             if !CommandDescriptor.allCommands.contains(where: { $0.canonicalName == desc.canonicalName }) {
                 CommandDescriptor.allCommands.append(desc)
             }
@@ -733,6 +773,14 @@ public final class CADCommandProcessor {
             guard let engine = engine else { clearCommand(); return }
             performRedo(engine: engine, steps: 1)
             clearCommand()
+        case "REDRAW", "R":
+            engine?.document.markEdited(regenerate: false)
+            print("[CAD] View redrawn.")
+            clearCommand()
+        case "REGEN", "REGENALL":
+            engine?.document.markEdited(regenerate: true)
+            print("[CAD] Drawing regenerated.")
+            clearCommand()
         // --- File Commands ---
         case "N", "NEW":
             _ = engine?.tabManager.newTab()
@@ -793,7 +841,7 @@ public final class CADCommandProcessor {
             engine?.ui.fileTabsVisible = false
             clearCommand()
         // --- Ribbon (defined in AutoLISP: lisp/ribbon.lsp) ---
-        case "RIBBON":
+        case "RIBBON", "TOOLBAR", "TO":
             guard let eng = engine else { clearCommand(); return }
             eng.ui.ribbonVisible.toggle()
             clearCommand()
@@ -956,7 +1004,7 @@ public final class CADCommandProcessor {
             print("[CAD] DXF export version set to \(version.displayName) (\(version.rawValue)).")
             print("[CAD] Save and Save As will use this version for DXF and DWG output.")
             clearCommand()
-        case "PDFEXPORT", "EXPORTPDF":
+        case "EXPORTPDF", "PDFEXPORT", "EPDF":
             guard let eng = engine else { clearCommand(); return }
             clearCommand()
             let pdfName = Self.pdfExportDefaultName(
@@ -982,14 +1030,14 @@ public final class CADCommandProcessor {
                 return
             }
             startCommand("MOVE", prompt: "Select base point")
-        case "R", "ROTATE":
+        case "ROTATE", "RO":
             guard let engine = engine else { clearCommand(); return }
             if !engine.cadSelection.hasSelection {
                 startCommand("ROTATE", prompt: "Select objects to rotate, then press Enter", selectingObjects: true)
                 return
             }
             startCommand("ROTATE", prompt: "Pick rotation angle or drag")
-        case "S", "SCALE":
+        case "SCALE", "SC":
             guard let engine = engine else { clearCommand(); return }
             if !engine.cadSelection.hasSelection {
                 startCommand("SCALE", prompt: "Select objects to scale, then press Enter", selectingObjects: true)
@@ -1134,13 +1182,13 @@ public final class CADCommandProcessor {
 
         case "ZOOME", "ZOOMEXTENTS":
             engine?.zoomExtents()
-        case "AA", "AALINES":
+        case "AALINES":
             if let engine = engine {
                 engine.renderer.antiAliasLines.toggle()
                 print("[CAD] Anti-aliased lines: \(engine.renderer.antiAliasLines ? "ON" : "OFF")")
             }
             clearCommand()
-        case "PROPS", "PROPERTIES", "PR":
+        case "PROPERTIES", "PROPS", "PR", "CH", "MO":
             // Like BLOCKS/LAYER, toggles regardless of selection: an open
             // panel with nothing selected shows its empty state.
             if let engine = engine {
@@ -1191,7 +1239,7 @@ public final class CADCommandProcessor {
                 }
             }
             clearCommand()
-        case "BLOCK", "BMAKE":
+        case "BLOCK", "B", "BMAKE":
             guard let engine = engine else {
                 clearCommand()
                 break
@@ -1203,7 +1251,7 @@ public final class CADCommandProcessor {
             }
             startCommand("BLOCK", prompt: "Enter block name")
 
-        case _ where upper.hasPrefix("BLOCK ") || upper.hasPrefix("BMAKE "):
+        case _ where upper.hasPrefix("BLOCK ") || upper.hasPrefix("BMAKE ") || upper.hasPrefix("B "):
             guard let engine = engine else {
                 clearCommand()
                 break
@@ -1239,7 +1287,7 @@ public final class CADCommandProcessor {
                 engine.ui.blockPanelVisible.toggle()
             }
             clearCommand()
-        case "XREF", "EXTERNALREFERENCES", "ER":
+        case "XREF", "XR", "ER", "EXTERNALREFERENCES":
             if let engine = engine {
                 engine.ui.xrefPanelVisible.toggle()
             }
@@ -1666,7 +1714,7 @@ public final class CADCommandProcessor {
             print("[CAD] Ortho: \(engine.snap.orthoEnabled ? "ON" : "OFF")")
             clearCommand()
         // --- Drawing Units ---
-        case "UNITS", "UNIT", "DDUNITS":
+        case "UNITS", "UN", "UNIT", "DDUNITS":
             guard let engine = engine else { clearCommand(); return }
             let unitLabel = switch engine.document.unit {
             case .millimeter: "millimeters"
@@ -1754,6 +1802,14 @@ public final class CADCommandProcessor {
                 let parts = upper.split(maxSplits: 1, whereSeparator: \.isWhitespace)
                 let commandName = parts.first.map(String.init) ?? upper
                 guard let factory = featureCommandRegistry[commandName] else {
+                    // Reserved LT names land here until their phase ships:
+                    // report honestly instead of "unknown command".
+                    if parts.count == 1,
+                       let stub = CADCommandAliasTable.stubMessage(for: commandName) {
+                        print(stub)
+                        clearCommand()
+                        return
+                    }
                     // AutoLISP c: dispatch: a bare name matching a loaded
                     // (defun c:NAME ...) runs it. Built-ins and feature
                     // commands win; anything with arguments stays unknown.
@@ -1850,7 +1906,7 @@ public final class CADCommandProcessor {
                 print("[CAD] View: \(engine.tabManager.activeViewName ?? "")")
             }
             return true
-        case "VIEW", "VIEWS":
+        case "VIEW", "V", "VIEWS":
             if argument.isEmpty {
                 printAvailableViews(engine.tabManager)
                 if engine.tabManager.cycleView(direction: 1) {
@@ -1865,7 +1921,7 @@ public final class CADCommandProcessor {
                 printAvailableViews(engine.tabManager)
             }
             return true
-        case "SHEET", "LAYOUT":
+        case "LAYOUT", "SHEET", "LO":
             let sheets = engine.tabManager.availableViews.enumerated().filter { $0.element.kind == .sheet }
             if argument.isEmpty {
                 if engine.tabManager.cycleView(direction: 1, sheetsOnly: true) {
