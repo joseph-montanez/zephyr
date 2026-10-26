@@ -63,6 +63,8 @@ final class CommandAliasParityTests: XCTestCase {
         ("LIST", "LIST"), ("LI", "LIST"), ("LS", "LIST"),
         ("AREA", "AREA"), ("AA", "AREA"),
         ("XLINE", "XLINE"), ("XL", "XLINE"),
+        ("POLYGON", "POLYGON"), ("POL", "POLYGON"),
+        ("BOUNDARY", "BOUNDARY"), ("BO", "BOUNDARY"),
         ("LAYOFF", "LAYOFF"), ("LAYON", "LAYON"),
         ("LAYISO", "LAYISO"), ("LAYUNISO", "LAYUNISO"),
         ("LAYMCUR", "LAYMCUR"), ("AI_MOLC", "LAYMCUR"),

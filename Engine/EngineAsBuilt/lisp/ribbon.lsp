@@ -164,6 +164,8 @@
           (zr-item "PENSTROKE" "Pen Stroke" nil)
           (zr-item "RAY" "Ray" nil)
           (zr-item "XLINE" "Construction Line" nil)
+          (zr-item "POLYGON" "Polygon" nil)
+          (zr-item "BOUNDARY" "Boundary" nil)
           (zr-sep)
           (zr-item "TEXT" "Single Line Text" nil)
           (zr-item "TABLE" "Table" nil)
@@ -263,7 +265,9 @@
                   (zr-item "SPLINE"    "Spline"     nil)
                   (zr-item "PENSTROKE" "Pen Stroke" nil)
                   (zr-item "RAY"       "Ray"        nil)
-                  (zr-item "XLINE"     "Xline"      nil)))))
+                  (zr-item "XLINE"     "Xline"      nil)
+                  (zr-item "POLYGON"   "Polygon"    nil)
+                  (zr-item "BOUNDARY"  "Boundary"   nil)))))
 
           (zr-panel "Modify"
             (list

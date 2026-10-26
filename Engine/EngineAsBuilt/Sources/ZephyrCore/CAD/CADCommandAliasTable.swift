@@ -186,6 +186,12 @@ public enum CADCommandAliasTable {
             canonicalName: "XLINE", aliases: ["XL"], category: .draw,
             description: "Draw an infinite construction line through a point"),
         CADCommandAliasEntry(
+            canonicalName: "POLYGON", aliases: ["POL"], category: .draw,
+            description: "Draw a regular polygon (sides, center, radius or edge)"),
+        CADCommandAliasEntry(
+            canonicalName: "BOUNDARY", aliases: ["BO"], category: .draw,
+            description: "Create a closed region from an interior pick point"),
+        CADCommandAliasEntry(
             canonicalName: "DIST", aliases: ["DI"], category: .draw,
             description: "Report distance, angles, and deltas between two points"),
         CADCommandAliasEntry(

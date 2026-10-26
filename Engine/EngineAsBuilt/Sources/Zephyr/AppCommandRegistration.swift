@@ -329,6 +329,16 @@ struct AppCommandRegistration {
             factory: { XlineCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "POLYGON",
+            aliases: ["POL"],
+            factory: { PolygonCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "BOUNDARY",
+            aliases: ["BO"],
+            factory: { BoundaryCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "DRAW",
             aliases: ["TOOLS"],
             factory: { DrawPaletteCommand() }
