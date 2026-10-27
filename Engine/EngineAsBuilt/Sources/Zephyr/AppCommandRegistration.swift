@@ -595,6 +595,11 @@ struct AppCommandRegistration {
             aliases: ["DBA"],
             factory: { DimChainCommand(mode: .base) }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIM",
+            aliases: [],
+            factory: { DimSmartCommand() }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

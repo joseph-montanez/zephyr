@@ -262,6 +262,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "DIMJOGGED",  aliases: ["DJO", "DIMJOG", "JOG"], category: .draw, syntax: "", description: "Jogged radius dimension for large radii"),
         CommandDescriptor(canonicalName: "DIMCONTINUE", aliases: ["DCO"], category: .draw, syntax: "", description: "Chain dimensions from the previous extension origin"),
         CommandDescriptor(canonicalName: "DIMBASELINE", aliases: ["DBA"], category: .draw, syntax: "", description: "Stack dimensions from a shared base origin"),
+        CommandDescriptor(canonicalName: "DIM", aliases: [], category: .draw, syntax: "", description: "Dimension the selection with the matching type"),
         CommandDescriptor(canonicalName: "-DIMSTYLE",  aliases: [], category: .settings, syntax: "Restore <name> | Save <name> | Apply <name>", description: "Set the current dimension style from the command line"),
         CommandDescriptor(canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw, syntax: "", description: "Draw a centerline between two lines"),
         // --- History ---

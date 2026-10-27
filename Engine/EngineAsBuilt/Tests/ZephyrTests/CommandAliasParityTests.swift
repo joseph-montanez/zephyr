@@ -35,6 +35,7 @@ final class CommandAliasParityTests: XCTestCase {
         ("ME", "MEASURE"), ("JOG", "DIMJOGGED"),
         ("DCO", "DIMCONTINUE"), ("DIMCONTINUE", "DIMCONTINUE"),
         ("DBA", "DIMBASELINE"), ("DIMBASELINE", "DIMBASELINE"),
+        ("DIM", "DIM"),
         ("B", "BLOCK"), ("BMAKE", "BLOCK"),
         ("XR", "XREF"), ("ER", "XREF"),
         ("IAT", "IMAGEATTACH"),

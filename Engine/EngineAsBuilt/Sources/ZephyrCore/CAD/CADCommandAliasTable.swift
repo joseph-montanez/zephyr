@@ -163,6 +163,10 @@ public enum CADCommandAliasTable {
             category: .draw,
             description: "Stack dimensions from a shared base origin"),
         CADCommandAliasEntry(
+            canonicalName: "DIM", aliases: [],
+            category: .draw,
+            description: "Dimension the selection with the matching type"),
+        CADCommandAliasEntry(
             canonicalName: "BLOCK", aliases: ["B", "BMAKE"],
             category: .block,
             syntax: "<name>",
