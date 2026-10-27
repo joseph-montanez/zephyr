@@ -665,6 +665,11 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { FieldCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "SELECTSIMILAR",
+            aliases: [],
+            factory: { SelectSimilarCommand() }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

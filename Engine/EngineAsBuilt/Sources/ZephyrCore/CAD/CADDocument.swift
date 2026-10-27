@@ -484,6 +484,11 @@ public final class CADDocument {
     public var lengthPrecision: Int = 4 {
         didSet { lengthPrecision = max(0, min(8, lengthPrecision)) }
     }
+
+    /// SELECTSIMILARMODE bitmask (type 1, layer 2, color 4, linetype 8,
+    /// lineweight 16, name 128; default 130 = layer+name like AutoCAD).
+    /// Session state, not snapshotted.
+    public var selectSimilarMode: Int = EntityFilter.defaultMode
     public var anglePrecision: Int = 0 {
         didSet { anglePrecision = max(0, min(8, anglePrecision)) }
     }

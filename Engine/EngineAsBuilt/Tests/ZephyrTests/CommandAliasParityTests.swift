@@ -49,6 +49,7 @@ final class CommandAliasParityTests: XCTestCase {
         ("TXT2MTXT", "TXT2MTXT"),
         ("FIELD", "FIELD"),
         ("SPELL", "SPELL"), ("SP", "SPELL"),
+        ("SELECTSIMILAR", "SELECTSIMILAR"),
         ("B", "BLOCK"), ("BMAKE", "BLOCK"),
         ("XR", "XREF"), ("ER", "XREF"),
         ("IAT", "IMAGEATTACH"),

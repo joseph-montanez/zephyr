@@ -93,7 +93,8 @@
               (zr-item "PASTECLIP" "Paste" nil)
               (zr-item "PASTEORIG" "Paste to Original Coordinates" nil)))
           (zr-sep)
-          (zr-item "MATCHPROP" "Match Properties" (list (zr-enable (zr-sel 1))))))
+          (zr-item "MATCHPROP" "Match Properties" (list (zr-enable (zr-sel 1))))
+          (zr-item "SELECTSIMILAR" "Select Similar" (list (zr-enable (zr-sel 1))))))
 
       (zr-menu "View"
         (list

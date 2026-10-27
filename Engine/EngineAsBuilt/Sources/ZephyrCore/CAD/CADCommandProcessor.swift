@@ -277,6 +277,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "TEXTALIGN", aliases: ["TA"], category: .modify, syntax: "[Align/Distribute]", description: "Align or distribute text along a baseline"),
         CommandDescriptor(canonicalName: "TXT2MTXT", aliases: [], category: .modify, syntax: "", description: "Merge single-line texts into one mtext"),
         CommandDescriptor(canonicalName: "FIELD", aliases: [], category: .draw, syntax: "[Date/Filename/Tabname/Area/Length]", description: "Insert a live-updating field value"),
+        CommandDescriptor(canonicalName: "SELECTSIMILAR", aliases: [], category: .modify, syntax: "[Settings]", description: "Select objects matching a reference (SELECTSIMILARMODE)"),
         CommandDescriptor(canonicalName: "SPELL", aliases: ["SP"], category: .modify, syntax: "", description: "Spell-check drawing text (unavailable: no platform checker reachable)"),
         // --- History ---
         CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)", bareEnterExecutes: true),

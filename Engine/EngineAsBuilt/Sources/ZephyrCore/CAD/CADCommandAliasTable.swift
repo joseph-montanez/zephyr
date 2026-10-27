@@ -157,6 +157,9 @@ public enum CADCommandAliasTable {
             canonicalName: "FIELD", category: .draw,
             description: "Insert a live-updating field value"),
         CADCommandAliasEntry(
+            canonicalName: "SELECTSIMILAR", category: .modify,
+            description: "Select objects matching a reference (SELECTSIMILARMODE)"),
+        CADCommandAliasEntry(
             canonicalName: "SPELL", aliases: ["SP"], category: .modify,
             description: "Spell-check drawing text (unavailable: no platform checker reachable)",
             isReservedStub: true),

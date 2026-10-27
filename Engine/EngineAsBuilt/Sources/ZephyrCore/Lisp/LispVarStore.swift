@@ -99,6 +99,7 @@ final class LispVarStore: @unchecked Sendable {
         "PLATFORM": .string("Zephyr"),
         "QTEXTMODE": .int(0),
         "REGENMODE": .int(1),
+        "SELECTSIMILARMODE": .int(130),
         "SKETCHINC": .real(0.1),
         "SNAPMODE": .int(0),
         "SPLINESEGS": .int(8),
@@ -174,6 +175,8 @@ final class LispVarStore: @unchecked Sendable {
             return .real(document.lastPerimeter)
         case "LUPREC":
             return .int(document.lengthPrecision)
+        case "SELECTSIMILARMODE":
+            return .int(document.selectSimilarMode)
         case "AUPREC":
             return .int(document.anglePrecision)
         case "PDMODE":
@@ -295,6 +298,13 @@ final class LispVarStore: @unchecked Sendable {
                 return "LUPREC requires an integer 0..8"
             }
             document.lengthPrecision = i
+            store(name, value)
+            return nil
+        case "SELECTSIMILARMODE":
+            guard case let .int(i) = value, (0...255).contains(i) else {
+                return "SELECTSIMILARMODE requires an integer 0..255"
+            }
+            document.selectSimilarMode = i
             store(name, value)
             return nil
         case "AUPREC":
