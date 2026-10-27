@@ -117,6 +117,7 @@ public enum DXFWriterBridge {
         var blocks: [CADBlock]
         var entities: [CADEntity]
         var textStyles: [String: CADTextStyle]
+        var dimensionStyles: [String: CADDimensionStyle]
         var leaderStyles: [String: CADLeaderStyle]
         var linetypePatterns: [String: [Double]]
         var unit: CADUnit
@@ -160,6 +161,7 @@ public enum DXFWriterBridge {
             blocks: document.allBlocks,
             entities: document.allEntities,
             textStyles: document.textStyles,
+            dimensionStyles: document.dimensionStyles,
             leaderStyles: document.leaderStyles,
             linetypePatterns: document.linetypePatterns,
             unit: document.unit,
@@ -183,6 +185,7 @@ public enum DXFWriterBridge {
                 blocks: $0.document.allBlocks,
                 entities: $0.document.allEntities,
                 textStyles: $0.document.textStyles,
+                dimensionStyles: $0.document.dimensionStyles,
                 leaderStyles: $0.document.leaderStyles,
                 linetypePatterns: $0.document.linetypePatterns,
                 unit: $0.document.unit,
@@ -212,6 +215,7 @@ public enum DXFWriterBridge {
             textStyles: Dictionary(uniqueKeysWithValues: textStyleFonts.map { name, font in
                 (name, CADTextStyle(name: name, fontFile: font))
             }),
+            dimensionStyles: [:],
             leaderStyles: ["Standard": .standard],
             linetypePatterns: linetypePatterns,
             unit: .millimeter,
@@ -386,6 +390,8 @@ public enum DXFWriterBridge {
         var linetypeNames = Set<String>()
         var textStyles: [String: CADTextStyle] = [:]
         var textStyleNames = Set<String>()
+        var dimstyles: [String: CADDimensionStyle] = [:]
+        var dimstyleNames = Set<String>()
         for view in orderedViews {
             for (name, pattern) in view.linetypePatterns {
                 let key = name.uppercased()
@@ -394,6 +400,10 @@ public enum DXFWriterBridge {
             for style in view.textStyles.values {
                 let key = style.name.uppercased()
                 if textStyleNames.insert(key).inserted { textStyles[style.name] = style }
+            }
+            for (name, style) in view.dimensionStyles where !name.isEmpty {
+                let key = name.uppercased()
+                if dimstyleNames.insert(key).inserted { dimstyles[name] = style }
             }
         }
         if textStyleNames.contains("STANDARD") == false {
@@ -408,6 +418,7 @@ public enum DXFWriterBridge {
         })
         addLinetypes(linetypes, to: writer, xrefBlockNames: xrefBlockNames)
         addTextStyles(textStyles, to: writer, xrefBlockNames: xrefBlockNames)
+        addDimstyles(dimstyles, to: writer, xrefBlockNames: xrefBlockNames)
 
         var layerNames = Set<String>()
         for view in orderedViews {
@@ -1441,6 +1452,55 @@ public enum DXFWriterBridge {
             entry.lastHeight = normalized.fixedHeight > 0 ? normalized.fixedHeight : 2.5
             entry.flags |= dependentSymbolFlags(forName: normalized.name, xrefBlockNames: xrefBlockNames)
             writer.addTextStyle(entry)
+        }
+    }
+
+    /// Document dimension styles become generated DIMSTYLE records with
+    /// their RAW values plus DIMSCALE (Phase 2.1), mirroring addTextStyles.
+    /// Keys are canonical: the entry name always writes the table key.
+    private static func addDimstyles(
+        _ styles: [String: CADDimensionStyle], to writer: DXFWriter,
+        xrefBlockNames: Set<String> = []
+    ) {
+        for (key, style) in styles.sorted(by: { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }) where !key.isEmpty {
+            let entry = DXFDimstyleEntry()
+            entry.name = key
+            entry.dimscale = style.overallScale
+            entry.dimasz = style.arrowSize
+            entry.dimexo = style.extensionLineOffset
+            entry.dimdli = style.dimLineOffset
+            entry.dimexe = style.extensionLineExtend
+            entry.dimtxt = style.textHeight
+            entry.dimgap = style.textOffset
+            entry.dimtsz = style.tickSize
+            entry.dimdec = style.unitsPrecision
+            entry.dimtdec = style.unitsPrecision
+            entry.dimlunit = style.unitsFormat.rawValue
+            entry.dimaunit = style.angleFormat.rawValue
+            entry.dimzin = style.zeroSuppression ?? 0
+            if let linearScaleFactor = style.linearScaleFactor {
+                entry.dimlfac = linearScaleFactor
+            }
+            if style.dimensionPrefix != nil || style.dimensionSuffix != nil {
+                entry.dimpost = "\(style.dimensionPrefix ?? "")<>\(style.dimensionSuffix ?? "")"
+            }
+            entry.dimse1 = style.suppressFirstExtension ? 1 : 0
+            entry.dimse2 = style.suppressSecondExtension ? 1 : 0
+            entry.dimsd1 = style.suppressFirstDimLine ? 1 : 0
+            entry.dimsd2 = style.suppressSecondDimLine ? 1 : 0
+            entry.dimtxsty = style.textStyle ?? ""
+            if let first = style.firstArrowBlockName, !first.isEmpty {
+                entry.dimblk1 = first
+            }
+            if let second = style.secondArrowBlockName, !second.isEmpty {
+                entry.dimblk2 = second
+            }
+            if !entry.dimblk1.isEmpty || !entry.dimblk2.isEmpty,
+               entry.dimblk1 != entry.dimblk2 {
+                entry.dimsah = 1
+            }
+            entry.flags |= dependentSymbolFlags(forName: key, xrefBlockNames: xrefBlockNames)
+            writer.addDimstyle(entry)
         }
     }
 

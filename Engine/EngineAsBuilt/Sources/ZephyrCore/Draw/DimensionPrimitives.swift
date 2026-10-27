@@ -256,9 +256,7 @@ public enum DimensionPrimitives {
     /// Commits the dimension to the document as a block + block reference entity.
     public static func commitDimension(primitives: [CADPrimitive], metadata: CADDimensionMetadata, layerID: UUID, document: CADDocument) {
         let blockName = "*D" + UUID().uuidString.prefix(8)
-        let style = metadata.styleOverrides
-            ?? document.dimensionStyles[metadata.styleName]
-            ?? CADDimensionStyle.default
+        let style = document.resolvedDimensionStyle(for: metadata)
         let block = CADBlock(
             name: blockName,
             geometry: primitives,
@@ -466,7 +464,7 @@ public enum DimensionPrimitives {
     public static func updateDimensionBlock(for entity: inout CADEntity, in document: CADDocument) {
         guard let box = entity.dimensionMetadata else { return }
         let metadata = box.value
-        let style = metadata.styleOverrides ?? document.dimensionStyles[metadata.styleName] ?? CADDimensionStyle.default
+        let style = document.resolvedDimensionStyle(for: metadata)
         let color = resolvedColor(for: entity, in: document)
         
         let newPrimitives = generatePrimitives(for: metadata, style: style, color: color)

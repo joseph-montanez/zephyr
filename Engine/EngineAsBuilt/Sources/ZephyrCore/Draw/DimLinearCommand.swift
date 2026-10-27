@@ -165,11 +165,12 @@ public final class DimLinearCommand: FeatureCommand {
         }
         
         let textMidpoint = Vector3(x: (dimStart.x + dimEnd.x) / 2.0, y: (dimStart.y + dimEnd.y) / 2.0, z: 0)
-        let style = CADDimensionStyle.default
+        let style = engine.document.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatMeasurement(dist)
         
         let metadata = CADDimensionMetadata(
+            styleName: engine.document.currentDimensionStyleName,
             type: .linearOrRotated,
             measurement: dist,
             defPoint: dimLinePos,

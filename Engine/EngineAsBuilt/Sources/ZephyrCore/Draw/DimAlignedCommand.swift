@@ -157,11 +157,12 @@ public final class DimAlignedCommand: FeatureCommand {
         let dimEnd = Vector3(x: p2.x + perp.x * offset, y: p2.y + perp.y * offset, z: 0)
         
         let textMidpoint = Vector3(x: (dimStart.x + dimEnd.x) / 2.0, y: (dimStart.y + dimEnd.y) / 2.0, z: 0)
-        let style = CADDimensionStyle.default
+        let style = engine.document.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatMeasurement(dist)
         
         let metadata = CADDimensionMetadata(
+            styleName: engine.document.currentDimensionStyleName,
             type: .aligned,
             measurement: dist,
             defPoint: dimLinePos,

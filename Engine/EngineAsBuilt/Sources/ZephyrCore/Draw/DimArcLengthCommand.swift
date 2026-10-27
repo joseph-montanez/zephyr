@@ -134,7 +134,7 @@ public final class DimArcLengthCommand: FeatureCommand {
         
         let length = abs(sweep * radius)
         
-        let style = CADDimensionStyle.default
+        let style = engine.document.currentDimensionStyle()
         let color: ColorRGBA = .white
         
         // Use an arc symbol prefix or just format it
@@ -145,6 +145,7 @@ public final class DimArcLengthCommand: FeatureCommand {
         let arcGripPos = Vector3(x: center.x + cos(midAngle) * dimRadius, y: center.y + sin(midAngle) * dimRadius, z: 0)
         
         let metadata = CADDimensionMetadata(
+            styleName: engine.document.currentDimensionStyleName,
             type: .arcLength,
             measurement: length,
             defPoint: arcGripPos,

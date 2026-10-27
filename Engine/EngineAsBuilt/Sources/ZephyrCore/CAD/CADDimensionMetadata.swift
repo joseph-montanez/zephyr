@@ -70,6 +70,27 @@ public struct CADDimensionMetadata: Sendable, Hashable, Codable {
         self.flags = flags
         self.styleOverrides = styleOverrides
     }
+
+    /// Copy that points at a different named style, preserving every
+    /// measured/placed field. Used when a style is renamed or deleted so
+    /// existing dimensions keep resolving (mirrors leader styleName edits).
+    public func withStyleName(_ name: String) -> CADDimensionMetadata {
+        CADDimensionMetadata(
+            styleName: name,
+            type: type,
+            measurement: measurement,
+            defPoint: defPoint,
+            defPoint2: defPoint2,
+            defPoint3: defPoint3,
+            defPoint4: defPoint4,
+            defPoint5: defPoint5,
+            textMidpoint: textMidpoint,
+            textOverride: textOverride,
+            rotationAngle: rotationAngle,
+            textRotationAngle: textRotationAngle,
+            flags: flags,
+            styleOverrides: styleOverrides)
+    }
 }
 
 /// Lightweight heap-allocated box so non-dimension entities only pay

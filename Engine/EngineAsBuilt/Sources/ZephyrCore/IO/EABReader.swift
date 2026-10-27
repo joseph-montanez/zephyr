@@ -432,12 +432,16 @@ public enum EABReader {
             let styleName = r.readString()
             let jsonString = r.readString()
             if let data = jsonString.data(using: .utf8),
-               let style = try? decoder.decode(CADDimensionStyle.self, from: data) {
+               var style = try? decoder.decode(CADDimensionStyle.self, from: data) {
+                // Keys are canonical: archives predate the embedded name,
+                // so re-stamp it from the key on every load.
+                style.name = styleName
                 styles[styleName] = style
             } else {
                 styles[styleName] = CADDimensionStyle.default
             }
         }
+        if styles.isEmpty { styles["Standard"] = .default }
         return styles
     }
 

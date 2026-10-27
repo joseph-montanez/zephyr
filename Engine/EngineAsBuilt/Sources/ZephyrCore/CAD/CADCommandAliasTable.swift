@@ -98,8 +98,11 @@ public enum CADCommandAliasTable {
         CADCommandAliasEntry(
             canonicalName: "DIMSTYLE", aliases: ["D", "DST"],
             category: .settings,
-            description: "Manage dimension styles",
-            isReservedStub: true),
+            description: "Manage dimension styles"),
+        CADCommandAliasEntry(
+            canonicalName: "-DIMSTYLE", aliases: [],
+            category: .settings,
+            description: "Set the current dimension style (command-line)"),
         CADCommandAliasEntry(
             canonicalName: "DRAW", aliases: ["TOOLS"], category: .draw,
             description: "Open the draw tools palette"),

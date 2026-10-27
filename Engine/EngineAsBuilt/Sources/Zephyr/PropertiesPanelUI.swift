@@ -402,7 +402,7 @@ struct PropertiesPanelUI {
         if let dimBox = entity.dimensionMetadata {
             if ImGuiCollapsingHeader("Dimension Properties", Int32(ImGuiTreeNodeFlags_DefaultOpen.rawValue)) {
                 let metadata = dimBox.value
-                var style = metadata.styleOverrides ?? engine.document.dimensionStyles[metadata.styleName] ?? CADDimensionStyle.default
+                var style = engine.document.resolvedDimensionStyle(for: metadata)
                 var changed = false
                 
                 // Text Override

@@ -81,7 +81,9 @@ public let EABArchiveMagic: UInt32 = 0x41424145  // "EABA" in little-endian
 /// Version 18 adds a long-string sentinel for payloads over the UInt16 limit.
 /// Version 19 adds the xrefs section (external-reference descriptors).
 /// Version 20 adds the mediaDefinitions section (ATTACH image/PDF refs).
-public let EABVersion: UInt32 = 20
+/// Version 21 stores dimension styles raw with overallScale (DIMSCALE);
+/// v20-era readers would misrender the unscaled values, so they reject v21.
+public let EABVersion: UInt32 = 21
 /// First version whose strings may use the 0xFFFF + UInt32 long-length form.
 public let EABVersionLongStrings: UInt32 = 18
 

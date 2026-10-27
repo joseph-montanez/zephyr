@@ -135,7 +135,7 @@ final class CommandAliasParityTests: XCTestCase {
 
     /// Reserved stubs report honestly and real commands never stub-report.
     func testStubMessages() {
-        for stub in ["S", "STRETCH", "D", "DIMSTYLE", "PS", "PSPACE",
+        for stub in ["S", "STRETCH", "PS", "PSPACE",
                      "CL", "CENTERLINE", "G", "GROUP", "W", "WBLOCK"] {
             XCTAssertNotNil(
                 CADCommandAliasTable.stubMessage(for: stub),

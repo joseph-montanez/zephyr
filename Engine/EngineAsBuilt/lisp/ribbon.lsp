@@ -351,6 +351,7 @@
               (zr-small "DIMALIGNED" "Aligned" "dim" nil)
               (zr-small "DIMANGULAR" "Angular" "dim" nil)
               (zr-small "DIMRADIUS"  "Radius"  "dim" nil)
+              (zr-small "DIMSTYLE"   "Style"   "dim" nil)
               (zr-drop  "More"
                 (list
                   (zr-small "DIMDIAMETER" "Diameter"   "dim"   nil)

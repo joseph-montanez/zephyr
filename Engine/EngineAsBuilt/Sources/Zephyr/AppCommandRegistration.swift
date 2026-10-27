@@ -580,6 +580,11 @@ struct AppCommandRegistration {
             aliases: ["DJO", "DIMJOG", "JOG"],
             factory: { DimJoggedCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMSTYLE",
+            aliases: ["D", "DST"],
+            factory: { DimStyleCommand() }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

@@ -2192,13 +2192,19 @@ public enum DXFImporter {
             var style = CADDimensionStyle()
             let scale = dimstyle.dimscale == 0 ? 1.0 : abs(dimstyle.dimscale)
 
-            style.arrowSize = max(0, dimstyle.dimasz * scale)
-            style.textHeight = max(0, dimstyle.dimtxt * scale)
-            style.textOffset = abs(dimstyle.dimgap * scale)
-            style.extensionLineOffset = max(0, dimstyle.dimexo * scale)
-            style.extensionLineExtend = max(0, dimstyle.dimexe * scale)
-            style.dimLineOffset = max(0, dimstyle.dimdli * scale)
-            style.tickSize = max(0, dimstyle.dimtsz * scale)
+            // Store RAW values with the DIMSCALE factor separate (Phase 2.1):
+            // geometry call sites consume style.scaled(), which reproduces
+            // the exact fold below, while the table round-trips the raw
+            // DIMASZ/DIMTXT/... values alongside DIMSCALE.
+            style.name = dimstyle.name
+            style.overallScale = scale
+            style.arrowSize = max(0, dimstyle.dimasz)
+            style.textHeight = max(0, dimstyle.dimtxt)
+            style.textOffset = abs(dimstyle.dimgap)
+            style.extensionLineOffset = max(0, dimstyle.dimexo)
+            style.extensionLineExtend = max(0, dimstyle.dimexe)
+            style.dimLineOffset = max(0, dimstyle.dimdli)
+            style.tickSize = max(0, dimstyle.dimtsz)
             style.unitsFormat = DimUnitsFormat(rawValue: dimstyle.dimlunit) ?? .decimal
             style.unitsPrecision = max(0, dimstyle.dimdec)
             style.angleFormat = DimAngleFormat(rawValue: dimstyle.dimaunit) ?? .decimalDegrees
@@ -2248,7 +2254,11 @@ public enum DXFImporter {
             result[dimstyle.name] = style
         }
 
-        if result["STANDARD"] == nil {
+        // Fallback only when no case-variant exists: injecting "STANDARD"
+        // alongside a file "Standard" would fork the table (Phase 2.1).
+        if !result.keys.contains(where: {
+            $0.caseInsensitiveCompare("Standard") == .orderedSame
+        }) {
             result["STANDARD"] = .default
         }
         return result
@@ -2437,9 +2447,12 @@ public enum DXFImporter {
             metadata.textMidpoint = position
             metadata.textRotationAngle = rotation
 
-            var style = metadata.styleOverrides
+            // Bake the table style fully (stored tables keep raw values now)
+            // so the override matches the old folded representation, then
+            // overwrite with the cached file-scaled text.
+            var style = (metadata.styleOverrides
                 ?? dimensionStyles[metadata.styleName]
-                ?? CADDimensionStyle.default
+                ?? CADDimensionStyle.default).scaled()
             style.textHeight = height
             style.textStyle = textStyle
             if let primitiveStyle = block.primitiveStyles[primitiveIndex],

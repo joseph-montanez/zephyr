@@ -260,6 +260,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "DIMARC",     aliases: ["DAR", "DIMARCLENGTH"], category: .draw, syntax: "", description: "Arc length dimension along a curve"),
         CommandDescriptor(canonicalName: "DIMORDINATE",aliases: ["DOR", "DIMORD"], category: .draw, syntax: "", description: "X or Y ordinate dimension from origin"),
         CommandDescriptor(canonicalName: "DIMJOGGED",  aliases: ["DJO", "DIMJOG", "JOG"], category: .draw, syntax: "", description: "Jogged radius dimension for large radii"),
+        CommandDescriptor(canonicalName: "-DIMSTYLE",  aliases: [], category: .settings, syntax: "Restore <name> | Save <name> | Apply <name>", description: "Set the current dimension style from the command line"),
         CommandDescriptor(canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw, syntax: "", description: "Draw a centerline between two lines"),
         // --- History ---
         CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)", bareEnterExecutes: true),
@@ -1453,6 +1454,12 @@ public final class CADCommandProcessor {
         case _ where upper.hasPrefix("-LAYER ") || upper.hasPrefix("-LA "):
             guard let engine = engine else { clearCommand(); return }
             runDashLayerCommand(text: text, upper: upper, engine: engine)
+        case "-DIMSTYLE":
+            print("[CAD] -DIMSTYLE Restore <name> | Save <name> | Apply <name>")
+            clearCommand()
+        case _ where upper.hasPrefix("-DIMSTYLE "):
+            guard let engine = engine else { clearCommand(); return }
+            runDashDimStyleCommand(text: text, upper: upper, engine: engine)
         case _ where upper.hasPrefix("LAYER DELETE ") || upper.hasPrefix("LAYER DEL ") || upper.hasPrefix("LA DELETE ") || upper.hasPrefix("LA DEL "):
             guard let engine = engine else { clearCommand(); return }
             let prefixLen: Int
@@ -2167,6 +2174,81 @@ public final class CADCommandProcessor {
         cmd.preset(pattern: pattern, scale: scale, angle: angle)
         activeFeatureCommand = cmd
         cmd.start(engine: engine, processor: self)
+    }
+
+    /// `-DIMSTYLE` Restore/Save/Apply over the document dimension-style
+    /// table (Phase 2.1). Restore makes the named style current; Save
+    /// snapshots the current row under a new name; Apply re-points the
+    /// current selection's dimensions at the named style.
+    private func runDashDimStyleCommand(text: String, upper: String, engine: PhrostEngine) {
+        let args = String(text.dropFirst(10)).trimmingCharacters(in: .whitespaces)
+        let tokens = args.split(whereSeparator: \.isWhitespace).map(String.init)
+        let usage = "-DIMSTYLE Restore <name> | Save <name> | Apply <name>"
+        guard let verb = tokens.first?.uppercased() else {
+            print("[CAD] \(usage)")
+            clearCommand()
+            return
+        }
+        let name = tokens.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        let doc = engine.document
+        switch verb {
+        case "RESTORE":
+            guard !name.isEmpty else {
+                print("[CAD] -DIMSTYLE Restore requires a style name. \(usage)")
+                clearCommand()
+                return
+            }
+            if doc.setCurrentDimensionStyle(named: name) {
+                print("[CAD] Current dimension style: \(doc.currentDimensionStyleName).")
+            } else {
+                let known = doc.dimensionStyles.keys.sorted().joined(separator: ", ")
+                print("[CAD] Dimension style '\(name)' not found. Styles: \(known).")
+            }
+            clearCommand()
+        case "SAVE":
+            guard !name.isEmpty else {
+                print("[CAD] -DIMSTYLE Save requires a new style name. \(usage)")
+                clearCommand()
+                return
+            }
+            let exists = doc.dimensionStyles.keys.contains(where: {
+                $0.caseInsensitiveCompare(name) == .orderedSame
+            })
+            if exists {
+                print("[CAD] Dimension style '\(name)' already exists.")
+                clearCommand()
+                return
+            }
+            var snapshot = doc.dimensionStyle(named: doc.currentDimensionStyleName)
+            snapshot.name = name
+            if doc.applyDimensionStyle(snapshot) {
+                print("[CAD] Dimension style '\(name)' saved from current settings.")
+            } else {
+                print("[CAD] Could not save dimension style '\(name)'.")
+            }
+            clearCommand()
+        case "APPLY":
+            guard !name.isEmpty else {
+                print("[CAD] -DIMSTYLE Apply requires a style name. \(usage)")
+                clearCommand()
+                return
+            }
+            let handles = engine.cadSelection.selectedHandles
+            guard !handles.isEmpty else {
+                print("[CAD] -DIMSTYLE Apply needs selected dimensions first.")
+                clearCommand()
+                return
+            }
+            if let count = doc.applyDimensionStyleToEntities(named: name, handles: handles) {
+                print("[CAD] Applied '\(name)' to \(count) dimension(s); overrides cleared.")
+            } else {
+                print("[CAD] Dimension style '\(name)' not found.")
+            }
+            clearCommand()
+        default:
+            print("[CAD] Unknown -DIMSTYLE option '\(verb)'. \(usage)")
+            clearCommand()
+        }
     }
 
     /// Interactive `-LAYER` sub-keywords over the document layer APIs.

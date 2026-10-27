@@ -36,6 +36,7 @@ public struct CADDocumentSnapshot: Sendable {
     public let dimensionStyles: [String: CADDimensionStyle]
     public let leaderStyles: [String: CADLeaderStyle]
     public let currentLeaderStyleName: String
+    public let currentDimensionStyleName: String
     public let linetypePatterns: [String: [Double]]
     public let globalLineTypeScale: Double
     public let autoContrastTrueColor: Bool
@@ -69,6 +70,7 @@ public struct CADDocumentSnapshot: Sendable {
         dimensionStyles: [String: CADDimensionStyle] = [:],
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
+        currentDimensionStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -96,9 +98,10 @@ public struct CADDocumentSnapshot: Sendable {
         self.activeLayerID = activeLayerID
         self.unit = unit
         self.textStyles = textStyles
-        self.dimensionStyles = dimensionStyles
+        self.dimensionStyles = dimensionStyles.isEmpty ? ["Standard": .default] : dimensionStyles
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.currentLeaderStyleName = currentLeaderStyleName
+        self.currentDimensionStyleName = currentDimensionStyleName
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
         self.autoContrastTrueColor = autoContrastTrueColor
@@ -121,6 +124,7 @@ public struct CADDocumentSnapshot: Sendable {
         dimensionStyles: [String: CADDimensionStyle] = [:],
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
+        currentDimensionStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -146,6 +150,7 @@ public struct CADDocumentSnapshot: Sendable {
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
+            currentDimensionStyleName: currentDimensionStyleName,
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
@@ -404,7 +409,7 @@ public final class CADDocument {
     }
     
     /// Map of dimension style name -> CADDimensionStyle
-    public var dimensionStyles: [String: CADDimensionStyle] = [:]
+    public var dimensionStyles: [String: CADDimensionStyle] = ["Standard": .default]
 
     /// Referenced image definitions (DXF IMAGEDEF), keyed by name.
     /// Document data: part of undo snapshots and saves; decoded
@@ -417,6 +422,7 @@ public final class CADDocument {
     /// Named multileader styles and the active style used by new leaders.
     public var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
     public var currentLeaderStyleName: String = "Standard"
+    public var currentDimensionStyleName: String = "Standard"
 
     /// DXF linetype dash pattern definitions (e.g. "DASHED" -> [10.0, 5.0]).
     /// Key is the uppercased linetype name. Saved/loaded in EAB for accurate round-trip.
@@ -3412,7 +3418,7 @@ public final class CADDocument {
 
         self.textStyles = imported.textStyles.isEmpty ? ["Standard": .standard] : imported.textStyles
         self.linetypePatterns = imported.linetypePatterns
-        self.dimensionStyles = imported.dimensionStyles
+        self.dimensionStyles = imported.dimensionStyles.isEmpty ? ["Standard": .default] : imported.dimensionStyles
         self.dxfRoundTripPayload = imported.roundTripPayload
         for layer in imported.layers { layerTable[layer.handle] = layer }
         if activeLayerID == nil, let first = imported.layers.first { activeLayerID = first.handle }
@@ -3468,6 +3474,7 @@ public final class CADDocument {
         dimensionStyles: [String: CADDimensionStyle] = [:],
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
+        currentDimensionStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -3482,9 +3489,10 @@ public final class CADDocument {
         self.xrefSourceFolder = xrefHostFolder
         self.eabUnloadedXrefHandles = unloadedXrefs
         self.textStyles = textStyles.isEmpty ? ["Standard": .standard] : textStyles
-        self.dimensionStyles = dimensionStyles
+        self.dimensionStyles = dimensionStyles.isEmpty ? ["Standard": .default] : dimensionStyles
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.currentLeaderStyleName = self.leaderStyles.keys.first(where: { $0.caseInsensitiveCompare(currentLeaderStyleName) == .orderedSame }) ?? "Standard"
+        self.currentDimensionStyleName = self.dimensionStyles.keys.first(where: { $0.caseInsensitiveCompare(currentDimensionStyleName) == .orderedSame }) ?? "Standard"
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
         self.autoContrastTrueColor = autoContrastTrueColor
@@ -3521,6 +3529,7 @@ public final class CADDocument {
         dimensionStyles: [String: CADDimensionStyle] = [:],
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
+        currentDimensionStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -3541,6 +3550,7 @@ public final class CADDocument {
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
+            currentDimensionStyleName: currentDimensionStyleName,
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
@@ -3562,7 +3572,7 @@ public final class CADDocument {
             return CADDocumentSnapshot(
                 layers: [:], blocks: [:], entities: [:], constraints: [:],
                 solvedTransforms: [:], activeLayerID: nil, unit: unit,
-                textStyles: ["Standard": .standard], dimensionStyles: [:],
+                textStyles: ["Standard": .standard], dimensionStyles: ["Standard": .default],
                 leaderStyles: ["Standard": .standard], currentLeaderStyleName: "Standard", linetypePatterns: [:],
                 imageAssetNames: [])
         }
@@ -3571,7 +3581,7 @@ public final class CADDocument {
             return CADDocumentSnapshot(
                 layers: [:], blocks: [:], entities: [:], constraints: [:],
                 solvedTransforms: [:], activeLayerID: nil, unit: unit,
-                textStyles: ["Standard": .standard], dimensionStyles: [:],
+                textStyles: ["Standard": .standard], dimensionStyles: ["Standard": .default],
                 leaderStyles: ["Standard": .standard], currentLeaderStyleName: "Standard", linetypePatterns: [:],
                 imageAssetNames: [])
         }
@@ -3603,6 +3613,7 @@ public final class CADDocument {
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
+            currentDimensionStyleName: currentDimensionStyleName,
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
@@ -3654,6 +3665,7 @@ public final class CADDocument {
             textStyles: base.textStyles, dimensionStyles: base.dimensionStyles,
             leaderStyles: base.leaderStyles,
             currentLeaderStyleName: base.currentLeaderStyleName,
+            currentDimensionStyleName: base.currentDimensionStyleName,
             linetypePatterns: base.linetypePatterns,
             globalLineTypeScale: base.globalLineTypeScale,
             autoContrastTrueColor: base.autoContrastTrueColor,
@@ -3712,6 +3724,7 @@ public final class CADDocument {
         dimensionStyles = snapshot.dimensionStyles
         leaderStyles = snapshot.leaderStyles
         currentLeaderStyleName = snapshot.currentLeaderStyleName
+        currentDimensionStyleName = snapshot.currentDimensionStyleName
         linetypePatterns = snapshot.linetypePatterns
         globalLineTypeScale = snapshot.globalLineTypeScale
         autoContrastTrueColor = snapshot.autoContrastTrueColor

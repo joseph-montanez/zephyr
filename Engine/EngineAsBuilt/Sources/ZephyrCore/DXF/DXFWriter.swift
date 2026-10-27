@@ -1768,6 +1768,11 @@ public class DXFWriter {
             out += "100\r\nAcDbSymbolTableRecord\r\n"
             out += "100\r\nAcDbDimStyleTableRecord\r\n"
             writeStr(2, ds.name, &out)
+            writeStr(3, ds.dimpost, &out)
+            writeStr(4, ds.dimapost, &out)
+            writeStr(5, ds.dimblk, &out)
+            writeStr(6, ds.dimblk1, &out)
+            writeStr(7, ds.dimblk2, &out)
             writeInt(70, ds.flags, &out)
             writeDbl(40, ds.dimscale, &out)
             writeDbl(41, ds.dimasz, &out)
