@@ -133,6 +133,12 @@ public enum CADCommandAliasTable {
             canonicalName: "DIMDISASSOCIATE", aliases: ["DDA"], category: .draw,
             description: "Drop associativity from dimensions (no-op: dimensions store snapshots)"),
         CADCommandAliasEntry(
+            canonicalName: "DIMEDIT", aliases: ["DED"], category: .draw,
+            description: "Move, replace, rotate, or oblique dimension text"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMTEDIT", category: .draw,
+            description: "Move or rotate dimension text along the dimension line"),
+        CADCommandAliasEntry(
             canonicalName: "AALINES", category: .view,
             description: "Toggle anti-aliased line rendering on/off"),
         CADCommandAliasEntry(

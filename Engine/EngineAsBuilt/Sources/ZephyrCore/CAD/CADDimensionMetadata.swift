@@ -33,6 +33,11 @@ public struct CADDimensionMetadata: Sendable, Hashable, Codable {
     public var textOverride: String?
     public let rotationAngle: Double   // dimension-line rotation, radians
     public var textRotationAngle: Double? // explicit/readable text rotation, radians
+    // Group 52 — extension-line obliquing angle, radians from the
+    // dimension-line direction. Nil (or pi/2) = perpendicular. Session-only
+    // like textRotationAngle: EAB and DXF export do not persist it, but DXF
+    // import maps a non-default group 52 here so foreign obliques render.
+    public var obliqueAngle: Double?
     
     // Group 70 flags (bit 6 = ordinate X-type, bit 7 = text is user-positioned, etc.)
     public let flags: Int
@@ -52,6 +57,7 @@ public struct CADDimensionMetadata: Sendable, Hashable, Codable {
         textOverride: String? = nil,
         rotationAngle: Double = 0,
         textRotationAngle: Double? = nil,
+        obliqueAngle: Double? = nil,
         flags: Int = 0,
         styleOverrides: CADDimensionStyle? = nil
     ) {
@@ -67,6 +73,7 @@ public struct CADDimensionMetadata: Sendable, Hashable, Codable {
         self.textOverride = textOverride
         self.rotationAngle = rotationAngle
         self.textRotationAngle = textRotationAngle
+        self.obliqueAngle = obliqueAngle
         self.flags = flags
         self.styleOverrides = styleOverrides
     }
@@ -88,6 +95,7 @@ public struct CADDimensionMetadata: Sendable, Hashable, Codable {
             textOverride: textOverride,
             rotationAngle: rotationAngle,
             textRotationAngle: textRotationAngle,
+            obliqueAngle: obliqueAngle,
             flags: flags,
             styleOverrides: styleOverrides)
     }

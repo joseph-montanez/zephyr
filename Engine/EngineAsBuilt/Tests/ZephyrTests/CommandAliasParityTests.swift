@@ -40,6 +40,8 @@ final class CommandAliasParityTests: XCTestCase {
         ("DCE", "DIMCENTER"), ("DIMCENTER", "DIMCENTER"),
         ("DIMREASSOCIATE", "DIMREASSOCIATE"), ("DRE", "DIMREASSOCIATE"),
         ("DIMDISASSOCIATE", "DIMDISASSOCIATE"), ("DDA", "DIMDISASSOCIATE"),
+        ("DIMEDIT", "DIMEDIT"), ("DED", "DIMEDIT"),
+        ("DIMTEDIT", "DIMTEDIT"),
         ("B", "BLOCK"), ("BMAKE", "BLOCK"),
         ("XR", "XREF"), ("ER", "XREF"),
         ("IAT", "IMAGEATTACH"),

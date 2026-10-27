@@ -2264,6 +2264,15 @@ public enum DXFImporter {
         return result
     }
 
+    /// Maps DXF group 52 (degrees) to the session obliquing angle (radians
+    /// from the dimension-line direction). Absent (0) and explicit-normal
+    /// (90) both mean perpendicular, so both map to nil; anything else is
+    /// negated for the engine's Y-down space, mirroring text rotation.
+    static func dimensionObliqueAngle(_ degrees: Double) -> Double? {
+        guard degrees != 0, abs(degrees - 90) > 1e-9 else { return nil }
+        return -degrees * .pi / 180.0
+    }
+
     private static func dimensionMetadata(from dimension: DXFDimensionEntity) -> CADDimensionMetadata? {
         let baseType = dimension.type & 0x0F
         let type: CADDimensionType
@@ -2309,6 +2318,7 @@ public enum DXFImporter {
         let textOverride = text.isEmpty || text == "<>" ? nil : dimension.text
         let flags = (dimension.type & ~0x0F) & ~32
         let styleName = dimension.style.isEmpty ? "STANDARD" : dimension.style
+        let obliqueAngle = dimensionObliqueAngle(dimension.oblique)
 
         switch type {
         case .linearOrRotated, .aligned:
@@ -2325,6 +2335,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .angular:
@@ -2343,6 +2354,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .angular3Point:
@@ -2360,6 +2372,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .diameter:
@@ -2375,6 +2388,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .radius:
@@ -2390,6 +2404,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .ordinate:
@@ -2406,6 +2421,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .arcLength:
@@ -2424,6 +2440,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .jogged:

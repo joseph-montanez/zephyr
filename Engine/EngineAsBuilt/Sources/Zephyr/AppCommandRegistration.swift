@@ -625,6 +625,16 @@ struct AppCommandRegistration {
             aliases: ["DDA"],
             factory: { DimDisassociateCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMEDIT",
+            aliases: ["DED"],
+            factory: { DimEditCommand(mode: .dimedit) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMTEDIT",
+            aliases: [],
+            factory: { DimEditCommand(mode: .dimtedit) }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

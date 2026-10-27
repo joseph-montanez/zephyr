@@ -153,14 +153,38 @@ public enum DimensionPrimitives {
         )
     }
 
-    /// Generates two extension lines.
-    public static func extensionLines(feature1: Vector3, feature2: Vector3, dimLineStart: Vector3, dimLineEnd: Vector3, style: CADDimensionStyle, color: ColorRGBA) -> [CADPrimitive] {
+    /// Generates two extension lines. With an obliquing angle (radians from
+    /// the dimension-line direction, nil = perpendicular) both lines slant
+    /// in parallel toward the dimension-line direction. Nil reproduces the
+    /// historical perpendicular behavior exactly.
+    public nonisolated static func extensionLines(feature1: Vector3, feature2: Vector3, dimLineStart: Vector3, dimLineEnd: Vector3, style: CADDimensionStyle, color: ColorRGBA, obliqueAngle: Double? = nil) -> [CADPrimitive] {
         var primitives: [CADPrimitive] = []
-        
-        let dir1 = Vector3(x: dimLineStart.x - feature1.x, y: dimLineStart.y - feature1.y, z: dimLineStart.z - feature1.z)
-        let len1 = sqrt(dir1.x * dir1.x + dir1.y * dir1.y + dir1.z * dir1.z)
-        if !style.suppressFirstExtension && len1 > 0 {
-            let n1 = dir1.normalized
+
+        let span = Vector3(x: dimLineEnd.x - dimLineStart.x, y: dimLineEnd.y - dimLineStart.y, z: 0)
+        let spanLen = hypot(span.x, span.y)
+        let along: Vector3? = spanLen > 0 ? Vector3(x: span.x / spanLen, y: span.y / spanLen, z: 0) : nil
+
+        /// Extension direction for one side: the 3D feature-to-dimline ray by
+        /// default (historical behavior), slanted in-plane toward the
+        /// dimension-line direction under oblique (obliquing assumes planar
+        /// dimensions, which is all the builders produce).
+        func extDir(feature: Vector3, dimPoint: Vector3) -> Vector3? {
+            let dx = dimPoint.x - feature.x
+            let dy = dimPoint.y - feature.y
+            let dz = dimPoint.z - feature.z
+            let len = sqrt(dx * dx + dy * dy + dz * dz)
+            guard len > 0 else { return nil }
+            let straight = Vector3(x: dx / len, y: dy / len, z: dz / len)
+            guard let phi = obliqueAngle, let u = along else { return straight }
+            var n = Vector3(x: -u.y, y: u.x, z: 0)
+            if n.x * straight.x + n.y * straight.y < 0 { n = Vector3(x: -n.x, y: -n.y, z: 0) }
+            let slanted = Vector3(x: u.x * cos(phi) + n.x * sin(phi), y: u.y * cos(phi) + n.y * sin(phi), z: 0)
+            let slantedLen = hypot(slanted.x, slanted.y)
+            guard slantedLen > 0 else { return straight }
+            return Vector3(x: slanted.x / slantedLen, y: slanted.y / slantedLen, z: 0)
+        }
+
+        if !style.suppressFirstExtension, let n1 = extDir(feature: feature1, dimPoint: dimLineStart) {
             let start = Vector3(x: feature1.x + n1.x * style.extensionLineOffset,
                                 y: feature1.y + n1.y * style.extensionLineOffset,
                                 z: feature1.z)
@@ -169,11 +193,8 @@ public enum DimensionPrimitives {
                               z: dimLineStart.z)
             primitives.append(.line(start: start, end: end, color: color))
         }
-        
-        let dir2 = Vector3(x: dimLineEnd.x - feature2.x, y: dimLineEnd.y - feature2.y, z: dimLineEnd.z - feature2.z)
-        let len2 = sqrt(dir2.x * dir2.x + dir2.y * dir2.y + dir2.z * dir2.z)
-        if !style.suppressSecondExtension && len2 > 0 {
-            let n2 = dir2.normalized
+
+        if !style.suppressSecondExtension, let n2 = extDir(feature: feature2, dimPoint: dimLineEnd) {
             let start = Vector3(x: feature2.x + n2.x * style.extensionLineOffset,
                                 y: feature2.y + n2.y * style.extensionLineOffset,
                                 z: feature2.z)
@@ -182,7 +203,7 @@ public enum DimensionPrimitives {
                               z: dimLineEnd.z)
             primitives.append(.line(start: start, end: end, color: color))
         }
-        
+
         return primitives
     }
     
@@ -326,10 +347,10 @@ public enum DimensionPrimitives {
                 y: dir.y * p2Along + perp.y * lineOffset,
                 z: dimLinePos.z)
             
-            primitives.append(contentsOf: extensionLines(feature1: p1, feature2: p2, dimLineStart: dimStart, dimLineEnd: dimEnd, style: style, color: color))
+            primitives.append(contentsOf: extensionLines(feature1: p1, feature2: p2, dimLineStart: dimStart, dimLineEnd: dimEnd, style: style, color: color, obliqueAngle: metadata.obliqueAngle))
             primitives.append(contentsOf: dimensionLine(from: dimStart, to: dimEnd, arrowAtStart: true, arrowAtEnd: true, style: style, color: color))
             primitives.append(dimensionText(position: metadata.textMidpoint, value: valueStr, rotation: textRotation(for: metadata, fallback: angle), style: style, color: color))
-            
+
         case .aligned:
             guard let p2 = metadata.defPoint3 else { return [] }
             let p1 = metadata.defPoint2
@@ -345,10 +366,10 @@ public enum DimensionPrimitives {
             let dimStart = Vector3(x: p1.x + perp.x * offset, y: p1.y + perp.y * offset, z: 0)
             let dimEnd = Vector3(x: p2.x + perp.x * offset, y: p2.y + perp.y * offset, z: 0)
             
-            primitives.append(contentsOf: extensionLines(feature1: p1, feature2: p2, dimLineStart: dimStart, dimLineEnd: dimEnd, style: style, color: color))
+            primitives.append(contentsOf: extensionLines(feature1: p1, feature2: p2, dimLineStart: dimStart, dimLineEnd: dimEnd, style: style, color: color, obliqueAngle: metadata.obliqueAngle))
             primitives.append(contentsOf: dimensionLine(from: dimStart, to: dimEnd, arrowAtStart: true, arrowAtEnd: true, style: style, color: color))
             primitives.append(dimensionText(position: metadata.textMidpoint, value: valueStr, rotation: textRotation(for: metadata, fallback: angle), style: style, color: color))
-            
+
         case .angular:
             guard let p2 = metadata.defPoint3, let center = metadata.defPoint4 else { return [] }
             let p1 = metadata.defPoint2

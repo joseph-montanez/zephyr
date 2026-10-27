@@ -269,6 +269,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw, syntax: "", description: "Draw a centerline between two lines"),
         CommandDescriptor(canonicalName: "DIMREASSOCIATE", aliases: ["DRE"], category: .draw, syntax: "", description: "Re-point a dimension at new extension origins and re-measure"),
         CommandDescriptor(canonicalName: "DIMDISASSOCIATE", aliases: ["DDA"], category: .draw, syntax: "", description: "Drop associativity from dimensions (no-op: dimensions store snapshots)"),
+        CommandDescriptor(canonicalName: "DIMEDIT", aliases: ["DED"], category: .draw, syntax: "[Home/New/Rotate/Oblique]", description: "Move, replace, rotate, or oblique dimension text"),
+        CommandDescriptor(canonicalName: "DIMTEDIT", aliases: [], category: .draw, syntax: "[Home/New/Left/Right/Center/Angle]", description: "Move or rotate dimension text along the dimension line"),
         // --- History ---
         CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)", bareEnterExecutes: true),
         CommandDescriptor(canonicalName: "REDO",       aliases: [],                category: .modify,  syntax: "[<count>]", description: "Re-apply the last undone change (Cmd/Ctrl+Y)", bareEnterExecutes: true),
