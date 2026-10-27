@@ -30,6 +30,7 @@ public enum EntityFilter {
     public static func isVisibleForSelection(
         _ entity: CADEntity, in document: CADDocument
     ) -> Bool {
+        guard !document.isIsolatedHidden(entity.handle) else { return false }
         guard let layer = document.layer(for: entity.layerID) else { return true }
         return layer.isVisible
     }

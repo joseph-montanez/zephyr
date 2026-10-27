@@ -57,6 +57,10 @@ public struct CADDocumentSnapshot: Sendable {
     /// this set render as placeholder frames.
     public let availableImageAssetNames: Set<String>
     public let layoutSettings: CADLayoutSettings?
+    /// Per-entity isolation (ISOLATEOBJECTS/HIDEOBJECTS) at snapshot time.
+    /// Render-only session state: restore paths ignore it, so undo/redo
+    /// never changes isolation, and it is never persisted to DXF/EAB.
+    public let isolatedHiddenHandles: Set<UUID>
 
     public init(
         layers: [UUID: Layer],
@@ -83,8 +87,10 @@ public struct CADDocumentSnapshot: Sendable {
         imageDefinitions: [String: CADImageDefinition] = [:],
         pdfDefinitions: [String: CADPdfDefinition] = [:],
         availableImageAssetNames: Set<String> = [],
-        layoutSettings: CADLayoutSettings? = nil
+        layoutSettings: CADLayoutSettings? = nil,
+        isolatedHiddenHandles: Set<UUID> = []
     ) {
+        self.isolatedHiddenHandles = isolatedHiddenHandles
         self.layoutSettings = layoutSettings
         self.xrefFadePercent = xrefFadePercent
         self.imageDefinitions = imageDefinitions
@@ -1182,6 +1188,52 @@ public final class CADDocument {
         return true
     }
 
+    // MARK: - Per-entity isolation (ISOLATEOBJECTS/HIDEOBJECTS)
+
+    /// Handles hidden by per-entity isolation. Render-only session state:
+    /// these methods never push undo, snapshots carry the set for the
+    /// renderer but restore paths ignore it, and file IO never sees it.
+    public var isolatedHiddenHandles: Set<UUID> = []
+
+    public func isIsolatedHidden(_ handle: UUID) -> Bool {
+        documentLock.withLock { isolatedHiddenHandles.contains(handle) }
+    }
+
+    /// Hide exactly these entities (HIDEOBJECTS). Unknown handles are
+    /// ignored so UNISOLATE counts stay exact.
+    public func hideEntitiesIsolated(_ handles: Set<UUID>) {
+        documentLock.withLock {
+            isolatedHiddenHandles.formUnion(handles.filter {
+                entityRegistry[$0] != nil
+            })
+            markEdited(regenerate: true)
+        }
+    }
+
+    /// Hide every entity except the kept ones (ISOLATEOBJECTS).
+    public func isolateEntities(keeping handles: Set<UUID>) {
+        documentLock.withLock {
+            isolatedHiddenHandles = Set(entityRegistry.keys.filter {
+                !handles.contains($0)
+            })
+            markEdited(regenerate: true)
+        }
+    }
+
+    /// Restore all per-entity isolated entities. Returns the restored count.
+    /// Handles whose entity is already gone are pruned, not counted.
+    @discardableResult
+    public func unisolateEntities() -> Int {
+        documentLock.withLock {
+            let live = isolatedHiddenHandles.filter { entityRegistry[$0] != nil }
+            isolatedHiddenHandles.removeAll()
+            if !live.isEmpty {
+                markEdited(regenerate: true)
+            }
+            return live.count
+        }
+    }
+
     public func setLayerLineType(_ handle: UUID, lineType: String) {
         pushUndo()
         guard var layer = layerTable[handle] else { return }
@@ -1822,6 +1874,7 @@ public final class CADDocument {
         for entity in entityRegistry.values {
             guard let layer = layerTable[entity.layerID] else { continue }
             if visibleLayersOnly && !layer.isVisible { continue }
+            if visibleLayersOnly && isolatedHiddenHandles.contains(entity.handle) { continue }
 
             let entityBackgroundScale: Double?
             if let value = entity.xdata["dxf.mtextBackgroundScale"],
@@ -3872,7 +3925,8 @@ public final class CADDocument {
             imageDefinitions: imageDefinitions,
             pdfDefinitions: pdfDefinitions,
             availableImageAssetNames: Set(imageStore.keys),
-            layoutSettings: layoutSettings
+            layoutSettings: layoutSettings,
+            isolatedHiddenHandles: isolatedHiddenHandles
         )
     }
 

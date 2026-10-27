@@ -700,6 +700,21 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { RecoverCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ISOLATEOBJECTS",
+            aliases: [],
+            factory: { IsolateCommand(mode: .isolate) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "HIDEOBJECTS",
+            aliases: [],
+            factory: { IsolateCommand(mode: .hide) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "UNISOLATEOBJECTS",
+            aliases: [],
+            factory: { IsolateCommand(mode: .unisolate) }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

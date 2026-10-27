@@ -1119,12 +1119,14 @@ public final class EngineLoopController {
                 if interaction.dragActive, engine.cadSelection.selectedHandles.contains(handle) { return nil }
                 guard let entity = engine.document.entity(for: handle) else { return nil }
                 guard let layer = engine.document.layer(for: entity.layerID), layer.isVisible else { return nil }
+                guard !engine.document.isIsolatedHidden(entity.handle) else { return nil }
                 return entity
             }
         } else {
             visibleEntities = engine.document.entitiesView.filter { entity in
                 if interaction.gripActive, let gripHandle = interaction.gripHandle, entity.handle == gripHandle { return false }
                 if interaction.dragActive, engine.cadSelection.selectedHandles.contains(entity.handle) { return false }
+                guard !engine.document.isIsolatedHidden(entity.handle) else { return false }
                 guard let layer = engine.document.layer(for: entity.layerID) else { return false }
                 return layer.isVisible
             }

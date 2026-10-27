@@ -497,6 +497,7 @@ public enum CADHitTesting {
             for handle in handles {
                 guard let entity = document.entity(for: handle) else { continue }
                 guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+                guard !document.isIsolatedHidden(entity.handle) else { continue }
                 guard let wbb = entity.worldBoundingBox else { continue }
                 let expanded = wbb.expanded(by: threshold)
                 guard expanded.contains(point) else { continue }
@@ -510,6 +511,7 @@ public enum CADHitTesting {
             }
             for entity in document.entitiesView {
                 guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+                guard !document.isIsolatedHidden(entity.handle) else { continue }
                 guard let wbb = entity.worldBoundingBox else { continue }
                 let expanded = wbb.expanded(by: threshold)
                 guard expanded.contains(point) else { continue }

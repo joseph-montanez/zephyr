@@ -451,6 +451,9 @@ public final class CADRendererBridge {
             guard let layer = snapshot.layers[entity.layerID], layer.isVisible else {
                 continue
             }
+            guard !snapshot.isolatedHiddenHandles.contains(entity.handle) else {
+                continue
+            }
             
             let entityIsTrueColor: Bool
             let entityColor: ColorRGBA
