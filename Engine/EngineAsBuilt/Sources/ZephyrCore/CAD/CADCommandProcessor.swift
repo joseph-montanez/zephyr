@@ -383,6 +383,9 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "REFEDIT",    aliases: [],                category: .block,   syntax: "", description: "Edit a block or xref in place"),
         CommandDescriptor(canonicalName: "REFCLOSE",   aliases: [],                category: .block,   syntax: "", description: "Save or discard in-place reference edits"),
         CommandDescriptor(canonicalName: "NCOPY",      aliases: [],                category: .modify,  syntax: "", description: "Copy nested geometry out of blocks and xrefs"),
+        CommandDescriptor(canonicalName: "MLINE",      aliases: ["ML"],           category: .draw,    syntax: "", description: "Draw multilines with justification/scale/style options"),
+        CommandDescriptor(canonicalName: "MLSTYLE",    aliases: [],                category: .draw,    syntax: "", description: "Manage multiline styles (offsets, current style)"),
+        CommandDescriptor(canonicalName: "ALIASEDIT",  aliases: [],                category: .settings, syntax: "", description: "Edit and reload user command aliases"),
         // --- Settings ---
         CommandDescriptor(canonicalName: "STYLE",      aliases: ["ST"], category: .settings, syntax: "", description: "Create and edit text styles"),
         CommandDescriptor(canonicalName: "MLEADERSTYLE", aliases: ["MLS"], category: .settings, syntax: "", description: "Create and edit multileader styles"),
@@ -503,6 +506,43 @@ public final class CADCommandProcessor {
     /// Key → canonical-name map of the feature registry (parity-test seam).
     public var featureCommandKeys: [String: String] {
         featureCommandCanonicalByKey
+    }
+
+    /// User aliases from the PGP file (alias → canonical). Applied at
+    /// execution before anything else; the user always wins.
+    private var userAliases: [String: String] = [:]
+
+    /// Resolves one input token through user aliases (identity when none).
+    public func resolveUserAlias(_ token: String) -> String {
+        let key = token.uppercased().trimmingCharacters(in: .whitespaces)
+        return userAliases[key] ?? token
+    }
+
+    /// Registers a user alias. Returns nil on success, else a warning
+    /// (unknown command, self-alias). Overriding a built-in key succeeds
+    /// with a collision warning — the user wins, never silently.
+    @discardableResult
+    public func registerUserAlias(_ alias: String, for command: String) -> String? {
+        let key = alias.uppercased().trimmingCharacters(in: .whitespaces)
+        let target = command.uppercased().trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty, !target.isEmpty else { return "ignoring empty alias" }
+        guard key != target else { return "ignoring self-alias '\(alias)'" }
+        var known = Set(CommandDescriptor.allCommands.map { $0.canonicalName.uppercased() })
+        known.formUnion(featureCommandRegistry.keys.map { $0.uppercased() })
+        guard known.contains(target) else {
+            return "unknown command '\(command)' for alias '\(alias)'"
+        }
+        var warning: String?
+        if let owner = featureCommandCanonicalByKey[key], owner != target {
+            warning = "user alias '\(alias)' overrides \(owner)"
+        } else if CommandDescriptor.allCommands.contains(where: {
+            $0.canonicalName.uppercased() == key
+                || $0.aliases.map({ $0.uppercased() }).contains(key)
+        }) {
+            warning = "user alias '\(alias)' overrides a built-in"
+        }
+        userAliases[key] = target
+        return warning
     }
 
     /// Backing store for `lispInvocationDepth` (see LispInvocationContext.swift).
@@ -731,7 +771,9 @@ public final class CADCommandProcessor {
         // other command may start. Must precede lastExecutedCommand so a
         // rejected command never poisons spacebar repeat.
         if rejectCommandIfLispActive(text) { return }
-        let upper = text.uppercased().trimmingCharacters(in: .whitespaces)
+        var upper = text.uppercased().trimmingCharacters(in: .whitespaces)
+        // User PGP aliases resolve before everything (user wins).
+        upper = userAliases[upper] ?? upper
         if upper.isEmpty {
             if isSelectingObjects {
                 confirmObjectSelection()

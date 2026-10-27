@@ -102,6 +102,7 @@ public enum EABSectionType: UInt32, Sendable {
     case xdata       = 9
     case metadata    = 10
     case textStyles   = 11
+    case mlineStyles  = 19
     case lineTypes    = 12
     case images       = 13
     case dimensionStyles = 14

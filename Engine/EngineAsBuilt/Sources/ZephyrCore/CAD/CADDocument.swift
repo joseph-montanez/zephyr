@@ -37,6 +37,8 @@ public struct CADDocumentSnapshot: Sendable {
     public let leaderStyles: [String: CADLeaderStyle]
     public let currentLeaderStyleName: String
     public let currentDimensionStyleName: String
+    public let mlineStyles: [String: CADMlineStyle]
+    public let currentMlineStyleName: String
     public let linetypePatterns: [String: [Double]]
     public let globalLineTypeScale: Double
     public let autoContrastTrueColor: Bool
@@ -77,6 +79,8 @@ public struct CADDocumentSnapshot: Sendable {
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
         currentDimensionStyleName: String = "Standard",
+        mlineStyles: [String: CADMlineStyle] = ["Standard": .standard],
+        currentMlineStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -112,6 +116,8 @@ public struct CADDocumentSnapshot: Sendable {
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.currentLeaderStyleName = currentLeaderStyleName
         self.currentDimensionStyleName = currentDimensionStyleName
+        self.mlineStyles = mlineStyles.isEmpty ? ["Standard": .standard] : mlineStyles
+        self.currentMlineStyleName = currentMlineStyleName
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
         self.autoContrastTrueColor = autoContrastTrueColor
@@ -1955,6 +1961,52 @@ public final class CADDocument {
             return newName
         }
         return nil
+    }
+
+    // MARK: - Multiline Styles (MLSTYLE)
+
+    /// Named multiline styles by exact name. "Standard" is guaranteed.
+    public var mlineStyles: [String: CADMlineStyle] = ["Standard": .standard]
+    /// Current multiline style for the MLINE command (CMLSTYLE).
+    public var currentMlineStyleName: String = "Standard"
+    /// Default multiline scale for the MLINE command (CMLSCALE).
+    public var mlineScale: Double = 1.0
+    /// Default multiline justification: 0 top, 1 zero, 2 bottom (CMLJUST).
+    public var mlineJustification: Int = 0
+
+    /// Case-insensitive style lookup with Standard fallback.
+    public func mlineStyle(named name: String) -> CADMlineStyle {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let exact = mlineStyles[trimmed] { return exact }
+        if let match = mlineStyles.values.first(where: {
+            $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) { return match }
+        return mlineStyles["Standard"] ?? .standard
+    }
+
+    /// Adds or replaces a style. Standard cannot be removed, only replaced.
+    public func setMlineStyle(_ style: CADMlineStyle) {
+        pushUndo()
+        mlineStyles[style.name] = style
+        markEdited(regenerate: true)
+    }
+
+    /// Deletes a style. Returns false for Standard or unknown names.
+    @discardableResult
+    public func deleteMlineStyle(named name: String) -> Bool {
+        guard name.caseInsensitiveCompare("Standard") != .orderedSame,
+              let key = mlineStyles.keys.first(where: {
+                  $0.caseInsensitiveCompare(name) == .orderedSame
+              }) else {
+            return false
+        }
+        pushUndo()
+        mlineStyles.removeValue(forKey: key)
+        if currentMlineStyleName.caseInsensitiveCompare(name) == .orderedSame {
+            currentMlineStyleName = "Standard"
+        }
+        markEdited(regenerate: true)
+        return true
     }
 
     public func removeBlock(handle: UUID) {
@@ -3995,6 +4047,7 @@ public final class CADDocument {
         dimensionStyles: [String: CADDimensionStyle],
         leaderStyles: [String: CADLeaderStyle],
         linetypePatterns: [String: [Double]],
+        mlineStyles: [String: CADMlineStyle] = [:],
         resetExisting: Bool = false
     ) {
         let existingNames = Set(layerTable.values.map { $0.name.uppercased() })
@@ -4027,6 +4080,9 @@ public final class CADDocument {
         }
         for (key, value) in linetypePatterns where self.linetypePatterns[key] == nil {
             self.linetypePatterns[key] = value
+        }
+        for (key, value) in mlineStyles where self.mlineStyles[key] == nil {
+            self.mlineStyles[key] = value
         }
     }
 
@@ -4162,6 +4218,12 @@ public final class CADDocument {
         self.textStyles = imported.textStyles.isEmpty ? ["Standard": .standard] : imported.textStyles
         self.linetypePatterns = imported.linetypePatterns
         self.dimensionStyles = imported.dimensionStyles.isEmpty ? ["Standard": .default] : imported.dimensionStyles
+        self.mlineStyles = imported.mlineStyles.isEmpty ? ["Standard": .standard] : imported.mlineStyles
+        if !mlineStyles.keys.contains(where: {
+            $0.caseInsensitiveCompare(currentMlineStyleName) == .orderedSame
+        }) {
+            currentMlineStyleName = "Standard"
+        }
         self.dxfRoundTripPayload = imported.roundTripPayload
         for layer in imported.layers { layerTable[layer.handle] = layer }
         if activeLayerID == nil, let first = imported.layers.first { activeLayerID = first.handle }
@@ -4221,6 +4283,8 @@ public final class CADDocument {
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
         currentDimensionStyleName: String = "Standard",
+        mlineStyles: [String: CADMlineStyle] = ["Standard": .standard],
+        currentMlineStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -4243,6 +4307,8 @@ public final class CADDocument {
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.currentLeaderStyleName = self.leaderStyles.keys.first(where: { $0.caseInsensitiveCompare(currentLeaderStyleName) == .orderedSame }) ?? "Standard"
         self.currentDimensionStyleName = self.dimensionStyles.keys.first(where: { $0.caseInsensitiveCompare(currentDimensionStyleName) == .orderedSame }) ?? "Standard"
+        self.mlineStyles = mlineStyles.isEmpty ? ["Standard": .standard] : mlineStyles
+        self.currentMlineStyleName = self.mlineStyles.keys.first(where: { $0.caseInsensitiveCompare(currentMlineStyleName) == .orderedSame }) ?? "Standard"
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
         self.autoContrastTrueColor = autoContrastTrueColor
@@ -4364,6 +4430,8 @@ public final class CADDocument {
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
             currentDimensionStyleName: currentDimensionStyleName,
+            mlineStyles: mlineStyles,
+            currentMlineStyleName: currentMlineStyleName,
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
@@ -4418,6 +4486,8 @@ public final class CADDocument {
             leaderStyles: base.leaderStyles,
             currentLeaderStyleName: base.currentLeaderStyleName,
             currentDimensionStyleName: base.currentDimensionStyleName,
+            mlineStyles: base.mlineStyles,
+            currentMlineStyleName: base.currentMlineStyleName,
             linetypePatterns: base.linetypePatterns,
             globalLineTypeScale: base.globalLineTypeScale,
             autoContrastTrueColor: base.autoContrastTrueColor,
@@ -4479,6 +4549,8 @@ public final class CADDocument {
         leaderStyles = snapshot.leaderStyles
         currentLeaderStyleName = snapshot.currentLeaderStyleName
         currentDimensionStyleName = snapshot.currentDimensionStyleName
+        mlineStyles = snapshot.mlineStyles
+        currentMlineStyleName = snapshot.currentMlineStyleName
         linetypePatterns = snapshot.linetypePatterns
         globalLineTypeScale = snapshot.globalLineTypeScale
         autoContrastTrueColor = snapshot.autoContrastTrueColor

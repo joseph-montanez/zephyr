@@ -119,6 +119,7 @@ public enum DXFWriterBridge {
         var textStyles: [String: CADTextStyle]
         var dimensionStyles: [String: CADDimensionStyle]
         var leaderStyles: [String: CADLeaderStyle]
+        var mlineStyles: [String: CADMlineStyle]
         var linetypePatterns: [String: [Double]]
         var unit: CADUnit
         var roundTripPayload: DXFRoundTripPayload?
@@ -165,6 +166,7 @@ public enum DXFWriterBridge {
             textStyles: document.textStyles,
             dimensionStyles: document.dimensionStyles,
             leaderStyles: document.leaderStyles,
+            mlineStyles: document.mlineStyles,
             linetypePatterns: document.linetypePatterns,
             unit: document.unit,
             roundTripPayload: document.dxfRoundTripPayload,
@@ -191,6 +193,7 @@ public enum DXFWriterBridge {
                 textStyles: $0.document.textStyles,
                 dimensionStyles: $0.document.dimensionStyles,
                 leaderStyles: $0.document.leaderStyles,
+                mlineStyles: $0.document.mlineStyles,
                 linetypePatterns: $0.document.linetypePatterns,
                 unit: $0.document.unit,
                 roundTripPayload: $0.document.dxfRoundTripPayload,
@@ -223,6 +226,7 @@ public enum DXFWriterBridge {
             }),
             dimensionStyles: [:],
             leaderStyles: ["Standard": .standard],
+            mlineStyles: ["Standard": .standard],
             linetypePatterns: linetypePatterns,
             unit: .millimeter,
             roundTripPayload: nil)
@@ -785,6 +789,17 @@ public enum DXFWriterBridge {
                     applyEntityStyle(entity.xdata, to: ml)
                     appendGroupXData(groupNames, to: ml)
                     writer.addEntity(ml, ownerBlockName: ownerBlockName)
+                    continue
+                }
+
+                // Multilines rebuild from centerline xdata; the baked
+                // lines stay out of the file.
+                if let mline = Self.mlineEntity(
+                    entity: entity, layerName: layerName,
+                    isPaperSpace: isPaperSpace, styles: view.mlineStyles) {
+                    applyEntityStyle(entity.xdata, to: mline)
+                    appendGroupXData(groupNames, to: mline)
+                    writer.addEntity(mline, ownerBlockName: ownerBlockName)
                     continue
                 }
 
@@ -3172,6 +3187,70 @@ public enum DXFWriterBridge {
         guard !ordered.isEmpty else { return }
         insert.attributes = ordered
         insert.attributesFollow = true
+    }
+
+    /// Rebuilds an MLINE file entity from centerline xdata. Returns nil
+    /// when the entity is not a multiline (no stored centerline), in which
+    /// case the baked lines export as plain geometry.
+    private static func mlineEntity(
+        entity: CADEntity,
+        layerName: String,
+        isPaperSpace: Bool,
+        styles: [String: CADMlineStyle]
+    ) -> DXFMlineEntity? {
+        func string(_ key: String) -> String? {
+            if case .string(let s) = entity.xdata[key] { return s }
+            return nil
+        }
+        func double(_ key: String) -> Double? {
+            if case .double(let d) = entity.xdata[key] { return d }
+            return nil
+        }
+        func int(_ key: String) -> Int? {
+            if case .int(let i) = entity.xdata[key] { return i }
+            return nil
+        }
+        guard string("dxf.mlineStyle") != nil,
+              let centerRaw = string("dxf.mlineCenterline"),
+              let model = MlineMath.decodeCenterline(centerRaw),
+              model.count >= 2 else {
+            return nil
+        }
+        let styleName = string("dxf.mlineStyle") ?? "Standard"
+        let style = styles.first(where: {
+            $0.key.caseInsensitiveCompare(styleName) == .orderedSame
+        })?.value ?? .standard
+        let closed = (int("dxf.mlineClosed") ?? 0) != 0
+        let world = model.map { entity.transform.transformPoint($0) }
+        let ml = DXFMlineEntity()
+        ml.layer = layerName
+        ml.space = isPaperSpace ? 1 : 0
+        ml.styleName = style.name
+        ml.scale = double("dxf.mlineScale") ?? 1.0
+        ml.justification = int("dxf.mlineJustification") ?? 0
+        ml.flags = closed ? 3 : 1
+        ml.vertexCount = world.count
+        ml.elementCount = style.elements.count
+        ml.vertices = MlineMath.exportFrames(centerline: world, closed: closed).map { frame in
+            DXFMlineVertex(
+                position: toDXF(frame.position),
+                direction: toDXFVector(frame.direction),
+                miter: toDXFVector(frame.miter))
+        }
+        var entry = DXFMlineStyleEntry()
+        entry.name = style.name
+        entry.flags = style.fillEnabled ? 1 : 0
+        entry.desc = style.description
+        entry.fillColor = style.fillColorACI
+        entry.startAngle = style.startAngle
+        entry.endAngle = style.endAngle
+        entry.elements = style.elements.map {
+            DXFMlineStyleElement(
+                offset: $0.offset, color: $0.colorACI,
+                lineType: $0.linetype.isEmpty ? "BYLAYER" : $0.linetype)
+        }
+        ml.resolvedStyle = entry
+        return ml
     }
 
     private static func makeInsert(

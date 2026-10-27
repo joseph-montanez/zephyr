@@ -625,6 +625,9 @@ public enum DXFExporter {
             return
         }
 
+        // Multilines export through the DXFWriterBridge path, which
+        // rebuilds MLINE entities from centerline xdata.
+
         // Raw geometry
         guard let geometry = entity.localGeometry, !geometry.isEmpty else { return }
 

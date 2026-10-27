@@ -821,6 +821,29 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { AttsyncCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLINE",
+            aliases: ["ML"],
+            factory: { MlineCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLSTYLE",
+            aliases: [],
+            factory: { MlstyleCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ALIASEDIT",
+            aliases: [],
+            factory: { AliaseditCommand() }
+        )
+        // User PGP aliases load last so they win over built-ins.
+        let pgp = PGPAliasLoader.loadIfPresent(
+            into: engine.commandProcessor)
+        if pgp.loaded > 0 || !pgp.warnings.isEmpty {
+            print("[CAD] PGP aliases: \(pgp.loaded) loaded" +
+                (pgp.warnings.isEmpty ? "" :
+                    "; warnings: " + pgp.warnings.joined(separator: "; ")))
+        }
         // PICKSTYLE group selection: one member in, whole selectable
         // group in. Resolves the active document per call (tabs switch).
         engine.cadSelection.groupExpansionProvider = { [weak engine] handle in

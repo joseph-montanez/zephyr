@@ -420,6 +420,16 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
+        // Multiline styles. Additive section: older readers skip it via
+        // the default case, so no version bump.
+        if !document.mlineStyles.isEmpty {
+            let mlineStylesData = serializeMlineStyles(document: document)
+            entries.append(EABSectionEntry(type: .mlineStyles, offset: UInt64(w.count),
+                                            size: UInt64(mlineStylesData.count), compression: .none))
+            w.writeBytes(mlineStylesData)
+            w.pad(to: 4)
+        }
+
         // Named selection groups (GROUP/UNGROUP). Additive section: older
         // readers skip it via the default case, so no version bump.
         if !document.groups.isEmpty {
@@ -1227,6 +1237,25 @@ public enum EABWriter {
             w.writeFloat64(normalized.widthFactor)
             w.writeFloat64(normalized.obliqueAngle)
             w.writeUInt8(normalized.isAnnotative ? 1 : 0)
+        }
+        return w.build()
+    }
+
+    // MARK: - Multiline Styles
+
+    private static func serializeMlineStyles(document: CADDocument) -> Data {
+        let w = BinaryWriter()
+        w.writeString(document.currentMlineStyleName)
+        w.writeUInt32(UInt32(document.mlineStyles.count))
+        let encoder = JSONEncoder()
+        for (styleName, style) in document.mlineStyles {
+            w.writeString(styleName)
+            if let data = try? encoder.encode(style),
+               let json = String(data: data, encoding: .utf8) {
+                w.writeString(json)
+            } else {
+                w.writeString("{}")
+            }
         }
         return w.build()
     }

@@ -54,6 +54,7 @@ public struct DXFImportResult: Sendable {
     }
     public let dimensionStyles: [String: CADDimensionStyle]
     public let leaderStyles: [String: CADLeaderStyle]
+    public let mlineStyles: [String: CADMlineStyle]
     public let views: [DXFDrawingView]
     public let roundTripPayload: DXFRoundTripPayload?
     /// Source drawing's $INSBASE (insertion base point), converted to
@@ -76,6 +77,7 @@ public struct DXFImportResult: Sendable {
                 textStyles: [String: CADTextStyle], linetypePatterns: [String: [Double]],
                 dimensionStyles: [String: CADDimensionStyle],
                 leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+                mlineStyles: [String: CADMlineStyle] = ["Standard": .standard],
                 views: [DXFDrawingView],
                 roundTripPayload: DXFRoundTripPayload? = nil,
                 insBase: Vector3 = .zero,
@@ -88,6 +90,7 @@ public struct DXFImportResult: Sendable {
         self.textStyles = textStyles; self.linetypePatterns = linetypePatterns
         self.dimensionStyles = dimensionStyles
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
+        self.mlineStyles = mlineStyles.isEmpty ? ["Standard": .standard] : mlineStyles
         self.views = views
         self.roundTripPayload = roundTripPayload
         self.insBase = insBase
@@ -662,6 +665,23 @@ public enum DXFImporter {
                 blockRotation: entry.blockRotation)
             leaderStyles[resolvedName] = style
             if entry.handle != 0 { leaderStyleByHandle[entry.handle] = style }
+        }
+        var mlineStyles: [String: CADMlineStyle] = ["Standard": .standard]
+        for entry in reader.mlineStyles {
+            let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedName = name.isEmpty ? "Standard" : name
+            mlineStyles[resolvedName] = CADMlineStyle(
+                name: resolvedName,
+                description: entry.desc,
+                elements: entry.elements.map {
+                    CADMlineElement(
+                        offset: $0.offset, colorACI: $0.color,
+                        linetype: $0.lineType)
+                },
+                fillEnabled: (entry.flags & 1) != 0,
+                fillColorACI: entry.fillColor,
+                startAngle: entry.startAngle,
+                endAngle: entry.endAngle)
         }
 
         DXFProfile.mark("setup: layers/styles/leader/handle maps")
@@ -1673,6 +1693,7 @@ public enum DXFImporter {
             linetypePatterns: linetypePatterns,
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
+            mlineStyles: mlineStyles,
             views: views,
             roundTripPayload: DXFRoundTripPayload(
                 sourceAcadVersion: reader.versionRaw.isEmpty
@@ -1858,6 +1879,19 @@ public enum DXFImporter {
             }
             xdata["dxf.mlineScale"] = .double(mline.scale)
             xdata["dxf.mlineJustification"] = .int(mline.justification)
+            xdata["dxf.mlineClosed"] = .int((mline.flags & 2) != 0 ? 1 : 0)
+            // Centerline in model space (Y-flipped like all imported
+            // geometry) so the writers can rebuild MLINE vertices.
+            let centerline = mline.vertices.map { vertex in
+                Vector3(
+                    x: vertex.position.x,
+                    y: -vertex.position.y,
+                    z: vertex.position.z)
+            }
+            if centerline.count >= 2 {
+                xdata["dxf.mlineCenterline"] = .string(
+                    MlineMath.encodeCenterline(centerline))
+            }
         }
 
         if let text = entity as? DXFTextEntity {

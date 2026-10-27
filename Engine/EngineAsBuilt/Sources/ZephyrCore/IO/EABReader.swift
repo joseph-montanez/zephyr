@@ -102,6 +102,8 @@ public enum EABReader {
                 dimensionStyles: components.dimensionStyles,
                 leaderStyles: components.leaderStyles,
                 currentLeaderStyleName: components.currentLeaderStyleName,
+                mlineStyles: components.mlineStyles,
+                currentMlineStyleName: components.currentMlineStyleName,
                 linetypePatterns: components.linetypePatterns,
                 globalLineTypeScale: components.globalLineTypeScale,
                 autoContrastTrueColor: components.autoContrastTrueColor,
@@ -131,6 +133,8 @@ public enum EABReader {
         dimensionStyles: [String: CADDimensionStyle],
         leaderStyles: [String: CADLeaderStyle],
         currentLeaderStyleName: String,
+        mlineStyles: [String: CADMlineStyle],
+        currentMlineStyleName: String,
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset],
@@ -228,6 +232,8 @@ public enum EABReader {
                 dimensionStyles: components.dimensionStyles,
                 leaderStyles: components.leaderStyles,
                 currentLeaderStyleName: components.currentLeaderStyleName,
+                mlineStyles: components.mlineStyles,
+                currentMlineStyleName: components.currentMlineStyleName,
                 linetypePatterns: components.linetypePatterns,
                 globalLineTypeScale: components.globalLineTypeScale,
                 autoContrastTrueColor: components.autoContrastTrueColor,
@@ -307,6 +313,8 @@ public enum EABReader {
         dimensionStyles: [String: CADDimensionStyle],
         leaderStyles: [String: CADLeaderStyle],
         currentLeaderStyleName: String,
+        mlineStyles: [String: CADMlineStyle],
+        currentMlineStyleName: String,
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset],
@@ -331,6 +339,8 @@ public enum EABReader {
         var dimensionStyles: [String: CADDimensionStyle] = [:]
         var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
         var currentLeaderStyleName = "Standard"
+        var mlineStyles: [String: CADMlineStyle] = ["Standard": .standard]
+        var currentMlineStyleName = "Standard"
         var linetypePatterns: [String: [Double]] = [:]
         var activeLayerID: UUID? = nil
         var autoContrastTrueColor = true
@@ -367,6 +377,10 @@ public enum EABReader {
                 let parsed = try parseLeaderStyles(reader)
                 leaderStyles = parsed.styles
                 currentLeaderStyleName = parsed.currentName
+            case .mlineStyles:
+                let parsed = try parseMlineStyles(reader)
+                mlineStyles = parsed.styles
+                currentMlineStyleName = parsed.currentName
             case .lineTypes:
                 linetypePatterns = try parseLinetypePatterns(reader)
             case .images:
@@ -401,6 +415,7 @@ public enum EABReader {
         }
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
                 textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
+                mlineStyles, currentMlineStyleName,
                 linetypePatterns, activeLayerID, loadedImageStore,
                 xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
                 globalLineTypeScale, autoContrastTrueColor, insertionBase)
@@ -422,6 +437,28 @@ public enum EABReader {
             if isUnloaded { unloaded.insert(handle) }
         }
         return (folder.isEmpty ? nil : folder, descriptors, unloaded)
+    }
+
+    private static func parseMlineStyles(
+        _ r: BinaryReader
+    ) throws -> (styles: [String: CADMlineStyle], currentName: String) {
+        let currentName = r.readString()
+        let count = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "mlineStyles")
+        var styles: [String: CADMlineStyle] = [:]
+        let decoder = JSONDecoder()
+        for _ in 0..<count {
+            let styleName = r.readString()
+            let jsonString = r.readString()
+            if let data = jsonString.data(using: .utf8),
+               var style = try? decoder.decode(CADMlineStyle.self, from: data) {
+                style.name = styleName
+                styles[styleName] = style
+            } else {
+                styles[styleName] = CADMlineStyle(name: styleName)
+            }
+        }
+        if styles.isEmpty { styles["Standard"] = .standard }
+        return (styles, currentName.isEmpty ? "Standard" : currentName)
     }
 
     private static func parseGroups(
@@ -528,6 +565,8 @@ public enum EABReader {
         dimensionStyles: [String: CADDimensionStyle],
         leaderStyles: [String: CADLeaderStyle],
         currentLeaderStyleName: String,
+        mlineStyles: [String: CADMlineStyle],
+        currentMlineStyleName: String,
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset],
@@ -563,6 +602,8 @@ public enum EABReader {
         var dimensionStyles: [String: CADDimensionStyle] = [:]
         var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
         var currentLeaderStyleName = "Standard"
+        var mlineStyles: [String: CADMlineStyle] = ["Standard": .standard]
+        var currentMlineStyleName = "Standard"
         var linetypePatterns: [String: [Double]] = [:]
         var activeLayerID: UUID? = nil
         var autoContrastTrueColor = true
@@ -603,6 +644,10 @@ public enum EABReader {
                 let parsed = try parseLeaderStyles(reader)
                 leaderStyles = parsed.styles
                 currentLeaderStyleName = parsed.currentName
+            case .mlineStyles:
+                let parsed = try parseMlineStyles(reader)
+                mlineStyles = parsed.styles
+                currentMlineStyleName = parsed.currentName
             case .lineTypes:
                 linetypePatterns = try parseLinetypePatterns(reader)
             case .images:
@@ -637,6 +682,7 @@ public enum EABReader {
         }
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
                 textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
+                mlineStyles, currentMlineStyleName,
                 linetypePatterns, activeLayerID, loadedImageStore,
                 xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
                 globalLineTypeScale, autoContrastTrueColor, insertionBase)

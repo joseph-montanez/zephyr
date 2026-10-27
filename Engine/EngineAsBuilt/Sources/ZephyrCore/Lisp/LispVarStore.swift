@@ -41,6 +41,9 @@ final class LispVarStore: @unchecked Sendable {
         "CHAMFERA": .real(0),
         "CHAMFERB": .real(0),
         "CMDECHO": .int(1),
+        "CMLJUST": .int(0),
+        "CMLSCALE": .real(1),
+        "CMLSTYLE": .string("Standard"),
         "CURSORSIZE": .int(5),
         "DATE": .real(2460600.5),
         "DIMSCALE": .real(1),
@@ -188,6 +191,12 @@ final class LispVarStore: @unchecked Sendable {
             return .real(document.pointDisplaySize)
         case "FILLMODE":
             return .int(document.fillMode ? 1 : 0)
+        case "CMLJUST":
+            return .int(document.mlineJustification)
+        case "CMLSCALE":
+            return .real(document.mlineScale)
+        case "CMLSTYLE":
+            return .string(document.currentMlineStyleName)
         case "BINDTYPE":
             return .int(XrefSysvars.bindType)
         case "REFPATHTYPE":
@@ -353,6 +362,37 @@ final class LispVarStore: @unchecked Sendable {
             }
             document.fillMode = (i != 0)
             document.markNeedsRegeneration()
+            store(name, value)
+            return nil
+        case "CMLJUST":
+            guard case let .int(i) = value, (0...2).contains(i) else {
+                return "CMLJUST requires 0 (Top), 1 (Zero), or 2 (Bottom)"
+            }
+            document.mlineJustification = i
+            store(name, value)
+            return nil
+        case "CMLSCALE":
+            let numeric: Double?
+            switch value {
+            case .real(let r): numeric = r
+            case .int(let i): numeric = Double(i)
+            default: numeric = nil
+            }
+            guard let numeric, numeric > 0, numeric.isFinite else {
+                return "CMLSCALE requires a positive scale"
+            }
+            document.mlineScale = numeric
+            store(name, value)
+            return nil
+        case "CMLSTYLE":
+            guard case let .string(s) = value, !s.isEmpty else {
+                return "CMLSTYLE requires a style name"
+            }
+            let resolved = document.mlineStyle(named: s)
+            guard resolved.name.caseInsensitiveCompare(s) == .orderedSame else {
+                return "CMLSTYLE: no multiline style named '\(s)'"
+            }
+            document.currentMlineStyleName = resolved.name
             store(name, value)
             return nil
         case "AUNITS":
