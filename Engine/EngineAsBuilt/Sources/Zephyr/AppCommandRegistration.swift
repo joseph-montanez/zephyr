@@ -755,6 +755,31 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { BaseCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "XCLIP",
+            aliases: ["XC"],
+            factory: { ClipCommand(filter: .blocks) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "IMAGECLIP",
+            aliases: ["ICL"],
+            factory: { ClipCommand(filter: .images) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PDFCLIP",
+            aliases: [],
+            factory: { ClipCommand(filter: .pdfs) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "IMAGEADJUST",
+            aliases: ["IAD"],
+            factory: { ImageAdjustCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PDFADJUST",
+            aliases: [],
+            factory: { PdfAdjustCommand() }
+        )
         // PICKSTYLE group selection: one member in, whole selectable
         // group in. Resolves the active document per call (tabs switch).
         engine.cadSelection.groupExpansionProvider = { [weak engine] handle in

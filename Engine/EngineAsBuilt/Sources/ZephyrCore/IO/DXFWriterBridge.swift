@@ -3169,6 +3169,15 @@ public enum DXFWriterBridge {
                     .map { Vector3(x: $0.a * Double(pixelW), y: $0.b * Double(pixelH), z: 0) }
             }
         }
+        var adjust = CADImageAdjust()
+        if case .string(let json) = xdata[CADImageAdjustMetadata.key],
+           let decoded = try? JSONDecoder().decode(
+               CADImageAdjust.self, from: Data(json.utf8)) {
+            adjust = decoded
+        }
+        entity.brightness = adjust.brightness
+        entity.contrast = adjust.contrast
+        entity.fade = adjust.fade
         return entity
     }
 

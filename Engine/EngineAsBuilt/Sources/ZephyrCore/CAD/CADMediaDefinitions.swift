@@ -47,6 +47,50 @@ public struct CADPdfDefinition: Hashable, Sendable, Codable {
 
 /// Per-instance PDF underlay parameters that cannot be derived from
 /// the instance geometry (kept for DXF write-back fidelity).
+/// Per-instance raster-image adjust (IMAGEADJUST): DXF IMAGE 281/282/283.
+/// Stored only when non-default; the renderer maps fade to sprite alpha
+/// and the values round-trip through DXF.
+public struct CADImageAdjust: Hashable, Sendable, Codable {
+    /// DXF 281 (0...100, default 50). Stored; render-approximated.
+    public var brightness: Int = 50
+    /// DXF 282 (0...100, default 50). Stored; render-approximated.
+    public var contrast: Int = 50
+    /// DXF 283 (0...100, default 0). Honored by the renderer (alpha).
+    public var fade: Int = 0
+
+    public init() {}
+
+    public var isDefault: Bool {
+        brightness == 50 && contrast == 50 && fade == 0
+    }
+
+    /// Alpha multiplier for sprite tint (1 = opaque).
+    public var alphaMultiplier: Double {
+        max(0, min(1, 1 - Double(fade) / 100))
+    }
+}
+
+/// Xdata storage for CADImageAdjust on the instance entity.
+public enum CADImageAdjustMetadata {
+    public static let key = "image.adjust"
+
+    public static func value(from entity: CADEntity) -> CADImageAdjust? {
+        guard case .string(let string) = entity.xdata[key],
+              let data = string.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(CADImageAdjust.self, from: data)
+    }
+
+    public static func set(_ value: CADImageAdjust?, on entity: inout CADEntity) {
+        guard let value, !value.isDefault else {
+            entity.xdata.removeValue(forKey: key)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(value),
+              let string = String(data: data, encoding: .utf8) else { return }
+        entity.xdata[key] = .string(string)
+    }
+}
+
 public struct CADPdfUnderlayParams: Hashable, Sendable, Codable {
     public var scaleX: Double = 1
     public var scaleY: Double = 1

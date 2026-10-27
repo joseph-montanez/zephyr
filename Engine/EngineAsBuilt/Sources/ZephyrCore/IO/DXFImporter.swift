@@ -1962,6 +1962,20 @@ public enum DXFImporter {
             }
         }
 
+        // IMAGE brightness/contrast/fade (281/282/283) ride instance
+        // xdata; stored only when non-default, like the writer emits.
+        if let img = entity as? DXFImageEntity {
+            var adjust = CADImageAdjust()
+            adjust.brightness = img.brightness
+            adjust.contrast = img.contrast
+            adjust.fade = img.fade
+            if !adjust.isDefault,
+               let data = try? JSONEncoder().encode(adjust),
+               let json = String(data: data, encoding: .utf8) {
+                xdata[CADImageAdjustMetadata.key] = .string(json)
+            }
+        }
+
         if let mtext = entity as? DXFMTextEntity,
            (mtext.backgroundFillFlags & 1) != 0 {
             xdata["dxf.mtextBackgroundScale"] = .double(max(1.0, mtext.backgroundScale))

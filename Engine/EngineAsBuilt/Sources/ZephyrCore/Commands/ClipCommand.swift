@@ -27,7 +27,43 @@ public final class ClipCommand: FeatureCommand {
     private var currentMouse = Vector3.zero
     private var preInvert = false
 
-    public init() {}
+    /// Target-kind filter for XCLIP/IMAGECLIP/PDFCLIP routing. `.any`
+    /// keeps the legacy CLIP behavior (blocks, images, PDF underlays).
+    public enum TargetFilter {
+        case any
+        case blocks
+        case images
+        case pdfs
+    }
+
+    private let filter: TargetFilter
+
+    public init() {
+        self.filter = .any
+    }
+
+    public init(filter: TargetFilter) {
+        self.filter = filter
+    }
+
+    private func allows(_ entity: CADEntity) -> Bool {
+        guard let kind = CADClipMetadata.kind(of: entity) else { return false }
+        switch filter {
+        case .any: return true
+        case .blocks: return kind == .block
+        case .images: return kind == .image
+        case .pdfs: return kind == .pdf
+        }
+    }
+
+    private var pickMessage: String {
+        switch filter {
+        case .any: return targetSelectionPrompt
+        case .blocks: return "Select block/xref to clip:"
+        case .images: return "Select image to clip:"
+        case .pdfs: return "Select PDF underlay to clip:"
+        }
+    }
 
     public var isSnappingEnabled: Bool {
         switch state {
@@ -42,12 +78,12 @@ public final class ClipCommand: FeatureCommand {
     public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
         targetHandles = engine.cadSelection.selectedHandles.compactMap { handle in
             guard let entity = engine.document.entity(for: handle),
-                  CADClipMetadata.isSupportedTarget(entity) else { return nil }
+                  allows(entity) else { return nil }
             return handle
         }
         if targetHandles.isEmpty {
             state = .selectingTargets
-            showCanvasPrompt(targetSelectionPrompt, processor: processor)
+            showCanvasPrompt(pickMessage, processor: processor)
         } else {
             state = .options
             openTextPrompt(optionPrompt(engine: engine), processor: processor)
@@ -74,7 +110,7 @@ public final class ClipCommand: FeatureCommand {
                 at: rawPoint,
                 engine: engine),
                   let entity = engine.document.entity(for: handle),
-                  CADClipMetadata.isSupportedTarget(entity) else {
+                  allows(entity) else {
                 processor.commandPrompt = "No clip-compatible object found. Click a block reference, raster image, or imported PDF underlay; press Enter when done."
                 return .handled
             }
@@ -87,7 +123,7 @@ public final class ClipCommand: FeatureCommand {
                 targetHandles.append(handle)
                 engine.cadSelection.addToSelection(handle)
             }
-            processor.commandPrompt = targetSelectionPrompt
+            processor.commandPrompt = pickMessage
             return .handled
 
         case .selectingPolyline:
@@ -176,7 +212,7 @@ public final class ClipCommand: FeatureCommand {
             switch state {
             case .selectingTargets:
                 guard !targetHandles.isEmpty else {
-                    processor.commandPrompt = targetSelectionPrompt
+                    processor.commandPrompt = pickMessage
                     return .handled
                 }
                 state = .options
@@ -207,7 +243,7 @@ public final class ClipCommand: FeatureCommand {
                 state = .options
                 openTextPrompt(optionPrompt(engine: engine), processor: processor)
             } else {
-                showCanvasPrompt(targetSelectionPrompt, processor: processor)
+                showCanvasPrompt(pickMessage, processor: processor)
             }
             return .handled
 
@@ -450,7 +486,7 @@ public final class ClipCommand: FeatureCommand {
             threshold: threshold,
             simplifyComplexBlocks: false),
            let entity = engine.document.entity(for: handle),
-           CADClipMetadata.isSupportedTarget(entity) {
+           allows(entity) {
             return handle
         }
 
@@ -458,7 +494,7 @@ public final class ClipCommand: FeatureCommand {
         var bestDrawOrder = Int.min
         var bestArea = Double.infinity
         for entity in engine.document.entitiesView {
-            guard CADClipMetadata.isSupportedTarget(entity),
+            guard allows(entity),
                   let layer = engine.document.layer(for: entity.layerID),
                   layer.isVisible,
                   let bounds = entity.worldBoundingBox,
