@@ -273,6 +273,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "DIMTEDIT", aliases: [], category: .draw, syntax: "[Home/New/Left/Right/Center/Angle]", description: "Move or rotate dimension text along the dimension line"),
         CommandDescriptor(canonicalName: "DIMBREAK", aliases: [], category: .draw, syntax: "[Manual/Auto/Remove]", description: "Break dimension lines around crossing geometry"),
         CommandDescriptor(canonicalName: "DIMSPACE", aliases: [], category: .draw, syntax: "", description: "Space dimension lines evenly or align them"),
+        CommandDescriptor(canonicalName: "FIND", aliases: [], category: .modify, syntax: "", description: "Find and replace text across the drawing"),
+        CommandDescriptor(canonicalName: "TEXTALIGN", aliases: ["TA"], category: .modify, syntax: "[Align/Distribute]", description: "Align or distribute text along a baseline"),
         // --- History ---
         CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)", bareEnterExecutes: true),
         CommandDescriptor(canonicalName: "REDO",       aliases: [],                category: .modify,  syntax: "[<count>]", description: "Re-apply the last undone change (Cmd/Ctrl+Y)", bareEnterExecutes: true),

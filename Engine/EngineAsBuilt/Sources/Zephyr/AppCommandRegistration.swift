@@ -645,6 +645,16 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { DimSpaceCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "FIND",
+            aliases: [],
+            factory: { FindCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "TEXTALIGN",
+            aliases: ["TA"],
+            factory: { TextAlignCommand() }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

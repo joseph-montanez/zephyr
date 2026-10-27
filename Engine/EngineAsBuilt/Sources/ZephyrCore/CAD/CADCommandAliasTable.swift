@@ -145,6 +145,12 @@ public enum CADCommandAliasTable {
             canonicalName: "DIMSPACE", category: .draw,
             description: "Space dimension lines evenly or align them"),
         CADCommandAliasEntry(
+            canonicalName: "FIND", category: .modify,
+            description: "Find and replace text across the drawing"),
+        CADCommandAliasEntry(
+            canonicalName: "TEXTALIGN", aliases: ["TA"], category: .modify,
+            description: "Align or distribute text along a baseline"),
+        CADCommandAliasEntry(
             canonicalName: "AALINES", category: .view,
             description: "Toggle anti-aliased line rendering on/off"),
         CADCommandAliasEntry(
