@@ -126,6 +126,7 @@ public enum DXFWriterBridge {
         var pdfDefinitions: [String: CADPdfDefinition] = [:]
         var imageAssets: [String: CADImageAsset] = [:]
         var groups: [String: CADGroup] = [:]
+        var insertionBase: Vector3 = .zero
     }
 
 
@@ -170,7 +171,8 @@ public enum DXFWriterBridge {
             imageDefinitions: document.imageDefinitions,
             pdfDefinitions: document.pdfDefinitions,
             imageAssets: document.imageStore,
-            groups: document.groups)
+            groups: document.groups,
+            insertionBase: document.insertionBase)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion)
     }
 
@@ -195,7 +197,8 @@ public enum DXFWriterBridge {
                 imageDefinitions: $0.document.imageDefinitions,
                 pdfDefinitions: $0.document.pdfDefinitions,
                 imageAssets: $0.document.imageStore,
-                groups: $0.document.groups)
+                groups: $0.document.groups,
+                insertionBase: $0.document.insertionBase)
         }
         try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion)
     }
@@ -367,6 +370,9 @@ public enum DXFWriterBridge {
         }
         writer.codePage = "ANSI_1252"
         writer.headerVars["$INSUNITS"] = modelView.unit.dxfINSUNITS
+        // $INSBASE in DXF file coordinates (Y negated, like $EXTMIN below).
+        let base = modelView.insertionBase
+        writer.headerVars["$INSBASE"] = Vector3(x: base.x, y: -base.y, z: base.z)
         let arrayAppID = DXFAppIdEntry()
         arrayAppID.name = CADArrayDXFCodec.appID
         writer.addAppId(arrayAppID)

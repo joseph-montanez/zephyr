@@ -454,6 +454,7 @@ public final class TabManager {
                 doc.leaderStyles = imported.leaderStyles
                 doc.groups = Dictionary(
                     uniqueKeysWithValues: imported.groups.map { ($0.name, $0) })
+                doc.insertionBase = imported.insBase
                 doc.dxfRoundTripPayload = imported.roundTripPayload
                 doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
                     ? (imported.leaderStyles.keys.sorted().first ?? "Standard")
@@ -508,6 +509,7 @@ public final class TabManager {
             doc.leaderStyles = imported.leaderStyles
             doc.groups = Dictionary(
                 uniqueKeysWithValues: imported.groups.map { ($0.name, $0) })
+            doc.insertionBase = imported.insBase
             doc.dxfRoundTripPayload = imported.roundTripPayload
             doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
                 ? (imported.leaderStyles.keys.sorted().first ?? "Standard")

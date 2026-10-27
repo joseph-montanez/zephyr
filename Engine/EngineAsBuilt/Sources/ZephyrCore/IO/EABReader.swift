@@ -111,7 +111,8 @@ public enum EABReader {
                 unloadedXrefs: components.unloadedXrefs,
                 imageDefinitions: components.imageDefinitions,
                 pdfDefinitions: components.pdfDefinitions,
-                groups: components.groups
+                groups: components.groups,
+                insertionBase: components.insertionBase
             )
             return [DrawingView(name: "Model", kind: .model, document: doc)]
         }
@@ -139,7 +140,8 @@ public enum EABReader {
         pdfDefinitions: [CADPdfDefinition],
         groups: [CADGroup],
         globalLineTypeScale: Double,
-        autoContrastTrueColor: Bool
+        autoContrastTrueColor: Bool,
+        insertionBase: Vector3
     ) {
         let data = try Data(contentsOf: url)
         return try readDocument(from: data)
@@ -235,7 +237,8 @@ public enum EABReader {
                 unloadedXrefs: components.unloadedXrefs,
                 imageDefinitions: components.imageDefinitions,
                 pdfDefinitions: components.pdfDefinitions,
-                groups: components.groups
+                groups: components.groups,
+                insertionBase: components.insertionBase
             )
 
             views.append(DrawingView(name: entry.name, kind: entry.kind,
@@ -278,7 +281,8 @@ public enum EABReader {
                     unloadedXrefs: components.unloadedXrefs,
                     imageDefinitions: components.imageDefinitions,
                     pdfDefinitions: components.pdfDefinitions,
-                    groups: components.groups
+                    groups: components.groups,
+                    insertionBase: components.insertionBase
                 )
                 views.append(DrawingView(name: "Recovered", kind: .model, document: doc,
                                          cameraState: CameraState(offsetX: 0, offsetY: 0, zoom: 1, rotation: 0)))
@@ -312,7 +316,8 @@ public enum EABReader {
         pdfDefinitions: [CADPdfDefinition],
         groups: [CADGroup],
         globalLineTypeScale: Double,
-        autoContrastTrueColor: Bool
+        autoContrastTrueColor: Bool,
+        insertionBase: Vector3
     ) {
         let header = try parseHeader(from: data)
         let rawTableOffset = header.sectionTableOffset; guard rawTableOffset <= UInt64(Int.max) else { throw EABError.readError("Section table offset exceeds Int.max") }; let entries = try parseSectionTable(from: data, at: Int(rawTableOffset))
@@ -330,6 +335,7 @@ public enum EABReader {
         var activeLayerID: UUID? = nil
         var autoContrastTrueColor = true
         var globalLineTypeScale = 1.0
+        var insertionBase: Vector3 = .zero
         var loadedImageStore: [String: CADImageAsset] = [:]
         var xrefHostFolder: String? = nil
         var unloadedXrefs: Set<UUID> = []
@@ -370,6 +376,7 @@ public enum EABReader {
                 activeLayerID = meta.activeLayerID
                 autoContrastTrueColor = meta.autoContrastTrueColor
                 globalLineTypeScale = meta.globalLineTypeScale
+                insertionBase = meta.insertionBase
             case .xrefs:
                 let parsed = parseXrefs(reader)
                 xrefHostFolder = parsed.hostFolder
@@ -396,7 +403,7 @@ public enum EABReader {
                 textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
                 linetypePatterns, activeLayerID, loadedImageStore,
                 xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
-                globalLineTypeScale, autoContrastTrueColor)
+                globalLineTypeScale, autoContrastTrueColor, insertionBase)
     }
 
     private static func parseXrefs(
@@ -530,7 +537,8 @@ public enum EABReader {
         pdfDefinitions: [CADPdfDefinition],
         groups: [CADGroup],
         globalLineTypeScale: Double,
-        autoContrastTrueColor: Bool
+        autoContrastTrueColor: Bool,
+        insertionBase: Vector3
     ) {
         let data = try Data(contentsOf: url)
         let header = try parseHeader(from: data)
@@ -559,6 +567,7 @@ public enum EABReader {
         var activeLayerID: UUID? = nil
         var autoContrastTrueColor = true
         var globalLineTypeScale = 1.0
+        var insertionBase: Vector3 = .zero
         var loadedImageStore: [String: CADImageAsset] = [:]
         var xrefHostFolder: String? = nil
         var unloadedXrefs: Set<UUID> = []
@@ -603,6 +612,7 @@ public enum EABReader {
                 activeLayerID = meta.activeLayerID
                 autoContrastTrueColor = meta.autoContrastTrueColor
                 globalLineTypeScale = meta.globalLineTypeScale
+                insertionBase = meta.insertionBase
             case .xrefs:
                 let parsed = parseXrefs(reader)
                 xrefHostFolder = parsed.hostFolder
@@ -629,7 +639,7 @@ public enum EABReader {
                 textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
                 linetypePatterns, activeLayerID, loadedImageStore,
                 xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
-                globalLineTypeScale, autoContrastTrueColor)
+                globalLineTypeScale, autoContrastTrueColor, insertionBase)
     }
 
     // MARK: - Header Parsing
@@ -1176,6 +1186,7 @@ public enum EABReader {
         let activeLayerID: UUID?
         let autoContrastTrueColor: Bool
         let globalLineTypeScale: Double
+        let insertionBase: Vector3
     }
 
     /// Reads activeLayerID, autoContrastTrueColor, and globalLineTypeScale from the metadata section.
@@ -1196,14 +1207,24 @@ public enum EABReader {
 
         var autoContrastTrueColor = true
         var globalLineTypeScale = 1.0
+        var insertionBase: Vector3 = .zero
 
         if r.remaining >= 4 {
             let customByteCount = r.readUInt32()
             if customByteCount >= 9 && r.remaining >= 9 {
                 autoContrastTrueColor = r.readUInt8() != 0
                 globalLineTypeScale = r.readFloat64()
-                if customByteCount > 9 && r.remaining >= Int(customByteCount - 9) {
-                    _ = r.readBytes(count: Int(customByteCount - 9))
+                var consumed: UInt32 = 9
+                // Insertion base (3×f64) appended after the v4 bytes.
+                // Older files stop at 9; newer unknown tails are skipped.
+                if customByteCount >= 33 && r.remaining >= 24 {
+                    insertionBase = Vector3(
+                        x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                    consumed = 33
+                }
+                if customByteCount > consumed
+                    && r.remaining >= Int(customByteCount - consumed) {
+                    _ = r.readBytes(count: Int(customByteCount - consumed))
                 }
             } else if customByteCount > 0 && r.remaining >= Int(customByteCount) {
                 _ = r.readBytes(count: Int(customByteCount))
@@ -1213,7 +1234,8 @@ public enum EABReader {
         return MetadataPayload(
             activeLayerID: activeID,
             autoContrastTrueColor: autoContrastTrueColor,
-            globalLineTypeScale: globalLineTypeScale
+            globalLineTypeScale: globalLineTypeScale,
+            insertionBase: insertionBase
         )
     }
 

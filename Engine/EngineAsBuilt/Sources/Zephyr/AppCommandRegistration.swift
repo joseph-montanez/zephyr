@@ -740,6 +740,21 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { RenameCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "WBLOCK",
+            aliases: ["W"],
+            factory: { WblockCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-WBLOCK",
+            aliases: [],
+            factory: { WblockCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "BASE",
+            aliases: [],
+            factory: { BaseCommand() }
+        )
         // PICKSTYLE group selection: one member in, whole selectable
         // group in. Resolves the active document per call (tabs switch).
         engine.cadSelection.groupExpansionProvider = { [weak engine] handle in

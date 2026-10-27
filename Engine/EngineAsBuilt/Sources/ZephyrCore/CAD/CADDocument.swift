@@ -509,6 +509,11 @@ public final class CADDocument {
     /// expansion in `selectionExpansion(for:)`; bit 1 is reserved until
     /// associative hatches land. Session state, not snapshotted.
     public var pickStyle: Int = 1
+
+    /// Insertion base point (BASE, DXF $INSBASE). Session state like a
+    /// sysvar, never undoable; round-tripped via DXF HEADER and EAB
+    /// metadata (custom bytes).
+    public var insertionBase: Vector3 = .zero
     public var anglePrecision: Int = 0 {
         didSet { anglePrecision = max(0, min(8, anglePrecision)) }
     }
@@ -3973,10 +3978,12 @@ public final class CADDocument {
         unloadedXrefs: Set<UUID> = [],
         imageDefinitions: [CADImageDefinition] = [],
         pdfDefinitions: [CADPdfDefinition] = [],
-        groups: [CADGroup] = []
+        groups: [CADGroup] = [],
+        insertionBase: Vector3 = .zero
     ) {
         self.unit = unit
         self.groups = Dictionary(uniqueKeysWithValues: groups.map { ($0.name, $0) })
+        self.insertionBase = insertionBase
         self.xrefSourceFolder = xrefHostFolder
         self.eabUnloadedXrefHandles = unloadedXrefs
         self.textStyles = textStyles.isEmpty ? ["Standard": .standard] : textStyles
