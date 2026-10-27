@@ -125,6 +125,7 @@ public enum DXFWriterBridge {
         var imageDefinitions: [String: CADImageDefinition] = [:]
         var pdfDefinitions: [String: CADPdfDefinition] = [:]
         var imageAssets: [String: CADImageAsset] = [:]
+        var groups: [String: CADGroup] = [:]
     }
 
 
@@ -168,7 +169,8 @@ public enum DXFWriterBridge {
             roundTripPayload: document.dxfRoundTripPayload,
             imageDefinitions: document.imageDefinitions,
             pdfDefinitions: document.pdfDefinitions,
-            imageAssets: document.imageStore)
+            imageAssets: document.imageStore,
+            groups: document.groups)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion)
     }
 
@@ -192,7 +194,8 @@ public enum DXFWriterBridge {
                 roundTripPayload: $0.document.dxfRoundTripPayload,
                 imageDefinitions: $0.document.imageDefinitions,
                 pdfDefinitions: $0.document.pdfDefinitions,
-                imageAssets: $0.document.imageStore)
+                imageAssets: $0.document.imageStore,
+                groups: $0.document.groups)
         }
         try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion)
     }
@@ -373,6 +376,13 @@ public enum DXFWriterBridge {
         let fieldAppID = DXFAppIdEntry()
         fieldAppID.name = FieldEval.dxfAppID
         writer.addAppId(fieldAppID)
+        // Registered only when the drawing actually has groups, so
+        // group-free files stay byte-identical to before.
+        if orderedViews.contains(where: { !$0.groups.isEmpty }) {
+            let groupAppID = DXFAppIdEntry()
+            groupAppID.name = CADGroup.dxfAppID
+            writer.addAppId(groupAppID)
+        }
 
         revisionCloudArcLength: for view in orderedViews {
             for entity in view.entities {
@@ -585,6 +595,9 @@ public enum DXFWriterBridge {
 
             for entity in exportEntities {
                 let layerName = layerNameByID[entity.layerID] ?? "0"
+                let groupNames = view.groups.values
+                    .filter { $0.members.contains(entity.handle) }
+                    .map(\.name)
 
                 if let box = entity.leaderData, dxfVersion.rawValue >= "AC1021" {
                     let data = box.value
@@ -649,8 +662,10 @@ public enum DXFWriterBridge {
                             }
                         }
                         leader.annotation = annotation
+                        appendGroupXData(groupNames, to: leader)
                         writer.addEntity(leader, ownerBlockName: ownerBlockName)
                         if let annotation {
+                            appendGroupXData(groupNames, to: annotation)
                             writer.addEntity(annotation, ownerBlockName: ownerBlockName)
                         }
                         continue
@@ -755,6 +770,7 @@ public enum DXFWriterBridge {
                             arrowheadName: branchArrowName)
                     }
                     applyEntityStyle(entity.xdata, to: ml)
+                    appendGroupXData(groupNames, to: ml)
                     writer.addEntity(ml, ownerBlockName: ownerBlockName)
                     continue
                 }
@@ -786,6 +802,7 @@ public enum DXFWriterBridge {
                                 groupID: groupID,
                                 role: "M",
                                 payloadChunks: payloadChunks)
+                            appendGroupXData(groupNames, to: insert)
                             writer.addEntity(insert, ownerBlockName: ownerBlockName)
                         } else {
                             let instances = array.evaluatedInstances(pathPoints: array.cachedPath)
@@ -802,6 +819,7 @@ public enum DXFWriterBridge {
                                     groupID: groupID,
                                     role: "M",
                                     payloadChunks: payloadChunks)
+                                appendGroupXData(groupNames, to: insert)
                                 writer.addEntity(insert, ownerBlockName: ownerBlockName)
                             } else {
                                 for (instanceIndex, instance) in instances.enumerated() {
@@ -818,6 +836,7 @@ public enum DXFWriterBridge {
                                         groupID: groupID,
                                         role: instanceIndex == 0 ? "M" : "I",
                                         payloadChunks: instanceIndex == 0 ? payloadChunks : [])
+                                    appendGroupXData(groupNames, to: insert)
                                     writer.addEntity(insert, ownerBlockName: ownerBlockName)
                                 }
                             }
@@ -830,6 +849,7 @@ public enum DXFWriterBridge {
                             transform: entity.transform)
                         insert.spatialFilter = spatialFilterData(from: entity, transform: entity.transform)
                         applyEntityStyle(entity.xdata, to: insert)
+                        appendGroupXData(groupNames, to: insert)
                         writer.addEntity(insert, ownerBlockName: ownerBlockName)
                     }
                     continue
@@ -850,6 +870,7 @@ public enum DXFWriterBridge {
                     hatch.layer = layerName
                     hatch.space = isPaperSpace ? 1 : 0
                     applyEntityStyle(entity.xdata, to: hatch)
+                    appendGroupXData(groupNames, to: hatch)
                     writer.addEntity(hatch, ownerBlockName: ownerBlockName)
                     consumedHatchIndices.formUnion(hatchExport.primitiveIndices)
                 }
@@ -864,6 +885,7 @@ public enum DXFWriterBridge {
                             table.layer = layerName
                             table.space = isPaperSpace ? 1 : 0
                             applyEntityStyle(entity.xdata, to: table)
+                            appendGroupXData(groupNames, to: table)
                             writer.addEntity(table, ownerBlockName: ownerBlockName)
                         } else {
                             for visual in DataTableTessellator.explodeForDXF(
@@ -877,6 +899,7 @@ public enum DXFWriterBridge {
                                 exported.layer = layerName
                                 exported.space = isPaperSpace ? 1 : 0
                                 applyEntityStyle(entity.xdata, to: exported)
+                                appendGroupXData(groupNames, to: exported)
                                 writer.addEntity(exported, ownerBlockName: ownerBlockName)
                             }
                         }
@@ -889,6 +912,7 @@ public enum DXFWriterBridge {
                     exported.layer = layerName
                     exported.space = isPaperSpace ? 1 : 0
                     applyEntityStyle(entity.xdata, to: exported)
+                    appendGroupXData(groupNames, to: exported)
                     writer.addEntity(exported, ownerBlockName: ownerBlockName)
                 }
             }
@@ -2240,6 +2264,18 @@ public enum DXFWriterBridge {
         }
         entity.extendedData.append((1001, FieldEval.dxfAppID))
         entity.extendedData.append((1000, expr))
+    }
+
+    /// Group membership records: one APPID block per group so a reimported
+    /// entity rejoins its groups (rebuilt in `DXFImporter`). Sorted for
+    /// stable output.
+    private static func appendGroupXData(
+        _ groupNames: [String], to entity: DXFEntity
+    ) {
+        for name in groupNames.sorted() {
+            entity.extendedData.append((1001, CADGroup.dxfAppID))
+            entity.extendedData.append((1000, name))
+        }
     }
 
     private static func xdataString(_ xdata: [String: XDataValue], _ key: String) -> String? {

@@ -106,6 +106,7 @@ public enum EABSectionType: UInt32, Sendable {
     case leaderStyles = 15
     case xrefs       = 16
     case mediaDefinitions = 17
+    case groups      = 18
 }
 
 /// Compression mode for a data section.

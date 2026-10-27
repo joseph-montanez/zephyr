@@ -420,6 +420,16 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
+        // Named selection groups (GROUP/UNGROUP). Additive section: older
+        // readers skip it via the default case, so no version bump.
+        if !document.groups.isEmpty {
+            let groupsData = serializeGroups(document: document)
+            entries.append(EABSectionEntry(type: .groups, offset: UInt64(w.count),
+                                            size: UInt64(groupsData.count), compression: .none))
+            w.writeBytes(groupsData)
+            w.pad(to: 4)
+        }
+
         // Linetype patterns (added in EAB v4)
         if !document.linetypePatterns.isEmpty {
             let lineTypesData = serializeLinetypePatterns(document: document)
@@ -1152,6 +1162,25 @@ public enum EABWriter {
             w.writeFloat64(normalized.widthFactor)
             w.writeFloat64(normalized.obliqueAngle)
             w.writeUInt8(normalized.isAnnotative ? 1 : 0)
+        }
+        return w.build()
+    }
+
+    // MARK: - Groups
+
+    private static func serializeGroups(document: CADDocument) -> Data {
+        let w = BinaryWriter()
+        let ordered = document.groups.values.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        w.writeUInt32(UInt32(ordered.count))
+        for group in ordered {
+            w.writeString(group.name)
+            w.writeUInt32(UInt32(group.members.count))
+            for member in group.members {
+                w.writeUUID(member)
+            }
+            w.writeUInt8(group.isSelectable ? 1 : 0)
         }
         return w.build()
     }

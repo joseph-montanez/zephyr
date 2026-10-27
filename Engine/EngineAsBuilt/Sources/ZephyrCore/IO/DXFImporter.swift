@@ -67,6 +67,9 @@ public struct DXFImportResult: Sendable {
     /// Referenced-media definitions (IMAGEDEF / PDFDEFINITION).
     public let imageDefinitions: [CADImageDefinition]
     public let pdfDefinitions: [CADPdfDefinition]
+    /// Selection groups rebuilt from ZEPHYR_GROUP appID records
+    /// (model-space members; paper-space groups are a Phase 3 item).
+    public let groups: [CADGroup]
     /// Source unit when the $INSUNITS code maps to a Zephyr unit.
     public var sourceUnit: CADUnit? { CADUnit(dxfINSUNITS: insUnits) }
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
@@ -79,7 +82,8 @@ public struct DXFImportResult: Sendable {
                 insUnits: Int = 0,
                 pendingXrefs: [DXFPendingXref] = [],
                 imageDefinitions: [CADImageDefinition] = [],
-                pdfDefinitions: [CADPdfDefinition] = []) {
+                pdfDefinitions: [CADPdfDefinition] = [],
+                groups: [CADGroup] = []) {
         self.layers = layers; self.blocks = blocks; self.entities = entities
         self.textStyles = textStyles; self.linetypePatterns = linetypePatterns
         self.dimensionStyles = dimensionStyles
@@ -91,6 +95,7 @@ public struct DXFImportResult: Sendable {
         self.pendingXrefs = pendingXrefs
         self.imageDefinitions = imageDefinitions
         self.pdfDefinitions = pdfDefinitions
+        self.groups = groups
     }
 
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
@@ -1515,12 +1520,13 @@ public enum DXFImporter {
 
         let modelEntities: [CADEntity]
         let views: [DXFDrawingView]
+        var groupStaging: [String: [UUID]] = [:]
 
         if reader.layouts.isEmpty {
             let modelOwnerHandle = blockHandleByName["*MODEL_SPACE"] ?? 0
-            modelEntities = convertEntities(
+            modelEntities = strippingGroupStaging(convertEntities(
                 reader.entities,
-                ownerHandle: modelOwnerHandle)
+                ownerHandle: modelOwnerHandle), stagingInto: &groupStaging)
             views = [DXFDrawingView(
                 name: "Model",
                 kind: .model,
@@ -1543,11 +1549,11 @@ public enum DXFImporter {
             } else {
                 modelSource = reader.entities.filter { $0.space == 0 }
             }
-            modelEntities = convertEntities(
+            modelEntities = strippingGroupStaging(convertEntities(
                 modelSource,
                 ownerHandle: modelLayout?.blockRecordHandle
                     ?? blockHandleByName["*MODEL_SPACE"]
-                    ?? 0)
+                    ?? 0), stagingInto: &groupStaging)
 
             var importedViews: [DXFDrawingView] = [DXFDrawingView(
                 name: modelLayout?.name ?? "Model",
@@ -1557,9 +1563,13 @@ public enum DXFImporter {
             for layout in orderedLayouts where
                 layout.name.caseInsensitiveCompare("Model") != .orderedSame {
                 let paperSource = sourceEntities(for: layout)
-                var paperEntities = convertEntities(
+                // Paper-space membership is stripped and dropped: v1 groups
+                // round-trip model-space members only (Phase 3 paper scope).
+                var discardedStaging: [String: [UUID]] = [:]
+                var paperEntities = strippingGroupStaging(convertEntities(
                     paperSource,
-                    ownerHandle: layout.blockRecordHandle)
+                    ownerHandle: layout.blockRecordHandle),
+                    stagingInto: &discardedStaging)
                 let paperDrawOrderOffset = modelEntities.count + 1
                 for index in paperEntities.indices where paperEntities[index].drawOrder != Int.max {
                     paperEntities[index].drawOrder += paperDrawOrderOffset
@@ -1698,7 +1708,27 @@ public enum DXFImporter {
             insUnits: reader.header.insUnits,
             pendingXrefs: pendingXrefs,
             imageDefinitions: imageDefinitions,
-            pdfDefinitions: pdfDefinitions)
+            pdfDefinitions: pdfDefinitions,
+            groups: groupStaging.map { CADGroup(name: $0.key, members: $0.value) })
+    }
+
+    /// Moves `CADGroup.stagingPrefix` keys staged during conversion out of
+    /// entity xdata into `staging` (name → member handles), returning
+    /// entities with clean xdata.
+    private static func strippingGroupStaging(
+        _ entities: [CADEntity], stagingInto staging: inout [String: [UUID]]
+    ) -> [CADEntity] {
+        entities.map { entity in
+            var copy = entity
+            for key in copy.xdata.keys where key.hasPrefix(CADGroup.stagingPrefix) {
+                let name = String(key.dropFirst(CADGroup.stagingPrefix.count))
+                if !name.isEmpty {
+                    staging[name, default: []].append(copy.handle)
+                }
+                copy.xdata.removeValue(forKey: key)
+            }
+            return copy
+        }
     }
 
     private static func arrayXData(
@@ -1905,17 +1935,30 @@ public enum DXFImporter {
         // FIELD expressions ride XDATA under our APPID (see
         // DXFWriterBridge.appendFieldXData); restore them so reimported
         // fields keep refreshing instead of going static.
+        // Group membership rides the same way (DXFWriterBridge
+        // .appendGroupXData); staged here under `CADGroup.stagingPrefix`
+        // and rebuilt into `DXFImportResult.groups` at assembly, so the
+        // staging keys never persist in entity xdata.
         var fieldActive = false
+        var groupActive = false
         for pair in entity.extendedData {
             if pair.code == 1001 {
-                fieldActive = (pair.value as? String)?.caseInsensitiveCompare(
+                let appID = pair.value as? String
+                fieldActive = appID?.caseInsensitiveCompare(
                     FieldEval.dxfAppID) == .orderedSame
+                groupActive = appID?.caseInsensitiveCompare(
+                    CADGroup.dxfAppID) == .orderedSame
                 continue
             }
             if fieldActive, pair.code == 1000,
                let expr = pair.value as? String, !expr.isEmpty {
                 xdata[FieldEval.exprKey] = .string(expr)
                 fieldActive = false
+            }
+            if groupActive, pair.code == 1000,
+               let name = pair.value as? String, !name.isEmpty {
+                xdata["\(CADGroup.stagingPrefix)\(name)"] = .bool(true)
+                groupActive = false
             }
         }
 

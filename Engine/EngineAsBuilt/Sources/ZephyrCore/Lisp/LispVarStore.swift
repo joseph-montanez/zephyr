@@ -96,6 +96,7 @@ final class LispVarStore: @unchecked Sendable {
         "PICKBOX": .int(3),
         "PICKDRAG": .int(0),
         "PICKFIRST": .int(1),
+        "PICKSTYLE": .int(1),
         "PLATFORM": .string("Zephyr"),
         "QTEXTMODE": .int(0),
         "REGENMODE": .int(1),
@@ -177,6 +178,8 @@ final class LispVarStore: @unchecked Sendable {
             return .int(document.lengthPrecision)
         case "SELECTSIMILARMODE":
             return .int(document.selectSimilarMode)
+        case "PICKSTYLE":
+            return .int(document.pickStyle)
         case "AUPREC":
             return .int(document.anglePrecision)
         case "PDMODE":
@@ -305,6 +308,13 @@ final class LispVarStore: @unchecked Sendable {
                 return "SELECTSIMILARMODE requires an integer 0..255"
             }
             document.selectSimilarMode = i
+            store(name, value)
+            return nil
+        case "PICKSTYLE":
+            guard case let .int(i) = value, (0...3).contains(i) else {
+                return "PICKSTYLE requires an integer 0..3"
+            }
+            document.pickStyle = i
             store(name, value)
             return nil
         case "AUPREC":

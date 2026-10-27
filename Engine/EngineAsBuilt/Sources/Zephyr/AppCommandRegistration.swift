@@ -715,6 +715,22 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { IsolateCommand(mode: .unisolate) }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "GROUP",
+            aliases: ["G"],
+            factory: { GroupCommand(mode: .group) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "UNGROUP",
+            aliases: [],
+            factory: { GroupCommand(mode: .ungroup) }
+        )
+        // PICKSTYLE group selection: one member in, whole selectable
+        // group in. Resolves the active document per call (tabs switch).
+        engine.cadSelection.groupExpansionProvider = { [weak engine] handle in
+            guard let document = engine?.document else { return [handle] }
+            return document.selectionExpansion(for: handle)
+        }
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

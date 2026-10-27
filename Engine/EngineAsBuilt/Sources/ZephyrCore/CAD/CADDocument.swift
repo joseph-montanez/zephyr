@@ -61,6 +61,8 @@ public struct CADDocumentSnapshot: Sendable {
     /// Render-only session state: restore paths ignore it, so undo/redo
     /// never changes isolation, and it is never persisted to DXF/EAB.
     public let isolatedHiddenHandles: Set<UUID>
+    /// Named selection groups (GROUP/UNGROUP) at snapshot time.
+    public let groups: [String: CADGroup]
 
     public init(
         layers: [UUID: Layer],
@@ -88,8 +90,10 @@ public struct CADDocumentSnapshot: Sendable {
         pdfDefinitions: [String: CADPdfDefinition] = [:],
         availableImageAssetNames: Set<String> = [],
         layoutSettings: CADLayoutSettings? = nil,
-        isolatedHiddenHandles: Set<UUID> = []
+        isolatedHiddenHandles: Set<UUID> = [],
+        groups: [String: CADGroup] = [:]
     ) {
+        self.groups = groups
         self.isolatedHiddenHandles = isolatedHiddenHandles
         self.layoutSettings = layoutSettings
         self.xrefFadePercent = xrefFadePercent
@@ -495,6 +499,16 @@ public final class CADDocument {
     /// lineweight 16, name 128; default 130 = layer+name like AutoCAD).
     /// Session state, not snapshotted.
     public var selectSimilarMode: Int = EntityFilter.defaultMode
+
+    /// Named selection groups (GROUP/UNGROUP), keyed by group name.
+    /// Model data: snapshotted (undoable), persisted to DXF/EAB.
+    public var groups: [String: CADGroup] = [:]
+
+    /// PICKSTYLE (0 = none, 1 = group select, 2 = associative hatch
+    /// select, 3 = both; default 1 like AutoCAD). Bit 0 drives group
+    /// expansion in `selectionExpansion(for:)`; bit 1 is reserved until
+    /// associative hatches land. Session state, not snapshotted.
+    public var pickStyle: Int = 1
     public var anglePrecision: Int = 0 {
         didSet { anglePrecision = max(0, min(8, anglePrecision)) }
     }
@@ -3782,9 +3796,11 @@ public final class CADDocument {
         xrefHostFolder: String? = nil,
         unloadedXrefs: Set<UUID> = [],
         imageDefinitions: [CADImageDefinition] = [],
-        pdfDefinitions: [CADPdfDefinition] = []
+        pdfDefinitions: [CADPdfDefinition] = [],
+        groups: [CADGroup] = []
     ) {
         self.unit = unit
+        self.groups = Dictionary(uniqueKeysWithValues: groups.map { ($0.name, $0) })
         self.xrefSourceFolder = xrefHostFolder
         self.eabUnloadedXrefHandles = unloadedXrefs
         self.textStyles = textStyles.isEmpty ? ["Standard": .standard] : textStyles
@@ -3926,7 +3942,8 @@ public final class CADDocument {
             pdfDefinitions: pdfDefinitions,
             availableImageAssetNames: Set(imageStore.keys),
             layoutSettings: layoutSettings,
-            isolatedHiddenHandles: isolatedHiddenHandles
+            isolatedHiddenHandles: isolatedHiddenHandles,
+            groups: groups
         )
     }
 
@@ -3978,7 +3995,9 @@ public final class CADDocument {
             imageDefinitions: base.imageDefinitions,
             pdfDefinitions: base.pdfDefinitions,
             availableImageAssetNames: available,
-            layoutSettings: base.layoutSettings)
+            layoutSettings: base.layoutSettings,
+            isolatedHiddenHandles: base.isolatedHiddenHandles,
+            groups: base.groups)
         }
     }
 
@@ -4032,6 +4051,7 @@ public final class CADDocument {
         imageDefinitions = snapshot.imageDefinitions
         pdfDefinitions = snapshot.pdfDefinitions
         layoutSettings = snapshot.layoutSettings
+        groups = snapshot.groups
         // Prune image assets no longer referenced by any entity after restore
         pruneUnreferencedImageAssets()
         resyncXrefInstanceBounds()

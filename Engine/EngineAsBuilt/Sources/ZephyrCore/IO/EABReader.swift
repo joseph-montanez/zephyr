@@ -110,7 +110,8 @@ public enum EABReader {
                 xrefHostFolder: components.xrefHostFolder,
                 unloadedXrefs: components.unloadedXrefs,
                 imageDefinitions: components.imageDefinitions,
-                pdfDefinitions: components.pdfDefinitions
+                pdfDefinitions: components.pdfDefinitions,
+                groups: components.groups
             )
             return [DrawingView(name: "Model", kind: .model, document: doc)]
         }
@@ -136,6 +137,7 @@ public enum EABReader {
         unloadedXrefs: Set<UUID>,
         imageDefinitions: [CADImageDefinition],
         pdfDefinitions: [CADPdfDefinition],
+        groups: [CADGroup],
         globalLineTypeScale: Double,
         autoContrastTrueColor: Bool
     ) {
@@ -232,7 +234,8 @@ public enum EABReader {
                 xrefHostFolder: components.xrefHostFolder,
                 unloadedXrefs: components.unloadedXrefs,
                 imageDefinitions: components.imageDefinitions,
-                pdfDefinitions: components.pdfDefinitions
+                pdfDefinitions: components.pdfDefinitions,
+                groups: components.groups
             )
 
             views.append(DrawingView(name: entry.name, kind: entry.kind,
@@ -274,7 +277,8 @@ public enum EABReader {
                     xrefHostFolder: components.xrefHostFolder,
                     unloadedXrefs: components.unloadedXrefs,
                     imageDefinitions: components.imageDefinitions,
-                    pdfDefinitions: components.pdfDefinitions
+                    pdfDefinitions: components.pdfDefinitions,
+                    groups: components.groups
                 )
                 views.append(DrawingView(name: "Recovered", kind: .model, document: doc,
                                          cameraState: CameraState(offsetX: 0, offsetY: 0, zoom: 1, rotation: 0)))
@@ -306,6 +310,7 @@ public enum EABReader {
         unloadedXrefs: Set<UUID>,
         imageDefinitions: [CADImageDefinition],
         pdfDefinitions: [CADPdfDefinition],
+        groups: [CADGroup],
         globalLineTypeScale: Double,
         autoContrastTrueColor: Bool
     ) {
@@ -331,6 +336,7 @@ public enum EABReader {
         var xrefDescriptors: [UUID: CADXrefDescriptor] = [:]
         var imageDefinitions: [CADImageDefinition] = []
         var pdfDefinitions: [CADPdfDefinition] = []
+        var groups: [CADGroup] = []
 
         for entry in entries {
             let reader = BinaryReader(
@@ -373,6 +379,8 @@ public enum EABReader {
                 let parsed = parseMediaDefinitions(reader)
                 imageDefinitions = parsed.image
                 pdfDefinitions = parsed.pdf
+            case .groups:
+                groups = parseGroups(reader)
             default:
                 break  // skip unknown sections
             }
@@ -387,7 +395,7 @@ public enum EABReader {
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
                 textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
                 linetypePatterns, activeLayerID, loadedImageStore,
-                xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions,
+                xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
                 globalLineTypeScale, autoContrastTrueColor)
     }
 
@@ -407,6 +415,24 @@ public enum EABReader {
             if isUnloaded { unloaded.insert(handle) }
         }
         return (folder.isEmpty ? nil : folder, descriptors, unloaded)
+    }
+
+    private static func parseGroups(
+        _ r: BinaryReader
+    ) -> [CADGroup] {
+        let count = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "groups")
+        var groups: [CADGroup] = []
+        for _ in 0..<count {
+            let name = r.readString()
+            let memberCount = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "groups.members")
+            var members: [UUID] = []
+            for _ in 0..<memberCount {
+                members.append(r.readUUID())
+            }
+            let isSelectable = r.readUInt8() != 0
+            groups.append(CADGroup(name: name, members: members, isSelectable: isSelectable))
+        }
+        return groups
     }
 
     private static func parseMediaDefinitions(
@@ -502,6 +528,7 @@ public enum EABReader {
         unloadedXrefs: Set<UUID>,
         imageDefinitions: [CADImageDefinition],
         pdfDefinitions: [CADPdfDefinition],
+        groups: [CADGroup],
         globalLineTypeScale: Double,
         autoContrastTrueColor: Bool
     ) {
@@ -538,6 +565,7 @@ public enum EABReader {
         var xrefDescriptors: [UUID: CADXrefDescriptor] = [:]
         var imageDefinitions: [CADImageDefinition] = []
         var pdfDefinitions: [CADPdfDefinition] = []
+        var groups: [CADGroup] = []
 
         for entry in entries {
             let reader = BinaryReader(
@@ -584,6 +612,8 @@ public enum EABReader {
                 let parsed = parseMediaDefinitions(reader)
                 imageDefinitions = parsed.image
                 pdfDefinitions = parsed.pdf
+            case .groups:
+                groups = parseGroups(reader)
             default:
                 break
             }
@@ -598,7 +628,7 @@ public enum EABReader {
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
                 textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
                 linetypePatterns, activeLayerID, loadedImageStore,
-                xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions,
+                xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
                 globalLineTypeScale, autoContrastTrueColor)
     }
 
