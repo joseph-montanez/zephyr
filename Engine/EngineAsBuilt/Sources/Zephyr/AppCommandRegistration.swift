@@ -680,6 +680,16 @@ struct AppCommandRegistration {
             aliases: ["FI"],
             factory: { SelectFilterCommand(mode: .filter) }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PURGE",
+            aliases: ["PU"],
+            factory: { PurgeCommand(mode: .confirm) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-PURGE",
+            aliases: [],
+            factory: { PurgeCommand(mode: .scripted) }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

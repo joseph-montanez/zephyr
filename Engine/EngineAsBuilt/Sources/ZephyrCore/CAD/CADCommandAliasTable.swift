@@ -166,6 +166,12 @@ public enum CADCommandAliasTable {
             canonicalName: "FILTER", aliases: ["FI"], category: .modify,
             description: "Select objects by combined property criteria"),
         CADCommandAliasEntry(
+            canonicalName: "PURGE", aliases: ["PU"], category: .modify,
+            description: "Remove unused definitions (confirms first)"),
+        CADCommandAliasEntry(
+            canonicalName: "-PURGE", category: .modify,
+            description: "Remove unused definitions without confirming"),
+        CADCommandAliasEntry(
             canonicalName: "SPELL", aliases: ["SP"], category: .modify,
             description: "Spell-check drawing text (unavailable: no platform checker reachable)",
             isReservedStub: true),

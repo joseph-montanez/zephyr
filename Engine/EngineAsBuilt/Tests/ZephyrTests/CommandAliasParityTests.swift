@@ -52,6 +52,8 @@ final class CommandAliasParityTests: XCTestCase {
         ("SELECTSIMILAR", "SELECTSIMILAR"),
         ("QSELECT", "QSELECT"),
         ("FILTER", "FILTER"), ("FI", "FILTER"),
+        ("PURGE", "PURGE"), ("PU", "PURGE"),
+        ("-PURGE", "-PURGE"),
         ("B", "BLOCK"), ("BMAKE", "BLOCK"),
         ("XR", "XREF"), ("ER", "XREF"),
         ("IAT", "IMAGEATTACH"),

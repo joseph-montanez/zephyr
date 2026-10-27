@@ -893,6 +893,187 @@ public final class CADDocument {
         layerTable[handle]
     }
 
+    /// Reachability sweep for PURGE: unreferenced layers, blocks, text /
+    /// dimension / leader styles, and linetype patterns. Protected (never
+    /// listed): referenced definitions, layer "0", the current layer,
+    /// "Standard" styles, the current text/dimension/leader styles,
+    /// "CONTINUOUS", xref blocks, and xref-dependent layers. Name matching
+    /// is case-insensitive throughout.
+    public func purgeableDefinitions(currentTextStyle: String) -> PurgeReport {
+        var items: [PurgeItem] = []
+        var kept: [PurgeKind: Int] = [:]
+        func keep(_ kind: PurgeKind) {
+            kept[kind, default: 0] += 1
+        }
+
+        let usedBlockIDs = Set(entityRegistry.values.compactMap(\.blockID))
+        var usedTextStyles = Set<String>()
+        var usedDimStyles = Set<String>()
+        var usedLeaderStyles = Set<String>()
+        var usedLinetypes = Set<String>()
+        for entity in entityRegistry.values {
+            for prim in entity.localGeometry ?? [] {
+                if case .text(_, _, _, _, let style, _, _, _, _) = prim,
+                   let style {
+                    usedTextStyles.insert(style.uppercased())
+                }
+            }
+            if case .string(let style) = entity.xdata["dxf.textStyle"],
+               !style.isEmpty {
+                usedTextStyles.insert(style.uppercased())
+            }
+            if case .string(let name) = entity.xdata["dxf.lineType"],
+               !name.isEmpty {
+                usedLinetypes.insert(name.uppercased())
+            }
+            if let box = entity.dimensionMetadata {
+                usedDimStyles.insert(box.value.styleName.uppercased())
+            }
+            if let leader = entity.leaderData?.value {
+                usedLeaderStyles.insert(leader.styleName.uppercased())
+            }
+        }
+        for block in blockTable.values {
+            for prim in block.geometry {
+                if case .text(_, _, _, _, let style, _, _, _, _) = prim,
+                   let style {
+                    usedTextStyles.insert(style.uppercased())
+                }
+            }
+            for style in block.primitiveStyles.values {
+                if let name = style.lineType {
+                    usedLinetypes.insert(name.uppercased())
+                }
+            }
+        }
+        for layer in layerTable.values {
+            usedLinetypes.insert(layer.lineType.uppercased())
+        }
+        let currentDim = currentDimensionStyleName.uppercased()
+        let currentLeader = currentLeaderStyleName.uppercased()
+        let currentText = currentTextStyle.uppercased()
+
+        for layer in allLayers.sorted(by: { $0.name < $1.name }) {
+            if layer.name.caseInsensitiveCompare("0") == .orderedSame
+                || layer.handle == activeLayerID
+                || isXrefDependentLayer(layer)
+                || isLayerStillReferenced(layer) {
+                keep(.layer)
+            } else {
+                items.append(PurgeItem(
+                    kind: .layer, key: layer.handle.uuidString,
+                    displayName: layer.name))
+            }
+        }
+
+        for block in allBlocks.sorted(by: { $0.name < $1.name }) {
+            if block.isXref || usedBlockIDs.contains(block.handle) {
+                keep(.block)
+            } else {
+                items.append(PurgeItem(
+                    kind: .block, key: block.handle.uuidString,
+                    displayName: block.name))
+            }
+        }
+
+        for name in textStyles.keys.sorted() {
+            let upper = name.uppercased()
+            if upper == "STANDARD" || upper == currentText || usedTextStyles.contains(upper) {
+                keep(.textStyle)
+            } else {
+                items.append(PurgeItem(kind: .textStyle, key: name, displayName: name))
+            }
+        }
+
+        for name in dimensionStyles.keys.sorted() {
+            let upper = name.uppercased()
+            if upper == "STANDARD" || upper == currentDim || usedDimStyles.contains(upper) {
+                keep(.dimStyle)
+            } else {
+                items.append(PurgeItem(kind: .dimStyle, key: name, displayName: name))
+            }
+        }
+
+        for name in leaderStyles.keys.sorted() {
+            let upper = name.uppercased()
+            if upper == "STANDARD" || upper == currentLeader || usedLeaderStyles.contains(upper) {
+                keep(.leaderStyle)
+            } else {
+                items.append(PurgeItem(kind: .leaderStyle, key: name, displayName: name))
+            }
+        }
+
+        for key in linetypePatterns.keys.sorted() {
+            if key.uppercased() == "CONTINUOUS" || usedLinetypes.contains(key.uppercased()) {
+                keep(.linetype)
+            } else {
+                items.append(PurgeItem(kind: .linetype, key: key, displayName: key))
+            }
+        }
+
+        return PurgeReport(items: items, protectedCounts: kept)
+    }
+
+    /// Removes every item in a purge report under ONE undo entry. Returns
+    /// per-kind removal counts. Items whose definitions vanished since the
+    /// report (or that became protected) are skipped, never forced.
+    @discardableResult
+    public func applyPurge(_ report: PurgeReport) -> [PurgeKind: Int] {
+        guard !report.items.isEmpty else { return [:] }
+        pushUndo()
+        var removed: [PurgeKind: Int] = [:]
+        for item in report.items {
+            switch item.kind {
+            case .layer:
+                guard let handle = UUID(uuidString: item.key),
+                      let layer = layerTable[handle],
+                      layer.handle != activeLayerID,
+                      !isXrefDependentLayer(layer),
+                      !isLayerStillReferenced(layer) else {
+                    continue
+                }
+                layerTable.removeValue(forKey: handle)
+                removed[.layer, default: 0] += 1
+            case .block:
+                guard let handle = UUID(uuidString: item.key),
+                      blockTable[handle] != nil,
+                      !entityRegistry.values.contains(where: { $0.blockID == handle }) else {
+                    continue
+                }
+                blockTable.removeValue(forKey: handle)
+                blockGridCache.removeValue(forKey: handle)
+                removed[.block, default: 0] += 1
+            case .textStyle:
+                guard textStyles[item.key] != nil,
+                      item.key.caseInsensitiveCompare("Standard") != .orderedSame else {
+                    continue
+                }
+                textStyles.removeValue(forKey: item.key)
+                removed[.textStyle, default: 0] += 1
+            case .dimStyle:
+                guard dimensionStyles[item.key] != nil,
+                      item.key.caseInsensitiveCompare("Standard") != .orderedSame else {
+                    continue
+                }
+                dimensionStyles.removeValue(forKey: item.key)
+                removed[.dimStyle, default: 0] += 1
+            case .leaderStyle:
+                guard leaderStyles[item.key] != nil,
+                      item.key.caseInsensitiveCompare("Standard") != .orderedSame else {
+                    continue
+                }
+                leaderStyles.removeValue(forKey: item.key)
+                removed[.leaderStyle, default: 0] += 1
+            case .linetype:
+                guard linetypePatterns[item.key] != nil else { continue }
+                linetypePatterns.removeValue(forKey: item.key)
+                removed[.linetype, default: 0] += 1
+            }
+        }
+        markEdited(regenerate: true)
+        return removed
+    }
+
     // Legacy Array copy (Avoid using in performance loops)
     public var allLayers: [Layer] { Array(layerTable.values) }
 
