@@ -379,7 +379,10 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "PDFATTACH",  aliases: [],                category: .block,   syntax: "", description: "Attach a PDF page as a live underlay reference"),
         CommandDescriptor(canonicalName: "-ATTACH",    aliases: [],                category: .block,   syntax: "", description: "Attach a reference file from the command line"),
         CommandDescriptor(canonicalName: "-XREF",      aliases: [],                category: .block,   syntax: "", description: "Manage external references from the command line"),
-        CommandDescriptor(canonicalName: "XBIND",      aliases: [],                category: .block,   syntax: "", description: "Bind one xref-dependent layer into the host"),
+        CommandDescriptor(canonicalName: "XBIND",      aliases: ["XB"],           category: .block,   syntax: "", description: "Bind one xref-dependent layer, style, or linetype into the host"),
+        CommandDescriptor(canonicalName: "REFEDIT",    aliases: [],                category: .block,   syntax: "", description: "Edit a block or xref in place"),
+        CommandDescriptor(canonicalName: "REFCLOSE",   aliases: [],                category: .block,   syntax: "", description: "Save or discard in-place reference edits"),
+        CommandDescriptor(canonicalName: "NCOPY",      aliases: [],                category: .modify,  syntax: "", description: "Copy nested geometry out of blocks and xrefs"),
         // --- Settings ---
         CommandDescriptor(canonicalName: "STYLE",      aliases: ["ST"], category: .settings, syntax: "", description: "Create and edit text styles"),
         CommandDescriptor(canonicalName: "MLEADERSTYLE", aliases: ["MLS"], category: .settings, syntax: "", description: "Create and edit multileader styles"),

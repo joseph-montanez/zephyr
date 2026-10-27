@@ -167,6 +167,57 @@ public enum CADHitTesting {
         return results
     }
 
+    /// A single nested pick: the closest block-member primitive under the
+    /// point, with the insert instance transform that carries it to world
+    /// space. Powers NCOPY (copy nested geometry out of blocks/xrefs).
+    public struct NestedHit: Sendable {
+        public var entity: CADEntity
+        public var primitiveIndex: Int
+        public var transform: Transform3D
+        public var distanceSquared: Double
+    }
+
+    /// Returns the closest nested (block-member) primitive under the point,
+    /// or nil. Loose entities are reported with their own transform and
+    /// their local-geometry index; `excluding` skips freshly copied
+    /// entities so NCOPY picks never hit their own output.
+    public static func nestedHitTest(
+        worldX: Double, worldY: Double,
+        document: CADDocument,
+        threshold: Double = 3.0,
+        excluding: Set<UUID> = []
+    ) -> NestedHit? {
+        let point = Vector3(x: worldX, y: worldY, z: 0)
+        let t2 = threshold * threshold
+        var best: NestedHit?
+        let layersByName = document.layersByUppercasedName()
+        forEachCandidate(in: document, near: point, threshold: threshold) { entity, geometry in
+            guard !excluding.contains(entity.handle) else { return }
+            guard CADClipMetadata.accepts(worldPoint: point, entity: entity) else { return }
+            let primStyles = document.primitiveStyles(for: entity)
+            for transform in instanceTransforms(for: entity, document: document) {
+                let candidates = gridCandidates(
+                    grid: entity.blockID.flatMap { document.spatialGrid(forBlock: $0) },
+                    geometryCount: geometry.count,
+                    point: point, transform: transform, radius: threshold)
+                for primIndex in candidates {
+                    guard CADPrimitiveVisibility.isVisible(
+                        style: primStyles[primIndex],
+                        layersByName: layersByName) else { continue }
+                    guard let dist = distanceSqToPrimitive(
+                        geometry[primIndex], point: point,
+                        transform: transform, t2: t2) else { continue }
+                    if dist < (best?.distanceSquared ?? .infinity) {
+                        best = NestedHit(
+                            entity: entity, primitiveIndex: primIndex,
+                            transform: transform, distanceSquared: dist)
+                    }
+                }
+            }
+        }
+        return best
+    }
+
     /// Returns true if the entity's geometry is within threshold of the point.
     public static func hitEntity(
         _ entity: CADEntity,

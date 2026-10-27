@@ -1146,14 +1146,18 @@ public final class TabManager {
     }
 
     /// Enters block editor mode for the given block ID.
-    public func enterBlockEditor(blockID: UUID) {
+    /// Pass `shadow` to edit an xref in place (REFEDIT): the session
+    /// materializes the loaded shadow geometry instead of the (empty)
+    /// host definition, and REFCLOSE saves back to the xref file.
+    public func enterBlockEditor(blockID: UUID, shadow: CADBlock? = nil) {
         guard var tab = activeTab else { return }
         guard tab.editingBlockID == nil else { return }
         guard let block = tab.document.block(for: blockID) else { return }
-        guard !block.isXref else {
+        guard !block.isXref || shadow != nil else {
             print("[Xref] '\(block.name)' is an external reference — open the source file to edit it, or Bind it first.")
             return
         }
+        let source = shadow ?? block
 
         let tempDoc = CADDocument()
         let layers = tab.document.allLayers
@@ -1174,11 +1178,11 @@ public final class TabManager {
         tempDoc.linetypePatterns = tab.document.linetypePatterns
         tempDoc.imageStore = tab.document.imageStore
 
-        let tempEntities = block.geometry.enumerated().map { index, primitive in
+        let tempEntities = source.geometry.enumerated().map { index, primitive in
             makeBlockEditorEntity(
                 primitive: primitive,
-                primitiveStyle: block.primitiveStyles[index],
-                primitiveXData: block.primitiveXData[index] ?? [:],
+                primitiveStyle: source.primitiveStyles[index],
+                primitiveXData: source.primitiveXData[index] ?? [:],
                 primitiveIndex: index,
                 layerIDsByName: layerIDsByName,
                 fallbackLayerID: fallbackLayerID)
@@ -1203,7 +1207,10 @@ public final class TabManager {
         guard var tab = activeTab else { return }
         guard let blockID = tab.editingBlockID, let parentDoc = tab.parentDocument else { return }
 
-        if saveChanges {
+        // Xref sessions never write back through the block table:
+        // shadow geometry reaches the file only via REFCLOSE save-back.
+        let isXrefSession = parentDoc.block(for: blockID)?.isXref == true
+        if saveChanges, !isXrefSession {
             var newPrimitives: [CADPrimitive] = []
             var newPrimitiveStyles: [Int: CADPrimitiveStyle] = [:]
             var newPrimitiveXData: [Int: [String: XDataValue]] = [:]

@@ -222,11 +222,37 @@ struct AppCommandRegistration {
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "XBIND",
+            aliases: ["XB"],
             descriptor: CommandDescriptor(
                 canonicalName: "XBIND",
+                aliases: ["XB"],
                 category: .block,
-                description: "Bind one xref-dependent layer into the host"),
+                description: "Bind one xref-dependent layer, style, or linetype into the host"),
             factory: { XBindCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "REFEDIT",
+            descriptor: CommandDescriptor(
+                canonicalName: "REFEDIT",
+                category: .block,
+                description: "Edit a block or xref in place"),
+            factory: { RefeditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "REFCLOSE",
+            descriptor: CommandDescriptor(
+                canonicalName: "REFCLOSE",
+                category: .block,
+                description: "Save or discard in-place reference edits"),
+            factory: { RefcloseCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "NCOPY",
+            descriptor: CommandDescriptor(
+                canonicalName: "NCOPY",
+                category: .modify,
+                description: "Copy nested geometry out of blocks and xrefs"),
+            factory: { NCopyCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "CLIP",

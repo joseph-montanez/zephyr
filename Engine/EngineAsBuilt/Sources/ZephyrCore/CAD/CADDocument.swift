@@ -1812,6 +1812,151 @@ public final class CADDocument {
         return newName
     }
 
+    /// Binds one xref-dependent style or linetype (`Owner|Name`) into the
+    /// host: rename per BINDTYPE, or merge when BINDTYPE=1 and the leaf
+    /// name already exists. Covers text, dimension, and leader styles plus
+    /// linetype patterns. Returns the bound name, or nil when `name` is
+    /// not a dependent symbol of any known category.
+    /// Stored dict key matching `name` case-insensitively (table keys
+    /// preserve authoring case; lookups must not assume uppercasing).
+    private static func styleKey<V>(
+        in dict: [String: V], matching name: String
+    ) -> String? {
+        let wanted = name.uppercased()
+        if dict[name] != nil { return name }
+        return dict.keys.first(where: { $0.uppercased() == wanted })
+    }
+
+    @discardableResult
+    public func xbindStyle(named name: String, bindType: Int) -> String? {
+        guard name.contains("|") else { return nil }
+        let key = name.uppercased()
+        if let stored = Self.styleKey(in: textStyles, matching: name) {
+            let existing = Set(textStyles.keys.map { $0.uppercased() })
+            guard let newName = Self.boundSymbolName(
+                name, bindType: bindType, existingUpperNames: existing) else {
+                return nil
+            }
+            pushUndo()
+            if bindType == 1,
+               Self.styleKey(in: textStyles, matching: newName) != nil {
+                textStyles.removeValue(forKey: stored)
+            } else {
+                var style = textStyles.removeValue(forKey: stored)!
+                style.name = newName
+                textStyles[newName] = style
+            }
+            // Text-style references in host blocks and loose entities
+            // follow the rename (mirrors bindXref's remapXData).
+            for (handle, var block) in blockTable {
+                var changed = false
+                for (index, var entry) in block.primitiveXData {
+                    if case .string(let name) = entry["dxf.textStyle"],
+                       name.uppercased() == key {
+                        entry["dxf.textStyle"] = .string(newName)
+                        block.primitiveXData[index] = entry
+                        changed = true
+                    }
+                }
+                if changed { blockTable[handle] = block }
+            }
+            for (handle, var entity) in entityRegistry {
+                if case .string(let name) = entity.xdata["dxf.textStyle"],
+                   name.uppercased() == key {
+                    entity.xdata["dxf.textStyle"] = .string(newName)
+                    entityRegistry[handle] = preparedEntityForStorage(entity)
+                }
+            }
+            markEdited(regenerate: true)
+            return newName
+        }
+        if let stored = Self.styleKey(in: dimensionStyles, matching: name) {
+            guard let newName = Self.boundSymbolName(
+                name, bindType: bindType,
+                existingUpperNames: Set(dimensionStyles.keys.map {
+                    $0.uppercased()
+                })) else {
+                return nil
+            }
+            pushUndo()
+            if bindType == 1,
+               Self.styleKey(in: dimensionStyles, matching: newName) != nil {
+                dimensionStyles.removeValue(forKey: stored)
+            } else {
+                var style = dimensionStyles.removeValue(forKey: stored)!
+                style.name = newName
+                dimensionStyles[newName] = style
+            }
+            markEdited(regenerate: true)
+            return newName
+        }
+        if let stored = Self.styleKey(in: leaderStyles, matching: name) {
+            guard let newName = Self.boundSymbolName(
+                name, bindType: bindType,
+                existingUpperNames: Set(leaderStyles.keys.map {
+                    $0.uppercased()
+                })) else {
+                return nil
+            }
+            pushUndo()
+            if bindType == 1,
+               Self.styleKey(in: leaderStyles, matching: newName) != nil {
+                leaderStyles.removeValue(forKey: stored)
+            } else {
+                var style = leaderStyles.removeValue(forKey: stored)!
+                style.name = newName
+                leaderStyles[newName] = style
+            }
+            markEdited(regenerate: true)
+            return newName
+        }
+        if let stored = Self.styleKey(in: linetypePatterns, matching: name) {
+            guard let newName = Self.boundSymbolName(
+                name, bindType: bindType,
+                existingUpperNames: Set(linetypePatterns.keys.map {
+                    $0.uppercased()
+                })) else {
+                return nil
+            }
+            pushUndo()
+            if bindType == 1,
+               Self.styleKey(in: linetypePatterns, matching: newName) != nil {
+                linetypePatterns.removeValue(forKey: stored)
+            } else {
+                let pattern = linetypePatterns.removeValue(forKey: stored)!
+                linetypePatterns[newName] = pattern
+            }
+            // Layers, block styles, and xdata referencing the old
+            // pattern follow along (mirrors bindXref's remap).
+            for (handle, var layer) in layerTable
+                where layer.lineType.uppercased() == key {
+                layer.lineType = newName
+                layerTable[handle] = layer
+            }
+            for (handle, var block) in blockTable {
+                var changed = false
+                for (index, var style) in block.primitiveStyles
+                    where style.lineType?.uppercased() == key {
+                    style.lineType = newName
+                    block.primitiveStyles[index] = style
+                    changed = true
+                }
+                for (index, var entry) in block.primitiveXData {
+                    if case .string(let name) = entry["dxf.lineType"],
+                       name.uppercased() == key {
+                        entry["dxf.lineType"] = .string(newName)
+                        block.primitiveXData[index] = entry
+                        changed = true
+                    }
+                }
+                if changed { blockTable[handle] = block }
+            }
+            markEdited(regenerate: true)
+            return newName
+        }
+        return nil
+    }
+
     public func removeBlock(handle: UUID) {
         pushUndo()
         blockTable.removeValue(forKey: handle)
