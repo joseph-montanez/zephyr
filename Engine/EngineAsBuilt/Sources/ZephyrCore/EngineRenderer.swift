@@ -720,6 +720,7 @@ public final class EngineRenderer {
         renderTrackingOverlays(drawList: drawList, cam: transform)
 
         renderCadSelectionHighlight(cam: transform)
+        renderConstraintBadges(cam: transform)
         renderCadHoverHighlight(cam: transform)
         renderRectSelectPreview(cam: transform)
         renderCadGrips(cam: transform)
@@ -2691,6 +2692,14 @@ public final class EngineRenderer {
                 _foregroundVertexEstimate += 8
             }
         }
+    }
+
+    /// CONSTRAINTBAR badges: one diamond per constrained entity while
+    /// the document flag is on. The renderer no-ops when it is off.
+    private func renderConstraintBadges(cam: CameraTransform) {
+        ConstraintBadgeRenderer.drawBadges(
+            document: engine.document, cam: cam,
+            drawList: igGetBackgroundDrawList(nil))
     }
 
     /// AutoCAD-style hover highlight: draws the entity's actual geometry outline

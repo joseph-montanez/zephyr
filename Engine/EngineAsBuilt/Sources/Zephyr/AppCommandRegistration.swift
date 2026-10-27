@@ -836,6 +836,26 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { AliaseditCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "GEOMCONSTRAINT",
+            aliases: ["GCON"],
+            factory: { GeomconstraintCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DELCONSTRAINT",
+            aliases: [],
+            factory: { DelconstraintCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "CONSTRAINTBAR",
+            aliases: ["CBAR"],
+            factory: { ConstraintbarCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "AUTOCONSTRAIN",
+            aliases: [],
+            factory: { AutoconstrainCommand() }
+        )
         // User PGP aliases load last so they win over built-ins.
         let pgp = PGPAliasLoader.loadIfPresent(
             into: engine.commandProcessor)

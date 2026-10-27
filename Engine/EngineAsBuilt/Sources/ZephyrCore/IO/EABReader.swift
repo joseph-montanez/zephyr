@@ -1133,11 +1133,15 @@ public enum EABReader {
             let entityA = r.readUUID()
             let entityBUUID = r.readUUID()
             let entityB: UUID? = (entityBUUID == UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))) ? nil : entityBUUID
-            guard let subA = ConstraintSubEntity(rawValue: r.readUInt8()),
-                  let subB = ConstraintSubEntity(rawValue: r.readUInt8()) else {
+            // Field order matches the writer (and CADConstraint
+            // declaration order): subA, idxA, subB, idxB.
+            guard let subA = ConstraintSubEntity(rawValue: r.readUInt8()) else {
                 throw EABError.corruptedSectionTable
             }
             let subIdxA = r.readUInt8()
+            guard let subB = ConstraintSubEntity(rawValue: r.readUInt8()) else {
+                throw EABError.corruptedSectionTable
+            }
             let subIdxB = r.readUInt8()
             let paramCount = Int(r.readUInt8())
             var params: [Double] = []

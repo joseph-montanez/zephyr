@@ -383,6 +383,16 @@
               (zr-small "ID"          "Locate Pt" "measure" nil)))))
 
       ;; =================================================================
+      (zr-tab "Parametric"
+        (list
+          (zr-panel "Geometric"
+            (list
+              (zr-big   "GEOMCONSTRAINT" "Constrain" "align" nil)
+              (zr-small "AUTOCONSTRAIN"  "Auto"      "align" nil)
+              (zr-small "DELCONSTRAINT"  "Delete"    "align" nil)
+              (zr-small "CONSTRAINTBAR"  "Show Bar"  "align" nil)))))
+
+      ;; =================================================================
       (zr-tab "View"
         (list
           (zr-panel "Navigate"

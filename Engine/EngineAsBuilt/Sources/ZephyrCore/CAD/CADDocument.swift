@@ -4152,6 +4152,71 @@ public final class CADDocument {
     public var constraintCount: Int { constraintTable.count }
     public var constraintsView: Dictionary<UUID, CADConstraint>.Values { constraintTable.values }
 
+    /// Constraints touching an entity, sorted by handle for determinism.
+    public func constraintsAffecting(_ handle: UUID) -> [CADConstraint] {
+        constraintTable.values.filter {
+            $0.entityA == handle || $0.entityB == handle
+        }.sorted { $0.handle.uuidString < $1.handle.uuidString }
+    }
+
+    /// CONSTRAINTBAR visibility. Session-only view state: never
+    /// snapshotted, undone, or persisted (like isolation, it describes
+    /// how to look, not what to save).
+    public var showConstraintBadges: Bool = false
+
+    /// World-space endpoints of every solver-eligible entity: loose
+    /// (non-block) entities with exactly one `.line` in local geometry.
+    public func solvableLines() -> [UUID: (a: Vector3, b: Vector3)] {
+        var out: [UUID: (a: Vector3, b: Vector3)] = [:]
+        for entity in entitiesView {
+            guard entity.blockID == nil,
+                  let geom = entity.localGeometry, geom.count == 1,
+                  case .line(let a, let b, _) = geom[0] else { continue }
+            out[entity.handle] = (
+                a: entity.transform.transformPoint(a),
+                b: entity.transform.transformPoint(b))
+        }
+        return out
+    }
+
+    /// Runs the line solver over all enabled constraints and writes the
+    /// solved endpoints back (transforms preserved via inverse mapping)
+    /// under a single undo snapshot. Returns the raw outcome so callers
+    /// can report unsatisfied (conflicting/unsupported) constraints.
+    @discardableResult
+    public func solveConstraints(
+        tolerance: Double = 1e-6, maxIterations: Int = 100
+    ) -> ConstraintSolver.Outcome {
+        let outcome = ConstraintSolver.solve(
+            lines: solvableLines(), constraints: allConstraints,
+            tolerance: tolerance, maxIterations: maxIterations)
+        var colors: [UUID: ColorRGBA?] = [:]
+        for entity in entitiesView {
+            if case .line(_, _, let color) = entity.localGeometry?.first {
+                colors[entity.handle] = color
+            }
+        }
+        pushUndo()
+        for (handle, ends) in outcome.lines {
+            guard var entity = entityRegistry[handle],
+                  entity.blockID == nil,
+                  entity.localGeometry?.count == 1 else { continue }
+            let inv = entity.transform.inverse()
+            let geometry: [CADPrimitive] = [.line(
+                start: inv.transformPoint(ends.a),
+                end: inv.transformPoint(ends.b),
+                color: colors[handle] ?? nil)]
+            entity.localGeometry = geometry
+            entity.localBoundingBox = CADEntity.computeLocalBoundingBox(
+                blockID: entity.blockID, localGeometry: geometry)
+            entity.updateAnchorCache()
+            entityRegistry[handle] = preparedEntityForStorage(entity)
+        }
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return outcome
+    }
+
     // MARK: - Solved Transforms
 
     /// Store the result of a constraint solve.
