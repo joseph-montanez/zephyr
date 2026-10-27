@@ -263,6 +263,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "DIMCONTINUE", aliases: ["DCO"], category: .draw, syntax: "", description: "Chain dimensions from the previous extension origin"),
         CommandDescriptor(canonicalName: "DIMBASELINE", aliases: ["DBA"], category: .draw, syntax: "", description: "Stack dimensions from a shared base origin"),
         CommandDescriptor(canonicalName: "DIM", aliases: [], category: .draw, syntax: "", description: "Dimension the selection with the matching type"),
+        CommandDescriptor(canonicalName: "CENTERMARK", aliases: ["CM"], category: .draw, syntax: "", description: "Draw a center cross for a circle or arc"),
+        CommandDescriptor(canonicalName: "DIMCENTER", aliases: ["DCE"], category: .draw, syntax: "", description: "Draw a center mark for a circle or arc"),
         CommandDescriptor(canonicalName: "-DIMSTYLE",  aliases: [], category: .settings, syntax: "Restore <name> | Save <name> | Apply <name>", description: "Set the current dimension style from the command line"),
         CommandDescriptor(canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw, syntax: "", description: "Draw a centerline between two lines"),
         // --- History ---
@@ -739,7 +741,8 @@ public final class CADCommandProcessor {
             let uy = dist > 1e-9 ? offsetY / dist : 0.0
             print("[CAD] MOVE direct distance: \(distance) units along (\(String(format: "%.4f", ux)), \(String(format: "%.4f", uy)))")
             engine.cadBridge.movePrimitivesDirect(
-                handles: engine.cadSelection.selectedHandles,
+                handles: engine.document.centerLinkedHandles(
+                    following: engine.cadSelection.selectedHandles),
                 by: (offsetX, offsetY), in: engine.geometryManager,
                 spriteManager: engine.spriteManager)
             engine.cadSelection.moveAllSelected(by: Vector3(x: offsetX, y: offsetY, z: 0), document: engine.document)
@@ -2631,7 +2634,8 @@ public final class CADCommandProcessor {
                 let dy = _moveGhostWorldY - commandRefPoint!.1
                 // Update GPU geometry immediately so grips/selection update
                 engine.cadBridge.movePrimitivesDirect(
-                    handles: engine.cadSelection.selectedHandles,
+                    handles: engine.document.centerLinkedHandles(
+                        following: engine.cadSelection.selectedHandles),
                     by: (dx, dy), in: engine.geometryManager,
                     spriteManager: engine.spriteManager)
                 engine.cadSelection.moveAllSelected(by: Vector3(x: dx, y: dy, z: 0), document: engine.document)

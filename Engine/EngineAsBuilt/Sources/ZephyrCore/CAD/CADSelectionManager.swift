@@ -238,11 +238,16 @@ public final class CADSelectionManager {
     }
 
     public func moveAllSelected(by delta: Vector3, document: CADDocument) {
-        document.moveEntities(handles: selectedHandles, by: delta)
+        // Associative-lite center marks/lines travel with their sources.
+        document.moveEntities(
+            handles: document.centerLinkedHandles(following: selectedHandles),
+            by: delta)
     }
 
     public func moveAllSelectedLive(by delta: Vector3, document: CADDocument) {
-        document.moveEntitiesLive(handles: selectedHandles, by: delta)
+        document.moveEntitiesLive(
+            handles: document.centerLinkedHandles(following: selectedHandles),
+            by: delta)
     }
 
     public func rotateAllSelected(

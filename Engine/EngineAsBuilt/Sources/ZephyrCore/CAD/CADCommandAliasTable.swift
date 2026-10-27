@@ -119,8 +119,13 @@ public enum CADCommandAliasTable {
             description: "Clip blocks, raster images, and PDF underlays"),
         CADCommandAliasEntry(
             canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw,
-            description: "Draw a centerline between two lines",
-            isReservedStub: true),
+            description: "Draw a centerline between two lines"),
+        CADCommandAliasEntry(
+            canonicalName: "CENTERMARK", aliases: ["CM"], category: .draw,
+            description: "Draw a center cross for a circle or arc"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMCENTER", aliases: ["DCE"], category: .draw,
+            description: "Draw a center mark for a circle or arc"),
         CADCommandAliasEntry(
             canonicalName: "AALINES", category: .view,
             description: "Toggle anti-aliased line rendering on/off"),

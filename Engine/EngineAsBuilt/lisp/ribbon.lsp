@@ -360,7 +360,9 @@
                   (zr-item "DIMJOGGED"   "Jogged"     nil)
                   (zr-item "DIMCONTINUE" "Continue"   nil)
                   (zr-item "DIMBASELINE" "Baseline"   nil)
-                  (zr-item "DIM"         "Smart"      nil)))))
+                  (zr-item "DIM"         "Smart"      nil)
+                  (zr-item "CENTERMARK"  "Cen Mark"   nil)
+                  (zr-item "CENTERLINE"  "Cen Line"   nil)))))
 
           (zr-panel "Leaders"
             (list

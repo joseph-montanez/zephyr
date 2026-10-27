@@ -600,6 +600,21 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { DimSmartCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "CENTERMARK",
+            aliases: ["CM"],
+            factory: { CenterMarkCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMCENTER",
+            aliases: ["DCE"],
+            factory: { CenterMarkCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "CENTERLINE",
+            aliases: ["CL"],
+            factory: { CenterLineCommand() }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(
