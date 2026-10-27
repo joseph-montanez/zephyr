@@ -157,6 +157,10 @@ public enum CADCommandAliasTable {
             canonicalName: "FIELD", category: .draw,
             description: "Insert a live-updating field value"),
         CADCommandAliasEntry(
+            canonicalName: "SPELL", aliases: ["SP"], category: .modify,
+            description: "Spell-check drawing text (unavailable: no platform checker reachable)",
+            isReservedStub: true),
+        CADCommandAliasEntry(
             canonicalName: "AALINES", category: .view,
             description: "Toggle anti-aliased line rendering on/off"),
         CADCommandAliasEntry(
