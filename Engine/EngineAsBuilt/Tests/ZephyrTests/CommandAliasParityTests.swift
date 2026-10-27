@@ -50,6 +50,8 @@ final class CommandAliasParityTests: XCTestCase {
         ("FIELD", "FIELD"),
         ("SPELL", "SPELL"), ("SP", "SPELL"),
         ("SELECTSIMILAR", "SELECTSIMILAR"),
+        ("QSELECT", "QSELECT"),
+        ("FILTER", "FILTER"), ("FI", "FILTER"),
         ("B", "BLOCK"), ("BMAKE", "BLOCK"),
         ("XR", "XREF"), ("ER", "XREF"),
         ("IAT", "IMAGEATTACH"),

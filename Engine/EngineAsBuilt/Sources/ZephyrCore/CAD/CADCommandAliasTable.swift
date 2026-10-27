@@ -160,6 +160,12 @@ public enum CADCommandAliasTable {
             canonicalName: "SELECTSIMILAR", category: .modify,
             description: "Select objects matching a reference (SELECTSIMILARMODE)"),
         CADCommandAliasEntry(
+            canonicalName: "QSELECT", category: .modify,
+            description: "Select objects by type, property, and operator"),
+        CADCommandAliasEntry(
+            canonicalName: "FILTER", aliases: ["FI"], category: .modify,
+            description: "Select objects by combined property criteria"),
+        CADCommandAliasEntry(
             canonicalName: "SPELL", aliases: ["SP"], category: .modify,
             description: "Spell-check drawing text (unavailable: no platform checker reachable)",
             isReservedStub: true),

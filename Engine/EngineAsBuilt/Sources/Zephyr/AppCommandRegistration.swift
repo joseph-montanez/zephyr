@@ -670,6 +670,16 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { SelectSimilarCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "QSELECT",
+            aliases: [],
+            factory: { SelectFilterCommand(mode: .qselect) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "FILTER",
+            aliases: ["FI"],
+            factory: { SelectFilterCommand(mode: .filter) }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

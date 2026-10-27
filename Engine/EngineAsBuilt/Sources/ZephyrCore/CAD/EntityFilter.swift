@@ -180,4 +180,174 @@ public enum EntityFilter {
         if mode & matchName != 0 { parts.append("name") }
         return parts.isEmpty ? "nothing (empty mask)" : parts.joined(separator: "+")
     }
+
+    // MARK: - QSELECT/FILTER criteria (Phase 2.2b)
+
+    /// Filterable properties. String-backed (type/layer/linetype/handle)
+    /// support equals/not-equals with `*`/`?` wildcards; numeric (color
+    /// ACI, lineweight mm) support the full comparison set.
+    public enum FilterProperty: String, CaseIterable {
+        case objectType
+        case layer
+        case color
+        case linetype
+        case lineweight
+        case handle
+    }
+
+    public enum FilterOperator: String, CaseIterable {
+        case equals
+        case notEquals
+        case lessThan
+        case lessThanOrEqual
+        case greaterThan
+        case greaterThanOrEqual
+    }
+
+    public struct FilterCriterion {
+        public var property: FilterProperty
+        public var op: FilterOperator
+        public var value: String
+
+        public init(property: FilterProperty, op: FilterOperator, value: String) {
+            self.property = property
+            self.op = op
+            self.value = value
+        }
+    }
+
+    public enum FilterCombine: String, CaseIterable {
+        case and
+        case or
+        case not
+    }
+
+    /// DXF type names the engine produces (for prompts and validation).
+    public static let knownTypes = [
+        "LINE", "LWPOLYLINE", "CIRCLE", "ARC", "SPLINE", "TEXT",
+        "ELLIPSE", "HATCH", "RAY", "XLINE", "IMAGE", "ACAD_TABLE",
+        "INSERT", "POINT", "UNKNOWN",
+    ]
+
+    public static func isNumericProperty(_ property: FilterProperty) -> Bool {
+        property == .color || property == .lineweight
+    }
+
+    /// Resolved string for a string-backed property.
+    public static func stringValue(
+        _ property: FilterProperty, of entity: CADEntity, in document: CADDocument
+    ) -> String? {
+        switch property {
+        case .objectType:
+            return LispEntityAdapter.dxfTypeName(entity: entity, document: document)
+        case .layer:
+            return LispEntityAdapter.layerName(entity: entity, document: document)
+        case .linetype:
+            return effectiveLineType(of: entity, in: document)
+        case .handle:
+            return entity.handle.uuidString
+        case .color, .lineweight:
+            return nil
+        }
+    }
+
+    /// Resolved number for a numeric property (color ACI 0-256, lineweight mm).
+    public static func numericValue(
+        _ property: FilterProperty, of entity: CADEntity, in document: CADDocument
+    ) -> Double? {
+        switch property {
+        case .color:
+            return Double(LispEntityAdapter.entityACI(entity: entity))
+        case .lineweight:
+            return effectiveLineWeight(of: entity, in: document)
+        case .objectType, .layer, .linetype, .handle:
+            return nil
+        }
+    }
+
+    /// Parses and range-checks a criterion value for a numeric property.
+    /// Color accepts ACI 0-256 (0 = BYBLOCK, 256 = BYLAYER); lineweight mm >= 0.
+    public static func parseNumericValue(
+        _ property: FilterProperty, _ text: String
+    ) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value = Double(trimmed), value.isFinite else { return nil }
+        switch property {
+        case .color:
+            guard value >= 0, value <= 256, value == value.rounded() else { return nil }
+            return value
+        case .lineweight:
+            guard value >= 0 else { return nil }
+            return value
+        case .objectType, .layer, .linetype, .handle:
+            return nil
+        }
+    }
+
+    /// Evaluates one criterion. Operator/property mismatches (a comparison
+    /// on a string property, an unparseable number) are false, never errors.
+    public static func evaluate(
+        _ criterion: FilterCriterion, on entity: CADEntity, in document: CADDocument
+    ) -> Bool {
+        switch criterion.property {
+        case .objectType, .layer, .linetype, .handle:
+            guard let actual = stringValue(
+                criterion.property, of: entity, in: document) else {
+                return false
+            }
+            switch criterion.op {
+            case .equals:
+                if criterion.value.contains("*") || criterion.value.contains("?") {
+                    return wildcardMatch(actual, pattern: criterion.value)
+                }
+                return actual.uppercased() == criterion.value.uppercased()
+            case .notEquals:
+                if criterion.value.contains("*") || criterion.value.contains("?") {
+                    return !wildcardMatch(actual, pattern: criterion.value)
+                }
+                return actual.uppercased() != criterion.value.uppercased()
+            case .lessThan, .lessThanOrEqual, .greaterThan, .greaterThanOrEqual:
+                return false
+            }
+        case .color, .lineweight:
+            guard let actual = numericValue(
+                criterion.property, of: entity, in: document),
+                  let wanted = parseNumericValue(
+                      criterion.property, criterion.value) else {
+                return false
+            }
+            switch criterion.op {
+            case .equals: return actual == wanted
+            case .notEquals: return actual != wanted
+            case .lessThan: return actual < wanted
+            case .lessThanOrEqual: return actual <= wanted
+            case .greaterThan: return actual > wanted
+            case .greaterThanOrEqual: return actual >= wanted
+            }
+        }
+    }
+
+    /// Combines per-criterion results: all (and), any (or), none (not).
+    /// Empty criteria match everything under and/or, nothing under not.
+    public static func combine(_ hits: [Bool], with combine: FilterCombine) -> Bool {
+        switch combine {
+        case .and: return hits.allSatisfy { $0 }
+        case .or: return hits.contains(true)
+        case .not: return !hits.contains(true)
+        }
+    }
+
+    /// Visible entities matching the criteria under the combinator.
+    public static func filter(
+        _ entities: [CADEntity], criteria: [FilterCriterion],
+        using combinator: FilterCombine, in document: CADDocument
+    ) -> [CADEntity] {
+        entities.filter { entity in
+            guard isVisibleForSelection(entity, in: document) else { return false }
+            let hits = criteria.map {
+                evaluate($0, on: entity, in: document)
+            }
+            return combine(hits, with: combinator)
+        }
+    }
 }
