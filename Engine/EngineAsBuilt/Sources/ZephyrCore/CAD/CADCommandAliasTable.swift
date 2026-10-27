@@ -127,6 +127,12 @@ public enum CADCommandAliasTable {
             canonicalName: "DIMCENTER", aliases: ["DCE"], category: .draw,
             description: "Draw a center mark for a circle or arc"),
         CADCommandAliasEntry(
+            canonicalName: "DIMREASSOCIATE", aliases: ["DRE"], category: .draw,
+            description: "Re-point a dimension at new extension origins and re-measure"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMDISASSOCIATE", aliases: ["DDA"], category: .draw,
+            description: "Drop associativity from dimensions (no-op: dimensions store snapshots)"),
+        CADCommandAliasEntry(
             canonicalName: "AALINES", category: .view,
             description: "Toggle anti-aliased line rendering on/off"),
         CADCommandAliasEntry(

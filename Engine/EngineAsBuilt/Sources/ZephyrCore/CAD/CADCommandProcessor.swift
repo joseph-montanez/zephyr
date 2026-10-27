@@ -267,6 +267,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "DIMCENTER", aliases: ["DCE"], category: .draw, syntax: "", description: "Draw a center mark for a circle or arc"),
         CommandDescriptor(canonicalName: "-DIMSTYLE",  aliases: [], category: .settings, syntax: "Restore <name> | Save <name> | Apply <name>", description: "Set the current dimension style from the command line"),
         CommandDescriptor(canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw, syntax: "", description: "Draw a centerline between two lines"),
+        CommandDescriptor(canonicalName: "DIMREASSOCIATE", aliases: ["DRE"], category: .draw, syntax: "", description: "Re-point a dimension at new extension origins and re-measure"),
+        CommandDescriptor(canonicalName: "DIMDISASSOCIATE", aliases: ["DDA"], category: .draw, syntax: "", description: "Drop associativity from dimensions (no-op: dimensions store snapshots)"),
         // --- History ---
         CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)", bareEnterExecutes: true),
         CommandDescriptor(canonicalName: "REDO",       aliases: [],                category: .modify,  syntax: "[<count>]", description: "Re-apply the last undone change (Cmd/Ctrl+Y)", bareEnterExecutes: true),

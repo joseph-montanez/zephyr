@@ -615,6 +615,16 @@ struct AppCommandRegistration {
             aliases: ["CL"],
             factory: { CenterLineCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMREASSOCIATE",
+            aliases: ["DRE"],
+            factory: { DimReassociateCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMDISASSOCIATE",
+            aliases: ["DDA"],
+            factory: { DimDisassociateCommand() }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(
