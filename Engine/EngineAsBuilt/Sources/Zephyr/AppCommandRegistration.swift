@@ -690,6 +690,16 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { PurgeCommand(mode: .scripted) }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "AUDIT",
+            aliases: [],
+            factory: { AuditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "RECOVER",
+            aliases: [],
+            factory: { RecoverCommand() }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(
