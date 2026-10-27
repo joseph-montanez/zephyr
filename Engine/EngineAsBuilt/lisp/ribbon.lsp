@@ -357,7 +357,9 @@
                   (zr-small "DIMDIAMETER" "Diameter"   "dim"   nil)
                   (zr-item "DIMARC"      "Arc Length" nil)
                   (zr-item "DIMORDINATE" "Ordinate"   nil)
-                  (zr-item "DIMJOGGED"   "Jogged"     nil)))))
+                  (zr-item "DIMJOGGED"   "Jogged"     nil)
+                  (zr-item "DIMCONTINUE" "Continue"   nil)
+                  (zr-item "DIMBASELINE" "Baseline"   nil)))))
 
           (zr-panel "Leaders"
             (list

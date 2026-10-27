@@ -585,6 +585,16 @@ struct AppCommandRegistration {
             aliases: ["D", "DST"],
             factory: { DimStyleCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMCONTINUE",
+            aliases: ["DCO"],
+            factory: { DimChainCommand(mode: .cont) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMBASELINE",
+            aliases: ["DBA"],
+            factory: { DimChainCommand(mode: .base) }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

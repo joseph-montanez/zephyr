@@ -260,6 +260,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "DIMARC",     aliases: ["DAR", "DIMARCLENGTH"], category: .draw, syntax: "", description: "Arc length dimension along a curve"),
         CommandDescriptor(canonicalName: "DIMORDINATE",aliases: ["DOR", "DIMORD"], category: .draw, syntax: "", description: "X or Y ordinate dimension from origin"),
         CommandDescriptor(canonicalName: "DIMJOGGED",  aliases: ["DJO", "DIMJOG", "JOG"], category: .draw, syntax: "", description: "Jogged radius dimension for large radii"),
+        CommandDescriptor(canonicalName: "DIMCONTINUE", aliases: ["DCO"], category: .draw, syntax: "", description: "Chain dimensions from the previous extension origin"),
+        CommandDescriptor(canonicalName: "DIMBASELINE", aliases: ["DBA"], category: .draw, syntax: "", description: "Stack dimensions from a shared base origin"),
         CommandDescriptor(canonicalName: "-DIMSTYLE",  aliases: [], category: .settings, syntax: "Restore <name> | Save <name> | Apply <name>", description: "Set the current dimension style from the command line"),
         CommandDescriptor(canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw, syntax: "", description: "Draw a centerline between two lines"),
         // --- History ---

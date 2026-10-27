@@ -155,6 +155,14 @@ public enum CADCommandAliasTable {
             category: .draw,
             description: "Jogged radius dimension for large radii"),
         CADCommandAliasEntry(
+            canonicalName: "DIMCONTINUE", aliases: ["DCO"],
+            category: .draw,
+            description: "Chain dimensions from the previous extension origin"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMBASELINE", aliases: ["DBA"],
+            category: .draw,
+            description: "Stack dimensions from a shared base origin"),
+        CADCommandAliasEntry(
             canonicalName: "BLOCK", aliases: ["B", "BMAKE"],
             category: .block,
             syntax: "<name>",
