@@ -139,6 +139,12 @@ public enum CADCommandAliasTable {
             canonicalName: "DIMTEDIT", category: .draw,
             description: "Move or rotate dimension text along the dimension line"),
         CADCommandAliasEntry(
+            canonicalName: "DIMBREAK", category: .draw,
+            description: "Break dimension lines around crossing geometry"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMSPACE", category: .draw,
+            description: "Space dimension lines evenly or align them"),
+        CADCommandAliasEntry(
             canonicalName: "AALINES", category: .view,
             description: "Toggle anti-aliased line rendering on/off"),
         CADCommandAliasEntry(

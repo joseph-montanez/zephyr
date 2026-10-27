@@ -12,6 +12,29 @@ public enum CADDimensionType: Int, Sendable, Hashable, Codable {
     case jogged = 8
 }
 
+/// Which regenerated line a dimension break gap cuts (Phase 2.1 DIMBREAK).
+public enum DimBreakLine: Int, Sendable, Hashable, Codable {
+    case firstExtension
+    case secondExtension
+    case dimension
+}
+
+/// One DIMBREAK gap: fractional span along a regenerated line (0 = line
+/// start, 1 = line end). Fractions survive MOVE and re-measure, unlike
+/// world points. Session-only like obliqueAngle: EAB and DXF export do not
+/// persist breaks.
+public struct DimBreak: Sendable, Hashable, Codable {
+    public var line: DimBreakLine
+    public var t0: Double
+    public var t1: Double
+
+    public init(line: DimBreakLine, t0: Double, t1: Double) {
+        self.line = line
+        self.t0 = min(t0, t1)
+        self.t1 = max(t0, t1)
+    }
+}
+
 public struct CADDimensionMetadata: Sendable, Hashable, Codable {
     public let styleName: String
     public let type: CADDimensionType
@@ -38,6 +61,7 @@ public struct CADDimensionMetadata: Sendable, Hashable, Codable {
     // like textRotationAngle: EAB and DXF export do not persist it, but DXF
     // import maps a non-default group 52 here so foreign obliques render.
     public var obliqueAngle: Double?
+    public var dimBreaks: [DimBreak] = []
     
     // Group 70 flags (bit 6 = ordinate X-type, bit 7 = text is user-positioned, etc.)
     public let flags: Int
@@ -58,6 +82,7 @@ public struct CADDimensionMetadata: Sendable, Hashable, Codable {
         rotationAngle: Double = 0,
         textRotationAngle: Double? = nil,
         obliqueAngle: Double? = nil,
+        dimBreaks: [DimBreak] = [],
         flags: Int = 0,
         styleOverrides: CADDimensionStyle? = nil
     ) {
@@ -74,6 +99,7 @@ public struct CADDimensionMetadata: Sendable, Hashable, Codable {
         self.rotationAngle = rotationAngle
         self.textRotationAngle = textRotationAngle
         self.obliqueAngle = obliqueAngle
+        self.dimBreaks = dimBreaks
         self.flags = flags
         self.styleOverrides = styleOverrides
     }
@@ -96,6 +122,7 @@ public struct CADDimensionMetadata: Sendable, Hashable, Codable {
             rotationAngle: rotationAngle,
             textRotationAngle: textRotationAngle,
             obliqueAngle: obliqueAngle,
+            dimBreaks: dimBreaks,
             flags: flags,
             styleOverrides: styleOverrides)
     }

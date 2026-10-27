@@ -153,62 +153,134 @@ public enum DimensionPrimitives {
         )
     }
 
+    /// Fractional gaps on one regenerated line, sorted and normalized.
+    public nonisolated static func gaps(
+        for line: DimBreakLine, in breaks: [DimBreak]
+    ) -> [(Double, Double)] {
+        breaks.filter { $0.line == line }.map { (min($0.t0, $0.t1), max($0.t0, $0.t1)) }
+    }
+
+    /// Splits a segment around fractional gaps. Gaps are clamped to [0, 1],
+    /// empties dropped, overlaps merged by the cursor walk. No gaps returns
+    /// the whole segment, full cover returns [].
+    public nonisolated static func splitSegment(
+        start: Vector3, end: Vector3, gaps: [(Double, Double)]
+    ) -> [(Vector3, Vector3)] {
+        let spans = gaps.compactMap { (a, b) -> (Double, Double)? in
+            let lo = max(0, min(a, b))
+            let hi = min(1, max(a, b))
+            guard hi - lo > 1e-9 else { return nil }
+            return (lo, hi)
+        }.sorted { $0.0 < $1.0 }
+        guard !spans.isEmpty else { return [(start, end)] }
+        func point(at t: Double) -> Vector3 {
+            Vector3(
+                x: start.x + (end.x - start.x) * t,
+                y: start.y + (end.y - start.y) * t,
+                z: start.z + (end.z - start.z) * t)
+        }
+        var pieces: [(Vector3, Vector3)] = []
+        var cursor = 0.0
+        for (lo, hi) in spans {
+            if lo > cursor + 1e-9 {
+                pieces.append((point(at: cursor), point(at: lo)))
+            }
+            cursor = max(cursor, hi)
+        }
+        if cursor < 1 - 1e-9 {
+            pieces.append((point(at: cursor), point(at: 1)))
+        }
+        return pieces
+    }
+
     /// Generates two extension lines. With an obliquing angle (radians from
     /// the dimension-line direction, nil = perpendicular) both lines slant
     /// in parallel toward the dimension-line direction. Nil reproduces the
     /// historical perpendicular behavior exactly.
-    public nonisolated static func extensionLines(feature1: Vector3, feature2: Vector3, dimLineStart: Vector3, dimLineEnd: Vector3, style: CADDimensionStyle, color: ColorRGBA, obliqueAngle: Double? = nil) -> [CADPrimitive] {
+    /// Extension direction for one side: the 3D feature-to-dimline ray by
+    /// default (historical behavior), slanted in-plane toward the
+    /// dimension-line direction under oblique (obliquing assumes planar
+    /// dimensions, which is all the builders produce).
+    nonisolated static func extDirection(
+        feature: Vector3, dimPoint: Vector3,
+        along: Vector3?, obliqueAngle: Double?
+    ) -> Vector3? {
+        let dx = dimPoint.x - feature.x
+        let dy = dimPoint.y - feature.y
+        let dz = dimPoint.z - feature.z
+        let len = sqrt(dx * dx + dy * dy + dz * dz)
+        guard len > 0 else { return nil }
+        let straight = Vector3(x: dx / len, y: dy / len, z: dz / len)
+        guard let phi = obliqueAngle, let u = along else { return straight }
+        var n = Vector3(x: -u.y, y: u.x, z: 0)
+        if n.x * straight.x + n.y * straight.y < 0 { n = Vector3(x: -n.x, y: -n.y, z: 0) }
+        let slanted = Vector3(x: u.x * cos(phi) + n.x * sin(phi), y: u.y * cos(phi) + n.y * sin(phi), z: 0)
+        let slantedLen = hypot(slanted.x, slanted.y)
+        guard slantedLen > 0 else { return straight }
+        return Vector3(x: slanted.x / slantedLen, y: slanted.y / slantedLen, z: 0)
+    }
+
+    /// Drawn endpoints of one extension line (offset/extend-adjusted) plus
+    /// its unit direction. Nil when feature meets dimPoint. Shared by the
+    /// regen path and DIMBREAK so gaps land on the exact drawn segments.
+    nonisolated static func extensionEndpoints(
+        feature: Vector3, dimPoint: Vector3,
+        along: Vector3?, style: CADDimensionStyle, obliqueAngle: Double?
+    ) -> (start: Vector3, end: Vector3, direction: Vector3)? {
+        guard let dir = extDirection(
+            feature: feature, dimPoint: dimPoint,
+            along: along, obliqueAngle: obliqueAngle) else {
+            return nil
+        }
+        let start = Vector3(
+            x: feature.x + dir.x * style.extensionLineOffset,
+            y: feature.y + dir.y * style.extensionLineOffset,
+            z: feature.z)
+        let end = Vector3(
+            x: dimPoint.x + dir.x * style.extensionLineExtend,
+            y: dimPoint.y + dir.y * style.extensionLineExtend,
+            z: dimPoint.z)
+        return (start, end, dir)
+    }
+
+    /// Unit direction along a dimension line, or nil for a degenerate span.
+    public nonisolated static func dimLineDirection(
+        from dimStart: Vector3, to dimEnd: Vector3
+    ) -> Vector3? {
+        let dx = dimEnd.x - dimStart.x
+        let dy = dimEnd.y - dimStart.y
+        let len = hypot(dx, dy)
+        guard len > 0 else { return nil }
+        return Vector3(x: dx / len, y: dy / len, z: 0)
+    }
+
+    public nonisolated static func extensionLines(feature1: Vector3, feature2: Vector3, dimLineStart: Vector3, dimLineEnd: Vector3, style: CADDimensionStyle, color: ColorRGBA, obliqueAngle: Double? = nil, firstGaps: [(Double, Double)] = [], secondGaps: [(Double, Double)] = []) -> [CADPrimitive] {
         var primitives: [CADPrimitive] = []
+        let along = dimLineDirection(from: dimLineStart, to: dimLineEnd)
 
-        let span = Vector3(x: dimLineEnd.x - dimLineStart.x, y: dimLineEnd.y - dimLineStart.y, z: 0)
-        let spanLen = hypot(span.x, span.y)
-        let along: Vector3? = spanLen > 0 ? Vector3(x: span.x / spanLen, y: span.y / spanLen, z: 0) : nil
-
-        /// Extension direction for one side: the 3D feature-to-dimline ray by
-        /// default (historical behavior), slanted in-plane toward the
-        /// dimension-line direction under oblique (obliquing assumes planar
-        /// dimensions, which is all the builders produce).
-        func extDir(feature: Vector3, dimPoint: Vector3) -> Vector3? {
-            let dx = dimPoint.x - feature.x
-            let dy = dimPoint.y - feature.y
-            let dz = dimPoint.z - feature.z
-            let len = sqrt(dx * dx + dy * dy + dz * dz)
-            guard len > 0 else { return nil }
-            let straight = Vector3(x: dx / len, y: dy / len, z: dz / len)
-            guard let phi = obliqueAngle, let u = along else { return straight }
-            var n = Vector3(x: -u.y, y: u.x, z: 0)
-            if n.x * straight.x + n.y * straight.y < 0 { n = Vector3(x: -n.x, y: -n.y, z: 0) }
-            let slanted = Vector3(x: u.x * cos(phi) + n.x * sin(phi), y: u.y * cos(phi) + n.y * sin(phi), z: 0)
-            let slantedLen = hypot(slanted.x, slanted.y)
-            guard slantedLen > 0 else { return straight }
-            return Vector3(x: slanted.x / slantedLen, y: slanted.y / slantedLen, z: 0)
+        if !style.suppressFirstExtension,
+           let first = extensionEndpoints(
+               feature: feature1, dimPoint: dimLineStart, along: along,
+               style: style, obliqueAngle: obliqueAngle) {
+            for piece in splitSegment(start: first.start, end: first.end, gaps: firstGaps) {
+                primitives.append(.line(start: piece.0, end: piece.1, color: color))
+            }
         }
 
-        if !style.suppressFirstExtension, let n1 = extDir(feature: feature1, dimPoint: dimLineStart) {
-            let start = Vector3(x: feature1.x + n1.x * style.extensionLineOffset,
-                                y: feature1.y + n1.y * style.extensionLineOffset,
-                                z: feature1.z)
-            let end = Vector3(x: dimLineStart.x + n1.x * style.extensionLineExtend,
-                              y: dimLineStart.y + n1.y * style.extensionLineExtend,
-                              z: dimLineStart.z)
-            primitives.append(.line(start: start, end: end, color: color))
-        }
-
-        if !style.suppressSecondExtension, let n2 = extDir(feature: feature2, dimPoint: dimLineEnd) {
-            let start = Vector3(x: feature2.x + n2.x * style.extensionLineOffset,
-                                y: feature2.y + n2.y * style.extensionLineOffset,
-                                z: feature2.z)
-            let end = Vector3(x: dimLineEnd.x + n2.x * style.extensionLineExtend,
-                              y: dimLineEnd.y + n2.y * style.extensionLineExtend,
-                              z: dimLineEnd.z)
-            primitives.append(.line(start: start, end: end, color: color))
+        if !style.suppressSecondExtension,
+           let second = extensionEndpoints(
+               feature: feature2, dimPoint: dimLineEnd, along: along,
+               style: style, obliqueAngle: obliqueAngle) {
+            for piece in splitSegment(start: second.start, end: second.end, gaps: secondGaps) {
+                primitives.append(.line(start: piece.0, end: piece.1, color: color))
+            }
         }
 
         return primitives
     }
     
     /// Generates dimension line with arrows/ticks.
-    public static func dimensionLine(from: Vector3, to: Vector3, arrowAtStart: Bool, arrowAtEnd: Bool, style: CADDimensionStyle, color: ColorRGBA) -> [CADPrimitive] {
+    public static func dimensionLine(from: Vector3, to: Vector3, arrowAtStart: Bool, arrowAtEnd: Bool, style: CADDimensionStyle, color: ColorRGBA, gaps: [(Double, Double)] = []) -> [CADPrimitive] {
         var primitives: [CADPrimitive] = []
         let dir = Vector3(x: to.x - from.x, y: to.y - from.y, z: to.z - from.z).normalized
         
@@ -235,7 +307,9 @@ public enum DimensionPrimitives {
         if !style.suppressFirstDimLine || !style.suppressSecondDimLine {
             // For simplicity, we just draw the whole line if either is not suppressed
             // Realistically we'd split the line at the text midpoint, but for now we draw a single line
-            primitives.append(.line(start: lineStart, end: lineEnd, color: color))
+            for piece in splitSegment(start: lineStart, end: lineEnd, gaps: gaps) {
+                primitives.append(.line(start: piece.0, end: piece.1, color: color))
+            }
         }
         
         return primitives
@@ -347,8 +421,8 @@ public enum DimensionPrimitives {
                 y: dir.y * p2Along + perp.y * lineOffset,
                 z: dimLinePos.z)
             
-            primitives.append(contentsOf: extensionLines(feature1: p1, feature2: p2, dimLineStart: dimStart, dimLineEnd: dimEnd, style: style, color: color, obliqueAngle: metadata.obliqueAngle))
-            primitives.append(contentsOf: dimensionLine(from: dimStart, to: dimEnd, arrowAtStart: true, arrowAtEnd: true, style: style, color: color))
+            primitives.append(contentsOf: extensionLines(feature1: p1, feature2: p2, dimLineStart: dimStart, dimLineEnd: dimEnd, style: style, color: color, obliqueAngle: metadata.obliqueAngle, firstGaps: gaps(for: .firstExtension, in: metadata.dimBreaks), secondGaps: gaps(for: .secondExtension, in: metadata.dimBreaks)))
+            primitives.append(contentsOf: dimensionLine(from: dimStart, to: dimEnd, arrowAtStart: true, arrowAtEnd: true, style: style, color: color, gaps: gaps(for: .dimension, in: metadata.dimBreaks)))
             primitives.append(dimensionText(position: metadata.textMidpoint, value: valueStr, rotation: textRotation(for: metadata, fallback: angle), style: style, color: color))
 
         case .aligned:
@@ -366,8 +440,8 @@ public enum DimensionPrimitives {
             let dimStart = Vector3(x: p1.x + perp.x * offset, y: p1.y + perp.y * offset, z: 0)
             let dimEnd = Vector3(x: p2.x + perp.x * offset, y: p2.y + perp.y * offset, z: 0)
             
-            primitives.append(contentsOf: extensionLines(feature1: p1, feature2: p2, dimLineStart: dimStart, dimLineEnd: dimEnd, style: style, color: color, obliqueAngle: metadata.obliqueAngle))
-            primitives.append(contentsOf: dimensionLine(from: dimStart, to: dimEnd, arrowAtStart: true, arrowAtEnd: true, style: style, color: color))
+            primitives.append(contentsOf: extensionLines(feature1: p1, feature2: p2, dimLineStart: dimStart, dimLineEnd: dimEnd, style: style, color: color, obliqueAngle: metadata.obliqueAngle, firstGaps: gaps(for: .firstExtension, in: metadata.dimBreaks), secondGaps: gaps(for: .secondExtension, in: metadata.dimBreaks)))
+            primitives.append(contentsOf: dimensionLine(from: dimStart, to: dimEnd, arrowAtStart: true, arrowAtEnd: true, style: style, color: color, gaps: gaps(for: .dimension, in: metadata.dimBreaks)))
             primitives.append(dimensionText(position: metadata.textMidpoint, value: valueStr, rotation: textRotation(for: metadata, fallback: angle), style: style, color: color))
 
         case .angular:
