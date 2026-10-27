@@ -653,8 +653,63 @@ public enum EABWriter {
             serializePrimitiveXData(
                 isXrefBlock ? [:] : block.primitiveXData,
                 geometryCount: isXrefBlock ? 0 : block.geometry.count, to: w)
+            // Attribute definitions (EAB v22).
+            serializeAttributeDefinitions(
+                isXrefBlock ? [] : block.attributeDefinitions, to: w)
         }
         return w.build()
+    }
+
+    private static func serializeAttributeDefinitions(
+        _ defs: [CADAttributeDefinition], to w: BinaryWriter
+    ) {
+        w.writeUInt32(UInt32(defs.count))
+        for def in defs {
+            w.writeString(def.tag)
+            w.writeString(def.prompt)
+            w.writeString(def.defaultValue)
+            w.writeFloat64(def.position.x)
+            w.writeFloat64(def.position.y)
+            w.writeFloat64(def.position.z)
+            w.writeFloat64(def.height)
+            w.writeFloat64(def.rotation)
+            w.writeString(def.style ?? "")
+            w.writeInt32(Int32(def.alignH))
+            w.writeInt32(Int32(def.alignV))
+            w.writeInt32(Int32(def.flags))
+            w.writeString(def.layerName ?? "")
+        }
+    }
+
+    private static func serializeAttributeValues(
+        _ values: [String: CADAttributeValue], to w: BinaryWriter
+    ) {
+        let ordered = values.sorted(by: { $0.key < $1.key })
+        w.writeUInt32(UInt32(ordered.count))
+        for (key, value) in ordered {
+            w.writeString(key)
+            w.writeString(value.value)
+            if let position = value.position {
+                w.writeUInt8(1)
+                w.writeFloat64(position.x)
+                w.writeFloat64(position.y)
+                w.writeFloat64(position.z)
+            } else {
+                w.writeUInt8(0)
+            }
+            if let height = value.height {
+                w.writeUInt8(1)
+                w.writeFloat64(height)
+            } else {
+                w.writeUInt8(0)
+            }
+            if let rotation = value.rotation {
+                w.writeUInt8(1)
+                w.writeFloat64(rotation)
+            } else {
+                w.writeUInt8(0)
+            }
+        }
     }
 
     private static func serializePrimitiveXData(
@@ -748,6 +803,7 @@ public enum EABWriter {
             if entity.dimensionMetadata != nil { flags |= 0x08 }
             if entity.arrayData != nil { flags |= 0x10 }
             if entity.leaderData != nil { flags |= 0x20 }
+            if !entity.attributeValues.isEmpty { flags |= 0x40 }
             w.writeUInt8(flags)
             // bbox (local-space)
             if let bb = entity.localBoundingBox {
@@ -786,6 +842,10 @@ public enum EABWriter {
                 let data = (try? JSONEncoder().encode(leader)) ?? Data()
                 w.writeUInt32(UInt32(data.count))
                 w.writeBytes(data)
+            }
+            // Per-insert attribute values (EAB v22, flag 0x40).
+            if flags & 0x40 != 0 {
+                serializeAttributeValues(entity.attributeValues, to: w)
             }
         }
         return w.build()

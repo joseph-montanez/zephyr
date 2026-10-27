@@ -2167,6 +2167,30 @@ public class DXFWriter {
             writeInt(71, ins.rowCount, &out)
             writeDbl(44, ins.colSpace, &out)
             writeDbl(45, ins.rowSpace, &out)
+            if ins.attributesFollow || !ins.attributes.isEmpty {
+                writeInt(66, 1, &out)
+                for text in ins.attributes {
+                    writeAttributeText(
+                        text, isDefinition: false,
+                        handle: allocHandle(), ownerHandle: h, &out)
+                }
+                let seqendHandle = allocHandle()
+                out += "  0\r\nSEQEND\r\n  5\r\n\(seqendHandle)\r\n"
+                if isModern { out += "330\r\n\(h)\r\n100\r\nAcDbEntity\r\n" }
+                writeStr(8, esc(layer: ins.layer), &out)
+            }
+
+        case .aTTDEF:
+            guard let attdef = e as? DXFTextEntity else { return }
+            writeAttributeText(
+                attdef, isDefinition: true,
+                handle: h, ownerHandle: ownerHandle, &out)
+
+        case .aTTRIB:
+            guard let attrib = e as? DXFTextEntity else { return }
+            writeAttributeText(
+                attrib, isDefinition: false,
+                handle: h, ownerHandle: ownerHandle, &out)
 
         case .sOLID:
             guard let sd = e as? DXFSolidEntity else { return }
@@ -2756,6 +2780,36 @@ public class DXFWriter {
         if hasSubclassMarkers { out += "100\r\nAcDbEntity\r\n" }
         writeStr(8, esc(layer: entity.layer), &out)
         writeCommonEntityData(entity, &out)
+    }
+
+    /// Shared ATTDEF/ATTRIB emitter. Coordinates arrive in file space
+    /// (Y-flipped); `angle_p` is file degrees.
+    private func writeAttributeText(
+        _ tx: DXFTextEntity,
+        isDefinition: Bool,
+        handle: String,
+        ownerHandle: String?,
+        _ out: inout String
+    ) {
+        writeEntityHeader(
+            isDefinition ? "ATTDEF" : "ATTRIB",
+            entity: tx, handle: handle, ownerHandle: ownerHandle, &out)
+        out += isDefinition ? "100\r\nAcDbAttributeDefinition\r\n" : "100\r\nAcDbAttribute\r\n"
+        writePoint3(10, tx.basePoint, &out)
+        writeDbl(40, tx.height, &out)
+        writeStr(1, tx.text, &out)
+        writeDbl(50, tx.angle_p, &out)
+        if !tx.style.isEmpty { writeStr(7, tx.style, &out) }
+        writeInt(72, tx.alignH, &out)
+        writeInt(74, tx.alignV, &out)
+        if tx.alignH != 0 || tx.alignV != 0 {
+            writePoint3(11, tx.secPoint, &out)
+        }
+        writeStr(2, tx.attributeTag, &out)
+        if isDefinition, !tx.attributePrompt.isEmpty {
+            writeStr(3, tx.attributePrompt, &out)
+        }
+        writeInt(70, tx.attributeFlags, &out)
     }
 
     private func writeVertex(

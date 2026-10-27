@@ -580,6 +580,9 @@ public enum DXFExporter {
             for prim in block.geometry {
                 writePrimitive(prim, ctx: ctx, layerName: "0", into: &output)
             }
+            for def in block.attributeDefinitions {
+                writeAttributeDefinition(def, ctx: ctx, into: &output)
+            }
             output += "  0\r\nENDBLK\r\n"
             output += "  5\r\n\(eh)\r\n"
             output += "330\r\n\(bh)\r\n"
@@ -617,8 +620,8 @@ public enum DXFExporter {
 
         // Block instances (INSERT)
         if let blockID = entity.blockID, let block = ctx.document.block(for: blockID) {
-            writeInsert(entity: entity, handle: handle, blockName: block.name,
-                        layerName: layerName, into: &output)
+            writeInsert(entity: entity, handle: handle, block: block, blockName: block.name,
+                        layerName: layerName, ctx: ctx, into: &output)
             return
         }
 
@@ -721,7 +724,8 @@ public enum DXFExporter {
     // MARK: - INSERT Entity
 
     private static func writeInsert(entity: CADEntity, handle: String,
-                                     blockName: String, layerName: String,
+                                     block: CADBlock, blockName: String, layerName: String,
+                                     ctx: ExportContext,
                                      into output: inout String) {
         output += "  0\r\nINSERT\r\n"
         output += "  5\r\n\(handle)\r\n"
@@ -742,6 +746,105 @@ public enum DXFExporter {
 
         let rotDeg = entity.transform.rotation * 180.0 / .pi
         if rotDeg != 0.0 { output += " 50\r\n\(dxfDouble(-rotDeg))\r\n" }
+
+        // ATTRIBs follow in definition order, then orphaned values by tag.
+        // The 66 flag mirrors the importer's `attributesFollow` gate.
+        let definedKeys = Set(block.attributeDefinitions.map(\.key))
+        var ordered: [(tag: String, value: CADAttributeValue, def: CADAttributeDefinition?)] = []
+        ordered.reserveCapacity(entity.attributeValues.count)
+        for def in block.attributeDefinitions {
+            guard let value = entity.attributeValues[def.key] else { continue }
+            ordered.append((tag: def.tag, value: value, def: def))
+        }
+        for key in entity.attributeValues.keys.sorted() where !definedKeys.contains(key) {
+            guard let value = entity.attributeValues[key] else { continue }
+            ordered.append((tag: key, value: value, def: nil))
+        }
+        if !ordered.isEmpty {
+            output += " 66\r\n1\r\n"
+            for item in ordered {
+                writeAttribute(item.tag, value: item.value, definition: item.def,
+                               entity: entity, ctx: ctx, into: &output)
+            }
+            output += "  0\r\nSEQEND\r\n"
+            output += "  5\r\n\(ctx.nextHandle())\r\n"
+            output += "100\r\nAcDbEntity\r\n"
+            output += "  8\r\n\(dxfEscape(layerName))\r\n"
+        }
+    }
+
+    // MARK: - ATTDEF / ATTRIB Entities
+
+    /// Writes a block-owned attribute definition (block space, Y-flipped
+    /// like all other block members).
+    private static func writeAttributeDefinition(
+        _ def: CADAttributeDefinition, ctx: ExportContext, into output: inout String
+    ) {
+        writeEntityHeader(
+            entityType: "ATTDEF", subclass: "AcDbAttributeDefinition",
+            handle: ctx.nextHandle(),
+            layerName: dxfEscape(def.layerName ?? "0"), into: &output)
+        output += " 10\r\n\(dxfDouble(def.position.x))\r\n"
+        output += " 20\r\n\(dxfDouble(-def.position.y))\r\n"
+        output += " 30\r\n\(dxfDouble(def.position.z))\r\n"
+        output += " 40\r\n\(dxfDouble(def.height))\r\n"
+        output += "  1\r\n\(dxfEscape(def.defaultValue))\r\n"
+        let rotDeg = def.rotation * 180.0 / .pi
+        if rotDeg != 0.0 { output += " 50\r\n\(dxfDouble(-rotDeg))\r\n" }
+        if let s = def.style { output += "  7\r\n\(dxfEscape(s))\r\n" }
+        if def.alignH != 0 || def.alignV != 0 {
+            output += " 72\r\n\(def.alignH)\r\n"
+            output += " 74\r\n\(def.alignV)\r\n"
+            output += " 11\r\n\(dxfDouble(def.position.x))\r\n"
+            output += " 21\r\n\(dxfDouble(-def.position.y))\r\n"
+            output += " 31\r\n\(dxfDouble(def.position.z))\r\n"
+        }
+        output += "  2\r\n\(dxfEscape(def.tag))\r\n"
+        if !def.prompt.isEmpty { output += "  3\r\n\(dxfEscape(def.prompt))\r\n" }
+        output += " 70\r\n\(def.flags)\r\n"
+    }
+
+    /// Writes one per-INSERT attribute value in world space. Placement is
+    /// the definition's block-space placement carried through the insert
+    /// transform (mirroring the importer's inverse computation so a
+    /// no-edit round-trip is exact).
+    private static func writeAttribute(
+        _ tag: String, value: CADAttributeValue,
+        definition: CADAttributeDefinition?,
+        entity: CADEntity, ctx: ExportContext,
+        into output: inout String
+    ) {
+        let blockPos = value.position ?? definition?.position ?? .zero
+        let worldPos = entity.transform.transformPoint(blockPos)
+        let scale = entity.transform.scale
+        let heightScale = max(abs(scale.x), abs(scale.y), 1e-12)
+        let blockHeight = value.height ?? definition?.height ?? 2.5
+        let worldRotation = entity.transform.rotation
+            + (value.rotation ?? definition?.rotation ?? 0)
+        writeEntityHeader(
+            entityType: "ATTRIB", subclass: "AcDbAttribute",
+            handle: ctx.nextHandle(),
+            layerName: dxfEscape(definition?.layerName ?? "0"), into: &output)
+        output += " 10\r\n\(dxfDouble(worldPos.x))\r\n"
+        output += " 20\r\n\(dxfDouble(-worldPos.y))\r\n"
+        output += " 30\r\n\(dxfDouble(worldPos.z))\r\n"
+        output += " 40\r\n\(dxfDouble(blockHeight * heightScale))\r\n"
+        output += "  1\r\n\(dxfEscape(value.value))\r\n"
+        let rotDeg = worldRotation * 180.0 / .pi
+        if rotDeg != 0.0 { output += " 50\r\n\(dxfDouble(-rotDeg))\r\n" }
+        let style = definition?.style
+        if let s = style { output += "  7\r\n\(dxfEscape(s))\r\n" }
+        let alignH = definition?.alignH ?? 0
+        let alignV = definition?.alignV ?? 0
+        if alignH != 0 || alignV != 0 {
+            output += " 72\r\n\(alignH)\r\n"
+            output += " 74\r\n\(alignV)\r\n"
+            output += " 11\r\n\(dxfDouble(worldPos.x))\r\n"
+            output += " 21\r\n\(dxfDouble(-worldPos.y))\r\n"
+            output += " 31\r\n\(dxfDouble(worldPos.z))\r\n"
+        }
+        output += "  2\r\n\(dxfEscape(tag))\r\n"
+        output += " 70\r\n\(definition?.flags ?? 0)\r\n"
     }
 
     // MARK: - Entity header helper

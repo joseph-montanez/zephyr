@@ -83,7 +83,9 @@ public let EABArchiveMagic: UInt32 = 0x41424145  // "EABA" in little-endian
 /// Version 20 adds the mediaDefinitions section (ATTACH image/PDF refs).
 /// Version 21 stores dimension styles raw with overallScale (DIMSCALE);
 /// v20-era readers would misrender the unscaled values, so they reject v21.
-public let EABVersion: UInt32 = 21
+/// Version 22 persists block attribute definitions (ATTDEF) and per-insert
+/// attribute values (ATTRIB).
+public let EABVersion: UInt32 = 22
 /// First version whose strings may use the 0xFFFF + UInt32 long-length form.
 public let EABVersionLongStrings: UInt32 = 18
 

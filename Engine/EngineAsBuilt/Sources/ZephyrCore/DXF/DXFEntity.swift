@@ -710,6 +710,7 @@ open class DXFTextEntity: DXFLineEntity {
     public var isAttribute: Bool
     public var isAttributeDefinition: Bool
     public var attributeTag: String
+    public var attributePrompt: String
     public var attributeFlags: Int
 
     public override init(eType: DXFEType = .tEXT) {
@@ -728,6 +729,7 @@ open class DXFTextEntity: DXFLineEntity {
         self.isAttribute = false
         self.isAttributeDefinition = false
         self.attributeTag = ""
+        self.attributePrompt = ""
         self.attributeFlags = 0
         super.init(eType: eType)
     }

@@ -1855,6 +1855,73 @@ public final class CADDocument {
         invalidateEntityGrid()   // instance world boxes changed
     }
 
+    // MARK: - Block Attributes (ATTDEF / ATTEDIT / ATTSYNC)
+
+    /// Adds an attribute definition to an edit-side block (never an xref).
+    /// Returns false when the block is missing, an xref, or the tag exists.
+    @discardableResult
+    public func addAttributeDefinition(
+        _ definition: CADAttributeDefinition, to blockHandle: UUID
+    ) -> Bool {
+        guard var block = blockTable[blockHandle], !block.isXref else { return false }
+        let key = definition.key
+        guard !key.isEmpty,
+              !block.attributeDefinitions.contains(where: { $0.key == key }) else {
+            return false
+        }
+        pushUndo()
+        block.attributeDefinitions.append(definition)
+        blockTable[blockHandle] = block
+        markEdited(regenerate: true)
+        return true
+    }
+
+    /// ATTSYNC for one insert: missing tags gain defaults, orphaned tags
+    /// are dropped, edited values survive, placement overrides reset.
+    /// Returns false when the entity is not an insert of a local block.
+    @discardableResult
+    public func syncAttributes(for handle: UUID) -> Bool {
+        guard var entity = entityRegistry[handle],
+              let blockID = entity.blockID,
+              let block = blockTable[blockID],
+              !block.isXref else { return false }
+        pushUndo()
+        entity.attributeValues = CADAttributeSync.apply(
+            definitions: block.attributeDefinitions, to: entity.attributeValues)
+        entityRegistry[handle] = preparedEntityForStorage(entity)
+        refreshPathArrays(dependingOn: handle)
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return true
+    }
+
+    /// ATTSYNC across inserts: every insert of `blockHandle` (or every
+    /// insert in the document when nil). One undo entry. Returns the
+    /// synced insert count.
+    @discardableResult
+    public func syncAttributesForBlock(_ blockHandle: UUID? = nil) -> Int {
+        let targets = entityRegistry.values.filter {
+            guard let bid = $0.blockID else { return false }
+            if let wanted = blockHandle { return bid == wanted }
+            return true
+        }
+        guard !targets.isEmpty else { return 0 }
+        pushUndo()
+        var synced = 0
+        for var entity in targets {
+            guard let bid = entity.blockID,
+                  let block = blockTable[bid], !block.isXref else { continue }
+            entity.attributeValues = CADAttributeSync.apply(
+                definitions: block.attributeDefinitions, to: entity.attributeValues)
+            entityRegistry[entity.handle] = preparedEntityForStorage(entity)
+            refreshPathArrays(dependingOn: entity.handle)
+            synced += 1
+        }
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return synced
+    }
+
     // MARK: - Entity Operations
 
     public func addEntity(_ entity: CADEntity) {
@@ -2155,7 +2222,7 @@ public final class CADDocument {
                 continue
             }
 
-            let geometry: [CADPrimitive]
+            var geometry: [CADPrimitive]
             let primitiveStyles: [Int: CADPrimitiveStyle]
             let primitiveXData: [Int: [String: XDataValue]]
             if let blockID = entity.blockID {
@@ -2184,10 +2251,18 @@ public final class CADDocument {
                     }
                 }
                 guard let block = effectiveBlock(for: blockID),
-                      !block.geometry.isEmpty else { continue }
+                      !block.geometry.isEmpty || !block.attributeDefinitions.isEmpty
+                else { continue }
                 geometry = block.geometry
                 primitiveStyles = block.primitiveStyles
                 primitiveXData = block.primitiveXData
+                // Attribute value text participates in extents like any
+                // other visible block member.
+                if !block.attributeDefinitions.isEmpty {
+                    geometry += CADAttributeDisplay.textPrimitives(
+                        definitions: block.attributeDefinitions,
+                        values: entity.attributeValues)
+                }
             } else {
                 guard let localGeometry = entity.localGeometry,
                       !localGeometry.isEmpty else { continue }
@@ -3263,10 +3338,19 @@ public final class CADDocument {
             // 2. Block Reference (non-array)
             if let blockID = entity.blockID, entity.arrayData == nil {
                 if blockTable[blockID]?.isXref == true { continue }
-                guard let block = effectiveBlock(for: blockID), !block.geometry.isEmpty else { continue }
+                guard let block = effectiveBlock(for: blockID),
+                      !block.geometry.isEmpty || !block.attributeDefinitions.isEmpty
+                else { continue }
 
                 handlesToRemove.insert(entity.handle)
                 for (index, prim) in block.geometry.enumerated() {
+                    // Baked ATTDEF placeholders are replaced by live
+                    // attribute text below once definitions exist.
+                    if !block.attributeDefinitions.isEmpty,
+                       case .string(let type) = block.primitiveXData[index]?["dxf.attributeType"],
+                       type.caseInsensitiveCompare("ATTDEF") == .orderedSame {
+                        continue
+                    }
                     var layerID = entity.layerID
                     if let style = block.primitiveStyles[index],
                        let l = layersView.first(where: { $0.name == style.layerName }) {
@@ -3284,6 +3368,29 @@ public final class CADDocument {
                             drawOrder: entity.drawOrder
                         )
                         entitiesToAdd.append(loose)
+                    }
+                }
+                if !block.attributeDefinitions.isEmpty {
+                    for item in CADAttributeDisplay.styledPrimitives(
+                        definitions: block.attributeDefinitions,
+                        values: entity.attributeValues) {
+                        var layerID = entity.layerID
+                        if let name = item.layerName,
+                           let l = layersView.first(where: { $0.name == name }) {
+                            layerID = l.handle
+                        }
+                        let transformed = CADGeometryMath.transformPrimitives(
+                            [item.primitive], by: entity.transform)
+                        for tp in transformed {
+                            let loose = CADEntity(
+                                layerID: layerID,
+                                localGeometry: [tp],
+                                transform: .identity,
+                                xdata: entity.xdata,
+                                drawOrder: entity.drawOrder
+                            )
+                            entitiesToAdd.append(loose)
+                        }
                     }
                 }
                 continue

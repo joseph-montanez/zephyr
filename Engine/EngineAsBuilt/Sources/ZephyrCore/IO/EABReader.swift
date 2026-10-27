@@ -788,15 +788,73 @@ public enum EABReader {
                 ? r.readUInt8() != 0
                 : name.uppercased().hasPrefix("*T")
             let primitiveXData = version >= 12 ? try parsePrimitiveXData(r) : [:]
+            let attributeDefinitions = version >= 22
+                ? try parseAttributeDefinitions(r) : []
             var block = CADBlock(handle: handle, name: name, geometry: geometry,
                                  primitiveStyles: primitiveStyles,
                                  primitiveXData: primitiveXData,
                                  dxfFlags: dxfFlags,
-                                 isInternalTableDisplayBlock: isInternalTableDisplayBlock)
+                                 isInternalTableDisplayBlock: isInternalTableDisplayBlock,
+                                 attributeDefinitions: attributeDefinitions)
             block.localBoundingBox = bbox
             blocks.append(block)
         }
         return blocks
+    }
+
+    private static func parseAttributeDefinitions(
+        _ r: BinaryReader
+    ) throws -> [CADAttributeDefinition] {
+        let count = safeCount(r.readUInt32(), limit: maxSafeStyleCount, label: "attributeDefinitions")
+        var defs: [CADAttributeDefinition] = []
+        defs.reserveCapacity(count)
+        for _ in 0..<count {
+            let tag = r.readString()
+            let prompt = r.readString()
+            let defaultValue = r.readString()
+            let position = Vector3(
+                x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+            let height = r.readFloat64()
+            let rotation = r.readFloat64()
+            let styleRaw = r.readString()
+            let alignH = Int(r.readInt32())
+            let alignV = Int(r.readInt32())
+            let flags = Int(r.readInt32())
+            let layerRaw = r.readString()
+            defs.append(CADAttributeDefinition(
+                tag: tag,
+                prompt: prompt,
+                defaultValue: defaultValue,
+                position: position,
+                height: height,
+                rotation: rotation,
+                style: styleRaw.isEmpty ? nil : styleRaw,
+                alignH: alignH,
+                alignV: alignV,
+                flags: flags,
+                layerName: layerRaw.isEmpty ? nil : layerRaw))
+        }
+        return defs
+    }
+
+    private static func parseAttributeValues(
+        _ r: BinaryReader
+    ) throws -> [String: CADAttributeValue] {
+        let count = safeCount(r.readUInt32(), limit: maxSafeStyleCount, label: "attributeValues")
+        var values: [String: CADAttributeValue] = [:]
+        values.reserveCapacity(count)
+        for _ in 0..<count {
+            let key = r.readString()
+            let value = r.readString()
+            let position: Vector3? = r.readUInt8() != 0
+                ? Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                : nil
+            let height: Double? = r.readUInt8() != 0 ? r.readFloat64() : nil
+            let rotation: Double? = r.readUInt8() != 0 ? r.readFloat64() : nil
+            values[key] = CADAttributeValue(
+                value: value, position: position, height: height, rotation: rotation)
+        }
+        return values
     }
 
     private static func parsePrimitiveXData(
@@ -887,6 +945,7 @@ public enum EABReader {
             let hasDimensionMetadata = (flags & 0x08) != 0
             let hasArrayData = version >= 14 && (flags & 0x10) != 0
             let hasLeaderData = version >= 15 && (flags & 0x20) != 0
+            let hasAttributeValues = version >= 22 && (flags & 0x40) != 0
 
             // bbox
             let bminX = Double(r.readFloat32())
@@ -947,12 +1006,18 @@ public enum EABReader {
                 }
             }
 
+            var attributeValues: [String: CADAttributeValue] = [:]
+            if hasAttributeValues {
+                attributeValues = try parseAttributeValues(r)
+            }
+
             var entity = CADEntity(
                 handle: handle, layerID: layerID, blockID: blockID,
                 localGeometry: localGeom, dimensionMetadata: dimensionMetadataBox,
                 leaderData: leaderData,
                 arrayData: arrayData,
                 transform: transform, xdata: xdata,
+                attributeValues: attributeValues,
                 drawOrder: drawOrder,
                 localBoundingBox: isEmptyBBox ? nil : bbox
             )

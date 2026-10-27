@@ -954,6 +954,8 @@ extension DXFReader {
             case 1:   e.text = decode(v)
             case 2 where isAttribute || isAttributeDefinition:
                 e.attributeTag = decode(v)
+            case 3 where isAttributeDefinition:
+                e.attributePrompt = decode(v)
             case 7:   e.style = decode(v)
             case 10:  e.basePoint.x = d(v)
             case 20:  e.basePoint.y = d(v)

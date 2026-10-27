@@ -236,13 +236,20 @@ public final class InsertCommand: FeatureCommand {
         guard let blockID else { stage = .done; return }
         let layerID = engine.document.activeLayerID
             ?? engine.document.allLayers.first?.handle ?? UUID()
-        let entity = CADEntity(
+        var entity = CADEntity(
             layerID: layerID,
             blockID: blockID,
             transform: DrawingFileInsert.insertionTransform(
                 point: insertionPoint,
                 scaleX: scaleX, scaleY: scaleY, scaleZ: scaleZ,
                 rotationDegrees: rotationDegrees))
+        // New inserts start ATTSYNC-clean: every defined tag present
+        // with its default value, under the same single undo entry.
+        if let block = engine.document.block(for: blockID),
+           !block.attributeDefinitions.isEmpty {
+            entity.attributeValues = CADAttributeSync.apply(
+                definitions: block.attributeDefinitions, to: [:])
+        }
         engine.document.addEntity(entity)
         print("[CAD] Inserted block '\(blockName)' at (\(insertionPoint.x), \(insertionPoint.y))")
         stage = .done

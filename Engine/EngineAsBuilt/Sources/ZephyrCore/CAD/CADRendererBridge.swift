@@ -691,6 +691,23 @@ public final class CADRendererBridge {
                 primitiveXData = [:]
             }
 
+            // Block attributes: value text synthesized from the block's
+            // definitions so ATTEDIT/ATTSYNC results display without
+            // touching shared definition geometry.
+            if let bid = entity.blockID,
+               let block = snapshot.blocks[bid],
+               !block.attributeDefinitions.isEmpty {
+                for item in CADAttributeDisplay.styledPrimitives(
+                    definitions: block.attributeDefinitions,
+                    values: entity.attributeValues) {
+                    if let layer = item.layerName, !layer.isEmpty {
+                        primitiveStyles[geometry.count] = CADPrimitiveStyle(
+                            layerName: layer)
+                    }
+                    geometry.append(item.primitive)
+                }
+            }
+
             // Xrefs are exempt from SIMPLIFY collapse: a floorplan must
             // not vanish because furniture blocks are simplified.
             let isXrefEntity = entity.blockID.map {

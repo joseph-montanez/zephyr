@@ -742,6 +742,10 @@ public struct CADBlock: Hashable, Sendable {
     /// Such blocks are preserved for raw DXF passthrough but never rendered or edited.
     public var isInternalTableDisplayBlock: Bool = false
 
+    /// Attribute definitions (DXF ATTDEF) owned by this block, in authored
+    /// order. Inserts carry per-tag values in `CADEntity.attributeValues`.
+    public var attributeDefinitions: [CADAttributeDefinition] = []
+
     /// Computed ONCE when the block is created or its geometry changes.
     /// Entity instances transform 8 corners of this box instead of iterating raw geometry — O(1).
     public internal(set) var localBoundingBox: BoundingBox3D
@@ -753,7 +757,8 @@ public struct CADBlock: Hashable, Sendable {
                 primitiveXData: [Int: [String: XDataValue]] = [:],
                 dxfFlags: Int = 0,
                 isInternalTableDisplayBlock: Bool = false,
-                xrefDescriptor: CADXrefDescriptor? = nil) {
+                xrefDescriptor: CADXrefDescriptor? = nil,
+                attributeDefinitions: [CADAttributeDefinition] = []) {
         self.handle = handle
         self.name = name
         self.geometry = geometry
@@ -762,6 +767,7 @@ public struct CADBlock: Hashable, Sendable {
         self.dxfFlags = dxfFlags
         self.isInternalTableDisplayBlock = isInternalTableDisplayBlock
         self.xrefDescriptor = xrefDescriptor
+        self.attributeDefinitions = attributeDefinitions
         self.localBoundingBox = CADBlock.computeBoundingBox(from: geometry)
     }
 
@@ -918,6 +924,10 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
 
     public var xdata: [String: XDataValue]
 
+    /// Per-INSERT block-attribute values (DXF ATTRIB), keyed by uppercased
+    /// tag. Only meaningful when `blockID` is non-nil.
+    public var attributeValues: [String: CADAttributeValue] = [:]
+
     /// Draw order for this entity. Lower values are drawn first (back), higher values
     /// are drawn later (front). `Int.max` (default) means "no explicit order" — the
     /// entity sorts after all entities with an explicit order.
@@ -1009,6 +1019,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
                 arrayData: CADArrayData? = nil,
                 transform: Transform3D = .identity,
                 xdata: [String: XDataValue] = [:],
+                attributeValues: [String: CADAttributeValue] = [:],
                 drawOrder: Int = Int.max,
                 localBoundingBox: BoundingBox3D? = nil,
                 anchorPoints: [AnchorPoint] = []) {
@@ -1021,6 +1032,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
         self.arrayData = arrayData
         self.transform = transform
         self.xdata = xdata
+        self.attributeValues = attributeValues
         self.drawOrder = drawOrder
         self.localBoundingBox = localBoundingBox ?? CADEntity.computeLocalBoundingBox(
             blockID: blockID, localGeometry: localGeometry)

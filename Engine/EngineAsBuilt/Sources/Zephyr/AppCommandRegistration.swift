@@ -780,6 +780,21 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { PdfAdjustCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ATTDEF",
+            aliases: ["ATT"],
+            factory: { AttdefCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ATTEDIT",
+            aliases: ["ATE"],
+            factory: { AtteditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ATTSYNC",
+            aliases: [],
+            factory: { AttsyncCommand() }
+        )
         // PICKSTYLE group selection: one member in, whole selectable
         // group in. Resolves the active document per call (tabs switch).
         engine.cadSelection.groupExpansionProvider = { [weak engine] handle in

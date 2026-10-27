@@ -461,10 +461,12 @@ public enum DXFWriterBridge {
         }
 
         var blockNameByID: [UUID: String] = [:]
+        var blockByID: [UUID: CADBlock] = [:]
         var exportedBlockNames = Set<String>()
         for view in orderedViews {
             for block in view.blocks where !block.name.isEmpty && !isSpaceBlockName(block.name) {
                 blockNameByID[block.handle] = block.name
+                blockByID[block.handle] = block
                 let key = block.name.uppercased()
                 guard exportedBlockNames.insert(key).inserted else { continue }
 
@@ -555,6 +557,11 @@ public enum DXFWriterBridge {
                     applyPrimitiveStyle(block.primitiveStyles[index], to: entity)
                     if entity.layer.isEmpty { entity.layer = "0" }
                     exported.entities.append(entity)
+                }
+                // Block attribute definitions travel as ATTDEF members so a
+                // save/reopen round-trip preserves tags, prompts, and defaults.
+                for def in block.attributeDefinitions {
+                    exported.entities.append(attributeDefinitionEntity(def))
                 }
                 writer.addBlock(exported)
             }
@@ -809,6 +816,11 @@ public enum DXFWriterBridge {
                                 role: "M",
                                 payloadChunks: payloadChunks)
                             appendGroupXData(groupNames, to: insert)
+                            Self.attachAttributes(
+                                to: insert, entity: entity,
+                                block: blockByID[blockID],
+                                transform: entity.transform,
+                                layerName: layerName)
                             writer.addEntity(insert, ownerBlockName: ownerBlockName)
                         } else {
                             let instances = array.evaluatedInstances(pathPoints: array.cachedPath)
@@ -826,6 +838,11 @@ public enum DXFWriterBridge {
                                     role: "M",
                                     payloadChunks: payloadChunks)
                                 appendGroupXData(groupNames, to: insert)
+                                Self.attachAttributes(
+                                    to: insert, entity: entity,
+                                    block: blockByID[blockID],
+                                    transform: entity.transform,
+                                    layerName: layerName)
                                 writer.addEntity(insert, ownerBlockName: ownerBlockName)
                             } else {
                                 for (instanceIndex, instance) in instances.enumerated() {
@@ -843,6 +860,11 @@ public enum DXFWriterBridge {
                                         role: instanceIndex == 0 ? "M" : "I",
                                         payloadChunks: instanceIndex == 0 ? payloadChunks : [])
                                     appendGroupXData(groupNames, to: insert)
+                                    Self.attachAttributes(
+                                        to: insert, entity: entity,
+                                        block: blockByID[blockID],
+                                        transform: transform,
+                                        layerName: layerName)
                                     writer.addEntity(insert, ownerBlockName: ownerBlockName)
                                 }
                             }
@@ -856,6 +878,11 @@ public enum DXFWriterBridge {
                         insert.spatialFilter = spatialFilterData(from: entity, transform: entity.transform)
                         applyEntityStyle(entity.xdata, to: insert)
                         appendGroupXData(groupNames, to: insert)
+                        Self.attachAttributes(
+                            to: insert, entity: entity,
+                            block: blockByID[blockID],
+                            transform: entity.transform,
+                            layerName: layerName)
                         writer.addEntity(insert, ownerBlockName: ownerBlockName)
                     }
                     continue
@@ -3061,6 +3088,90 @@ public enum DXFWriterBridge {
         entity.extendedData.append((1000, "G:\(groupID.uuidString)"))
         entity.extendedData.append((1000, "R:\(role)"))
         for chunk in payloadChunks { entity.extendedData.append((1000, chunk)) }
+    }
+
+    /// Builds an ATTDEF file entity from a block-space definition.
+    private static func attributeDefinitionEntity(
+        _ def: CADAttributeDefinition
+    ) -> DXFTextEntity {
+        let entity = DXFTextEntity(eType: .aTTDEF)
+        entity.isAttributeDefinition = true
+        entity.layer = def.layerName ?? "0"
+        entity.basePoint = toDXF(def.position)
+        entity.secPoint = toDXF(def.position)
+        entity.height = def.height
+        entity.hasExplicitHeight = true
+        entity.text = def.defaultValue
+        entity.angle_p = -def.rotation * 180.0 / .pi
+        entity.style = def.style ?? ""
+        entity.alignH = def.alignH
+        entity.alignV = def.alignV
+        entity.attributeTag = def.tag
+        entity.attributePrompt = def.prompt
+        entity.attributeFlags = def.flags
+        return entity
+    }
+
+    /// Attaches per-insert ATTRIB file entities (definition order, then
+    /// orphaned tags) so values survive a save/reopen round-trip.
+    /// Placement mirrors the exporter's world-space computation.
+    private static func attachAttributes(
+        to insert: DXFInsertEntity,
+        entity: CADEntity,
+        block: CADBlock?,
+        transform: Transform3D,
+        layerName: String
+    ) {
+        guard let block,
+              !block.attributeDefinitions.isEmpty,
+              !entity.attributeValues.isEmpty else { return }
+        let xAxis = transformedVector(Vector3(x: 1, y: 0, z: 0), by: transform)
+        let yAxis = transformedVector(Vector3(x: 0, y: 1, z: 0), by: transform)
+        let heightScale = max(xAxis.magnitude, yAxis.magnitude, 1e-12)
+        let entityRotation = atan2(xAxis.y, xAxis.x)
+        func makeAttribute(
+            tag: String, stored: CADAttributeValue,
+            def: CADAttributeDefinition?
+        ) -> DXFTextEntity {
+            let blockPos = stored.position ?? def?.position ?? .zero
+            let blockHeight = stored.height ?? def?.height ?? 2.5
+            let blockRotation = stored.rotation ?? def?.rotation ?? 0
+            let text = DXFTextEntity(eType: .aTTRIB)
+            text.isAttribute = true
+            if let defLayer = def?.layerName,
+               !defLayer.isEmpty, defLayer != "0" {
+                text.layer = defLayer
+            } else {
+                text.layer = layerName
+            }
+            let world = transform.transformPoint(blockPos)
+            text.basePoint = toDXF(world)
+            text.secPoint = toDXF(world)
+            text.height = blockHeight * heightScale
+            text.hasExplicitHeight = true
+            text.text = stored.value
+            text.angle_p = -(entityRotation + blockRotation) * 180.0 / .pi
+            text.style = def?.style ?? ""
+            text.alignH = def?.alignH ?? 0
+            text.alignV = def?.alignV ?? 0
+            text.attributeTag = tag
+            text.attributeFlags = def?.flags ?? 0
+            return text
+        }
+        let definedKeys = Set(block.attributeDefinitions.map(\.key))
+        var ordered: [DXFTextEntity] = []
+        for def in block.attributeDefinitions {
+            guard let stored = entity.attributeValues[def.key] else { continue }
+            ordered.append(makeAttribute(tag: def.tag, stored: stored, def: def))
+        }
+        for key in entity.attributeValues.keys.sorted()
+            where !definedKeys.contains(key) {
+            guard let stored = entity.attributeValues[key] else { continue }
+            ordered.append(makeAttribute(tag: key, stored: stored, def: nil))
+        }
+        guard !ordered.isEmpty else { return }
+        insert.attributes = ordered
+        insert.attributesFollow = true
     }
 
     private static func makeInsert(

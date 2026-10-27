@@ -778,7 +778,8 @@ public enum DXFImporter {
                         return (index, item.xdata)
                     }),
                 dxfFlags: block.flags,
-                isInternalTableDisplayBlock: block.name.hasPrefix("*T"))
+                isInternalTableDisplayBlock: block.name.hasPrefix("*T"),
+                attributeDefinitions: Self.attributeDefinitions(in: block))
             blocks.append(cadBlock)
             blockByID[handle] = cadBlock
         }
@@ -1248,6 +1249,8 @@ public enum DXFImporter {
                     let columns = max(1, insert.colCount)
                     let rows = max(1, insert.rowCount)
                     let blockBase = blockBaseByName[insert.name] ?? .zero
+                    let insertAttributeValues = Self.attributeValues(
+                        from: insert, block: block, blockBase: blockBase)
                     let arrayXData = Self.arrayXData(from: insert)
                     if let groupID = arrayXData.groupID {
                         if arrayXData.role == "I" || seenArrayGroups.contains(groupID) {
@@ -1268,6 +1271,7 @@ public enum DXFImporter {
                                 xdata: Self.entityStyleXData(
                                     from: entity,
                                     globalLineTypeScale: globalLineTypeScale),
+                                attributeValues: insertAttributeValues,
                                 drawOrder: drawOrder,
                                 localBoundingBox: arrayData.localBoundingBox(
                                     source: block.localBoundingBox,
@@ -1299,6 +1303,7 @@ public enum DXFImporter {
                             xdata: Self.entityStyleXData(
                                 from: entity,
                                 globalLineTypeScale: globalLineTypeScale),
+                            attributeValues: insertAttributeValues,
                             drawOrder: drawOrder,
                             localBoundingBox: arrayData.localBoundingBox(
                                 source: block.localBoundingBox))
@@ -1319,6 +1324,7 @@ public enum DXFImporter {
                             xdata: Self.entityStyleXData(
                                 from: entity,
                                 globalLineTypeScale: globalLineTypeScale),
+                            attributeValues: insertAttributeValues,
                             drawOrder: drawOrder,
                             localBoundingBox: block.localBoundingBox)
                         if let clipData = Self.spatialFilterClipData(for: insert, reader: reader) {
@@ -1328,33 +1334,9 @@ public enum DXFImporter {
                         converted.append(cadEnt)
                     }
 
-                    for attribute in insert.attributes
-                        where Self.shouldRenderAttributeEntity(attribute) {
-                        let __pt1188 = DXFProfile.tic()
-                        let primitives = DXFEntityConverter.convertEntityToPrimitives(
-                            attribute,
-                            bylayerColor: nil)
-                        DXFProfile.toc(__pt1188, "  -> convertEntityToPrimitives")
-                        guard !primitives.isEmpty else { continue }
-                        let normalized = Self.normalizedStandaloneTextGeometry(primitives)
-                        let attributeLayerID = attribute.layer.isEmpty
-                            || attribute.layer == "0"
-                            ? layerID(for: insert)
-                            : layerID(for: attribute)
-                        var attributeEntity = CADEntity(
-                            handle: UUID(),
-                            layerID: attributeLayerID,
-                            blockID: nil,
-                            localGeometry: normalized.geometry,
-                            transform: normalized.transform,
-                            xdata: Self.attributeStyleXData(
-                                from: attribute,
-                                insert: insert,
-                                globalLineTypeScale: globalLineTypeScale),
-                            drawOrder: drawOrder)
-                        attributeEntity.drawOrder = drawOrder
-                        converted.append(attributeEntity)
-                    }
+                    // ATTRIBs now live on the insert as values (rendered from
+                    // the block's definitions); they are no longer flattened
+                    // into standalone text entities.
                     continue
                 }
 
@@ -2070,34 +2052,129 @@ public enum DXFImporter {
         return ([localText], transform)
     }
 
-    private static func attributeStyleXData(
-        from attribute: DXFTextEntity,
-        insert: DXFInsertEntity,
-        globalLineTypeScale: Double
-    ) -> [String: XDataValue] {
-        var xdata = entityStyleXData(
-            from: attribute,
-            globalLineTypeScale: globalLineTypeScale)
+    /// Extracts ATTDEF definitions from a block's raw DXF members.
+    /// Placement mirrors the bake path exactly: each definition reuses the
+    /// converted `.text` primitive so Y-flip, rotation, and alignment match
+    /// what the renderer drew before linkage existed. Definitions are
+    /// extracted regardless of the invisible flag (ATTSYNC still manages
+    /// invisible tags); rendering skips them later.
+    private static func attributeDefinitions(
+        in block: DXFBlockEntity
+    ) -> [CADAttributeDefinition] {
+        var defs: [CADAttributeDefinition] = []
+        for entity in block.entities {
+            guard let attdef = entity as? DXFTextEntity,
+                  attdef.eType == .aTTDEF,
+                  !attdef.attributeTag.isEmpty else { continue }
+            defs.append(attributeDefinition(from: attdef))
+        }
+        return defs
+    }
 
-        if attribute.color == 0 {
-            if insert.color24 >= 0 || (insert.color > 0 && insert.color < 256) {
-                let color = DXFColorTable.aciToRGBA(
-                    insert.color,
-                    color24: insert.color24)
-                xdata["dxf.color"] = .string(String(
-                    format: "#%02X%02X%02X", color.r, color.g, color.b))
+    private static func attributeDefinition(
+        from attdef: DXFTextEntity
+    ) -> CADAttributeDefinition {
+        var position = Vector3(
+            x: attdef.basePoint.x, y: -attdef.basePoint.y, z: attdef.basePoint.z)
+        var height = attdef.height > 0 ? attdef.height : 2.5
+        var rotation = -attdef.angle_p * .pi / 180.0
+        var style: String? = attdef.style.isEmpty ? nil : attdef.style
+        var alignH = attdef.alignH
+        var alignV = attdef.alignV
+        var defaultValue = DXFEntityConverter.cleanTextFormatting(
+            attdef.text, entityType: .aTTDEF)
+        let primitives = DXFEntityConverter.convertEntityToPrimitives(
+            attdef,
+            bylayerColor: nil,
+            showAttributeDefinitionTagWhenEmpty: true)
+        if let first = primitives.first,
+           case .text(
+            let pos, let cleaned, let h, let rot, let st, let ah, let av, _, _
+           ) = first {
+            position = pos
+            if h > 0 { height = h }
+            rotation = rot
+            style = st
+            alignH = ah
+            alignV = av
+            defaultValue = cleaned
+        }
+        return CADAttributeDefinition(
+            tag: attdef.attributeTag,
+            prompt: attdef.attributePrompt,
+            defaultValue: defaultValue,
+            position: position,
+            height: height,
+            rotation: rotation,
+            style: style,
+            alignH: alignH,
+            alignV: alignV,
+            flags: attdef.attributeFlags,
+            layerName: attdef.layer.isEmpty ? nil : attdef.layer)
+    }
+
+    /// Collects an INSERT's ATTRIBs as per-tag values. Placement overrides
+    /// are recorded only when the ATTRIB was moved off its definition (the
+    /// ATTSYNC-normalized state stays override-free); orphaned tags keep
+    /// their full placement so no imported content is lost.
+    private static func attributeValues(
+        from insert: DXFInsertEntity,
+        block: CADBlock,
+        blockBase: Vector3
+    ) -> [String: CADAttributeValue] {
+        let isArray = max(1, insert.colCount) > 1 || max(1, insert.rowCount) > 1
+        let mirrored = insert.haveExtrusion && insert.extrusion.z < 0
+        let entityRotation = mirrored ? insert.angle + .pi : -insert.angle
+        let sx = insert.xScale == 0 ? 1.0 : insert.xScale
+        let sy = insert.yScale == 0 ? 1.0 : insert.yScale
+        let heightDivisor = max(abs(sx), abs(sy), 1e-12)
+        let defsByKey = Dictionary(
+            uniqueKeysWithValues: block.attributeDefinitions.map { ($0.key, $0) })
+        var values: [String: CADAttributeValue] = [:]
+        for attribute in insert.attributes {
+            let tag = attribute.attributeTag.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            guard !tag.isEmpty else { continue }
+            let key = tag.uppercased()
+            var placed = CADAttributeValue(value: DXFEntityConverter.cleanTextFormatting(
+                attribute.text, entityType: .aTTRIB))
+            let primitives = DXFEntityConverter.convertEntityToPrimitives(
+                attribute, bylayerColor: nil)
+            if let first = primitives.first,
+               case .text(
+                let pos, let cleaned, let h, let rot, _, _, _, _, _
+               ) = first {
+                placed.value = cleaned
+                if !isArray && !mirrored {
+                    let local = Self.insertTransform(
+                        insert, blockBase: blockBase).inverse().transformPoint(pos)
+                    if let def = defsByKey[key] {
+                        if abs(local.x - def.position.x) > 1e-6
+                            || abs(local.y - def.position.y) > 1e-6
+                            || abs(local.z - def.position.z) > 1e-6 {
+                            placed.position = local
+                        }
+                        if abs(h / heightDivisor - def.height) > 1e-6 {
+                            placed.height = h / heightDivisor
+                        }
+                        var delta = rot - entityRotation - def.rotation
+                        while delta > .pi { delta -= 2 * .pi }
+                        while delta < -.pi { delta += 2 * .pi }
+                        if abs(delta) > 1e-6 {
+                            placed.rotation = rot - entityRotation
+                        }
+                    } else {
+                        placed.position = local
+                        placed.height = h / heightDivisor
+                        placed.rotation = rot - entityRotation
+                    }
+                } else if defsByKey[key] == nil {
+                    placed.height = h > 0 ? h : nil
+                }
             }
+            values[key] = placed
         }
-
-        if attribute.lineType.uppercased() == "BYBLOCK", !insert.lineType.isEmpty {
-            xdata["dxf.lineType"] = .string(insert.lineType)
-        }
-        if attribute.lWeight == .byBlock, insert.lWeight.dxfInt >= 0 {
-            xdata["dxf.lineWeight"] = .double(
-                DXFColorTable.lineWeightToMM(Double(insert.lWeight.dxfInt)))
-        }
-
-        return xdata
+        return values
     }
 
     private static func primitiveStyle(from entity: DXFEntity) -> CADPrimitiveStyle {

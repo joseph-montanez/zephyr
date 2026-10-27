@@ -29,6 +29,7 @@ public final class FindCommand: FeatureCommand {
         case leaderText
         case leaderAttribute(index: Int)
         case tableCell(row: Int, col: Int)
+        case insertAttribute(tag: String)
     }
 
     public struct Match {
@@ -231,6 +232,8 @@ public final class FindCommand: FeatureCommand {
             return attrs[index].text
         case .tableCell(let row, let col):
             return tableCellString(entity: entity, row: row, col: col)
+        case .insertAttribute(let tag):
+            return entity.attributeValues[tag]?.value
         }
     }
 
@@ -246,6 +249,17 @@ public final class FindCommand: FeatureCommand {
             return value
         }
         return nil
+    }
+
+    /// Sorted tags on `entity` whose attribute value contains `find`.
+    static func matchingAttributeTags(
+        in entity: CADEntity, find: String, options: Options
+    ) -> [String] {
+        guard !entity.attributeValues.isEmpty else { return [] }
+        return entity.attributeValues.keys.sorted().filter { tag in
+            guard let stored = entity.attributeValues[tag] else { return false }
+            return !ranges(in: stored.value, find: find, options: options).isEmpty
+        }
     }
 
     private func collectMatches(engine: PhrostEngine) {
@@ -283,6 +297,13 @@ public final class FindCommand: FeatureCommand {
                         break
                     }
                 }
+            }
+            for tag in Self.matchingAttributeTags(
+                in: entity, find: findText, options: options) {
+                matches.append(Match(
+                    handle: entity.handle,
+                    kind: .insertAttribute(tag: tag),
+                    sourceLabel: "ATTRIB"))
             }
             if let leader = entity.leaderData?.value {
                 if !Self.ranges(in: leader.text, find: findText, options: options).isEmpty {
@@ -495,6 +516,17 @@ public final class FindCommand: FeatureCommand {
             }
             guard count > 0 else { return (nil, 0) }
             updated.localGeometry = geom
+            return (updated, count)
+        case .insertAttribute(let tag):
+            guard var stored = updated.attributeValues[tag] else {
+                return (nil, 0)
+            }
+            let (next, count) = Self.replacing(
+                stored.value, find: findText, with: replaceText,
+                options: options)
+            guard count > 0 else { return (nil, 0) }
+            stored.value = next
+            updated.attributeValues[tag] = stored
             return (updated, count)
         }
     }
