@@ -46,6 +46,8 @@ final class CommandAliasParityTests: XCTestCase {
         ("DIMSPACE", "DIMSPACE"),
         ("FIND", "FIND"),
         ("TEXTALIGN", "TEXTALIGN"), ("TA", "TEXTALIGN"),
+        ("TXT2MTXT", "TXT2MTXT"),
+        ("FIELD", "FIELD"),
         ("B", "BLOCK"), ("BMAKE", "BLOCK"),
         ("XR", "XREF"), ("ER", "XREF"),
         ("IAT", "IMAGEATTACH"),

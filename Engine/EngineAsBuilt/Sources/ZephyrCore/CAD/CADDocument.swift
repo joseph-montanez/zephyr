@@ -525,6 +525,63 @@ public final class CADDocument {
     public var lastPerimeter: Double = 0
     public var lastPoint: Vector3?
 
+    /// Open-time file identity for FIELD evaluation ($FILENAME/$TABNAME).
+    /// Recorded by `finalizeOpen`; session state, never undoable or persisted.
+    public var sourceFileName: String?
+    public var layoutName: String?
+
+    /// Records open-time identity and refreshes every FIELD expression.
+    /// Called by the file-open funnels (DXF + EAB); returns refreshed count.
+    @discardableResult
+    public func finalizeOpen(sourceFileName: String?, layoutName: String?) -> Int {
+        self.sourceFileName = sourceFileName
+        self.layoutName = layoutName
+        return evaluateFields()
+    }
+
+    /// Re-evaluates every `field.expr` carrier in one undo entry.
+    /// Unresolvable expressions keep their last text.
+    @discardableResult
+    public func evaluateFields() -> Int {
+        var staged: [(UUID, CADEntity)] = []
+        for entity in allEntities {
+            guard case .string(let expr) = entity.xdata[FieldEval.exprKey],
+                  let value = FieldEval.evaluate(expr, in: self),
+                  var geom = entity.localGeometry else {
+                continue
+            }
+            var changed = false
+            for i in 0..<geom.count {
+                guard case .text(
+                    let pos, let current, let height, let rotation, let style,
+                    let alignH, let alignV, let mtextWidth, let color) = geom[i] else {
+                    continue
+                }
+                if current == value { continue }
+                geom[i] = .text(
+                    position: pos, text: value, height: height, rotation: rotation,
+                    style: style, alignH: alignH, alignV: alignV,
+                    mtextWidth: mtextWidth, color: color)
+                changed = true
+                break
+            }
+            guard changed else { continue }
+            var updated = entity
+            updated.localGeometry = geom
+            updated.xdata["dxf.text"] = .string(value)
+            staged.append((entity.handle, updated))
+        }
+        guard !staged.isEmpty else { return 0 }
+        let before = snapshot()
+        for (handle, updated) in staged {
+            guard entityRegistry[handle] != nil else { continue }
+            updateEntityLive(updated)
+        }
+        invalidateEntityGrid()
+        pushUndo(before)
+        return staged.count
+    }
+
     /// Bumped whenever rendering must refresh, including non-dirty
     /// changes (xref load/unload/reload, fade). Secondary render
     /// contexts (floated windows, split panes) compare against this —
@@ -3429,6 +3486,9 @@ public final class CADDocument {
         }
         markEdited(regenerate: true)
         rebuildEntityGrid()
+        finalizeOpen(
+            sourceFileName: url.lastPathComponent,
+            layoutName: imported.views.first?.name)
     }
 
     @MainActor

@@ -370,6 +370,9 @@ public enum DXFWriterBridge {
         let revisionCloudAppID = DXFAppIdEntry()
         revisionCloudAppID.name = RevCloudDXFCodec.appID
         writer.addAppId(revisionCloudAppID)
+        let fieldAppID = DXFAppIdEntry()
+        fieldAppID.name = FieldEval.dxfAppID
+        writer.addAppId(fieldAppID)
 
         revisionCloudArcLength: for view in orderedViews {
             for entity in view.entities {
@@ -2225,6 +2228,20 @@ public enum DXFWriterBridge {
         entity.color24 = DXFColorTable.rgbaToTrueColor(color) ?? -1
     }
 
+    /// FIELD expression records: the evaluated text already travels in the
+    /// TEXT/MTEXT value; the expression rides XDATA under our APPID so a
+    /// reimported field keeps refreshing instead of going static.
+    private static func appendFieldXData(
+        _ xdata: [String: XDataValue], to entity: DXFEntity
+    ) {
+        guard case .string(let expr) = xdata[FieldEval.exprKey],
+              !expr.isEmpty else {
+            return
+        }
+        entity.extendedData.append((1001, FieldEval.dxfAppID))
+        entity.extendedData.append((1000, expr))
+    }
+
     private static func xdataString(_ xdata: [String: XDataValue], _ key: String) -> String? {
         guard case .string(let value)? = xdata[key] else { return nil }
         return value
@@ -2595,6 +2612,7 @@ public enum DXFWriterBridge {
                     xdata, "dxf.mtextLineSpacingStyle") == 2 ? 2 : 1
                 applyMTextBackground(xdata, to: entity)
                 applyColor(color, to: entity)
+                appendFieldXData(xdata, to: entity)
                 return entity
             }
 
@@ -2611,6 +2629,7 @@ public enum DXFWriterBridge {
             entity.oblique = xdataDouble(xdata, "dxf.textOblique") ?? 0.0
             entity.textGen = xdataInt(xdata, "dxf.textGenerationFlags") ?? 0
             applyColor(color, to: entity)
+            appendFieldXData(xdata, to: entity)
             return entity
 
         case .ellipse(let center, let majorAxis, let minorRatio, let color):

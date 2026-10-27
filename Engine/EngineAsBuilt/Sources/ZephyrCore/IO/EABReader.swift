@@ -61,7 +61,12 @@ public enum EABReader {
     /// Returns an array of `DrawingView` ready for `TabManager`.
     public static func readViews(from url: URL) throws -> [DrawingView] {
         let data = try Data(contentsOf: url)  // no .mappedIfSafe — file may be replaced atomically
-        return try readViews(from: data)
+        let views = try readViews(from: data)
+        let fileName = url.lastPathComponent
+        for view in views {
+            view.document.finalizeOpen(sourceFileName: fileName, layoutName: view.name)
+        }
+        return views
     }
 
     /// Read views from in-memory Data.

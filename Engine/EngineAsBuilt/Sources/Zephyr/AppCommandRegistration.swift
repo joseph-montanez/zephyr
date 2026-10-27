@@ -655,6 +655,16 @@ struct AppCommandRegistration {
             aliases: ["TA"],
             factory: { TextAlignCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "TXT2MTXT",
+            aliases: [],
+            factory: { Txt2MtxtCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "FIELD",
+            aliases: [],
+            factory: { FieldCommand() }
+        )
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

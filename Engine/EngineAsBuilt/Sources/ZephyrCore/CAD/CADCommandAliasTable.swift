@@ -151,6 +151,12 @@ public enum CADCommandAliasTable {
             canonicalName: "TEXTALIGN", aliases: ["TA"], category: .modify,
             description: "Align or distribute text along a baseline"),
         CADCommandAliasEntry(
+            canonicalName: "TXT2MTXT", category: .modify,
+            description: "Merge single-line texts into one mtext"),
+        CADCommandAliasEntry(
+            canonicalName: "FIELD", category: .draw,
+            description: "Insert a live-updating field value"),
+        CADCommandAliasEntry(
             canonicalName: "AALINES", category: .view,
             description: "Toggle anti-aliased line rendering on/off"),
         CADCommandAliasEntry(

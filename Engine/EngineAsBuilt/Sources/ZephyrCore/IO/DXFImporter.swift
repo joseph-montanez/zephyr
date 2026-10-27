@@ -1902,6 +1902,23 @@ public enum DXFImporter {
             }
         }
 
+        // FIELD expressions ride XDATA under our APPID (see
+        // DXFWriterBridge.appendFieldXData); restore them so reimported
+        // fields keep refreshing instead of going static.
+        var fieldActive = false
+        for pair in entity.extendedData {
+            if pair.code == 1001 {
+                fieldActive = (pair.value as? String)?.caseInsensitiveCompare(
+                    FieldEval.dxfAppID) == .orderedSame
+                continue
+            }
+            if fieldActive, pair.code == 1000,
+               let expr = pair.value as? String, !expr.isEmpty {
+                xdata[FieldEval.exprKey] = .string(expr)
+                fieldActive = false
+            }
+        }
+
         if let mtext = entity as? DXFMTextEntity,
            (mtext.backgroundFillFlags & 1) != 0 {
             xdata["dxf.mtextBackgroundScale"] = .double(max(1.0, mtext.backgroundScale))

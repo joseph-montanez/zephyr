@@ -515,6 +515,8 @@ public final class TabManager {
                 doc.unit = su
             }
             doc.savedRevision = doc.editRevision  // freshly imported
+            doc.finalizeOpen(
+                sourceFileName: url.lastPathComponent, layoutName: view.name)
             return DrawingView(
                 name: view.name,
                 kind: view.kind,
