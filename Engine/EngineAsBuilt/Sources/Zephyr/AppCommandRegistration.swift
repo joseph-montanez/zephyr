@@ -725,6 +725,21 @@ struct AppCommandRegistration {
             aliases: [],
             factory: { GroupCommand(mode: .ungroup) }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "OOPS",
+            aliases: [],
+            factory: { OopsCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "REVERSE",
+            aliases: [],
+            factory: { ReverseCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "RENAME",
+            aliases: [],
+            factory: { RenameCommand() }
+        )
         // PICKSTYLE group selection: one member in, whole selectable
         // group in. Resolves the active document per call (tabs switch).
         engine.cadSelection.groupExpansionProvider = { [weak engine] handle in

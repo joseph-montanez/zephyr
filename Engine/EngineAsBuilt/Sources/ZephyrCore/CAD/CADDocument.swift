@@ -1122,6 +1122,151 @@ public final class CADDocument {
         markEdited(regenerate: true)
     }
 
+    // MARK: - RENAME per-type renames (see CADRename for validation)
+
+    func renameBlockDefinition(from oldName: String, to newName: String) -> String? {
+        guard var block = allBlocks.first(where: {
+            $0.name.caseInsensitiveCompare(oldName) == .orderedSame
+        }) else { return "Block '\(oldName)' not found." }
+        if block.name.hasPrefix("*") || block.name.contains("|") {
+            return "Anonymous and xref-dependent blocks cannot be renamed."
+        }
+        if block.isXref {
+            return "External references cannot be renamed (Bind it first)."
+        }
+        if allBlocks.contains(where: {
+            $0.handle != block.handle
+                && $0.name.caseInsensitiveCompare(newName) == .orderedSame
+        }) { return "A block named '\(newName)' already exists." }
+        pushUndo()
+        block.name = newName
+        blockTable[block.handle] = block
+        markEdited(regenerate: true)
+        return nil
+    }
+
+    func renameLayerByName(from oldName: String, to newName: String) -> String? {
+        if oldName.caseInsensitiveCompare("0") == .orderedSame {
+            return "Layer '0' cannot be renamed."
+        }
+        guard let layer = allLayers.first(where: {
+            $0.name.caseInsensitiveCompare(oldName) == .orderedSame
+        }) else { return "Layer '\(oldName)' not found." }
+        if allLayers.contains(where: {
+            $0.handle != layer.handle
+                && $0.name.caseInsensitiveCompare(newName) == .orderedSame
+        }) { return "A layer named '\(newName)' already exists." }
+        renameLayer(handle: layer.handle, name: newName)
+        return nil
+    }
+
+    func renameTextStyleDefinition(from oldName: String, to newName: String) -> String? {
+        // Key-based (not value-name-based): a value filed under a key
+        // keeps the key's identity, so protection and collisions use keys.
+        guard let key = textStyles.keys.first(where: {
+            $0.caseInsensitiveCompare(oldName) == .orderedSame
+        }), let existing = textStyles[key] else {
+            return "Text style '\(oldName)' not found."
+        }
+        if key.caseInsensitiveCompare("Standard") == .orderedSame {
+            return "The 'Standard' text style cannot be renamed."
+        }
+        if textStyles.keys.contains(where: {
+            $0.caseInsensitiveCompare(newName) == .orderedSame
+                && $0.caseInsensitiveCompare(key) != .orderedSame
+        }) { return "A text style named '\(newName)' already exists." }
+        var renamed = existing
+        renamed.name = newName
+        return applyTextStyle(renamed, replacing: key) ? nil
+            : "Could not rename text style."
+    }
+
+    func renameDimensionStyleDefinition(from oldName: String, to newName: String) -> String? {
+        guard let key = dimensionStyles.keys.first(where: {
+            $0.caseInsensitiveCompare(oldName) == .orderedSame
+        }), var style = dimensionStyles[key] else {
+            return "Dimension style '\(oldName)' not found."
+        }
+        if key.caseInsensitiveCompare("Standard") == .orderedSame {
+            return "The 'Standard' dimension style cannot be renamed."
+        }
+        if dimensionStyles.keys.contains(where: {
+            $0.caseInsensitiveCompare(newName) == .orderedSame
+                && $0.caseInsensitiveCompare(key) != .orderedSame
+        }) { return "A dimension style named '\(newName)' already exists." }
+        style.name = newName
+        return applyDimensionStyle(style, replacing: key) ? nil
+            : "Could not rename dimension style."
+    }
+
+    func renameLeaderStyleDefinition(from oldName: String, to newName: String) -> String? {
+        // Key-based: see renameTextStyleDefinition.
+        guard let key = leaderStyles.keys.first(where: {
+            $0.caseInsensitiveCompare(oldName) == .orderedSame
+        }), let existing = leaderStyles[key] else {
+            return "Leader style '\(oldName)' not found."
+        }
+        if key.caseInsensitiveCompare("Standard") == .orderedSame {
+            return "The 'Standard' leader style cannot be renamed."
+        }
+        if leaderStyles.keys.contains(where: {
+            $0.caseInsensitiveCompare(newName) == .orderedSame
+                && $0.caseInsensitiveCompare(key) != .orderedSame
+        }) { return "A leader style named '\(newName)' already exists." }
+        var renamed = existing
+        renamed.name = newName
+        return applyLeaderStyle(renamed, replacing: key) ? nil
+            : "Could not rename leader style."
+    }
+
+    func renameLinetypeDefinition(from oldName: String, to newName: String) -> String? {
+        guard let key = linetypePatterns.keys.first(where: {
+            $0.caseInsensitiveCompare(oldName) == .orderedSame
+        }) else { return "Linetype '\(oldName)' not found." }
+        for reserved in ["CONTINUOUS", "BYLAYER", "BYBLOCK"] {
+            if key.caseInsensitiveCompare(reserved) == .orderedSame {
+                return "Linetype '\(key)' cannot be renamed."
+            }
+        }
+        if linetypePatterns.keys.contains(where: {
+            $0.caseInsensitiveCompare(newName) == .orderedSame
+                && $0.caseInsensitiveCompare(key) != .orderedSame
+        }) { return "A linetype named '\(newName)' already exists." }
+        pushUndo()
+        let pattern = linetypePatterns[key] ?? []
+        linetypePatterns.removeValue(forKey: key)
+        linetypePatterns[newName] = pattern
+        for handle in Array(entityRegistry.keys) {
+            guard var entity = entityRegistry[handle] else { continue }
+            if case .string(let name) = entity.xdata["dxf.lineType"],
+               name.caseInsensitiveCompare(key) == .orderedSame {
+                entity.xdata["dxf.lineType"] = .string(newName)
+                entityRegistry[handle] = entity
+            }
+        }
+        for (handle, var block) in blockTable {
+            var changed = false
+            for (index, var style) in block.primitiveStyles {
+                if let name = style.lineType,
+                   name.caseInsensitiveCompare(key) == .orderedSame {
+                    style.lineType = newName
+                    block.primitiveStyles[index] = style
+                    changed = true
+                }
+            }
+            if changed { blockTable[handle] = block }
+        }
+        for layer in allLayers
+        where layer.lineType.caseInsensitiveCompare(key) == .orderedSame {
+            if var updated = layerTable[layer.handle] {
+                updated.lineType = newName
+                layerTable[layer.handle] = updated
+            }
+        }
+        markEdited(regenerate: true)
+        return nil
+    }
+
     public func setLayerOpacity(_ handle: UUID, opacity: Double) {
         pushUndo()
         guard var layer = layerTable[handle] else { return }
@@ -1736,9 +1881,36 @@ public final class CADDocument {
     public func removeEntity(handle: UUID) {
         documentLock.withLock {
             pushUndo()
+            if let erased = entityRegistry[handle] {
+                oopsBuffer = [erased]
+            }
             entityRegistry.removeValue(forKey: handle)
             markEdited(regenerate: true)
             invalidateEntityGrid()
+        }
+    }
+
+    /// Last erased entity set for OOPS. Session state: replaced on every
+    /// `removeEntity`/`removeEntities`, never snapshotted or persisted,
+    /// consumed (cleared) by `oopsRestore()`.
+    public var oopsBuffer: [CADEntity] = []
+
+    /// Restore the last erased set (OOPS). Re-inserts with original
+    /// handles under one undo entry and clears the buffer. Returns the
+    /// restored count; pushes no undo when the buffer is empty.
+    @discardableResult
+    public func oopsRestore() -> Int {
+        documentLock.withLock {
+            guard !oopsBuffer.isEmpty else { return 0 }
+            pushUndo()
+            for entity in oopsBuffer {
+                entityRegistry[entity.handle] = preparedEntityForStorage(entity)
+            }
+            let count = oopsBuffer.count
+            oopsBuffer.removeAll()
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+            return count
         }
     }
 
@@ -3338,6 +3510,10 @@ public final class CADDocument {
 
     public func removeEntities(handles: Set<UUID>) {
         pushUndo()
+        let erased = handles.compactMap { entityRegistry[$0] }
+        if !erased.isEmpty {
+            oopsBuffer = erased
+        }
         for handle in handles {
             entityRegistry.removeValue(forKey: handle)
         }
