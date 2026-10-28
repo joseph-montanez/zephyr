@@ -350,14 +350,28 @@ struct ArrayRibbonUI {
 
         if array.kind == .rectangular { return }
 
-        let base = screen(entity.transform.transformPoint(.zero), engine: engine)
-        ImDrawListAddRectFilled(
-            drawList,
-            ImVec2(x: base.x - 5, y: base.y - 5),
-            ImVec2(x: base.x + 5, y: base.y + 5),
-            accent,
-            0,
-            0)
+        // Path arrays mark the true anchor (the point riding the path at
+        // item 0), not the entity origin: re-picking the marker is a no-op
+        // instead of a jump. Other kinds keep the origin marker.
+        let baseWorld: Vector3?
+        if array.kind == .path {
+            baseWorld = CADArrayData.anchorWorld(
+                entityTransform: entity.transform,
+                array: array,
+                pathPoints: array.cachedPath)
+        } else {
+            baseWorld = entity.transform.transformPoint(.zero)
+        }
+        if let baseWorld {
+            let base = screen(baseWorld, engine: engine)
+            ImDrawListAddRectFilled(
+                drawList,
+                ImVec2(x: base.x - 5, y: base.y - 5),
+                ImVec2(x: base.x + 5, y: base.y + 5),
+                accent,
+                0,
+                0)
+        }
 
         let instances = array.evaluatedInstances(pathPoints: array.cachedPath)
         if instances.count > 1 {

@@ -157,6 +157,37 @@ final class CADArrayDataTests: XCTestCase {
         XCTAssertEqual(onPath.y, 0, accuracy: 1e-9)
     }
 
+    func testRepickingAnchorMarkerIsNoOp() throws {
+        // The ribbon marker draws `anchorWorld`; clicking it to re-pick the
+        // base must leave the anchor untouched (regression: the marker used
+        // to show the entity origin, so every re-pick jumped by the
+        // base-to-path distance).
+        var array = CADArrayData.path(
+            itemCount: 3,
+            cachedPath: [
+                Vector3(x: -5, y: 0, z: 0),
+                Vector3(x: 15, y: 0, z: 0),
+            ])
+        array.baseAnchor = Vector3(x: 4, y: -2, z: 0)
+        let entity = Transform3D.translated(
+            by: Vector3(x: 5, y: 0, z: 0))
+        let marker = try XCTUnwrap(CADArrayData.anchorWorld(
+            entityTransform: entity,
+            array: array,
+            pathPoints: array.cachedPath))
+        // The marker rides the path at item 0's station ...
+        XCTAssertEqual(marker.x, 0, accuracy: 1e-9)
+        XCTAssertEqual(marker.y, 0, accuracy: 1e-9)
+        // ... and re-picking it resolves back to the same anchor.
+        let again = try XCTUnwrap(CADArrayData.rebasedAnchor(
+            worldPoint: marker,
+            entityTransform: entity,
+            array: array,
+            pathPoints: array.cachedPath))
+        XCTAssertEqual(again.x, 4, accuracy: 1e-9)
+        XCTAssertEqual(again.y, -2, accuracy: 1e-9)
+    }
+
     func testOldPayloadWithoutBaseAnchorDecodes() throws {
         let array = CADArrayData.path(
             itemCount: 3,

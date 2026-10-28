@@ -253,6 +253,20 @@ public struct CADArrayData: Codable, Hashable, Sendable {
         return anchor
     }
 
+    /// World position of the anchor riding the path at the first item.
+    /// The ribbon marker draws this point, so clicking the marker to
+    /// re-pick the base is a no-op by construction.
+    public static func anchorWorld(
+        entityTransform: Transform3D,
+        array: CADArrayData,
+        pathPoints: [Vector3]
+    ) -> Vector3? {
+        let instances = array.evaluatedInstances(pathPoints: pathPoints)
+        guard let first = instances.first(where: { $0.index.item == 0 && $0.index.row == 0 && $0.index.level == 0 }) ?? instances.first else { return nil }
+        return entityTransform.transformPoint(
+            first.transform.transformPoint(array.baseAnchor))
+    }
+
     private func rectangularInstances() -> [CADArrayInstance] {
         let count = max(1, columns) * max(1, rows) * max(1, levels)
         var result: [CADArrayInstance] = []
