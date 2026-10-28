@@ -185,6 +185,11 @@ public final class CADVertexEditor {
                     let dir = Vector3(x: localPts[1].x - localPts[0].x, y: localPts[1].y - localPts[0].y, z: 0)
                     prim = .ray(start: localPts[0], direction: dir, color: c)
                 }
+            case .xline(_, _, let c):
+                if localPts.count >= 2 {
+                    let dir = Vector3(x: localPts[1].x - localPts[0].x, y: localPts[1].y - localPts[0].y, z: 0)
+                    prim = .xline(point: localPts[0], direction: dir, color: c)
+                }
             default: break
             }
             newGeometry[primIdx] = prim

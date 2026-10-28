@@ -616,6 +616,11 @@ public final class SnapEngine {
                     } else {
                         localNearest = start + dirNorm * t
                     }
+                case .xline(let point, let direction, _):
+                    let dirNorm = direction.normalized
+                    let v = localCursor - point
+                    let t = v.dot(dirNorm)
+                    localNearest = point + dirNorm * t
                 case .image:
                     localNearest = nil
                 }

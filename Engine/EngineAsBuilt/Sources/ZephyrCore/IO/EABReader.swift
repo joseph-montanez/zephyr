@@ -1559,6 +1559,11 @@ public enum EABReader {
                 let direction = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
                 let color = readColor()
                 prims.append(.ray(start: start, direction: direction, color: color))
+            case 21: // xline
+                let point = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                let direction = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                let color = readColor()
+                prims.append(.xline(point: point, direction: direction, color: color))
             case 16: // image
                 let insertion = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
                 let uAxis = Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())

@@ -105,9 +105,9 @@ final class LispVarStore: @unchecked Sendable {
     ]
 
     private static let readOnly: Set<String> = [
-        "ACADVER", "CMDNAMES", "DATE", "DWGNAME", "DWGPREFIX", "DWGTITLED",
+        "ACADVER", "AREA", "CMDNAMES", "DATE", "DWGNAME", "DWGPREFIX", "DWGTITLED",
         "ERRNO", "EXTMAX", "EXTMIN", "LASTANGLE", "LOGINNAME", "MILLISECS",
-        "PLATFORM", "UNDOCTL", "VERSION",
+        "PERIMETER", "PLATFORM", "UNDOCTL", "VERSION",
     ]
 
     // MARK: - Access
@@ -141,7 +141,24 @@ final class LispVarStore: @unchecked Sendable {
         case "OFFSETGAPTYPE":
             return .int(OffsetSettings.gapType.rawValue)
         case "LASTPOINT":
+            if let p = document.lastPoint {
+                return LispEntityAdapter.pointValue(p)
+            }
             return lock.withLock { memory["LASTPOINT"] ?? .nilValue }
+        case "AREA":
+            return .real(document.lastArea)
+        case "PERIMETER":
+            return .real(document.lastPerimeter)
+        case "LUPREC":
+            return .int(document.lengthPrecision)
+        case "AUPREC":
+            return .int(document.anglePrecision)
+        case "PDMODE":
+            return .int(document.pointDisplayMode)
+        case "PDSIZE":
+            return .real(document.pointDisplaySize)
+        case "FILLMODE":
+            return .int(document.fillMode ? 1 : 0)
         case "BINDTYPE":
             return .int(XrefSysvars.bindType)
         case "REFPATHTYPE":
@@ -219,6 +236,51 @@ final class LispVarStore: @unchecked Sendable {
             guard case let .int(i) = value, (1...5).contains(i) else {
                 return "LUNITS requires an integer 1..5"
             }
+            store(name, value)
+            return nil
+        case "LUPREC":
+            guard case let .int(i) = value, (0...8).contains(i) else {
+                return "LUPREC requires an integer 0..8"
+            }
+            document.lengthPrecision = i
+            store(name, value)
+            return nil
+        case "AUPREC":
+            guard case let .int(i) = value, (0...8).contains(i) else {
+                return "AUPREC requires an integer 0..8"
+            }
+            document.anglePrecision = i
+            store(name, value)
+            return nil
+        case "PDMODE":
+            guard case let .int(i) = value,
+                  CADDocument.isValidPointDisplayMode(i) else {
+                return "PDMODE requires 0-4, optionally +32 (circle) and/or +64 (square)"
+            }
+            document.pointDisplayMode = i
+            document.markNeedsRegeneration()
+            store(name, value)
+            return nil
+        case "PDSIZE":
+            let realVal: Double?
+            switch value {
+            case .real(let r): realVal = r
+            case .int(let i): realVal = Double(i)
+            default: realVal = nil
+            }
+            guard let realVal, realVal.isFinite else {
+                return "PDSIZE requires a real number (0 = 5% of viewport, negative = percent)"
+            }
+            document.pointDisplaySize = realVal
+            document.markNeedsRegeneration()
+            store(name, value)
+            return nil
+        case "FILLMODE":
+            guard case let .int(i) = value, (0...1).contains(i) else {
+                return "FILLMODE requires 0 or 1"
+            }
+            document.fillMode = (i != 0)
+            document.markNeedsRegeneration()
             store(name, value)
             return nil
         case "AUNITS":

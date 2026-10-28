@@ -382,6 +382,10 @@ public final class GeometryManager: @unchecked Sendable {
     public var handleToEntityIndex: [UUID: UInt32] = [:]
     public var renderOrigin: CADRenderOrigin = .zero
     public var autoContrastTrueColor: Bool = true
+    /// Point glyph style/size (PDMODE/PDSIZE), synced from the snapshot on
+    /// every apply. Read by the tessellation gather for `.point` inputs.
+    public var pointDisplayMode: Int = 0
+    public var pointDisplaySize: Double = 0
 
     // MARK: Spatial Grid (lazy-built when primitive count exceeds threshold)
     private static let spatialGridThreshold: Int = 4_000

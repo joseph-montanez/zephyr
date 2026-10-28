@@ -3732,6 +3732,11 @@ public final class EngineRenderer {
             let end = Vector3(x: start.x + direction.x * 1000.0, y: start.y + direction.y * 1000.0, z: start.z + direction.z * 1000.0)
             drawPath([start, end], closed: false)
 
+        case .xline(let point, let direction, _):
+            let back = Vector3(x: point.x - direction.x * 1000.0, y: point.y - direction.y * 1000.0, z: point.z - direction.z * 1000.0)
+            let end = Vector3(x: point.x + direction.x * 1000.0, y: point.y + direction.y * 1000.0, z: point.z + direction.z * 1000.0)
+            drawPath([back, end], closed: false)
+
         case .image(let insertion, let uAxis, let vAxis, _, let clipBoundary, _):
             if let clipBoundary, clipBoundary.count >= 2 {
                 drawPath(clipBoundary, closed: true)

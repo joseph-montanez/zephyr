@@ -219,6 +219,9 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "LINE",       aliases: ["L"],             category: .draw,    syntax: "", description: "Draw a line segment by picking two points"),
         CommandDescriptor(canonicalName: "PLINE",      aliases: ["POLYLINE", "PL"], category: .draw, syntax: "", description: "Draw a multi-segment polyline"),
         CommandDescriptor(canonicalName: "AREA",       aliases: ["AA"],            category: .draw,    syntax: "", description: "Calculate area and perimeter of closed regions"),
+        CommandDescriptor(canonicalName: "DIST",       aliases: ["DI"],            category: .draw,    syntax: "", description: "Report distance, angles, and deltas between two points"),
+        CommandDescriptor(canonicalName: "ID",         aliases: [],                category: .draw,    syntax: "", description: "Report the coordinates of a picked point"),
+        CommandDescriptor(canonicalName: "LIST",       aliases: ["LI", "LS"],      category: .draw,    syntax: "", description: "List type, layer, and geometry of selected entities"),
         CommandDescriptor(canonicalName: "GRADIENT",   aliases: ["GD"],            category: .draw,    syntax: "", description: "Fill a closed boundary with a gradient"),
         CommandDescriptor(canonicalName: "CIRCLE",     aliases: ["C"],             category: .draw,    syntax: "", description: "Draw a circle by center and radius"),
         CommandDescriptor(canonicalName: "ARC",        aliases: ["A"],             category: .draw,    syntax: "", description: "Draw an arc by center, radius, and angles"),
@@ -231,6 +234,13 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SPLINE",     aliases: ["SPL"],           category: .draw,    syntax: "", description: "Draw a smooth spline curve through control points"),
         CommandDescriptor(canonicalName: "PENSTROKE",  aliases: ["PSTROKE"],      category: .draw,    syntax: "", description: "Draw with tablet pen capturing pressure and tilt per vertex"),
         CommandDescriptor(canonicalName: "RAY",        aliases: [],                category: .draw,    syntax: "", description: "Draw a ray from a start point in a direction"),
+        CommandDescriptor(canonicalName: "XLINE",      aliases: ["XL"],            category: .draw,    syntax: "[Hor/Ver/Ang/Bisect/Offset]", description: "Draw an infinite construction line through a point"),
+        CommandDescriptor(canonicalName: "POLYGON",    aliases: ["POL"],           category: .draw,    syntax: "[Inscribed/Circumscribed/Edge]", description: "Draw a regular polygon (sides, center, radius or edge)"),
+        CommandDescriptor(canonicalName: "BOUNDARY",   aliases: ["BO"],            category: .draw,    syntax: "", description: "Create a closed region from an interior pick point"),
+        CommandDescriptor(canonicalName: "-BOUNDARY",  aliases: [],                category: .draw,    syntax: "", description: "Create a closed region from an interior pick point (command line)"),
+        CommandDescriptor(canonicalName: "POINT",      aliases: ["PO"],            category: .draw,    syntax: "", description: "Place point entities (display follows PDMODE/PDSIZE)"),
+        CommandDescriptor(canonicalName: "PTYPE",      aliases: ["DDPTYPE"],       category: .settings, syntax: "", description: "Set point display style (PDMODE) and size (PDSIZE)"),
+        CommandDescriptor(canonicalName: "DONUT",      aliases: ["DO"],            category: .draw,    syntax: "", description: "Draw a filled ring (inside/outside diameters, FILLMODE honored)"),
         CommandDescriptor(canonicalName: "DRAW",       aliases: ["TOOLS"],         category: .draw,    syntax: "", description: "Open the draw tools palette"),
         CommandDescriptor(canonicalName: "MTEXT",      aliases: ["MT", "T"],       category: .draw,    syntax: "", description: "Place multiline text"),
         CommandDescriptor(canonicalName: "TEXT",       aliases: ["DTEXT", "DT"],   category: .draw,    syntax: "", description: "Place single-line text"),
@@ -327,6 +337,12 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "LAYER RENAME", aliases: ["LA RENAME"],   category: .layer,   syntax: "<oldName> <newName>", description: "Rename an existing layer"),
         CommandDescriptor(canonicalName: "LAYERSORT", aliases: ["LASORT", "LAYER SORT", "LA SORT"], category: .layer, syntax: "[Name|On|Color|Linetype|Lineweight|Opacity|Plot|Used] [Asc|Desc]", description: "Sort layers in the Layers panel by property; repeat a key to toggle direction"),
         CommandDescriptor(canonicalName: "LAYERMOVE",    aliases: ["LM", "LAYMOVE"], category: .layer, syntax: "", description: "Move selected entities to a different layer (autocomplete prompt)"),
+        CommandDescriptor(canonicalName: "LAYOFF",     aliases: [],                category: .layer,   syntax: "", description: "Turn off the layer of a selected object (pick-driven)"),
+        CommandDescriptor(canonicalName: "LAYON",      aliases: [],                category: .layer,   syntax: "", description: "Turn on the layer of a selected object (pick-driven)"),
+        CommandDescriptor(canonicalName: "LAYISO",     aliases: [],                category: .layer,   syntax: "[Settings]", description: "Isolate the layer of a selected object; others hidden or faded"),
+        CommandDescriptor(canonicalName: "LAYUNISO",   aliases: [],                category: .layer,   syntax: "", description: "Restore layers hidden by the most recent LAYISO"),
+        CommandDescriptor(canonicalName: "LAYMCUR",    aliases: ["AI_MOLC"],        category: .layer,   syntax: "", description: "Make the layer of a selected object current"),
+        CommandDescriptor(canonicalName: "LAYMCH",     aliases: [],                category: .layer,   syntax: "", description: "Change selected entities to the layer of a picked destination object"),
         // --- Block ---
         CommandDescriptor(canonicalName: "BLOCK",      aliases: ["B", "BMAKE"],     category: .block,   syntax: "<name>", description: "Create a new block from selected entities"),
         CommandDescriptor(canonicalName: "WBLOCK",     aliases: ["W"],             category: .block,   syntax: "", description: "Write a block or entities to a drawing file"),
@@ -1865,6 +1881,20 @@ public final class CADCommandProcessor {
                 commandLineActive = false
             } else {
                 print("[CAD] LM requires entities to be selected.")
+            }
+            clearCommand()
+        case "LAYMCH":
+            // Same destination popup as LAYERMOVE: requires a selection,
+            // then Enter applies the highlighted layer to it.
+            guard let engine = engine else { clearCommand(); return }
+            if engine.cadSelection.hasSelection {
+                engine.ui.layerMoveActive = true
+                engine.ui.layerMoveBuffer = ""
+                engine.ui.layerMoveSelectionIndex = 0
+                engine.ui.layerMoveMatches = engine.document.allLayers.sorted { $0.name < $1.name }
+                commandLineActive = false
+            } else {
+                print("[CAD] LAYMCH requires entities to be selected.")
             }
             clearCommand()
         default:

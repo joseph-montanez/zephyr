@@ -1009,6 +1009,10 @@ public enum EABWriter {
                 let c = color ?? .white
                 verts.append(PVAVertex(position: start, color: c))
                 verts.append(PVAVertex(position: Vector3(x: start.x + direction.x, y: start.y + direction.y, z: start.z), color: c))
+            case .xline(let point, let direction, let color):
+                let c = color ?? .white
+                verts.append(PVAVertex(position: point, color: c))
+                verts.append(PVAVertex(position: Vector3(x: point.x + direction.x, y: point.y + direction.y, z: point.z), color: c))
             case .image:
                 // Images are not converted to PVA vertices
                 break
@@ -1323,7 +1327,8 @@ public enum EABWriter {
             // type byte: 0=point, 1=line, 2=rect, 3=fillRect, 4=polygon,
             // 5=circle, 6=arc, 7=fillPolygon, 8=text, 9=fillComplexPolygon,
             // 10=gradient, 11=spline, 12=ellipse, 13=hatch, 14=ray,
-            // 15=legacy straight polyline, 16=image, 18=bulge-aware polyline
+            // 15=legacy straight polyline, 16=image, 18=bulge-aware polyline,
+            // 21=xline
             switch p {
             case .point(let pos, let color):
                 w.writeUInt8(0)
@@ -1493,6 +1498,11 @@ public enum EABWriter {
             case .ray(let start, let direction, let color):
                 w.writeUInt8(14)
                 w.writeFloat64(start.x); w.writeFloat64(start.y); w.writeFloat64(start.z)
+                w.writeFloat64(direction.x); w.writeFloat64(direction.y); w.writeFloat64(direction.z)
+                writeColor(color)
+            case .xline(let point, let direction, let color):
+                w.writeUInt8(21)
+                w.writeFloat64(point.x); w.writeFloat64(point.y); w.writeFloat64(point.z)
                 w.writeFloat64(direction.x); w.writeFloat64(direction.y); w.writeFloat64(direction.z)
                 writeColor(color)
             case .image(let insertion, let uAxis, let vAxis, let imageName, let clipBoundary, let tint):

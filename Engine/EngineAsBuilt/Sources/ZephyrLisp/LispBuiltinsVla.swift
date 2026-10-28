@@ -161,8 +161,8 @@ enum VlaBuiltins {
 
     /// Analytical kernel curves for an entity, parsed from its entget assoc
     /// list (world coordinates). Supports LINE, CIRCLE, ARC, LWPOLYLINE,
-    /// ELLIPSE, RAY. SPLINE and anything else throw a clean error rather
-    /// than a silently wrong answer.
+    /// ELLIPSE, RAY, XLINE. SPLINE and anything else throw a clean error
+    /// rather than a silently wrong answer.
     private static func kernelCurves(
         for handle: String, host: any LispHost, name: String
     ) async throws -> ([Curve2d], Double) {
@@ -276,6 +276,10 @@ enum VlaBuiltins {
             let s = try point3(10)
             let d = try point3(11)
             return ([.ray(Ray2d(origin: pt2(s), direction: Vec2d(x: d[0], y: d[1])))], s[2])
+        case "XLINE":
+            let s = try point3(10)
+            let d = try point3(11)
+            return ([.xline(XLine2d(origin: pt2(s), direction: Vec2d(x: d[0], y: d[1])))], s[2])
         default:
             throw LispError.unsupportedStub("\(name): unsupported entity type \(etype)")
         }

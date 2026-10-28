@@ -324,6 +324,41 @@ struct AppCommandRegistration {
             factory: { RayCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "XLINE",
+            aliases: ["XL"],
+            factory: { XlineCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "POLYGON",
+            aliases: ["POL"],
+            factory: { PolygonCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "BOUNDARY",
+            aliases: ["BO"],
+            factory: { BoundaryCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-BOUNDARY",
+            aliases: [],
+            factory: { BoundaryCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "POINT",
+            aliases: ["PO"],
+            factory: { PointCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PTYPE",
+            aliases: ["DDPTYPE"],
+            factory: { PTypeCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DONUT",
+            aliases: ["DO"],
+            factory: { DonutCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "DRAW",
             aliases: ["TOOLS"],
             factory: { DrawPaletteCommand() }
@@ -400,7 +435,42 @@ struct AppCommandRegistration {
         engine.commandProcessor.registerFeatureCommand(
             name: "AREA",
             aliases: ["AA"],
-            factory: { MeasureGeomTool(initialMode: .area) }
+            factory: { AreaCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIST",
+            aliases: ["DI"],
+            factory: { DistanceCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ID",
+            factory: { IdCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LIST",
+            aliases: ["LI", "LS"],
+            factory: { ListCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYOFF",
+            factory: { LayerPickCommand(mode: .off) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYON",
+            factory: { LayerPickCommand(mode: .on) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYISO",
+            factory: { LayerPickCommand(mode: .isolate) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYUNISO",
+            factory: { LayerPickCommand(mode: .unisolate) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYMCUR",
+            aliases: ["AI_MOLC"],
+            factory: { LayerPickCommand(mode: .makeCurrent) }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "GRADIENT",

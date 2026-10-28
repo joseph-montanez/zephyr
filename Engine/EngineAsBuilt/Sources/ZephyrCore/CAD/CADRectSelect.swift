@@ -351,6 +351,19 @@ public enum CADRectSelect {
             let wdy = unitDir.x * sinR + unitDir.y * cosR
             let farEnd = Vector3(x: ws.x + wdx * 100_000, y: ws.y + wdy * 100_000, z: ws.z)
             return segmentIntersectsRect(p1: ws, p2: farEnd, rectMin: rectMin, rectMax: rectMax)
+        case .xline(let point, let direction, _):
+            let ws = transform.transformPoint(point)
+            let dirNorm = direction.magnitude
+            guard dirNorm > 1e-12 else { return false }
+            let unitDir = Vector3(x: direction.x / dirNorm, y: direction.y / dirNorm, z: 0)
+            let rot = transform.rotation
+            let cosR = cos(rot)
+            let sinR = sin(rot)
+            let wdx = unitDir.x * cosR - unitDir.y * sinR
+            let wdy = unitDir.x * sinR + unitDir.y * cosR
+            let farEnd = Vector3(x: ws.x + wdx * 100_000, y: ws.y + wdy * 100_000, z: ws.z)
+            let backEnd = Vector3(x: ws.x - wdx * 100_000, y: ws.y - wdy * 100_000, z: ws.z)
+            return segmentIntersectsRect(p1: backEnd, p2: farEnd, rectMin: rectMin, rectMax: rectMax)
         case .image(let insertion, let uAxis, let vAxis, _, _, _):
             let c0 = transform.transformPoint(insertion)
             let c1 = transform.transformPoint(Vector3(x: insertion.x + uAxis.x, y: insertion.y + uAxis.y, z: insertion.z + uAxis.z))

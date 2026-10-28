@@ -183,6 +183,51 @@ public enum CADCommandAliasTable {
             canonicalName: "GRADIENT", aliases: ["GD"], category: .draw,
             description: "Fill a closed boundary with a gradient"),
         CADCommandAliasEntry(
+            canonicalName: "XLINE", aliases: ["XL"], category: .draw,
+            description: "Draw an infinite construction line through a point"),
+        CADCommandAliasEntry(
+            canonicalName: "POLYGON", aliases: ["POL"], category: .draw,
+            description: "Draw a regular polygon (sides, center, radius or edge)"),
+        CADCommandAliasEntry(
+            canonicalName: "BOUNDARY", aliases: ["BO"], category: .draw,
+            description: "Create a closed region from an interior pick point"),
+        CADCommandAliasEntry(
+            canonicalName: "POINT", aliases: ["PO"], category: .draw,
+            description: "Place point entities (display follows PDMODE/PDSIZE)"),
+        CADCommandAliasEntry(
+            canonicalName: "PTYPE", aliases: ["DDPTYPE"], category: .settings,
+            description: "Set point display style (PDMODE) and size (PDSIZE)"),
+        CADCommandAliasEntry(
+            canonicalName: "DONUT", aliases: ["DO"], category: .draw,
+            description: "Draw a filled ring (inside/outside diameters, FILLMODE honored)"),
+        CADCommandAliasEntry(
+            canonicalName: "DIST", aliases: ["DI"], category: .draw,
+            description: "Report distance, angles, and deltas between two points"),
+        CADCommandAliasEntry(
+            canonicalName: "ID", category: .draw,
+            description: "Report the coordinates of a picked point"),
+        CADCommandAliasEntry(
+            canonicalName: "LIST", aliases: ["LI", "LS"], category: .draw,
+            description: "List type, layer, and geometry of selected entities"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYOFF", category: .layer,
+            description: "Turn off the layer of a selected object (pick-driven)"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYON", category: .layer,
+            description: "Turn on the layer of a selected object (pick-driven)"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYISO", category: .layer,
+            description: "Isolate the layer of a selected object; others hidden or faded"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYUNISO", category: .layer,
+            description: "Restore layers hidden by the most recent LAYISO"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYMCUR", aliases: ["AI_MOLC"], category: .layer,
+            description: "Make the layer of a selected object current"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYMCH", category: .layer,
+            description: "Change selected entities to the layer of a picked destination object"),
+        CADCommandAliasEntry(
             canonicalName: "GROUP", aliases: ["G"], category: .modify,
             description: "Create a lightweight named or unnamed object group",
             isReservedStub: true),

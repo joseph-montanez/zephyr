@@ -572,6 +572,7 @@ public final class OffsetCommand: FeatureCommand {
         switch primitive {
         case .line(let s, let e, _): return .line(start: s, end: e, color: nil)
         case .ray(let s, let d, _): return .ray(start: s, direction: d, color: nil)
+        case .xline(let p, let d, _): return .xline(point: p, direction: d, color: nil)
         case .circle(let c, let r, _): return .circle(center: c, radius: r, color: nil)
         case .arc(let c, let r, let sa, let ea, _):
             return .arc(center: c, radius: r, startAngle: sa, endAngle: ea, color: nil)
@@ -623,6 +624,11 @@ public final class OffsetCommand: FeatureCommand {
             let length = direction.magnitude
             guard length > 1e-12 else { return ([start], false) }
             return ([start, start + direction / length * 25000.0], false)
+        case .xline(let point, let direction, _):
+            let length = direction.magnitude
+            guard length > 1e-12 else { return ([point], false) }
+            let unit = direction / length
+            return ([point - unit * 25000.0, point + unit * 25000.0], false)
         case .circle(let center, let radius, _):
             let points = (0..<128).map { index in
                 let angle = 2.0 * Double.pi * Double(index) / 128.0

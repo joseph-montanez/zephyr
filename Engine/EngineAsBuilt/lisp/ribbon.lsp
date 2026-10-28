@@ -163,6 +163,11 @@
           (zr-item "SPLINE" "Spline" nil)
           (zr-item "PENSTROKE" "Pen Stroke" nil)
           (zr-item "RAY" "Ray" nil)
+          (zr-item "XLINE" "Construction Line" nil)
+          (zr-item "POLYGON" "Polygon" nil)
+          (zr-item "BOUNDARY" "Boundary" nil)
+          (zr-item "POINT" "Point" nil)
+          (zr-item "DONUT" "Donut" nil)
           (zr-sep)
           (zr-item "TEXT" "Single Line Text" nil)
           (zr-item "TABLE" "Table" nil)
@@ -216,6 +221,12 @@
           (zr-item "LAYER" "Layers" nil)
           (zr-item "LAYERSORT" "Sort Layers" nil)
           (zr-item "LAYERMOVE" "Move to Layer" (list (zr-enable (zr-sel 1))))
+          (zr-item "LAYMCH" "Change to Layer" (list (zr-enable (zr-sel 1))))
+          (zr-item "LAYMCUR" "Make Layer Current" nil)
+          (zr-item "LAYISO" "Isolate Layer" nil)
+          (zr-item "LAYUNISO" "Restore Layers" nil)
+          (zr-item "LAYOFF" "Turn Layer Off" nil)
+          (zr-item "LAYON" "Turn Layer On" nil)
           (zr-sep)
           (zr-sub "AutoLISP"
             (list
@@ -255,7 +266,12 @@
                   (zr-item "HATCH"     "Hatch"      nil)
                   (zr-item "SPLINE"    "Spline"     nil)
                   (zr-item "PENSTROKE" "Pen Stroke" nil)
-                  (zr-item "RAY"       "Ray"        nil)))))
+                  (zr-item "RAY"       "Ray"        nil)
+                  (zr-item "XLINE"     "Xline"      nil)
+                  (zr-item "POLYGON"   "Polygon"    nil)
+                  (zr-item "BOUNDARY"  "Boundary"   nil)
+                  (zr-item "POINT"     "Point"      nil)
+                  (zr-item "DONUT"     "Donut"      nil)))))
 
           (zr-panel "Modify"
             (list
@@ -353,7 +369,11 @@
             (list
               (zr-big   "MEASUREGEOM" "Measure" "measure" nil)
               (zr-small "MEASURE"     "Divide"  "measure" nil)
-              (zr-small "DIVIDE"      "Points"  "measure" nil)))))
+              (zr-small "DIVIDE"      "Points"  "measure" nil)
+              (zr-small "DIST"        "Distance" "measure" nil)
+              (zr-small "AREA"        "Area"     "measure" nil)
+              (zr-small "LIST"        "List"     "measure" nil)
+              (zr-small "ID"          "Locate Pt" "measure" nil)))))
 
       ;; =================================================================
       (zr-tab "View"

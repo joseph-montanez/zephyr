@@ -76,6 +76,7 @@ struct GeometryPanelUI {
         case .ellipse: return "Ellipse"
         case .hatch, .hatchPath: return "Hatch"
         case .ray: return "Ray"
+        case .xline: return "Xline"
         case .image: return "Image"
         case .table: return "Table"
         }
@@ -190,6 +191,12 @@ struct GeometryPanelUI {
             return (
                 "Ray #\(i)",
                 "start (\(String(format: "%.2f", start.x)), \(String(format: "%.2f", start.y)))  dir=\(String(format: "%.1f", angle))\u{00B0}  \(color.map { UIFormatting.colorStr($0) } ?? "\u{2014}")"
+            )
+        case .xline(let point, let direction, let color):
+            let angle = atan2(direction.y, direction.x) * 180.0 / .pi
+            return (
+                "Xline #\(i)",
+                "through (\(String(format: "%.2f", point.x)), \(String(format: "%.2f", point.y)))  dir=\(String(format: "%.1f", angle))\u{00B0}  \(color.map { UIFormatting.colorStr($0) } ?? "\u{2014}")"
             )
         case .image(_, let uAxis, let vAxis, let imageName, _, _):
             let w = uAxis.magnitude

@@ -39,6 +39,9 @@ public struct CADDocumentSnapshot: Sendable {
     public let linetypePatterns: [String: [Double]]
     public let globalLineTypeScale: Double
     public let autoContrastTrueColor: Bool
+    public let pointDisplayMode: Int
+    public let pointDisplaySize: Double
+    public let fillMode: Bool
     public let dxfRoundTripPayload: DXFRoundTripPayload?
     /// Names of image assets currently referenced by entities (not the raw Data blobs).
     /// The actual `imageStore` lives on `CADDocument` and persists across undo/redo.
@@ -69,6 +72,9 @@ public struct CADDocumentSnapshot: Sendable {
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
+        pointDisplayMode: Int = 0,
+        pointDisplaySize: Double = 0,
+        fillMode: Bool = true,
         dxfRoundTripPayload: DXFRoundTripPayload? = nil,
         imageAssetNames: Set<String> = [],
         xrefFadePercent: Int = 50,
@@ -96,6 +102,9 @@ public struct CADDocumentSnapshot: Sendable {
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
         self.autoContrastTrueColor = autoContrastTrueColor
+        self.pointDisplayMode = pointDisplayMode
+        self.pointDisplaySize = pointDisplaySize
+        self.fillMode = fillMode
         self.dxfRoundTripPayload = dxfRoundTripPayload
         self.imageAssetNames = imageAssetNames
     }
@@ -115,6 +124,9 @@ public struct CADDocumentSnapshot: Sendable {
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
+        pointDisplayMode: Int = 0,
+        pointDisplaySize: Double = 0,
+        fillMode: Bool = true,
         dxfRoundTripPayload: DXFRoundTripPayload? = nil,
         imageAssetNames: Set<String> = [],
         layoutSettings: CADLayoutSettings? = nil
@@ -137,6 +149,9 @@ public struct CADDocumentSnapshot: Sendable {
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
+            pointDisplayMode: pointDisplayMode,
+            pointDisplaySize: pointDisplaySize,
+            fillMode: fillMode,
             dxfRoundTripPayload: dxfRoundTripPayload,
             imageAssetNames: imageAssetNames,
             layoutSettings: layoutSettings)
@@ -469,6 +484,53 @@ public final class CADDocument {
     public var xrefFadePercent: Int = 50 {
         didSet { xrefFadePercent = max(0, min(90, xrefFadePercent)) }
     }
+
+    /// Display precision for inquiry output (LUPREC/AUPREC sysvars, live
+    /// through LispVarStore like LTSCALE). Session state, not snapshotted:
+    /// precision changes are never undoable, matching AutoCAD.
+    public var lengthPrecision: Int = 4 {
+        didSet { lengthPrecision = max(0, min(8, lengthPrecision)) }
+    }
+    public var anglePrecision: Int = 0 {
+        didSet { anglePrecision = max(0, min(8, anglePrecision)) }
+    }
+
+    /// Point display style/size (PDMODE/PDSIZE sysvars, live through
+    /// LispVarStore like LTSCALE). Session state, not snapshotted:
+    /// style changes retessellate but are never undoable, matching AutoCAD.
+    /// PDMODE base: 0 dot, 1 none, 2 plus, 3 X, 4 tick; +32 circle,
+    /// +64 square around the glyph.
+    public var pointDisplayMode: Int = 0 {
+        didSet {
+            if !Self.isValidPointDisplayMode(pointDisplayMode) {
+                pointDisplayMode = oldValue
+                return
+            }
+            markNeedsRegeneration()
+        }
+    }
+    public var pointDisplaySize: Double = 0 {
+        didSet { markNeedsRegeneration() }
+    }
+
+    public static func isValidPointDisplayMode(_ v: Int) -> Bool {
+        guard v >= 0 else { return false }
+        let base = v % 32
+        let extra = v - base
+        return (0...4).contains(base) && [0, 32, 64, 96].contains(extra)
+    }
+
+    /// Fill display (FILLMODE sysvar, live through LispVarStore).
+    /// Wide polylines and hatches render filled when true.
+    public var fillMode: Bool = true {
+        didSet { markNeedsRegeneration() }
+    }
+
+    /// Last inquiry results (AREA/PERIMETER/LASTPOINT sysvars, live reads).
+    /// Written by DIST/AREA/ID; session state, not snapshotted.
+    public var lastArea: Double = 0
+    public var lastPerimeter: Double = 0
+    public var lastPoint: Vector3?
 
     /// Bumped whenever rendering must refresh, including non-dirty
     /// changes (xref load/unload/reload, fade). Secondary render
@@ -826,6 +888,62 @@ public final class CADDocument {
         layer.lineWeight = lineWeight
         layerTable[handle] = layer
         markEdited(regenerate: true)
+    }
+
+    /// Isolation save stack for LAYISO/LAYUNISO (session state, not
+    /// snapshotted: isolation is a working state, never undoable).
+    public var layerIsolationStack: [[UUID: Layer]] = []
+    /// LAYISO hides other layers (false) or lock-fades them (true).
+    /// Fade stands in for locking until the 1C frozen/locked model lands.
+    public var layisoFadeOthers = false
+
+    /// Set visibility on many layers in exactly one undo step.
+    public func setLayersVisible(_ handles: [UUID], visible: Bool) {
+        pushUndo()
+        for h in handles {
+            if var layer = layerTable[h] {
+                layer.isVisible = visible
+                layerTable[h] = layer
+            }
+        }
+        markEdited(regenerate: true)
+    }
+
+    /// Isolate: kept layers are forced visible; every other layer is
+    /// hidden (or faded to 0.3 opacity when `layisoFadeOthers`).
+    /// Pushes the prior state for LAYUNISO. Exactly one undo step.
+    public func isolateLayers(keeping: Set<UUID>) {
+        pushUndo()
+        var saved: [UUID: Layer] = [:]
+        for h in Array(layerTable.keys) {
+            guard var layer = layerTable[h] else { continue }
+            saved[h] = layer
+            if keeping.contains(h) {
+                // Isolated layers are forced visible (AutoCAD behavior):
+                // a kept layer hidden by an earlier isolation comes back.
+                layer.isVisible = true
+            } else if layisoFadeOthers {
+                layer.opacity = 0.3
+            } else {
+                layer.isVisible = false
+            }
+            layerTable[h] = layer
+        }
+        layerIsolationStack.append(saved)
+        markEdited(regenerate: true)
+    }
+
+    /// Restore the most recent isolation. Returns false (and pushes no
+    /// undo) when the stack is empty.
+    @discardableResult
+    public func unisolateLayers() -> Bool {
+        guard let saved = layerIsolationStack.popLast() else { return false }
+        pushUndo()
+        for (h, layer) in saved where layerTable[h] != nil {
+            layerTable[h] = layer
+        }
+        markEdited(regenerate: true)
+        return true
     }
 
     public func setLayerLineType(_ handle: UUID, lineType: String) {
@@ -1809,6 +1927,9 @@ public final class CADDocument {
 
         case .ray(let start, _, _):
             bounds.include(transform.transformPoint(start))
+
+        case .xline(let point, _, _):
+            bounds.include(transform.transformPoint(point))
 
         case .image(let insertion, let uAxis, let vAxis, let imageName, let clipBoundary, _):
             // Unresolved raster (missing file) renders nothing, so it must
@@ -3529,6 +3650,9 @@ public final class CADDocument {
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
+            pointDisplayMode: pointDisplayMode,
+            pointDisplaySize: pointDisplaySize,
+            fillMode: fillMode,
             dxfRoundTripPayload: dxfRoundTripPayload ?? dxfRoundTripPayloadFallback,
             imageAssetNames: names,
             xrefFadePercent: xrefFadePercent,
@@ -3577,6 +3701,9 @@ public final class CADDocument {
             linetypePatterns: base.linetypePatterns,
             globalLineTypeScale: base.globalLineTypeScale,
             autoContrastTrueColor: base.autoContrastTrueColor,
+            pointDisplayMode: base.pointDisplayMode,
+            pointDisplaySize: base.pointDisplaySize,
+            fillMode: base.fillMode,
             dxfRoundTripPayload: base.dxfRoundTripPayload,
             imageAssetNames: base.imageAssetNames,
             xrefFadePercent: base.xrefFadePercent,

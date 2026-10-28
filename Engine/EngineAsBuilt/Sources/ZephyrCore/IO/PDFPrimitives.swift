@@ -388,6 +388,17 @@ enum PDFPrimitives {
             cb.num(start.x); cb.num(start.y); cb.raw("m ")
             cb.num(far.x); cb.num(far.y); cb.raw("l S\n")
 
+        case .xline(let point, let dir, _):
+            let mag = dir.magnitude
+            guard mag > 1e-12 else { break }
+            // Both directions; the page MediaBox clips, as on screen.
+            let far = Vector3(x: point.x + dir.x / mag * 100_000,
+                              y: point.y + dir.y / mag * 100_000, z: 0)
+            let back = Vector3(x: point.x - dir.x / mag * 100_000,
+                               y: point.y - dir.y / mag * 100_000, z: 0)
+            cb.num(back.x); cb.num(back.y); cb.raw("m ")
+            cb.num(far.x); cb.num(far.y); cb.raw("l S\n")
+
         case .gradient(let outer, let holes, _, _, let c1, _):
             // Flat-fill approximation of the gradient (axial /Sh shading is a
             // possible future upgrade). Fill color is c1; holes punch via
@@ -502,6 +513,8 @@ enum PDFPrimitives {
         case .hatchPath(_, _, _, _, _, let c, _):
             return c
         case .ray(_, _, let c):
+            return c
+        case .xline(_, _, let c):
             return c
         case .gradient(_, _, _, _, let c1, _):
             return c1

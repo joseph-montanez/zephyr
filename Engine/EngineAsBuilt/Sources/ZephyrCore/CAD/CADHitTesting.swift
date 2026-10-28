@@ -443,6 +443,22 @@ public enum CADHitTesting {
             let farEnd = Vector3(x: ws.x + wdx * 100_000, y: ws.y + wdy * 100_000, z: ws.z)
             let d = CADGeometryMath.pointToSegmentDistSq(point, ws, farEnd)
             return d <= t2 ? d : nil
+        case .xline(let point, let direction, _):
+            let ws = transform.transformPoint(point)
+            let dx = direction.x
+            let dy = direction.y
+            let dirNorm = sqrt(dx * dx + dy * dy)
+            guard dirNorm > 1e-12 else { return nil }
+            let unitDir = Vector3(x: dx / dirNorm, y: dy / dirNorm, z: 0)
+            let rot = transform.rotation
+            let cosR = cos(rot)
+            let sinR = sin(rot)
+            let wdx = unitDir.x * cosR - unitDir.y * sinR
+            let wdy = unitDir.x * sinR + unitDir.y * cosR
+            let farEnd = Vector3(x: ws.x + wdx * 100_000, y: ws.y + wdy * 100_000, z: ws.z)
+            let backEnd = Vector3(x: ws.x - wdx * 100_000, y: ws.y - wdy * 100_000, z: ws.z)
+            let d = CADGeometryMath.pointToSegmentDistSq(point, backEnd, farEnd)
+            return d <= t2 ? d : nil
         case .image(let insertion, let uAxis, let vAxis, _, _, _):
             let c0 = transform.transformPoint(insertion)
             let c1 = transform.transformPoint(Vector3(x: insertion.x + uAxis.x, y: insertion.y + uAxis.y, z: insertion.z + uAxis.z))

@@ -263,6 +263,13 @@ extension LispCADHost {
                 return LispEntityAdapter.pointValue(worldDir(direction, at: start, t))
             default: break
             }
+        case let .xline(point, direction, _):
+            switch prop {
+            case "BASEPOINT": return LispEntityAdapter.pointValue(t.transformPoint(point))
+            case "DIRECTIONVECTOR":
+                return LispEntityAdapter.pointValue(worldDir(direction, at: point, t))
+            default: break
+            }
         case let .image(insertion, _, _, _, _, _):
             if prop == "INSERTIONPOINT" {
                 return LispEntityAdapter.pointValue(t.transformPoint(insertion))
@@ -722,6 +729,19 @@ extension LispCADHost {
             default:
                 throw LispError.hostError(
                     "setpropertyvalue: unknown property \"\(prop)\" for RAY")
+            }
+        case let .xline(point, direction, color):
+            switch prop {
+            case "BASEPOINT":
+                prim = .xline(
+                    point: localPoint(try propPoint(value, property: prop), t),
+                    direction: direction, color: color)
+            case "DIRECTIONVECTOR":
+                let world = try propPoint(value, property: prop)
+                prim = .xline(point: point, direction: localDirVec(world, t), color: color)
+            default:
+                throw LispError.hostError(
+                    "setpropertyvalue: unknown property \"\(prop)\" for XLINE")
             }
         case let .image(_, uAxis, vAxis, imageName, clipBoundary, tint):
             guard prop == "INSERTIONPOINT" else {

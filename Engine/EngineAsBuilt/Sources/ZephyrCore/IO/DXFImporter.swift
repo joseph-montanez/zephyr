@@ -2781,6 +2781,8 @@ public enum DXFImporter {
             return .hatchPath(boundary: transformPolyline(boundary, by: transform), holes: holes.map { transformPolyline($0, by: transform) }, pattern: pattern, scale: scalar(scale), angle: angle + transform.rotation, color: color, backgroundColor: backgroundColor)
         case .ray(let start, let direction, let color):
             return .ray(start: p(start), direction: v(direction), color: color)
+        case .xline(let point, let direction, let color):
+            return .xline(point: p(point), direction: v(direction), color: color)
         case .image(let insertion, let uAxis, let vAxis, let imageName, let clipBoundary, let tint):
             return .image(insertion: p(insertion), uAxis: v(uAxis), vAxis: v(vAxis), imageName: imageName, clipBoundary: clipBoundary?.map(p), tint: tint)
         case .table(let data, let origin, let color):
