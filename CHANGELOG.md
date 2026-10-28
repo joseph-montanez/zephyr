@@ -33,6 +33,14 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **COMMANDLINE** (`CLI`, Ctrl+9) — show/hide the command line
 - **CLEANSCREENON / CLEANSCREENOFF** (Ctrl+0) — hide all chrome with save/restore
 - **TOOLBAR** (`TO`) — ribbon visibility toggle
+- **Tier-1 draw parity** — `XLINE` (`XL`), `POINT` (`PO`), `DONUT` (`DO`), `POLYGON` (`POL`), `BOUNDARY` (`BO`/`-BO`) with closed-polyline output, and native `XLine2d` ray handling
+- **Dimensioning suite** — `DIMSTYLE` table with manager UI and `-DIMSTYLE`, chaining `DCO`/`DBA` (continue/baseline), smart dispatching `DIM`, `CENTERMARK`/`DIMCENTER`/`CENTERLINE`, re-pointing `DIMREASSOCIATE`, text/geometry `DIMEDIT`/`DIMTEDIT`, and `DIMBREAK`/`DIMSPACE`
+- **Text tools** — `FIND` search/replace, `TEXTALIGN` baseline alignment, `TXT2MTXT` merge, and `FIELD` codes with evaluation hooks
+- **Selection tools** — `SELECTSIMILAR` with `SELECTSIMILARMODE`, `QSELECT`/`FILTER` predicate engine, `GROUP`/`UNGROUP` with `PICKSTYLE`, and `ISOLATE`/`HIDE`/`UNISOLATE`
+- **Drawing management** — reachability-sweep `PURGE`/`-PURGE`, validating `AUDIT`/`RECOVER`, plus `OOPS`, `REVERSE`, and `RENAME`
+- **Blocks and references** — `WBLOCK`/`-WBLOCK` with `BASE`/`INSBASE` round-trip, `ATTDEF`/`ATTEDIT` (`ATE`)/`ATTSYNC`, `REFEDIT`/`REFCLOSE` with `NCOPY` and `XBIND`, and `IMAGEADJUST`/`PDFADJUST`
+- **Multilines and aliases** — `MLINE` (`ML`) baked from centerlines, `MLSTYLE` manager with live `CMLJUST`/`CMLSCALE`/`CMLSTYLE`, and `ALIASEDIT` over a `zephyr.pgp` file whose user aliases win over built-ins
+- **Parametric constraints** — line-solver-backed `GEOMCONSTRAINT` (`GCON`) for Fix/Horizontal/Vertical/Coincident/Parallel/Perpendicular/Equal, `AUTOCONSTRAIN` inference, `DELCONSTRAINT`, badge-overlay `CONSTRAINTBAR` (`CBAR`), and a Parametric ribbon tab (`DIMCONSTRAINT`/`PARAMETERS` stay unregistered until a dimensional solver lands)
 
 ### Improvements
 - **AutoCAD LT alias alignment (breaking)** — Zephyr-only aliases that shadowed LT meanings now resolve to LT: `AA`→`AREA`, `DT`→`TEXT`, `R`→`REDRAW`, and `S`/`D`/`PS`/`CL` are reserved for `STRETCH`/`DIMSTYLE`/`PSPACE`/`CENTERLINE` (honest not-implemented-yet feedback until those phases land); canonical spellings flipped to `PLINE`, `RECTANG`, `SPLINEDIT`, `PROPERTIES`, `EXPORTPDF`, `TEXTEDIT`, `MTEXT`, `LAYOUT`, with the old spellings kept as aliases; displaced commands keep `RO`, `SC`, `TB`, `TOOLS`, `PSTROKE`, `TOR`. Full command names (`AALINES`, `TABLE`, `RAY`, `SCALE`, `DRAW`, `PENSTROKE`, `CLIP`, `TORIENT`) are unaffected, as are ribbon buttons and AutoLISP scripts using full names. Enforced by a new `CommandAliasParityTests` golden table so the four dispatch surfaces cannot drift apart again
@@ -47,9 +55,10 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Layer property sorting**
 - **Themes** — Catppuccin palettes, dropdown/slider contrast, and full theming for the Hatch and PenStroke UI
 - **PDF export** — DXF paper space layouts (paper size, units, and rotation from `AcDbPlotSettings`), export of the active drawing view, point sizing scaled inversely to prevent giant blocks, contrast adjustment for white strokes on light backgrounds, and `PDFEXPORT` filename normalization
-
+- **PGP user aliases** — `zephyr.pgp` (`ALIAS, *COMMAND`) loads at startup with user entries overriding colliding built-ins (with warnings), editable live via `ALIASEDIT`
 ### DXF & File Formats
 - **MLINE support** — plus DXF entity handles preserved in xdata
+- **MLINESTYLE objects** — multiline styles round-trip through DXF (`MLINESTYLE` table + rebuilt `MLINE` entities) and a new EAB section carries named multiline styles
 - **References on the wire** — INSERT/xref and ATTACH payload handling, with `REFPATHTYPE` 0/2 mapping
 - **Gradient hatch write-back** — `GF*` system variables and `entmake` support
 
@@ -70,7 +79,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Windows builds** — missing DLLs, crash when engine init fails, and `igInputText` String-pointer warnings
 - **Per-window state** — ImGui contexts, window-local main tab and selection gestures, long EAB strings, and a quieter initial load
 - **Frame tearing** — reused ImGui transfer buffers are now mapped with `cycle=true`; mapping with `cycle=false` let a new frame overwrite upload data the GPU was still reading, which tore the interface every couple of frames
-
+- **EAB constraint codec** — sub-entity/index fields now read in writer order, so coincident endpoint indexes survive a save/load round trip
 ### Maintenance
 - **Swift 6.4 migration** — toolchain bump and `zlib-ng` fix
 - **Dependencies** — SDL3 3.4.18 and SDL3_image 3.4.8
