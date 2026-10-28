@@ -267,6 +267,138 @@ final class AttributeTests: XCTestCase {
         XCTAssertNil(insert.attributeValues["TITLE"]?.position)
     }
 
+    func testDXFImportDuplicateAttributeTagsSurvives() throws {
+        // Real-world blocks repeat a tag (A_000217.dxf ships two TAGTYPE
+        // ATTDEFs in one block). The import used to trap building the
+        // definition lookup; later definitions shadow earlier ones.
+        let dxf = """
+        0
+        SECTION
+          2
+        BLOCKS
+          0
+        BLOCK
+          8
+        0
+          2
+        DUPBLK
+         70
+        0
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+          0
+        ATTDEF
+          8
+        0
+         10
+        5.0
+         20
+        -2.0
+         30
+        0.0
+         40
+        2.5
+          1
+        One
+         50
+        0.0
+          7
+        STANDARD
+          2
+        TAGTYPE
+          3
+        First:
+         70
+        0
+          0
+        ATTDEF
+          8
+        0
+         10
+        5.0
+         20
+        -4.0
+         30
+        0.0
+         40
+        2.5
+          1
+        Two
+         50
+        0.0
+          7
+        STANDARD
+          2
+        TAGTYPE
+          3
+        Second:
+         70
+        0
+          0
+        ENDBLK
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        ENTITIES
+          0
+        INSERT
+          8
+        0
+          2
+        DUPBLK
+         10
+        100.0
+         20
+        -50.0
+         30
+        0.0
+         66
+        1
+          0
+        ATTRIB
+          8
+        0
+         10
+        105.0
+         20
+        -54.0
+         30
+        0.0
+         40
+        2.5
+          1
+        Filed
+         50
+        0.0
+          7
+        STANDARD
+          2
+        TAGTYPE
+         70
+        0
+          0
+        SEQEND
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        let block = try XCTUnwrap(doc.allBlocks.first(where: { $0.name == "DUPBLK" }))
+        // Both definitions survive; the value still resolves.
+        XCTAssertEqual(block.attributeDefinitions.count, 2)
+        let insert = try XCTUnwrap(doc.allEntities.first)
+        XCTAssertEqual(insert.attributeValues["TAGTYPE"]?.value, "Filed")
+        // Placed on the shadowing (last) definition: override-free.
+        XCTAssertNil(insert.attributeValues["TAGTYPE"]?.position)
+    }
+
     // MARK: - DXF round-trip
 
     func testDXFExportReimportRoundTrip() throws {

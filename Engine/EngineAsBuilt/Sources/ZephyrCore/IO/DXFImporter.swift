@@ -2162,8 +2162,12 @@ public enum DXFImporter {
         let sx = insert.xScale == 0 ? 1.0 : insert.xScale
         let sy = insert.yScale == 0 ? 1.0 : insert.yScale
         let heightDivisor = max(abs(sx), abs(sy), 1e-12)
+        // Real-world blocks repeat a tag (later ATTDEF shadows the
+        // earlier one, matching the ATTRIB loop's last-wins below); a
+        // trapping unique-keys build turned that into an import crash.
         let defsByKey = Dictionary(
-            uniqueKeysWithValues: block.attributeDefinitions.map { ($0.key, $0) })
+            block.attributeDefinitions.map { ($0.key, $0) },
+            uniquingKeysWith: { _, last in last })
         var values: [String: CADAttributeValue] = [:]
         for attribute in insert.attributes {
             let tag = attribute.attributeTag.trimmingCharacters(

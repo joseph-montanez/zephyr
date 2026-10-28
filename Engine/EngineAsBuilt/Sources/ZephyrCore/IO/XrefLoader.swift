@@ -519,19 +519,22 @@ public enum XrefLoader {
         into built: inout BuiltContent
     ) {
         func prefixed(_ name: String) -> String { "\(prefix)|\(name)" }
-        let layerMap = Dictionary(uniqueKeysWithValues: imported.layers.compactMap { layer -> (String, String)? in
+        // File-controlled names can collide after uppercasing ("Walls"
+        // vs "WALLS"); first-wins keeps the import alive instead of
+        // trapping on duplicates.
+        let layerMap = Dictionary(imported.layers.compactMap { layer -> (String, String)? in
             layer.name == "0" ? nil : (layer.name.uppercased(), prefixed(layer.name))
-        })
+        }, uniquingKeysWith: { first, _ in first })
         let builtinLinetypes: Set<String> = ["CONTINUOUS", "BYLAYER", "BYBLOCK"]
-        let linetypeMap = Dictionary(uniqueKeysWithValues: imported.linetypePatterns.keys.compactMap { key -> (String, String)? in
+        let linetypeMap = Dictionary(imported.linetypePatterns.keys.compactMap { key -> (String, String)? in
             builtinLinetypes.contains(key.uppercased()) ? nil : (key.uppercased(), prefixed(key))
-        })
-        let mlineStyleMap = Dictionary(uniqueKeysWithValues: imported.mlineStyles.keys.map {
+        }, uniquingKeysWith: { first, _ in first })
+        let mlineStyleMap = Dictionary(imported.mlineStyles.keys.map {
             ($0.uppercased(), prefixed($0))
-        })
-        let textStyleMap = Dictionary(uniqueKeysWithValues: imported.textStyles.keys.map {
+        }, uniquingKeysWith: { first, _ in first })
+        let textStyleMap = Dictionary(imported.textStyles.keys.map {
             ($0.uppercased(), prefixed($0))
-        })
+        }, uniquingKeysWith: { first, _ in first })
 
         for layer in imported.layers where layer.name != "0" {
             var copy = layer

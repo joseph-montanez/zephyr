@@ -4407,7 +4407,10 @@ public final class CADDocument {
         insertionBase: Vector3 = .zero
     ) {
         self.unit = unit
-        self.groups = Dictionary(uniqueKeysWithValues: groups.map { ($0.name, $0) })
+        // Group names arrive from files; duplicates (or case-variants of
+        // the same name) keep the first instead of trapping the import.
+        self.groups = Dictionary(groups.map { ($0.name, $0) },
+                                 uniquingKeysWith: { first, _ in first })
         self.insertionBase = insertionBase
         self.xrefSourceFolder = xrefHostFolder
         self.eabUnloadedXrefHandles = unloadedXrefs
