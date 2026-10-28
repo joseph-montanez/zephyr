@@ -1,7 +1,7 @@
 fixtures: 6
 fixture: blank_lines.dxf
-exportBytes: 10441
-exportLineCount: 1872
+exportBytes: 10551
+exportLineCount: 1886
 layerCount: 1
 layer: 0 c=255,255,255,255 lw=0.25 lt=CONTINUOUS vis=true op=1.0
 blockCount: 2
@@ -11,8 +11,8 @@ entityCount: 1
 entity: kind=line layer=0 block=- geomCount=1 transform=8b68b521a35ec8d5 geometry=4fb3b2160e8ff065
 primitiveKind: line count=1
 fixture: minimal_cr.dxf
-exportBytes: 10780
-exportLineCount: 1932
+exportBytes: 10890
+exportLineCount: 1946
 layerCount: 1
 layer: 0 c=255,255,255,255 lw=0.25 lt=CONTINUOUS vis=true op=1.0
 blockCount: 2
@@ -26,8 +26,8 @@ primitiveKind: circle count=1
 primitiveKind: line count=1
 primitiveKind: text count=1
 fixture: minimal_crlf.dxf
-exportBytes: 10780
-exportLineCount: 1932
+exportBytes: 10890
+exportLineCount: 1946
 layerCount: 1
 layer: 0 c=255,255,255,255 lw=0.25 lt=CONTINUOUS vis=true op=1.0
 blockCount: 2
@@ -41,8 +41,8 @@ primitiveKind: circle count=1
 primitiveKind: line count=1
 primitiveKind: text count=1
 fixture: minimal_lf.dxf
-exportBytes: 10780
-exportLineCount: 1932
+exportBytes: 10890
+exportLineCount: 1946
 layerCount: 1
 layer: 0 c=255,255,255,255 lw=0.25 lt=CONTINUOUS vis=true op=1.0
 blockCount: 2
@@ -56,8 +56,8 @@ primitiveKind: circle count=1
 primitiveKind: line count=1
 primitiveKind: text count=1
 fixture: multiline_text.dxf
-exportBytes: 10780
-exportLineCount: 1932
+exportBytes: 10890
+exportLineCount: 1946
 layerCount: 1
 layer: 0 c=255,255,255,255 lw=0.25 lt=CONTINUOUS vis=true op=1.0
 blockCount: 2
@@ -71,8 +71,8 @@ primitiveKind: circle count=1
 primitiveKind: line count=1
 primitiveKind: text count=1
 fixture: whitespace.dxf
-exportBytes: 10780
-exportLineCount: 1932
+exportBytes: 10890
+exportLineCount: 1946
 layerCount: 1
 layer: 0 c=255,255,255,255 lw=0.25 lt=CONTINUOUS vis=true op=1.0
 blockCount: 2
@@ -85,4 +85,4 @@ entity: kind=text layer=0 block=- geomCount=1 transform=35507eec19159309 geometr
 primitiveKind: circle count=1
 primitiveKind: line count=1
 primitiveKind: text count=1
-DIGEST: 89fb563a2f62e47b
+DIGEST: aff1abfc0ff4a061
