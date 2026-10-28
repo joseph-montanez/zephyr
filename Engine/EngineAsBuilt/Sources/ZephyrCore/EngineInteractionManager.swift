@@ -47,7 +47,7 @@ public final class EngineInteractionManager {
 
     /// True while any window-owned CAD gesture is in progress.
     public var hasActiveWindowGesture: Bool {
-        panActive || dragActive || gripActive || rectSelectActive
+        panActive || dragActive || gripActive || rectSelectActive || lassoActive
             || tableBoundaryDrag != nil || penState.penDrawing
     }
 
@@ -79,6 +79,8 @@ public final class EngineInteractionManager {
     /// of the drawing it started in and must never land in another one.
     public func cancelRectSelect() {
         rectSelectActive = false
+        lassoActive = false
+        lassoPointsWorld.removeAll()
         rectSelectPreviewHandles.removeAll()
         clearWindowGestureIfIdle()
     }
@@ -99,6 +101,37 @@ public final class EngineInteractionManager {
     
     /// Handles that would be selected by the current rect (live preview).
     public var rectSelectPreviewHandles: Set<UUID> = []
+
+    // MARK: - Lasso Select State (press-and-drag)
+
+    /// Whether a freeform lasso selection is in progress. Started when the
+    /// cursor moves while the left button is held (AutoCAD press-and-drag),
+    /// as opposed to click-move-click which draws a rectangular box.
+    public var lassoActive: Bool = false
+    /// World-space cursor path forming the lasso polygon.
+    public var lassoPointsWorld: [Vector3] = []
+    /// Screen-space X where the lasso started (for L→R/R→L detection).
+    public var lassoScreenStartX: Float = 0
+    /// Screen position of the last appended lasso point (path decimation).
+    public var lassoLastScreenX: Float = 0
+    public var lassoLastScreenY: Float = 0
+
+    /// AutoCAD "Allow press and drag for Lasso" option. When true (default),
+    /// press-move-release draws a freeform lasso; when false, it draws a
+    /// rectangular box committed on release instead.
+    public var allowPressAndDragLasso: Bool = true
+
+    // MARK: - Press Anchor (click vs drag disambiguation)
+
+    /// Screen position where the left button was pressed for the in-progress
+    /// (or most recent) empty-space gesture. Compared against the release
+    /// position to tell a click apart from a press-and-drag.
+    public var mouseDownScreenX: Float = 0
+    public var mouseDownScreenY: Float = 0
+
+    /// Minimum screen-space movement (logical pixels) before a held press
+    /// becomes a drag gesture (lasso, or rectangle commit on release).
+    public var pressDragThresholdPixels: Float = 5
     /// Cached rect-preview query, keyed by rect + document revision.
     /// `renderRectSelectPreview` runs every frame during a drag while the
     /// underlying query walks the document, so frames without cursor or

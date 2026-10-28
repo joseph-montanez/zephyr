@@ -410,6 +410,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "CLEANSCREENOFF",  aliases: [],                category: .view,     syntax: "", description: "Restore ribbon and panels hidden by CLEANSCREENON"),
         CommandDescriptor(canonicalName: "EXTENSION",       aliases: ["EXT"],           category: .settings, syntax: "", description: "Toggle extension snapping on/off"),
         CommandDescriptor(canonicalName: "ORTHO",          aliases: [],                category: .settings, syntax: "", description: "Toggle ortho mode (F8) — constrain cursor to cardinal axes"),
+        CommandDescriptor(canonicalName: "LASSO",          aliases: ["PICKDRAG"],      category: .settings, syntax: "[ON|OFF]", description: "Toggle press-and-drag lasso selection on/off (AutoCAD Options > Selection)"),
         CommandDescriptor(canonicalName: "UNITS",          aliases: ["UN", "UNIT", "DDUNITS"], category: .settings, syntax: "[mm|cm|m|in|ft|yd]", description: "Set or display the drawing base unit"),
         CommandDescriptor(canonicalName: "DIMSTYLE",       aliases: ["D", "DST"], category: .settings, syntax: "", description: "Manage dimension styles"),
         CommandDescriptor(canonicalName: "SETUISCALE",     aliases: ["ZOOMUI", "UISCALE"], category: .settings, syntax: "[scale|AUTO]", description: "Override UI zoom (1.0=100%, 1.5=150%, AUTO=system DPI)"),
@@ -1881,6 +1882,27 @@ public final class CADCommandProcessor {
             syncToggleSysvar(
                 "ORTHOMODE", on: engine.snap.orthoEnabled, engine: engine)
             print("[CAD] Ortho: \(engine.snap.orthoEnabled ? "ON" : "OFF")")
+            clearCommand()
+        case "LASSO", "PICKDRAG":
+            guard let engine = engine else { clearCommand(); return }
+            engine.interaction.allowPressAndDragLasso.toggle()
+            print("[CAD] Press-and-drag Lasso: \(engine.interaction.allowPressAndDragLasso ? "ON" : "OFF")")
+            clearCommand()
+        case _ where upper.hasPrefix("LASSO ") || upper.hasPrefix("PICKDRAG "):
+            guard let engine = engine else { clearCommand(); return }
+            let arg = upper.hasPrefix("PICKDRAG")
+                ? String(upper.dropFirst(8)).trimmingCharacters(in: .whitespaces)
+                : String(upper.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+            if arg == "ON" {
+                engine.interaction.allowPressAndDragLasso = true
+            } else if arg == "OFF" {
+                engine.interaction.allowPressAndDragLasso = false
+            } else {
+                print("[CAD] Usage: LASSO [ON|OFF]")
+                clearCommand()
+                return
+            }
+            print("[CAD] Press-and-drag Lasso: \(engine.interaction.allowPressAndDragLasso ? "ON" : "OFF")")
             clearCommand()
         // --- Drawing Units ---
         case "UNITS", "UN", "UNIT", "DDUNITS":

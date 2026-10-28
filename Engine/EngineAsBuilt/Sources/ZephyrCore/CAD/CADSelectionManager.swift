@@ -24,6 +24,25 @@ public final class CADSelectionManager {
 
     public enum RectSelectMode { case replace, add, subtract }
     public enum RectSelectStyle: Equatable, Sendable { case window, crossing }
+
+    /// AutoCAD drag-direction rule, shared by rectangular and lasso selection:
+    /// dragging left-to-right selects a window (only fully enclosed objects),
+    /// dragging right-to-left selects a crossing (enclosed or touched objects).
+    public static func styleForDrag(startScreenX: Float, currentScreenX: Float) -> RectSelectStyle {
+        currentScreenX >= startScreenX ? .window : .crossing
+    }
+
+    /// AutoCAD rubber-band colors, shared by the rectangular box and the lasso
+    /// path: blue window (left-to-right), green crossing (right-to-left),
+    /// red when subtracting with Shift held.
+    public static func rubberBandColor(mode: RectSelectMode, style: RectSelectStyle) -> (UInt8, UInt8, UInt8, UInt8) {
+        switch mode {
+        case .subtract:
+            return (255, 80, 80, 255)
+        case .replace, .add:
+            return style == .window ? (0, 128, 255, 255) : (0, 190, 90, 255)
+        }
+    }
     public enum GripType: Equatable {
         case center, rotation
         case corner(index: Int)
@@ -248,6 +267,43 @@ public final class CADSelectionManager {
             mode: mode, style: style,
             into: &selectedHandles)
         // Update lastSelectedHandle to one of the newly-added handles if any.
+        let added = selectedHandles.subtracting(before)
+        if let first = added.first {
+            lastSelectedHandle = first
+        }
+        _markSelectionChanged()
+    }
+
+    /// Returns the set of handles selected by a lasso polygon,
+    /// without modifying the current selection.
+    public func handlesInPolygon(
+        worldPoints: [Vector3],
+        document: CADDocument,
+        style: RectSelectStyle
+    ) -> Set<UUID> {
+        return CADLassoSelect.handlesInPolygon(
+            worldPoints: worldPoints,
+            document: document, style: style)
+    }
+
+    /// Modifies the selection set based on a lasso polygon.
+    public func selectInPolygon(
+        worldPoints: [Vector3],
+        document: CADDocument,
+        mode: RectSelectMode,
+        style: RectSelectStyle
+    ) {
+        selectedLeaderContentHandle = nil
+        if mode == .replace {
+            selectedHandles.removeAll()
+            lastSelectedHandle = nil
+        }
+        let before = selectedHandles
+        CADLassoSelect.selectInPolygon(
+            worldPoints: worldPoints,
+            document: document,
+            mode: mode, style: style,
+            into: &selectedHandles)
         let added = selectedHandles.subtracting(before)
         if let first = added.first {
             lastSelectedHandle = first

@@ -163,16 +163,40 @@ public final class EngineLoopController {
         }
     }
 
+    // MARK: - Selection Debug (env-gated)
+
+    /// True when ZEPHYR_DEBUG_SELECTION is set in the environment. Enables
+    /// one-line state-transition logs from the tool mouse handlers.
+    internal static let selectionDebugEnabled: Bool =
+        ProcessInfo.processInfo.environment["ZEPHYR_DEBUG_SELECTION"] != nil
+
+    internal func selectionDebug(_ message: @autoclosure () -> String) {
+        if Self.selectionDebugEnabled {
+            FileHandle.standardError.write(Data("[SELDEBUG] \(message())\n".utf8))
+        }
+    }
+
     // MARK: - Tool Mouse Handlers
-    
+
     // Extracted from Engine+Loop.swift
     internal func handleToolMouseDown(x: Float, y: Float) {
         let interaction = engine.interaction
         let snapMgr = engine.snap
         let (wx, wy) = engine.camera.screenToWorld(screenX: x, screenY: y, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
         let shiftHeld = (engine.io != nil) ? engine.io.pointee.KeyShift : false
+        selectionDebug("DOWN-ENTRY x=\(x) y=\(y) rectActive=\(interaction.rectSelectActive) lassoActive=\(interaction.lassoActive) cmd=\(engine.commandProcessor.activeCommand ?? "nil")")
+
+        if interaction.lassoActive {
+            // A second press while a lasso is somehow still active (missed
+            // mouse-up) discards the stale gesture rather than committing it.
+            cancelLassoSelection()
+            interaction.rectSelectActive = false
+            interaction.rectSelectPreviewHandles.removeAll()
+            return
+        }
 
         if interaction.rectSelectActive {
+            selectionDebug("DOWN x=\(x) y=\(y) branch=commit-armed-box")
             interaction.rectSelectActive = false
             interaction.rectSelectPreviewHandles.removeAll()
             let minX = min(interaction.rectSelectStartX, interaction.rectSelectCurrentX)
@@ -216,6 +240,8 @@ public final class EngineLoopController {
                     interaction.rectSelectCurrentX = wx
                     interaction.rectSelectCurrentY = wy
                     interaction.cadRectSelectMode = shiftHeld ? .subtract : .add
+                    interaction.mouseDownScreenX = x
+                    interaction.mouseDownScreenY = y
                 }
                 return
             }
@@ -453,30 +479,83 @@ public final class EngineLoopController {
         interaction.rectSelectCurrentX = wx
         interaction.rectSelectCurrentY = wy
         interaction.cadRectSelectMode = shiftHeld ? .subtract : .add
+        interaction.mouseDownScreenX = x
+        interaction.mouseDownScreenY = y
+        selectionDebug("DOWN x=\(x) y=\(y) branch=arm-box rectActive=true")
     }
 
     internal func handleToolMouseUp(x: Float, y: Float) {
         let interaction = engine.interaction
-        if interaction.rectSelectActive, !interaction.dragActive, !interaction.gripActive {
-            interaction.rectSelectActive = false
-            interaction.rectSelectPreviewHandles.removeAll()
-            let (releaseWX, releaseWY) = engine.camera.screenToWorld(screenX: x, screenY: y, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
-            if let commit = CADRectSelect.commitRect(
-                startX: interaction.rectSelectStartX, startY: interaction.rectSelectStartY,
-                currentX: releaseWX, currentY: releaseWY,
-                screenStartX: interaction.rectSelectScreenStartX, screenX: x) {
-                engine.cadSelection.selectInRect(
-                    worldX: commit.minX,
-                    worldY: commit.minY,
-                    worldW: commit.worldW,
-                    worldH: commit.worldH,
+        if interaction.lassoActive {
+            // Press-and-drag release: commit the freeform lasso polygon —
+            // unless the whole path fits in a tiny bbox, which was a slipping
+            // click (trackpad / HiDPI), not a deliberate drag. In that case
+            // the box stays armed at the original corner (click semantics).
+            let points = interaction.lassoPointsWorld
+            interaction.lassoActive = false
+            interaction.lassoPointsWorld.removeAll()
+            var isDeliberateDrag = false
+            if points.count >= 3 {
+                let (minX, minY, maxX, maxY) = CADLassoSelect.boundingBox(points)
+                let extentDevicePx = hypot(maxX - minX, maxY - minY) * engine.camera.zoom
+                let intentDevicePx = 24.0 * Double(max(engine.currentDpiScale, 1.0))
+                isDeliberateDrag = extentDevicePx > intentDevicePx
+                selectionDebug("UP-LASSO pts=\(points.count) extentPx=\(extentDevicePx) intentPx=\(intentDevicePx) deliberate=\(isDeliberateDrag)")
+            }
+            if isDeliberateDrag {
+                interaction.rectSelectActive = false
+                interaction.rectSelectPreviewHandles.removeAll()
+                let style = CADSelectionManager.styleForDrag(
+                    startScreenX: interaction.lassoScreenStartX, currentScreenX: x)
+                engine.cadSelection.selectInPolygon(
+                    worldPoints: points,
                     document: engine.document,
-                    mode: interaction.cadRectSelectMode,
-                    style: commit.style)
+                    mode: interaction.cadRectSelectMode, style: style)
                 if engine.commandProcessor.isSelectingObjects {
                     engine.commandProcessor.updateObjectSelectionPrompt()
                 }
             }
+            return
+        }
+        if interaction.rectSelectActive, !interaction.dragActive, !interaction.gripActive {
+            let dx = x - interaction.mouseDownScreenX
+            let dy = y - interaction.mouseDownScreenY
+            let dist = hypot(dx, dy)
+            // Threshold is in logical pixels; event coords are device pixels
+            // (2x on a 200%-scaled display), so scale it before comparing.
+            let threshPx = interaction.pressDragThresholdPixels * max(engine.currentDpiScale, 1.0)
+            if !interaction.allowPressAndDragLasso && dist > threshPx {
+                // Press-drag release with lasso disabled (rectangle-drag mode):
+                // commit the rectangle. With lasso enabled a release never
+                // commits a rectangle by itself — only a formed lasso (>= 3
+                // points, handled above) commits — so a click that slips a
+                // few pixels between press and release still ARMS the first
+                // corner instead of committing a tiny box and disarming.
+                selectionDebug("UP x=\(x) y=\(y) dist=\(dist) threshPx=\(threshPx) branch=commit-drag")
+                interaction.rectSelectActive = false
+                interaction.rectSelectPreviewHandles.removeAll()
+                let (releaseWX, releaseWY) = engine.camera.screenToWorld(screenX: x, screenY: y, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
+                if let commit = CADRectSelect.commitRect(
+                    startX: interaction.rectSelectStartX, startY: interaction.rectSelectStartY,
+                    currentX: releaseWX, currentY: releaseWY,
+                    screenStartX: interaction.rectSelectScreenStartX, screenX: x) {
+                    engine.cadSelection.selectInRect(
+                        worldX: commit.minX,
+                        worldY: commit.minY,
+                        worldW: commit.worldW,
+                        worldH: commit.worldH,
+                        document: engine.document,
+                        mode: interaction.cadRectSelectMode,
+                        style: commit.style)
+                    if engine.commandProcessor.isSelectingObjects {
+                        engine.commandProcessor.updateObjectSelectionPrompt()
+                    }
+                }
+            } else {
+                selectionDebug("UP x=\(x) y=\(y) dist=\(dist) threshPx=\(threshPx) branch=keep-armed")
+            }
+            // Otherwise this was a click: keep the box active so the next
+            // click sets the opposite corner (click-move-click).
             return
         }
         if let tableDrag = interaction.tableBoundaryDrag {
@@ -562,13 +641,32 @@ public final class EngineLoopController {
         }
     }
 
+    /// Discards an in-progress lasso path without changing the selection.
+    internal func cancelLassoSelection() {
+        engine.interaction.lassoActive = false
+        engine.interaction.lassoPointsWorld.removeAll()
+        engine.interaction.rectSelectPreviewHandles.removeAll()
+    }
+
+    /// Appends the cursor to the lasso path (decimated to ~2 device-px steps).
+    private func appendLassoPoint(worldX wx: Double, worldY wy: Double, screenX x: Float, screenY y: Float) {
+        let interaction = engine.interaction
+        let dx = x - interaction.lassoLastScreenX
+        let dy = y - interaction.lassoLastScreenY
+        if hypot(dx, dy) >= 2 {
+            interaction.lassoPointsWorld.append(Vector3(x: wx, y: wy, z: 0))
+            interaction.lassoLastScreenX = x
+            interaction.lassoLastScreenY = y
+        }
+    }
+
     internal func handleToolMouseMotion(x: Float, y: Float) {
         let interaction = engine.interaction
         let (wx, wy) = engine.camera.screenToWorld(screenX: x, screenY: y, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
         let isLeftDown = (engine.io != nil) ? engine.io.pointee.MouseDown.0 : false
 
         // Heal state if SDL missed a mouse up event (e.g., releasing outside window)
-        if (interaction.dragActive || interaction.gripActive || interaction.tableBoundaryDrag != nil) && !isLeftDown {
+        if (interaction.dragActive || interaction.gripActive || interaction.lassoActive || interaction.tableBoundaryDrag != nil) && !isLeftDown {
             handleToolMouseUp(x: x, y: y)
         }
 
@@ -908,6 +1006,32 @@ public final class EngineLoopController {
         if interaction.rectSelectActive {
             interaction.rectSelectCurrentX = wx
             interaction.rectSelectCurrentY = wy
+            // Press-and-drag disambiguation: a press on empty space that moves
+            // while held becomes a drag gesture, not a box corner.
+            if !interaction.lassoActive && isLeftDown &&
+               !interaction.dragActive && !interaction.gripActive {
+                let mdx = x - interaction.mouseDownScreenX
+                let mdy = y - interaction.mouseDownScreenY
+                // Threshold is in logical pixels; event coords are device pixels.
+                let threshPx = interaction.pressDragThresholdPixels * max(engine.currentDpiScale, 1.0)
+                if hypot(mdx, mdy) > threshPx,
+                   interaction.allowPressAndDragLasso {
+                    // Convert the box corner into a freeform lasso path.
+                    interaction.lassoActive = true
+                    interaction.lassoScreenStartX = interaction.rectSelectScreenStartX
+                    interaction.lassoPointsWorld = [
+                        Vector3(x: interaction.rectSelectStartX, y: interaction.rectSelectStartY, z: 0),
+                        Vector3(x: wx, y: wy, z: 0),
+                    ]
+                    interaction.lassoLastScreenX = x
+                    interaction.lassoLastScreenY = y
+                }
+                // With lasso disabled the rectangle keeps rubber-banding and
+                // is committed on release (see handleToolMouseUp).
+            }
+            if interaction.lassoActive {
+                appendLassoPoint(worldX: wx, worldY: wy, screenX: x, screenY: y)
+            }
             return
         }
 

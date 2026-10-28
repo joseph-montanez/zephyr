@@ -2813,16 +2813,29 @@ public final class EngineRenderer {
     /// capped to stay under ImGui's 16-bit index limit (65535 vertices).
     private func renderRectSelectPreview(cam: CameraTransform) {
         guard engine.interaction.rectSelectActive else { return }
-        let previewStyle: CADSelectionManager.RectSelectStyle = (engine.interaction.lastMouseX >= engine.interaction.rectSelectScreenStartX) ? .window : .crossing
-        let previewMinX = min(engine.interaction.rectSelectStartX, engine.interaction.rectSelectCurrentX)
-        let previewMaxX = max(engine.interaction.rectSelectStartX, engine.interaction.rectSelectCurrentX)
-        let previewMinY = min(engine.interaction.rectSelectStartY, engine.interaction.rectSelectCurrentY)
-        let previewMaxY = max(engine.interaction.rectSelectStartY, engine.interaction.rectSelectCurrentY)
-        guard previewMaxX > previewMinX || previewMaxY > previewMinY else { return }
-        let previewHandles = engine.interaction.rectPreviewHandles(
-            minX: previewMinX, minY: previewMinY, maxX: previewMaxX, maxY: previewMaxY,
-            revision: engine.document.renderRevision,
-            compute: { engine.cadSelection.handlesInRect(worldX: previewMinX, worldY: previewMinY, worldW: previewMaxX - previewMinX, worldH: previewMaxY - previewMinY, document: engine.document, style: previewStyle) })
+        let previewHandles: Set<UUID>
+        if engine.interaction.lassoActive {
+            guard engine.interaction.lassoPointsWorld.count >= 3 else { return }
+            let previewStyle = CADSelectionManager.styleForDrag(
+                startScreenX: engine.interaction.lassoScreenStartX,
+                currentScreenX: engine.interaction.lastMouseX)
+            previewHandles = engine.cadSelection.handlesInPolygon(
+                worldPoints: engine.interaction.lassoPointsWorld,
+                document: engine.document, style: previewStyle)
+        } else {
+            let previewStyle = CADSelectionManager.styleForDrag(
+                startScreenX: engine.interaction.rectSelectScreenStartX,
+                currentScreenX: engine.interaction.lastMouseX)
+            let previewMinX = min(engine.interaction.rectSelectStartX, engine.interaction.rectSelectCurrentX)
+            let previewMaxX = max(engine.interaction.rectSelectStartX, engine.interaction.rectSelectCurrentX)
+            let previewMinY = min(engine.interaction.rectSelectStartY, engine.interaction.rectSelectCurrentY)
+            let previewMaxY = max(engine.interaction.rectSelectStartY, engine.interaction.rectSelectCurrentY)
+            guard previewMaxX > previewMinX || previewMaxY > previewMinY else { return }
+            previewHandles = engine.interaction.rectPreviewHandles(
+                minX: previewMinX, minY: previewMinY, maxX: previewMaxX, maxY: previewMaxY,
+                revision: engine.document.renderRevision,
+                compute: { engine.cadSelection.handlesInRect(worldX: previewMinX, worldY: previewMinY, worldW: previewMaxX - previewMinX, worldH: previewMaxY - previewMinY, document: engine.document, style: previewStyle) })
+        }
         guard !previewHandles.isEmpty else { return }
         guard !CADSelectionDisplayPolicy.previewSuppressed(previewCount: previewHandles.count, selectionPreviewLimit: engine.selectionPreviewLimit) else { return }
 
@@ -3480,6 +3493,10 @@ public final class EngineRenderer {
 
     private func renderRectSelectBox(origin: (x: Float, y: Float) = (0, 0)) {
         guard engine.interaction.rectSelectActive else { return }
+        if engine.interaction.lassoActive {
+            renderLassoPath(origin: origin)
+            return
+        }
         let cam = engine.camera.currentTransform(windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
         let q1 = EngineCameraManager.worldToScreen(
             worldX: engine.interaction.rectSelectStartX, worldY: engine.interaction.rectSelectStartY, cam: cam)
@@ -3489,25 +3506,58 @@ public final class EngineRenderer {
         let p3 = SDL_FPoint(x: q3.x + origin.x, y: q3.y + origin.y)
         let p2 = SDL_FPoint(x: p3.x, y: p1.y)
         let p4 = SDL_FPoint(x: p1.x, y: p3.y)
-        let style: CADSelectionManager.RectSelectStyle =
-            (engine.interaction.lastMouseX >= engine.interaction.rectSelectScreenStartX) ? .window : .crossing
-        let hc: (UInt8, UInt8, UInt8, UInt8)
-        switch engine.interaction.cadRectSelectMode {
-        case .replace:
-            hc = (style == .window) ? (0, 128, 255, 255) : (64, 180, 255, 255)
-        case .add:
-            hc = (style == .window) ? (0, 128, 255, 255) : (64, 180, 255, 255)
-        case .subtract:
-            hc = (255, 80, 80, 255)
-        }
+        // AutoCAD colors: blue window (left-to-right), green crossing
+        // (right-to-left), red when subtracting with Shift held.
+        let style = CADSelectionManager.styleForDrag(
+            startScreenX: engine.interaction.rectSelectScreenStartX,
+            currentScreenX: engine.interaction.lastMouseX)
+        let hc = CADSelectionManager.rubberBandColor(
+            mode: engine.interaction.cadRectSelectMode, style: style)
         let drawList = igGetBackgroundDrawList(nil)
         let col = makeImCol32(r: hc.0, g: hc.1, b: hc.2, a: hc.3)
-        
+        let fill = makeImCol32(r: hc.0, g: hc.1, b: hc.2, a: 28)
+
+        ImDrawListAddRectFilled(
+            drawList,
+            ImVec2(x: min(p1.x, p3.x), y: min(p1.y, p3.y)),
+            ImVec2(x: max(p1.x, p3.x), y: max(p1.y, p3.y)),
+            fill, 0.0, 0)
         ImDrawListAddLine(drawList, ImVec2(x: p1.x, y: p1.y), ImVec2(x: p2.x, y: p2.y), col, 1.0)
         ImDrawListAddLine(drawList, ImVec2(x: p2.x, y: p2.y), ImVec2(x: p3.x, y: p3.y), col, 1.0)
         ImDrawListAddLine(drawList, ImVec2(x: p3.x, y: p3.y), ImVec2(x: p4.x, y: p4.y), col, 1.0)
         ImDrawListAddLine(drawList, ImVec2(x: p4.x, y: p4.y), ImVec2(x: p1.x, y: p1.y), col, 1.0)
-        _foregroundVertexEstimate += 8  // 4 thin lines ≈ 8 verts
+        _foregroundVertexEstimate += 12  // filled rect + 4 thin lines
+    }
+
+    /// Renders the in-progress freeform lasso path (press-and-drag selection).
+    /// Same AutoCAD color rule as the box: blue for a left-to-right window,
+    /// green for a right-to-left crossing, red when subtracting.
+    private func renderLassoPath(origin: (x: Float, y: Float) = (0, 0)) {
+        let pts = engine.interaction.lassoPointsWorld
+        guard pts.count >= 2 else { return }
+        let cam = engine.camera.currentTransform(windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
+        let style = CADSelectionManager.styleForDrag(
+            startScreenX: engine.interaction.lassoScreenStartX,
+            currentScreenX: engine.interaction.lastMouseX)
+        let hc = CADSelectionManager.rubberBandColor(
+            mode: engine.interaction.cadRectSelectMode, style: style)
+        let drawList = igGetBackgroundDrawList(nil)
+        let col = makeImCol32(r: hc.0, g: hc.1, b: hc.2, a: hc.3)
+
+        func toScreen(_ p: Vector3) -> SDL_FPoint {
+            let s = EngineCameraManager.worldToScreen(worldX: p.x, worldY: p.y, cam: cam)
+            return SDL_FPoint(x: s.x + origin.x, y: s.y + origin.y)
+        }
+        var prev = toScreen(pts[0])
+        for i in 1..<pts.count {
+            let cur = toScreen(pts[i])
+            ImDrawListAddLine(drawList, ImVec2(x: prev.x, y: prev.y), ImVec2(x: cur.x, y: cur.y), col, 1.0)
+            prev = cur
+        }
+        // Closing segment back to the start to show the enclosed region.
+        let first = toScreen(pts[0])
+        ImDrawListAddLine(drawList, ImVec2(x: prev.x, y: prev.y), ImVec2(x: first.x, y: first.y), col, 1.0)
+        _foregroundVertexEstimate += pts.count * 2
     }
 
     // MARK: - Move Ghost Preview

@@ -280,6 +280,11 @@ internal final class EngineInputHandler {
                 if engine.interaction.dragActive || engine.interaction.gripActive {
                     engine.loopController.handleToolMouseUp(x: 0, y: 0)
                 }
+                // A focus loss must never commit a lasso with a bogus cursor
+                // position — discard the path instead.
+                if engine.interaction.lassoActive {
+                    engine.loopController.cancelLassoSelection()
+                }
                 // Release panning state that may be stuck from a missed mouse-up.
                 engine.interaction.panActive = false
                 engine.interaction.touchPanActive = false
