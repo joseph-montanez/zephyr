@@ -69,6 +69,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **ODA setup** — download 404 and teardown hardening; first-run setup popup
 - **Windows builds** — missing DLLs, crash when engine init fails, and `igInputText` String-pointer warnings
 - **Per-window state** — ImGui contexts, window-local main tab and selection gestures, long EAB strings, and a quieter initial load
+- **Frame tearing** — reused ImGui transfer buffers are now mapped with `cycle=true`; mapping with `cycle=false` let a new frame overwrite upload data the GPU was still reading, which tore the interface every couple of frames
 
 ### Maintenance
 - **Swift 6.4 migration** — toolchain bump and `zlib-ng` fix
@@ -84,6 +85,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **NURBS** — single scratch buffer per evaluation instead of three arrays
 - **EAB/SHX** — one byte helper with safe loads, gated by golden digests
 - **Swift 6.4 branch** — performance harness and baseline
+- **Large-selection cursor lag** — the Properties panel picker rebuilt, relabeled, and re-sorted the whole selection every frame (plus a console print per frame); it is now cached and rebuilt only when the selection or document changes, with no per-frame allocation in the comparator. Also cached: rect-select preview queries (per frame → per changed rect), renderable world bounds, and layer lookups; hover hit-tests are throttled (8 ms) with grip early-outs, live-drag transforms skip full storage prep, and the vertex rebuild no longer launches mid-rect-drag
+- **ImGui uploads** — transfer buffers are reused across frames instead of created/released per frame (amortized growth with headroom)
 
 ## September 2026
 

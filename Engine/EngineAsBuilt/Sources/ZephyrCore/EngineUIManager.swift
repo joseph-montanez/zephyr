@@ -129,6 +129,28 @@ public enum PropertiesPanelUIPolicy {
         }
         return orderedSelectedHandles.first
     }
+
+    /// Staleness check for the panel's cached picker list. The list is a
+    /// function of (selection, document contents), so it only needs
+    /// rebuilding when the document, the selection generation, or the
+    /// document revision (labels embed block names / geometry kinds)
+    /// moves. Rebuilding per frame makes a large selection pay entity
+    /// copies + label building + an allocating sort on the render path.
+    public static func pickerCacheStale(
+        cachedDocument: ObjectIdentifier?,
+        document: ObjectIdentifier,
+        cachedSelectionGeneration: Int,
+        selectionGeneration: Int,
+        cachedRevision: UInt64,
+        revision: UInt64,
+        cachedCount: Int,
+        selectionCount: Int
+    ) -> Bool {
+        cachedDocument != document
+            || cachedSelectionGeneration != selectionGeneration
+            || cachedRevision != revision
+            || cachedCount != selectionCount
+    }
 }
 
 /// Drawing-view tabs belong to the tab shown in each OS window/pane, not

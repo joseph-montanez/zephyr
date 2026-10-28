@@ -1,4 +1,5 @@
 import Foundation
+import SwiftSDL
 
 /// Updates grip and entity hover state for pointer motion.
 ///
@@ -13,6 +14,25 @@ final class CADHoverCoordinator {
         self.engine = engine
     }
 
+    /// Minimum ms between CPU hover hit-tests during a mouse-move burst.
+    /// The distance gate still applies; the GPU pick pass keeps hover
+    /// fresh between CPU runs.
+    static let hoverRetestIntervalTicks: UInt64 = 8
+
+    /// Pure throttle decision for CPU hover hit-tests. With no current
+    /// hover target the test always runs so the first highlight appears
+    /// promptly; otherwise bursts are coalesced to one test per interval.
+    static func shouldRunHoverTest(
+        moveDistance: Double,
+        threshold: Double,
+        hasHoverTarget: Bool,
+        ticksSinceLastTest: UInt64
+    ) -> Bool {
+        guard hasHoverTarget else { return true }
+        if ticksSinceLastTest < hoverRetestIntervalTicks { return false }
+        return moveDistance > threshold * 0.5
+    }
+
     func update(worldX: Double, worldY: Double, screenX: Float, screenY: Float) {
         updateGrip(screenX: screenX, screenY: screenY)
         updateEntity(worldX: worldX, worldY: worldY)
@@ -20,6 +40,19 @@ final class CADHoverCoordinator {
 
     private func updateGrip(screenX: Float, screenY: Float) {
         let interaction = engine.interaction
+        // No grips can exist without a selection or above GRIPOBJLIMIT
+        // (`getAllGrips` returns [] in both cases) -- skip the O(selected)
+        // regeneration entirely instead of proving it empty per event.
+        let selected = engine.cadSelection.selectedHandles
+        guard !selected.isEmpty,
+              !CADSelectionDisplayPolicy.gripsSuppressed(
+                  selectedCount: selected.count,
+                  gripObjectLimit: engine.gripObjectMax)
+        else {
+            interaction.hoveredGrip = nil
+            interaction.hoveredGripHandle = nil
+            return
+        }
         let camera = engine.camera.currentTransform(
             windowWidth: engine.windowWidth,
             windowHeight: engine.windowHeight)
@@ -37,10 +70,16 @@ final class CADHoverCoordinator {
     private func updateEntity(worldX: Double, worldY: Double) {
         let interaction = engine.interaction
         let threshold = 6.0 / engine.camera.zoom
+        let nowTicks = SDL_GetTicks()
         let distance = hypot(
             worldX - interaction.lastHoverTestWorldX,
             worldY - interaction.lastHoverTestWorldY)
-        guard distance > threshold * 0.5 || interaction.hoveredEntityHandle == nil else {
+        guard Self.shouldRunHoverTest(
+            moveDistance: distance,
+            threshold: threshold,
+            hasHoverTarget: interaction.hoveredEntityHandle != nil,
+            ticksSinceLastTest: nowTicks &- interaction.lastHoverTestTicks
+        ) else {
             return
         }
 
@@ -52,5 +91,6 @@ final class CADHoverCoordinator {
             simplifyComplexBlocks: engine.simplifyComplexBlocks)
         interaction.lastHoverTestWorldX = worldX
         interaction.lastHoverTestWorldY = worldY
+        interaction.lastHoverTestTicks = nowTicks
     }
 }

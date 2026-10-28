@@ -73,4 +73,48 @@ final class PropertiesPanelUIPolicyTests: XCTestCase {
         XCTAssertNil(PropertiesPanelUIPolicy.displayedHandle(
             orderedSelectedHandles: [], inspectedHandle: nil, lastSelectedHandle: a))
     }
+
+    // MARK: - Picker cache (selection perf)
+
+    /// The picker list is a function of (selection, document contents).
+    /// It must rebuild only when one of those moves, never per frame --
+    /// otherwise a large selection pays entity copies + label building +
+    /// an allocating sort on the render path.
+    func testPickerCacheFreshWhenNothingChanged() {
+        let doc = ObjectIdentifier(NSString(string: "doc"))
+        XCTAssertFalse(PropertiesPanelUIPolicy.pickerCacheStale(
+            cachedDocument: doc, document: doc,
+            cachedSelectionGeneration: 3, selectionGeneration: 3,
+            cachedRevision: 9, revision: 9,
+            cachedCount: 4, selectionCount: 4))
+    }
+
+    func testPickerCacheStaleOnAnyKeyChange() {
+        let doc = ObjectIdentifier(NSString(string: "doc"))
+        let other = ObjectIdentifier(NSString(string: "other"))
+        // Tab/document switch.
+        XCTAssertTrue(PropertiesPanelUIPolicy.pickerCacheStale(
+            cachedDocument: doc, document: other,
+            cachedSelectionGeneration: 3, selectionGeneration: 3,
+            cachedRevision: 9, revision: 9,
+            cachedCount: 4, selectionCount: 4))
+        // Selection changed (even same size).
+        XCTAssertTrue(PropertiesPanelUIPolicy.pickerCacheStale(
+            cachedDocument: doc, document: doc,
+            cachedSelectionGeneration: 3, selectionGeneration: 4,
+            cachedRevision: 9, revision: 9,
+            cachedCount: 4, selectionCount: 4))
+        // Document edited (labels may change: block rename, geometry edits).
+        XCTAssertTrue(PropertiesPanelUIPolicy.pickerCacheStale(
+            cachedDocument: doc, document: doc,
+            cachedSelectionGeneration: 3, selectionGeneration: 3,
+            cachedRevision: 9, revision: 10,
+            cachedCount: 4, selectionCount: 4))
+        // Cold cache (nothing cached yet).
+        XCTAssertTrue(PropertiesPanelUIPolicy.pickerCacheStale(
+            cachedDocument: nil, document: doc,
+            cachedSelectionGeneration: 0, selectionGeneration: 3,
+            cachedRevision: 0, revision: 9,
+            cachedCount: 0, selectionCount: 4))
+    }
 }

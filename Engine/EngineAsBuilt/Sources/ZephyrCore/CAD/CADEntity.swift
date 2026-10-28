@@ -644,7 +644,12 @@ public struct Layer: Hashable, Sendable {
 /// DXF draw-style metadata retained for primitives inside flattened blocks.
 /// Block geometry alone cannot represent per-child layer, line type, or line weight.
 public struct CADPrimitiveStyle: Hashable, Sendable {
-    public var layerName: String?
+    public var layerName: String? {
+        didSet { cachedEffectiveLayerUppercased = Self.uppercasedEffectiveLayerName(layerName) }
+    }
+    /// Cached trimmed+uppercased layer key. Derived from `layerName`;
+    /// excluded from `==`/`hashValue` so persistence semantics are unchanged.
+    public private(set) var cachedEffectiveLayerUppercased: String?
     public var color: ColorRGBA?
     public var isColorByBlock: Bool
     public var lineType: String?
@@ -676,6 +681,7 @@ public struct CADPrimitiveStyle: Hashable, Sendable {
         textBackgroundUsesViewportColor: Bool = false
     ) {
         self.layerName = layerName
+        self.cachedEffectiveLayerUppercased = Self.uppercasedEffectiveLayerName(layerName)
         self.color = color
         self.isColorByBlock = isColorByBlock
         self.lineType = lineType
@@ -694,6 +700,16 @@ public struct CADPrimitiveStyle: Hashable, Sendable {
     /// Layer this primitive's style resolves against: the trimmed
     /// `layerName`, or nil when empty or "0" (layer "0" inside a block
     /// inherits the INSERT entity's layer, matching the renderer).
+    public static func uppercasedEffectiveLayerName(_ rawName: String?) -> String? {
+        guard let raw = rawName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty, raw != "0" else { return nil }
+        return raw.uppercased()
+    }
+
+    public var effectiveLayerUppercased: String? {
+        cachedEffectiveLayerUppercased
+    }
+
     public var effectiveLayerName: String? {
         guard let raw = layerName?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty, raw != "0" else { return nil }
@@ -713,8 +729,8 @@ public enum CADPrimitiveVisibility {
     }
 
     public static func isVisible(style: CADPrimitiveStyle?, layersByName: [String: Layer]) -> Bool {
-        guard let name = style?.effectiveLayerName,
-              let layer = layersByName[name.uppercased()] else { return true }
+        guard let name = style?.effectiveLayerUppercased,
+              let layer = layersByName[name] else { return true }
         return layer.isVisible
     }
 }

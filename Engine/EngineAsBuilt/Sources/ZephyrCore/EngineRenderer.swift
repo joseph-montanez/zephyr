@@ -140,6 +140,10 @@ public final class EngineRenderer {
     internal var imguiVertexCapacity: Int = 0
     internal var imguiIndexBuffer: OpaquePointer?
     internal var imguiIndexCapacity: Int = 0
+    internal var imguiVtxTransferBuffer: OpaquePointer?
+    internal var imguiVtxTransferCapacityBytes: Int = 0
+    internal var imguiIdxTransferBuffer: OpaquePointer?
+    internal var imguiIdxTransferCapacityBytes: Int = 0
 
 
     internal var usesTriangleHairlines: Bool { false }
@@ -568,7 +572,8 @@ public final class EngineRenderer {
                 background: engine.ui.backgroundColor,
                 useLightDisplayPalette: engine.ui.isViewportBackgroundLight,
                 pendingApplied: pendingApplied,
-                interactive: !(engine.interaction.dragActive || engine.interaction.gripActive))
+                interactive: !(engine.interaction.dragActive || engine.interaction.gripActive
+                    || engine.interaction.rectSelectActive))
             // NOTE: ctx.cachedMutationGen is written at swap time inside applyVertexBuild.
             if engine.mainWindowShowsActiveTab() {
                 renderPrimaryWindow(
@@ -833,7 +838,8 @@ public final class EngineRenderer {
             background: engine.ui.backgroundColor,
             useLightDisplayPalette: engine.ui.isViewportBackgroundLight,
             pendingApplied: pendingApplied,
-            interactive: !(engine.interaction.dragActive || engine.interaction.gripActive))
+            interactive: !(engine.interaction.dragActive || engine.interaction.gripActive
+                    || engine.interaction.rectSelectActive))
 
         // Non-focused pane prep: every such pane gets its own leaf-keyed
         // context driven by its remembered entry — which tab, which of the
@@ -2490,6 +2496,42 @@ public final class EngineRenderer {
     /// Called once per window frame, immediately after `ImGuiRender` and before
     /// that window's render pass consumes the buffers.
     /// - Returns: Whether fresh draw data is ready to render.
+    /// Growth policy for reusable ImGui transfer buffers. Returns the
+    /// capacity to ensure: reuse when the existing buffer covers the need,
+    /// else grow with headroom to avoid per-frame reallocations.
+    static func grownImGuiTransferCapacity(neededBytes: Int, existingBytes: Int) -> Int? {
+        guard neededBytes > 0 else { return nil }
+        if existingBytes >= neededBytes { return existingBytes }
+        return neededBytes + max(4096, neededBytes / 4)
+    }
+
+    /// Returns a transfer buffer with at least `bytes` capacity, growing
+    /// (with headroom) only when the current one is too small. Buffers are
+    /// never released per-frame; uploads already pass `cycle=true`, which
+    /// is SDL's documented cross-frame reuse mechanism.
+    private func ensuredImGuiTransferBuffer(
+        bytes: Int,
+        current: inout OpaquePointer?,
+        capacity: inout Int
+    ) -> OpaquePointer? {
+        guard let want = Self.grownImGuiTransferCapacity(
+            neededBytes: bytes, existingBytes: capacity)
+        else { return nil }
+        if current == nil || capacity < bytes {
+            var info = SDL_GPUTransferBufferCreateInfo()
+            info.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
+            info.size = UInt32(want)
+            if let created = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &info) {
+                if let old = current {
+                    SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, old)
+                }
+                current = created
+                capacity = want
+            }
+        }
+        return current
+    }
+
     private func uploadImGuiDrawData() -> Bool {
         guard let drawData = ImGuiGetDrawData() else { return false }
         var totalVtxCount = 0
@@ -2542,21 +2584,24 @@ public final class EngineRenderer {
                 let vtxSizeInBytes = UInt32(totalVtxCount * MemoryLayout<ImDrawVert>.stride)
                 let idxSizeInBytes = UInt32(totalIdxCount * MemoryLayout<ImDrawIdx>.stride)
 
-                var vtxTransferInfo = SDL_GPUTransferBufferCreateInfo()
-                vtxTransferInfo.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
-                vtxTransferInfo.size = vtxSizeInBytes
-                let vtxTransferBuf = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &vtxTransferInfo)
-
-                var idxTransferInfo = SDL_GPUTransferBufferCreateInfo()
-                idxTransferInfo.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
-                idxTransferInfo.size = idxSizeInBytes
-                let idxTransferBuf = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &idxTransferInfo)
+                // Reusable transfer buffers: no per-frame create/release.
+                // Map MUST use cycle=true: the previous frame's upload may
+                // still be in flight, and overwriting referenced data without
+                // cycling tears the UI every few frames.
+                let vtxTransferBuf = ensuredImGuiTransferBuffer(
+                    bytes: Int(vtxSizeInBytes),
+                    current: &imguiVtxTransferBuffer,
+                    capacity: &imguiVtxTransferCapacityBytes)
+                let idxTransferBuf = ensuredImGuiTransferBuffer(
+                    bytes: Int(idxSizeInBytes),
+                    current: &imguiIdxTransferBuffer,
+                    capacity: &imguiIdxTransferCapacityBytes)
 
                 if let vtxTransferBuf,
                    let idxTransferBuf
                 {
-                    let vtxMapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, vtxTransferBuf, false)
-                    let idxMapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, idxTransferBuf, false)
+                    let vtxMapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, vtxTransferBuf, true)
+                    let idxMapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, idxTransferBuf, true)
 
                     if let vtxMapped,
                        let idxMapped
@@ -2609,13 +2654,6 @@ public final class EngineRenderer {
                             SDL_UnmapGPUTransferBuffer(engine.gpuDevice, idxTransferBuf)
                         }
                     }
-                }
-
-                if let vtxTransferBuf {
-                    SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, vtxTransferBuf)
-                }
-                if let idxTransferBuf {
-                    SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, idxTransferBuf)
                 }
             }
         }
@@ -2772,7 +2810,10 @@ public final class EngineRenderer {
         let previewMinY = min(engine.interaction.rectSelectStartY, engine.interaction.rectSelectCurrentY)
         let previewMaxY = max(engine.interaction.rectSelectStartY, engine.interaction.rectSelectCurrentY)
         guard previewMaxX > previewMinX || previewMaxY > previewMinY else { return }
-        let previewHandles = engine.cadSelection.handlesInRect(worldX: previewMinX, worldY: previewMinY, worldW: previewMaxX - previewMinX, worldH: previewMaxY - previewMinY, document: engine.document, style: previewStyle)
+        let previewHandles = engine.interaction.rectPreviewHandles(
+            minX: previewMinX, minY: previewMinY, maxX: previewMaxX, maxY: previewMaxY,
+            revision: engine.document.renderRevision,
+            compute: { engine.cadSelection.handlesInRect(worldX: previewMinX, worldY: previewMinY, worldW: previewMaxX - previewMinX, worldH: previewMaxY - previewMinY, document: engine.document, style: previewStyle) })
         guard !previewHandles.isEmpty else { return }
         guard !CADSelectionDisplayPolicy.previewSuppressed(previewCount: previewHandles.count, selectionPreviewLimit: engine.selectionPreviewLimit) else { return }
 

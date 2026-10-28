@@ -349,7 +349,20 @@ public final class CADDocument {
 
     // MARK: Tables
 
-    private var layerTable: [UUID: Layer] = [:]
+    private var layerTable: [UUID: Layer] = [:] {
+        didSet { cachedLayersByUpper = nil }
+    }
+    private var cachedLayersByUpper: [String: Layer]?
+    /// Cached `renderableWorldBoundingBox` results, keyed by
+    /// `renderRevision`. Every bounds-affecting mutation path bumps the
+    /// revision (`markEdited`/`markNeedsRegeneration`); live-drag
+    /// transforms intentionally skip it, but no bounds caller runs
+    /// mid-drag (regen launch and zoom-extents only).
+    private var cachedBoundsRevision: UInt64 = 0
+    private var cachedVisibleBounds: BoundingBox3D?
+    private var cachedVisibleBoundsValid = false
+    private var cachedAllBounds: BoundingBox3D?
+    private var cachedAllBoundsValid = false
     private var blockTable: [UUID: CADBlock] = [:]
     private var entityRegistry: [UUID: CADEntity] = [:]
     private var constraintTable: [UUID: CADConstraint] = [:]
@@ -1005,7 +1018,7 @@ public final class CADDocument {
         }
         let upper = layer.name.uppercased()
         func stylesUse(_ styles: [Int: CADPrimitiveStyle]) -> Bool {
-            styles.values.contains { $0.effectiveLayerName?.uppercased() == upper }
+            styles.values.contains { $0.effectiveLayerUppercased == upper }
         }
         if blockTable.values.contains(where: { stylesUse($0.primitiveStyles) }) {
             return true
@@ -1201,7 +1214,7 @@ public final class CADDocument {
         for (handle, var block) in blockTable {
             var changed = false
             for (index, var style) in block.primitiveStyles
-            where style.effectiveLayerName?.uppercased() == upper {
+            where style.effectiveLayerUppercased == upper {
                 style.layerName = newName
                 block.primitiveStyles[index] = style
                 changed = true
@@ -1214,7 +1227,7 @@ public final class CADDocument {
                 guard var shadow = entry.shadow else { continue }
                 var changed = false
                 for (index, var style) in shadow.primitiveStyles
-                where style.effectiveLayerName?.uppercased() == upper {
+                where style.effectiveLayerUppercased == upper {
                     style.layerName = newName
                     shadow.primitiveStyles[index] = style
                     changed = true
@@ -1447,6 +1460,10 @@ public final class CADDocument {
     /// text, SHX glyphs, dimension blocks, arcs, ellipses, and splines match what is displayed.
     public func renderableWorldBoundingBox(visibleLayersOnly: Bool = true) -> BoundingBox3D? {
         documentLock.withLock {
+            if cachedBoundsRevision == renderRevision {
+                if visibleLayersOnly, cachedVisibleBoundsValid { return cachedVisibleBounds }
+                if !visibleLayersOnly, cachedAllBoundsValid { return cachedAllBounds }
+            }
             var bounds = CADRenderBoundsAccumulator()
         let layersByName = visibleLayersOnly ? layersByUppercasedName() : [:]
         // Rasters that never loaded render nothing; keep them out of extents.
@@ -1627,7 +1644,16 @@ public final class CADDocument {
             }
         }
 
-        return bounds.boundingBox
+        let result = bounds.boundingBox
+        cachedBoundsRevision = renderRevision
+        if visibleLayersOnly {
+            cachedVisibleBounds = result
+            cachedVisibleBoundsValid = true
+        } else {
+            cachedAllBounds = result
+            cachedAllBoundsValid = true
+        }
+        return result
         }
     }
 
@@ -2326,6 +2352,19 @@ public final class CADDocument {
         markEdited(regenerate: true)
     }
 
+    /// Result to store after a live (per-mouse-event) transform, without
+    /// the full storage prep. Pure transform changes leave local-space
+    /// caches (`localBoundingBox`, anchors, pen fit points) untouched, and
+    /// `transform`'s didSet already refreshed the world box. Array
+    /// instances still go through the full prep because their cached path
+    /// folds in the container transform.
+    private func liveTransformedEntity(_ entity: CADEntity) -> CADEntity {
+        if entity.arrayData == nil {
+            return entity
+        }
+        return preparedEntityForStorage(entity)
+    }
+
     // MARK: - Bulk Transforms
 
     public func moveEntities(handles: Set<UUID>, by delta: Vector3) {
@@ -2356,7 +2395,7 @@ public final class CADDocument {
                 z: t.position.z + delta.z
             )
             entity.transform = t
-            entityRegistry[handle] = preparedEntityForStorage(entity)
+            entityRegistry[handle] = liveTransformedEntity(entity)
         }
         for handle in handles { refreshPathArrays(dependingOn: handle) }
         // Do not push undo or set isDirty. Handled on mouse-up.
@@ -2406,7 +2445,7 @@ public final class CADDocument {
             )
             t.rotation = entity.transform.rotation + angleDeltaRadians
             entity.transform = t
-            entityRegistry[handle] = preparedEntityForStorage(entity)
+            entityRegistry[handle] = liveTransformedEntity(entity)
         }
         for handle in handles { refreshPathArrays(dependingOn: handle) }
     }
@@ -2457,7 +2496,7 @@ public final class CADDocument {
                 z: t.scale.z * factor
             )
             entity.transform = t
-            entityRegistry[handle] = preparedEntityForStorage(entity)
+            entityRegistry[handle] = liveTransformedEntity(entity)
         }
         for handle in handles { refreshPathArrays(dependingOn: handle) }
     }
@@ -3022,7 +3061,12 @@ public final class CADDocument {
     }
 
     public func layersByUppercasedName() -> [String: Layer] {
-        CADPrimitiveVisibility.layersByUppercasedName(layerTable.values)
+        documentLock.withLock {
+            if let cached = cachedLayersByUpper { return cached }
+            let built = CADPrimitiveVisibility.layersByUppercasedName(layerTable.values)
+            cachedLayersByUpper = built
+            return built
+        }
     }
 
     /// Per-primitive visibility aligned with `resolvedGeometry(for:)`, or
@@ -3030,7 +3074,7 @@ public final class CADDocument {
     public func primitiveVisibility(for entity: CADEntity) -> [Bool]? {
         guard let geometry = resolvedGeometry(for: entity), !geometry.isEmpty else { return nil }
         let styles = primitiveStyles(for: entity)
-        guard styles.values.contains(where: { $0.effectiveLayerName != nil }) else { return nil }
+        guard styles.values.contains(where: { $0.effectiveLayerUppercased != nil }) else { return nil }
         let layersByName = layersByUppercasedName()
         return geometry.indices.map {
             CADPrimitiveVisibility.isVisible(style: styles[$0], layersByName: layersByName)
@@ -3178,7 +3222,7 @@ public final class CADDocument {
     public func anyPrimitiveVisible(for entity: CADEntity, layersByName: [String: Layer]) -> Bool {
         guard let geometry = resolvedGeometry(for: entity), !geometry.isEmpty else { return false }
         let styles = primitiveStyles(for: entity)
-        guard styles.values.contains(where: { $0.effectiveLayerName != nil }) else { return true }
+        guard styles.values.contains(where: { $0.effectiveLayerUppercased != nil }) else { return true }
         return geometry.indices.contains {
             CADPrimitiveVisibility.isVisible(style: styles[$0], layersByName: layersByName)
         }

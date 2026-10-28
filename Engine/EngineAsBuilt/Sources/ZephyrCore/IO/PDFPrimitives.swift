@@ -54,8 +54,8 @@ enum PDFPrimitives {
         let primStyles = document.primitiveStyles(for: entity)
         let layersByName = document.layersByUppercasedName()
         func styleLayer(_ index: Int) -> Layer? {
-            guard let name = primStyles[index]?.effectiveLayerName else { return nil }
-            return layersByName[name.uppercased()]
+            guard let name = primStyles[index]?.effectiveLayerUppercased else { return nil }
+            return layersByName[name]
         }
         func resolvedColor(_ index: Int, _ prim: CADPrimitive) -> ColorRGBA {
             let base: ColorRGBA

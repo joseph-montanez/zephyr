@@ -33,6 +33,18 @@ struct PropertiesPanelUI {
     static var _isDocked: Bool = false
     /// Tracks previous frame's showPropertiesPanel flag to detect re-open.
     static var _wasVisible: Bool = false
+    /// Cached picker list, rebuilt only when the selection or document
+    /// moves (see `PropertiesPanelUIPolicy.pickerCacheStale`). Rebuilding
+    /// per frame made large selections pay entity copies + label
+    /// building + an allocating sort on the render path.
+    static var _cachedPickerItems: [(handle: UUID, label: String)] = []
+    static var _cachedOrderedHandles: [UUID] = []
+    static var _cachedEditHandles: Set<UUID> = []
+    static var _cachedEditInspected: UUID?
+    static var _cachedEditSelectionGeneration: Int = -1
+    static var _cachedPickerDocument: ObjectIdentifier?
+    static var _cachedPickerSelectionGeneration: Int = -1
+    static var _cachedPickerRevision: UInt64 = .max
     /// Single entity chosen in the multi-select picker; nil means All.
     static var _inspectedHandle: UUID? = nil
     /// When the last copy-to-clipboard happened, for brief feedback text.
@@ -42,24 +54,58 @@ struct PropertiesPanelUI {
     /// - Parameter engine: The engine instance.
     static func render(engine: PhrostEngine) {
         let doc = engine.document
+        // Panel toggled off: nothing renders (same early return as the
+        // content == .hidden guard below, without touching the picker).
+        guard engine.ui.showPropertiesPanel else {
+            _wasVisible = false
+            return
+        }
         // Stable, labeled view of the selection for the multi-select
         // picker (selectedHandles is an unordered set). A selected
         // handle whose entity no longer resolves is simply left out.
-        let pickerItems: [(handle: UUID, label: String)] =
-            engine.cadSelection.selectedHandles
+        // Rebuilt only when the selection or document changes; a large
+        // selection otherwise pays this (entity copies + labels + sort)
+        // once per change instead of once per frame.
+        let selection = engine.cadSelection
+        if PropertiesPanelUIPolicy.pickerCacheStale(
+            cachedDocument: _cachedPickerDocument,
+            document: ObjectIdentifier(doc),
+            cachedSelectionGeneration: _cachedPickerSelectionGeneration,
+            selectionGeneration: selection._selectionGeneration,
+            cachedRevision: _cachedPickerRevision,
+            revision: doc.renderRevision,
+            cachedCount: _cachedPickerItems.count,
+            selectionCount: selection.selectedHandles.count)
+        {
+            _cachedPickerItems = selection.selectedHandles
                 .compactMap { h in
-                    doc.entity(for: h).map { (handle: h, label: Self.pickerLabel(for: $0, document: doc)) }
+                    doc.entity(for: h).map {
+                        (handle: h, label: Self.pickerLabel(for: $0, document: doc), uuid: h.uuidString)
+                    }
                 }
-                .sorted { ($0.label, $0.handle.uuidString) < ($1.label, $1.handle.uuidString) }
-        let orderedHandles = pickerItems.map(\.handle)
+                .sorted { ($0.label, $0.uuid) < ($1.label, $1.uuid) }
+                .map { (handle: $0.handle, label: $0.label) }
+            _cachedPickerDocument = ObjectIdentifier(doc)
+            _cachedPickerSelectionGeneration = selection._selectionGeneration
+            _cachedPickerRevision = doc.renderRevision
+            _cachedOrderedHandles = _cachedPickerItems.map(\.handle)
+        }
+        let pickerItems = _cachedPickerItems
+        let orderedHandles = _cachedOrderedHandles
 
         // Resolve the inspected target. A pick whose entity left the
         // selection falls back to All (see PropertiesPanelUIPolicy).
         let inspectedHandle = PropertiesPanelUIPolicy.resolvedInspectedHandle(
             _inspectedHandle, orderedSelectedHandles: orderedHandles)
         _inspectedHandle = inspectedHandle
-        let editHandles = PropertiesPanelUIPolicy.editHandles(
-            orderedSelectedHandles: orderedHandles, inspectedHandle: inspectedHandle)
+        if _cachedEditSelectionGeneration != selection._selectionGeneration
+            || _cachedEditInspected != inspectedHandle {
+            _cachedEditHandles = PropertiesPanelUIPolicy.editHandles(
+                orderedSelectedHandles: orderedHandles, inspectedHandle: inspectedHandle)
+            _cachedEditInspected = inspectedHandle
+            _cachedEditSelectionGeneration = selection._selectionGeneration
+        }
+        let editHandles = _cachedEditHandles
 
         // Resolve the displayed entity if there is one. Nothing to show
         // is not an error: the panel just shows its empty state.
@@ -115,13 +161,12 @@ struct PropertiesPanelUI {
         AppLayout.reportCurrentDockedPanel(engine: engine)
 
         guard entered else {
-            print("[PropsPanel] igBegin returned false, isDocked=\(isDocked), ImGuiIsWindowDocked=\(ImGuiIsWindowDocked())")
             ImGuiEnd()
             ImGuiPopStyleVar(1)
             ImGuiPopStyleColor(1)
             return
         }
-        print("[PropsPanel] igBegin returned true, isDocked=\(ImGuiIsWindowDocked()), handle=\(entity?.handle.uuidString ?? "none")")
+
         defer {
             ImGuiEnd()
             ImGuiPopStyleVar(1)

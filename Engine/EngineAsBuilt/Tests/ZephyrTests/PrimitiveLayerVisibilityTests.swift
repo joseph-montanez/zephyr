@@ -143,6 +143,41 @@ final class PrimitiveLayerVisibilityTests: XCTestCase {
                      "named blocks must not be remapped/cloned")
     }
 
+    func testEffectiveLayerUppercasedNormalization() {
+        XCTAssertNil(CADPrimitiveStyle(layerName: nil).effectiveLayerUppercased)
+        XCTAssertNil(CADPrimitiveStyle(layerName: "").effectiveLayerUppercased)
+        XCTAssertNil(CADPrimitiveStyle(layerName: "   ").effectiveLayerUppercased)
+        XCTAssertNil(CADPrimitiveStyle(layerName: "0").effectiveLayerUppercased)
+        XCTAssertNil(CADPrimitiveStyle(layerName: " 0 ").effectiveLayerUppercased)
+        XCTAssertEqual(CADPrimitiveStyle(layerName: "Walls").effectiveLayerUppercased, "WALLS")
+        XCTAssertEqual(CADPrimitiveStyle(layerName: "  walls ").effectiveLayerUppercased, "WALLS")
+    }
+
+    func testEffectiveLayerUppercasedFollowsMutation() {
+        var style = CADPrimitiveStyle(layerName: "Walls")
+        XCTAssertEqual(style.effectiveLayerUppercased, "WALLS")
+        style.layerName = "  Doors "
+        XCTAssertEqual(style.effectiveLayerUppercased, "DOORS")
+        XCTAssertEqual(style.effectiveLayerName, "Doors")
+        style.layerName = "0"
+        XCTAssertNil(style.effectiveLayerUppercased)
+        XCTAssertNil(style.effectiveLayerName)
+    }
+
+    func testLayersByUppercasedNameReflectsRenameAndVisibility() {
+        let doc = CADDocument()
+        let walls = Layer(name: "Walls", color: .white)
+        doc.importLayersBlocksEntities(layers: [walls], blocks: [], entities: [])
+        XCTAssertNotNil(doc.layersByUppercasedName()["WALLS"])
+        doc.renameLayer(handle: walls.handle, name: "Partitions")
+        XCTAssertNil(doc.layersByUppercasedName()["WALLS"])
+        XCTAssertNotNil(doc.layersByUppercasedName()["PARTITIONS"])
+        doc.setLayerVisible(walls.handle, visible: false)
+        XCTAssertEqual(doc.layersByUppercasedName()["PARTITIONS"]?.isVisible, false)
+        // Cached callers must see the same dictionary contents on repeat reads.
+        XCTAssertEqual(doc.layersByUppercasedName(), doc.layersByUppercasedName())
+    }
+
     func testDuplicateAnonymousBlockClonesWithStyles() {
         let doc = CADDocument()
         let host = Layer(name: "Host", color: .white)
@@ -167,5 +202,33 @@ final class PrimitiveLayerVisibilityTests: XCTestCase {
         XCTAssertEqual(cloned?.primitiveStyles[0]?.lineWeight, 0.5)
         XCTAssertEqual(cloned?.primitiveXData[0]?["dxf.test"], XDataValue.string("v"))
         XCTAssertEqual(cloned?.dxfFlags, 1)
+    }
+
+    func testRenderableBoundsCacheRefreshesOnEdit() {
+        // Repeated reads must agree (cache hit); edits must be reflected
+        // (revision-keyed invalidation) so zoom-extents never goes stale.
+        let doc = CADDocument()
+        let layer = Layer(name: "0")
+        let first = CADEntity(
+            layerID: layer.handle,
+            localGeometry: [.line(
+                start: Vector3(x: 0, y: 0, z: 0),
+                end: Vector3(x: 10, y: 0, z: 0), color: nil)],
+            transform: .identity)
+        doc.importLayersBlocksEntities(layers: [layer], blocks: [], entities: [first])
+        let b1 = doc.renderableWorldBoundingBox()
+        let b1again = doc.renderableWorldBoundingBox()
+        XCTAssertNotNil(b1)
+        XCTAssertEqual(b1?.max.x, b1again?.max.x)
+        XCTAssertEqual(b1?.min.x, b1again?.min.x)
+        let far = CADEntity(
+            layerID: layer.handle,
+            localGeometry: [.line(
+                start: Vector3(x: 100, y: 0, z: 0),
+                end: Vector3(x: 110, y: 0, z: 0), color: nil)],
+            transform: .identity)
+        doc.addEntity(far)
+        let b2 = doc.renderableWorldBoundingBox()
+        XCTAssertEqual(b2?.max.x ?? 0, 110, accuracy: 1e-9)
     }
 }

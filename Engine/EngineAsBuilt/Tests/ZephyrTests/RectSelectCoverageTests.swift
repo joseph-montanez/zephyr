@@ -119,4 +119,56 @@ final class RectSelectCoverageTests: XCTestCase {
         }
         XCTAssertFalse(selected.contains(handles["outsideLine"]!))
     }
+
+    func testPreviewCacheReusesSameRectAndRevision() {
+        // Per-frame preview during a drag must not re-walk the document
+        // when neither the rect nor the document changed.
+        let (doc, _) = fixture()
+        let interaction = EngineInteractionManager()
+        let rev = doc.renderRevision
+        var computes = 0
+        func query() -> Set<UUID> {
+            interaction.rectPreviewHandles(
+                minX: 1, minY: 1, maxX: 9, maxY: 9, revision: rev) {
+                    computes += 1
+                    return CADRectSelect.handlesInRect(
+                        worldX: 1, worldY: 1, worldW: 8, worldH: 8,
+                        document: doc, style: .window)
+                }
+        }
+        let first = query()
+        let second = query()
+        XCTAssertEqual(computes, 1, "same rect+revision must compute once")
+        XCTAssertEqual(first, second)
+        XCTAssertFalse(first.isEmpty)
+    }
+
+    func testPreviewCacheInvalidatesOnRectOrRevisionChange() {
+        let (doc, _) = fixture()
+        let interaction = EngineInteractionManager()
+        let rev = doc.renderRevision
+        var computes = 0
+        func query(minX: Double, maxX: Double, revision: UInt64) -> Set<UUID> {
+            interaction.rectPreviewHandles(
+                minX: minX, minY: 1, maxX: maxX, maxY: 9, revision: revision) {
+                    computes += 1
+                    return CADRectSelect.handlesInRect(
+                        worldX: minX, worldY: 1, worldW: maxX - minX, worldH: 8,
+                        document: doc, style: .window)
+                }
+        }
+        let base = query(minX: 1, maxX: 9, revision: rev)
+        XCTAssertEqual(computes, 1)
+        // Moved cursor: rect changed, must recompute.
+        let grown = query(minX: 0, maxX: 9, revision: rev)
+        XCTAssertEqual(computes, 2)
+        XCTAssertTrue(grown.isSuperset(of: base))
+        // Same rect again: cached.
+        _ = query(minX: 0, maxX: 9, revision: rev)
+        XCTAssertEqual(computes, 2)
+        // Document edited (revision bumped): must recompute even for
+        // the same rect so new/deleted entities are reflected.
+        _ = query(minX: 0, maxX: 9, revision: rev &+ 1)
+        XCTAssertEqual(computes, 3)
+    }
 }

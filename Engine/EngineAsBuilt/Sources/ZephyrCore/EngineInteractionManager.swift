@@ -99,6 +99,33 @@ public final class EngineInteractionManager {
     
     /// Handles that would be selected by the current rect (live preview).
     public var rectSelectPreviewHandles: Set<UUID> = []
+    /// Cached rect-preview query, keyed by rect + document revision.
+    /// `renderRectSelectPreview` runs every frame during a drag while the
+    /// underlying query walks the document, so frames without cursor or
+    /// document change reuse the previous result.
+    public var cachedRectPreviewRect: (minX: Double, minY: Double, maxX: Double, maxY: Double)?
+    public var cachedRectPreviewHandles: Set<UUID> = []
+    public var cachedRectPreviewRevision: UInt64 = 0
+    /// Returns cached preview handles when rect and revision match the
+    /// previous call; otherwise computes via `compute` and caches.
+    /// Same rect + same revision always yields the same set, so reuse is
+    /// behavior-identical to recomputing.
+    public func rectPreviewHandles(
+        minX: Double, minY: Double, maxX: Double, maxY: Double,
+        revision: UInt64,
+        compute: () -> Set<UUID>
+    ) -> Set<UUID> {
+        if let r = cachedRectPreviewRect,
+           r.minX == minX, r.minY == minY, r.maxX == maxX, r.maxY == maxY,
+           cachedRectPreviewRevision == revision {
+            return cachedRectPreviewHandles
+        }
+        let handles = compute()
+        cachedRectPreviewRect = (minX, minY, maxX, maxY)
+        cachedRectPreviewHandles = handles
+        cachedRectPreviewRevision = revision
+        return handles
+    }
 
     // MARK: - Object Picker Popup (multi-hit click)
     
@@ -135,6 +162,9 @@ public final class EngineInteractionManager {
     /// Last world-space position at which we performed a full `closestEntity` hit test.
     public var lastHoverTestWorldX: Double = -1e30
     public var lastHoverTestWorldY: Double = -1e30
+    /// Ticks of the last full CPU hover hit-test. Throttles `closestEntity`
+    /// during mouse-move bursts (see `CADHoverCoordinator`).
+    public var lastHoverTestTicks: UInt64 = 0
     
     /// Accumulated rotation angle during grip drag (radians). Used to transform
     /// cached grip positions incrementally rather than recomputing from bounds.
