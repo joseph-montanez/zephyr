@@ -1537,9 +1537,30 @@ public final class CADDocument {
     }
 
     private func refreshPathArrays(dependingOn pathHandle: UUID? = nil) {
+        if let pathHandle {
+            refreshPathArrays(dependingOn: Set([pathHandle]))
+            return
+        }
         let handles = entityRegistry.values.compactMap { entity -> UUID? in
             guard let array = entity.arrayData, array.kind == .path else { return nil }
-            if let pathHandle, array.pathEntityHandle != pathHandle { return nil }
+            return entity.handle
+        }
+        for handle in handles {
+            guard let entity = entityRegistry[handle] else { continue }
+            entityRegistry[handle] = preparedEntityForStorage(entity)
+        }
+    }
+
+    /// Set version: one registry scan no matter how many movers. Bulk
+    /// MOVE/ROTATE/SCALE used to call the single-handle version per
+    /// handle — O(selection × registry), which froze large documents
+    /// once 100+ objects moved at once.
+    private func refreshPathArrays(dependingOn pathHandles: Set<UUID>) {
+        guard !pathHandles.isEmpty else { return }
+        let handles = entityRegistry.values.compactMap { entity -> UUID? in
+            guard let array = entity.arrayData, array.kind == .path,
+                  let pathHandle = array.pathEntityHandle,
+                  pathHandles.contains(pathHandle) else { return nil }
             return entity.handle
         }
         for handle in handles {
@@ -2060,7 +2081,7 @@ public final class CADDocument {
                 entityRegistry[entityHandle] = preparedEntityForStorage(entity)
             }
         }
-        for entityHandle in affectedHandles { refreshPathArrays(dependingOn: entityHandle) }
+        refreshPathArrays(dependingOn: Set(affectedHandles))
         markEdited(regenerate: true)
         invalidateEntityGrid()   // instance world boxes changed
     }
@@ -3079,8 +3100,8 @@ public final class CADDocument {
         for entity in existing {
             let updated = preparedEntityForStorage(entity)
             entityRegistry[updated.handle] = updated
-            refreshPathArrays(dependingOn: updated.handle)
         }
+        refreshPathArrays(dependingOn: Set(existing.map(\.handle)))
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -3128,7 +3149,7 @@ public final class CADDocument {
                 entityRegistry[entityHandle] = preparedEntityForStorage(entity)
             }
         }
-        for entityHandle in affectedHandles { refreshPathArrays(dependingOn: entityHandle) }
+        refreshPathArrays(dependingOn: Set(affectedHandles))
         invalidateEntityGrid()
     }
 
@@ -3266,7 +3287,7 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
-        for handle in handles { refreshPathArrays(dependingOn: handle) }
+        refreshPathArrays(dependingOn: handles)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -3283,7 +3304,7 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = liveTransformedEntity(entity)
         }
-        for handle in handles { refreshPathArrays(dependingOn: handle) }
+        refreshPathArrays(dependingOn: handles)
         // Do not push undo or set isDirty. Handled on mouse-up.
     }
 
@@ -3308,7 +3329,7 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
-        for handle in handles { refreshPathArrays(dependingOn: handle) }
+        refreshPathArrays(dependingOn: handles)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -3333,7 +3354,7 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = liveTransformedEntity(entity)
         }
-        for handle in handles { refreshPathArrays(dependingOn: handle) }
+        refreshPathArrays(dependingOn: handles)
     }
 
     public func scaleEntities(handles: Set<UUID>, around center: Vector3, factor: Double) {
@@ -3358,7 +3379,7 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
-        for handle in handles { refreshPathArrays(dependingOn: handle) }
+        refreshPathArrays(dependingOn: handles)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -3384,7 +3405,7 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = liveTransformedEntity(entity)
         }
-        for handle in handles { refreshPathArrays(dependingOn: handle) }
+        refreshPathArrays(dependingOn: handles)
     }
 
     // MARK: - ALIGN Command Support
@@ -3428,7 +3449,7 @@ public final class CADDocument {
                 entity.transform = translation.multiplying(by: entity.transform)
                 entityRegistry[handle] = preparedEntityForStorage(entity)
             }
-            for handle in handles { refreshPathArrays(dependingOn: handle) }
+            refreshPathArrays(dependingOn: handles)
             markEdited(regenerate: true)
             invalidateEntityGrid()
             return
@@ -3442,7 +3463,7 @@ public final class CADDocument {
                 entity.transform = translation.multiplying(by: entity.transform)
                 entityRegistry[handle] = preparedEntityForStorage(entity)
             }
-            for handle in handles { refreshPathArrays(dependingOn: handle) }
+            refreshPathArrays(dependingOn: handles)
             markEdited(regenerate: true)
             invalidateEntityGrid()
             return
@@ -3465,7 +3486,7 @@ public final class CADDocument {
             entity.transform = finalTransform.multiplying(by: entity.transform)
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
-        for handle in handles { refreshPathArrays(dependingOn: handle) }
+        refreshPathArrays(dependingOn: handles)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
