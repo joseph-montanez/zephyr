@@ -352,13 +352,17 @@ struct ArrayRibbonUI {
 
         // Path arrays mark the true anchor (the point riding the path at
         // item 0), not the entity origin: re-picking the marker is a no-op
-        // instead of a jump. Other kinds keep the origin marker.
+        // instead of a jump. Polar arrays mark the rotation center, matching
+        // AutoCAD's center grip; the stored center rides the entity
+        // transform, so the marker tracks MOVE for free.
         let baseWorld: Vector3?
         if array.kind == .path {
             baseWorld = CADArrayData.anchorWorld(
                 entityTransform: entity.transform,
                 array: array,
                 pathPoints: array.cachedPath)
+        } else if array.kind == .polar {
+            baseWorld = entity.transform.transformPoint(array.centerPoint)
         } else {
             baseWorld = entity.transform.transformPoint(.zero)
         }

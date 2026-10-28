@@ -188,6 +188,26 @@ final class CADArrayDataTests: XCTestCase {
         XCTAssertEqual(again.y, -2, accuracy: 1e-9)
     }
 
+    func testPolarCenterTracksEntityMove() {
+        // The polar center is stored base-relative; moving the entity must
+        // carry the marked center with it (this is what the ribbon draws).
+        let base = Vector3(x: 2, y: 3, z: 0)
+        let center = Vector3(x: 20, y: 30, z: 0)
+        let array = CADArrayData.polar(
+            itemCount: 6,
+            centerPoint: Vector3(
+                x: center.x - base.x, y: center.y - base.y, z: 0))
+        let entity = Transform3D.translated(by: base)
+        let before = entity.transformPoint(array.centerPoint)
+        XCTAssertEqual(before.x, 20, accuracy: 1e-9)
+        XCTAssertEqual(before.y, 30, accuracy: 1e-9)
+        let moved = Transform3D.translated(
+            by: Vector3(x: 5, y: -7, z: 0)).multiplying(by: entity)
+        let after = moved.transformPoint(array.centerPoint)
+        XCTAssertEqual(after.x, 25, accuracy: 1e-9)
+        XCTAssertEqual(after.y, 23, accuracy: 1e-9)
+    }
+
     func testOldPayloadWithoutBaseAnchorDecodes() throws {
         let array = CADArrayData.path(
             itemCount: 3,
