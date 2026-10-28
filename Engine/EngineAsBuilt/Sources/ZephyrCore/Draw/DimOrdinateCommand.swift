@@ -136,7 +136,7 @@ public final class DimOrdinateCommand: FeatureCommand {
             textValue = feature.y
         }
         
-        let style = CADDimensionStyle.default
+        let style = engine.document.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatMeasurement(textValue)
         
@@ -144,6 +144,7 @@ public final class DimOrdinateCommand: FeatureCommand {
         if isXType { flags |= (1 << 6) } // Bit 6 for X-type ordinate
         
         let metadata = CADDimensionMetadata(
+            styleName: engine.document.currentDimensionStyleName,
             type: .ordinate,
             measurement: textValue,
             defPoint: feature,

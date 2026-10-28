@@ -54,6 +54,7 @@ public struct DXFImportResult: Sendable {
     }
     public let dimensionStyles: [String: CADDimensionStyle]
     public let leaderStyles: [String: CADLeaderStyle]
+    public let mlineStyles: [String: CADMlineStyle]
     public let views: [DXFDrawingView]
     public let roundTripPayload: DXFRoundTripPayload?
     /// Source drawing's $INSBASE (insertion base point), converted to
@@ -67,23 +68,29 @@ public struct DXFImportResult: Sendable {
     /// Referenced-media definitions (IMAGEDEF / PDFDEFINITION).
     public let imageDefinitions: [CADImageDefinition]
     public let pdfDefinitions: [CADPdfDefinition]
+    /// Selection groups rebuilt from ZEPHYR_GROUP appID records
+    /// (model-space members; paper-space groups are a Phase 3 item).
+    public let groups: [CADGroup]
     /// Source unit when the $INSUNITS code maps to a Zephyr unit.
     public var sourceUnit: CADUnit? { CADUnit(dxfINSUNITS: insUnits) }
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
                 textStyles: [String: CADTextStyle], linetypePatterns: [String: [Double]],
                 dimensionStyles: [String: CADDimensionStyle],
                 leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
+                mlineStyles: [String: CADMlineStyle] = ["Standard": .standard],
                 views: [DXFDrawingView],
                 roundTripPayload: DXFRoundTripPayload? = nil,
                 insBase: Vector3 = .zero,
                 insUnits: Int = 0,
                 pendingXrefs: [DXFPendingXref] = [],
                 imageDefinitions: [CADImageDefinition] = [],
-                pdfDefinitions: [CADPdfDefinition] = []) {
+                pdfDefinitions: [CADPdfDefinition] = [],
+                groups: [CADGroup] = []) {
         self.layers = layers; self.blocks = blocks; self.entities = entities
         self.textStyles = textStyles; self.linetypePatterns = linetypePatterns
         self.dimensionStyles = dimensionStyles
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
+        self.mlineStyles = mlineStyles.isEmpty ? ["Standard": .standard] : mlineStyles
         self.views = views
         self.roundTripPayload = roundTripPayload
         self.insBase = insBase
@@ -91,6 +98,7 @@ public struct DXFImportResult: Sendable {
         self.pendingXrefs = pendingXrefs
         self.imageDefinitions = imageDefinitions
         self.pdfDefinitions = pdfDefinitions
+        self.groups = groups
     }
 
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
@@ -658,6 +666,23 @@ public enum DXFImporter {
             leaderStyles[resolvedName] = style
             if entry.handle != 0 { leaderStyleByHandle[entry.handle] = style }
         }
+        var mlineStyles: [String: CADMlineStyle] = ["Standard": .standard]
+        for entry in reader.mlineStyles {
+            let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedName = name.isEmpty ? "Standard" : name
+            mlineStyles[resolvedName] = CADMlineStyle(
+                name: resolvedName,
+                description: entry.desc,
+                elements: entry.elements.map {
+                    CADMlineElement(
+                        offset: $0.offset, colorACI: $0.color,
+                        linetype: $0.lineType)
+                },
+                fillEnabled: (entry.flags & 1) != 0,
+                fillColorACI: entry.fillColor,
+                startAngle: entry.startAngle,
+                endAngle: entry.endAngle)
+        }
 
         DXFProfile.mark("setup: layers/styles/leader/handle maps")
         var blockGeometryCache: [String: [StyledPrimitive]] = [:]
@@ -773,7 +798,8 @@ public enum DXFImporter {
                         return (index, item.xdata)
                     }),
                 dxfFlags: block.flags,
-                isInternalTableDisplayBlock: block.name.hasPrefix("*T"))
+                isInternalTableDisplayBlock: block.name.hasPrefix("*T"),
+                attributeDefinitions: Self.attributeDefinitions(in: block))
             blocks.append(cadBlock)
             blockByID[handle] = cadBlock
         }
@@ -1243,6 +1269,8 @@ public enum DXFImporter {
                     let columns = max(1, insert.colCount)
                     let rows = max(1, insert.rowCount)
                     let blockBase = blockBaseByName[insert.name] ?? .zero
+                    let insertAttributeValues = Self.attributeValues(
+                        from: insert, block: block, blockBase: blockBase)
                     let arrayXData = Self.arrayXData(from: insert)
                     if let groupID = arrayXData.groupID {
                         if arrayXData.role == "I" || seenArrayGroups.contains(groupID) {
@@ -1263,6 +1291,7 @@ public enum DXFImporter {
                                 xdata: Self.entityStyleXData(
                                     from: entity,
                                     globalLineTypeScale: globalLineTypeScale),
+                                attributeValues: insertAttributeValues,
                                 drawOrder: drawOrder,
                                 localBoundingBox: arrayData.localBoundingBox(
                                     source: block.localBoundingBox,
@@ -1294,6 +1323,7 @@ public enum DXFImporter {
                             xdata: Self.entityStyleXData(
                                 from: entity,
                                 globalLineTypeScale: globalLineTypeScale),
+                            attributeValues: insertAttributeValues,
                             drawOrder: drawOrder,
                             localBoundingBox: arrayData.localBoundingBox(
                                 source: block.localBoundingBox))
@@ -1314,6 +1344,7 @@ public enum DXFImporter {
                             xdata: Self.entityStyleXData(
                                 from: entity,
                                 globalLineTypeScale: globalLineTypeScale),
+                            attributeValues: insertAttributeValues,
                             drawOrder: drawOrder,
                             localBoundingBox: block.localBoundingBox)
                         if let clipData = Self.spatialFilterClipData(for: insert, reader: reader) {
@@ -1323,33 +1354,9 @@ public enum DXFImporter {
                         converted.append(cadEnt)
                     }
 
-                    for attribute in insert.attributes
-                        where Self.shouldRenderAttributeEntity(attribute) {
-                        let __pt1188 = DXFProfile.tic()
-                        let primitives = DXFEntityConverter.convertEntityToPrimitives(
-                            attribute,
-                            bylayerColor: nil)
-                        DXFProfile.toc(__pt1188, "  -> convertEntityToPrimitives")
-                        guard !primitives.isEmpty else { continue }
-                        let normalized = Self.normalizedStandaloneTextGeometry(primitives)
-                        let attributeLayerID = attribute.layer.isEmpty
-                            || attribute.layer == "0"
-                            ? layerID(for: insert)
-                            : layerID(for: attribute)
-                        var attributeEntity = CADEntity(
-                            handle: UUID(),
-                            layerID: attributeLayerID,
-                            blockID: nil,
-                            localGeometry: normalized.geometry,
-                            transform: normalized.transform,
-                            xdata: Self.attributeStyleXData(
-                                from: attribute,
-                                insert: insert,
-                                globalLineTypeScale: globalLineTypeScale),
-                            drawOrder: drawOrder)
-                        attributeEntity.drawOrder = drawOrder
-                        converted.append(attributeEntity)
-                    }
+                    // ATTRIBs now live on the insert as values (rendered from
+                    // the block's definitions); they are no longer flattened
+                    // into standalone text entities.
                     continue
                 }
 
@@ -1515,12 +1522,13 @@ public enum DXFImporter {
 
         let modelEntities: [CADEntity]
         let views: [DXFDrawingView]
+        var groupStaging: [String: [UUID]] = [:]
 
         if reader.layouts.isEmpty {
             let modelOwnerHandle = blockHandleByName["*MODEL_SPACE"] ?? 0
-            modelEntities = convertEntities(
+            modelEntities = strippingGroupStaging(convertEntities(
                 reader.entities,
-                ownerHandle: modelOwnerHandle)
+                ownerHandle: modelOwnerHandle), stagingInto: &groupStaging)
             views = [DXFDrawingView(
                 name: "Model",
                 kind: .model,
@@ -1543,11 +1551,11 @@ public enum DXFImporter {
             } else {
                 modelSource = reader.entities.filter { $0.space == 0 }
             }
-            modelEntities = convertEntities(
+            modelEntities = strippingGroupStaging(convertEntities(
                 modelSource,
                 ownerHandle: modelLayout?.blockRecordHandle
                     ?? blockHandleByName["*MODEL_SPACE"]
-                    ?? 0)
+                    ?? 0), stagingInto: &groupStaging)
 
             var importedViews: [DXFDrawingView] = [DXFDrawingView(
                 name: modelLayout?.name ?? "Model",
@@ -1557,9 +1565,13 @@ public enum DXFImporter {
             for layout in orderedLayouts where
                 layout.name.caseInsensitiveCompare("Model") != .orderedSame {
                 let paperSource = sourceEntities(for: layout)
-                var paperEntities = convertEntities(
+                // Paper-space membership is stripped and dropped: v1 groups
+                // round-trip model-space members only (Phase 3 paper scope).
+                var discardedStaging: [String: [UUID]] = [:]
+                var paperEntities = strippingGroupStaging(convertEntities(
                     paperSource,
-                    ownerHandle: layout.blockRecordHandle)
+                    ownerHandle: layout.blockRecordHandle),
+                    stagingInto: &discardedStaging)
                 let paperDrawOrderOffset = modelEntities.count + 1
                 for index in paperEntities.indices where paperEntities[index].drawOrder != Int.max {
                     paperEntities[index].drawOrder += paperDrawOrderOffset
@@ -1681,6 +1693,7 @@ public enum DXFImporter {
             linetypePatterns: linetypePatterns,
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
+            mlineStyles: mlineStyles,
             views: views,
             roundTripPayload: DXFRoundTripPayload(
                 sourceAcadVersion: reader.versionRaw.isEmpty
@@ -1698,7 +1711,27 @@ public enum DXFImporter {
             insUnits: reader.header.insUnits,
             pendingXrefs: pendingXrefs,
             imageDefinitions: imageDefinitions,
-            pdfDefinitions: pdfDefinitions)
+            pdfDefinitions: pdfDefinitions,
+            groups: groupStaging.map { CADGroup(name: $0.key, members: $0.value) })
+    }
+
+    /// Moves `CADGroup.stagingPrefix` keys staged during conversion out of
+    /// entity xdata into `staging` (name → member handles), returning
+    /// entities with clean xdata.
+    private static func strippingGroupStaging(
+        _ entities: [CADEntity], stagingInto staging: inout [String: [UUID]]
+    ) -> [CADEntity] {
+        entities.map { entity in
+            var copy = entity
+            for key in copy.xdata.keys where key.hasPrefix(CADGroup.stagingPrefix) {
+                let name = String(key.dropFirst(CADGroup.stagingPrefix.count))
+                if !name.isEmpty {
+                    staging[name, default: []].append(copy.handle)
+                }
+                copy.xdata.removeValue(forKey: key)
+            }
+            return copy
+        }
     }
 
     private static func arrayXData(
@@ -1846,6 +1879,19 @@ public enum DXFImporter {
             }
             xdata["dxf.mlineScale"] = .double(mline.scale)
             xdata["dxf.mlineJustification"] = .int(mline.justification)
+            xdata["dxf.mlineClosed"] = .int((mline.flags & 2) != 0 ? 1 : 0)
+            // Centerline in model space (Y-flipped like all imported
+            // geometry) so the writers can rebuild MLINE vertices.
+            let centerline = mline.vertices.map { vertex in
+                Vector3(
+                    x: vertex.position.x,
+                    y: -vertex.position.y,
+                    z: vertex.position.z)
+            }
+            if centerline.count >= 2 {
+                xdata["dxf.mlineCenterline"] = .string(
+                    MlineMath.encodeCenterline(centerline))
+            }
         }
 
         if let text = entity as? DXFTextEntity {
@@ -1899,6 +1945,50 @@ public enum DXFImporter {
             xdata["dxf.attributeFlags"] = .int(text.attributeFlags)
             if !text.attributeTag.isEmpty {
                 xdata["dxf.attributeTag"] = .string(text.attributeTag)
+            }
+        }
+
+        // FIELD expressions ride XDATA under our APPID (see
+        // DXFWriterBridge.appendFieldXData); restore them so reimported
+        // fields keep refreshing instead of going static.
+        // Group membership rides the same way (DXFWriterBridge
+        // .appendGroupXData); staged here under `CADGroup.stagingPrefix`
+        // and rebuilt into `DXFImportResult.groups` at assembly, so the
+        // staging keys never persist in entity xdata.
+        var fieldActive = false
+        var groupActive = false
+        for pair in entity.extendedData {
+            if pair.code == 1001 {
+                let appID = pair.value as? String
+                fieldActive = appID?.caseInsensitiveCompare(
+                    FieldEval.dxfAppID) == .orderedSame
+                groupActive = appID?.caseInsensitiveCompare(
+                    CADGroup.dxfAppID) == .orderedSame
+                continue
+            }
+            if fieldActive, pair.code == 1000,
+               let expr = pair.value as? String, !expr.isEmpty {
+                xdata[FieldEval.exprKey] = .string(expr)
+                fieldActive = false
+            }
+            if groupActive, pair.code == 1000,
+               let name = pair.value as? String, !name.isEmpty {
+                xdata["\(CADGroup.stagingPrefix)\(name)"] = .bool(true)
+                groupActive = false
+            }
+        }
+
+        // IMAGE brightness/contrast/fade (281/282/283) ride instance
+        // xdata; stored only when non-default, like the writer emits.
+        if let img = entity as? DXFImageEntity {
+            var adjust = CADImageAdjust()
+            adjust.brightness = img.brightness
+            adjust.contrast = img.contrast
+            adjust.fade = img.fade
+            if !adjust.isDefault,
+               let data = try? JSONEncoder().encode(adjust),
+               let json = String(data: data, encoding: .utf8) {
+                xdata[CADImageAdjustMetadata.key] = .string(json)
             }
         }
 
@@ -1996,34 +2086,129 @@ public enum DXFImporter {
         return ([localText], transform)
     }
 
-    private static func attributeStyleXData(
-        from attribute: DXFTextEntity,
-        insert: DXFInsertEntity,
-        globalLineTypeScale: Double
-    ) -> [String: XDataValue] {
-        var xdata = entityStyleXData(
-            from: attribute,
-            globalLineTypeScale: globalLineTypeScale)
+    /// Extracts ATTDEF definitions from a block's raw DXF members.
+    /// Placement mirrors the bake path exactly: each definition reuses the
+    /// converted `.text` primitive so Y-flip, rotation, and alignment match
+    /// what the renderer drew before linkage existed. Definitions are
+    /// extracted regardless of the invisible flag (ATTSYNC still manages
+    /// invisible tags); rendering skips them later.
+    private static func attributeDefinitions(
+        in block: DXFBlockEntity
+    ) -> [CADAttributeDefinition] {
+        var defs: [CADAttributeDefinition] = []
+        for entity in block.entities {
+            guard let attdef = entity as? DXFTextEntity,
+                  attdef.eType == .aTTDEF,
+                  !attdef.attributeTag.isEmpty else { continue }
+            defs.append(attributeDefinition(from: attdef))
+        }
+        return defs
+    }
 
-        if attribute.color == 0 {
-            if insert.color24 >= 0 || (insert.color > 0 && insert.color < 256) {
-                let color = DXFColorTable.aciToRGBA(
-                    insert.color,
-                    color24: insert.color24)
-                xdata["dxf.color"] = .string(String(
-                    format: "#%02X%02X%02X", color.r, color.g, color.b))
+    private static func attributeDefinition(
+        from attdef: DXFTextEntity
+    ) -> CADAttributeDefinition {
+        var position = Vector3(
+            x: attdef.basePoint.x, y: -attdef.basePoint.y, z: attdef.basePoint.z)
+        var height = attdef.height > 0 ? attdef.height : 2.5
+        var rotation = -attdef.angle_p * .pi / 180.0
+        var style: String? = attdef.style.isEmpty ? nil : attdef.style
+        var alignH = attdef.alignH
+        var alignV = attdef.alignV
+        var defaultValue = DXFEntityConverter.cleanTextFormatting(
+            attdef.text, entityType: .aTTDEF)
+        let primitives = DXFEntityConverter.convertEntityToPrimitives(
+            attdef,
+            bylayerColor: nil,
+            showAttributeDefinitionTagWhenEmpty: true)
+        if let first = primitives.first,
+           case .text(
+            let pos, let cleaned, let h, let rot, let st, let ah, let av, _, _
+           ) = first {
+            position = pos
+            if h > 0 { height = h }
+            rotation = rot
+            style = st
+            alignH = ah
+            alignV = av
+            defaultValue = cleaned
+        }
+        return CADAttributeDefinition(
+            tag: attdef.attributeTag,
+            prompt: attdef.attributePrompt,
+            defaultValue: defaultValue,
+            position: position,
+            height: height,
+            rotation: rotation,
+            style: style,
+            alignH: alignH,
+            alignV: alignV,
+            flags: attdef.attributeFlags,
+            layerName: attdef.layer.isEmpty ? nil : attdef.layer)
+    }
+
+    /// Collects an INSERT's ATTRIBs as per-tag values. Placement overrides
+    /// are recorded only when the ATTRIB was moved off its definition (the
+    /// ATTSYNC-normalized state stays override-free); orphaned tags keep
+    /// their full placement so no imported content is lost.
+    private static func attributeValues(
+        from insert: DXFInsertEntity,
+        block: CADBlock,
+        blockBase: Vector3
+    ) -> [String: CADAttributeValue] {
+        let isArray = max(1, insert.colCount) > 1 || max(1, insert.rowCount) > 1
+        let mirrored = insert.haveExtrusion && insert.extrusion.z < 0
+        let entityRotation = mirrored ? insert.angle + .pi : -insert.angle
+        let sx = insert.xScale == 0 ? 1.0 : insert.xScale
+        let sy = insert.yScale == 0 ? 1.0 : insert.yScale
+        let heightDivisor = max(abs(sx), abs(sy), 1e-12)
+        let defsByKey = Dictionary(
+            uniqueKeysWithValues: block.attributeDefinitions.map { ($0.key, $0) })
+        var values: [String: CADAttributeValue] = [:]
+        for attribute in insert.attributes {
+            let tag = attribute.attributeTag.trimmingCharacters(
+                in: .whitespacesAndNewlines)
+            guard !tag.isEmpty else { continue }
+            let key = tag.uppercased()
+            var placed = CADAttributeValue(value: DXFEntityConverter.cleanTextFormatting(
+                attribute.text, entityType: .aTTRIB))
+            let primitives = DXFEntityConverter.convertEntityToPrimitives(
+                attribute, bylayerColor: nil)
+            if let first = primitives.first,
+               case .text(
+                let pos, let cleaned, let h, let rot, _, _, _, _, _
+               ) = first {
+                placed.value = cleaned
+                if !isArray && !mirrored {
+                    let local = Self.insertTransform(
+                        insert, blockBase: blockBase).inverse().transformPoint(pos)
+                    if let def = defsByKey[key] {
+                        if abs(local.x - def.position.x) > 1e-6
+                            || abs(local.y - def.position.y) > 1e-6
+                            || abs(local.z - def.position.z) > 1e-6 {
+                            placed.position = local
+                        }
+                        if abs(h / heightDivisor - def.height) > 1e-6 {
+                            placed.height = h / heightDivisor
+                        }
+                        var delta = rot - entityRotation - def.rotation
+                        while delta > .pi { delta -= 2 * .pi }
+                        while delta < -.pi { delta += 2 * .pi }
+                        if abs(delta) > 1e-6 {
+                            placed.rotation = rot - entityRotation
+                        }
+                    } else {
+                        placed.position = local
+                        placed.height = h / heightDivisor
+                        placed.rotation = rot - entityRotation
+                    }
+                } else if defsByKey[key] == nil {
+                    placed.height = h > 0 ? h : nil
+                }
             }
+            values[key] = placed
         }
-
-        if attribute.lineType.uppercased() == "BYBLOCK", !insert.lineType.isEmpty {
-            xdata["dxf.lineType"] = .string(insert.lineType)
-        }
-        if attribute.lWeight == .byBlock, insert.lWeight.dxfInt >= 0 {
-            xdata["dxf.lineWeight"] = .double(
-                DXFColorTable.lineWeightToMM(Double(insert.lWeight.dxfInt)))
-        }
-
-        return xdata
+        return values
     }
 
     private static func primitiveStyle(from entity: DXFEntity) -> CADPrimitiveStyle {
@@ -2192,13 +2377,19 @@ public enum DXFImporter {
             var style = CADDimensionStyle()
             let scale = dimstyle.dimscale == 0 ? 1.0 : abs(dimstyle.dimscale)
 
-            style.arrowSize = max(0, dimstyle.dimasz * scale)
-            style.textHeight = max(0, dimstyle.dimtxt * scale)
-            style.textOffset = abs(dimstyle.dimgap * scale)
-            style.extensionLineOffset = max(0, dimstyle.dimexo * scale)
-            style.extensionLineExtend = max(0, dimstyle.dimexe * scale)
-            style.dimLineOffset = max(0, dimstyle.dimdli * scale)
-            style.tickSize = max(0, dimstyle.dimtsz * scale)
+            // Store RAW values with the DIMSCALE factor separate (Phase 2.1):
+            // geometry call sites consume style.scaled(), which reproduces
+            // the exact fold below, while the table round-trips the raw
+            // DIMASZ/DIMTXT/... values alongside DIMSCALE.
+            style.name = dimstyle.name
+            style.overallScale = scale
+            style.arrowSize = max(0, dimstyle.dimasz)
+            style.textHeight = max(0, dimstyle.dimtxt)
+            style.textOffset = abs(dimstyle.dimgap)
+            style.extensionLineOffset = max(0, dimstyle.dimexo)
+            style.extensionLineExtend = max(0, dimstyle.dimexe)
+            style.dimLineOffset = max(0, dimstyle.dimdli)
+            style.tickSize = max(0, dimstyle.dimtsz)
             style.unitsFormat = DimUnitsFormat(rawValue: dimstyle.dimlunit) ?? .decimal
             style.unitsPrecision = max(0, dimstyle.dimdec)
             style.angleFormat = DimAngleFormat(rawValue: dimstyle.dimaunit) ?? .decimalDegrees
@@ -2248,10 +2439,23 @@ public enum DXFImporter {
             result[dimstyle.name] = style
         }
 
-        if result["STANDARD"] == nil {
+        // Fallback only when no case-variant exists: injecting "STANDARD"
+        // alongside a file "Standard" would fork the table (Phase 2.1).
+        if !result.keys.contains(where: {
+            $0.caseInsensitiveCompare("Standard") == .orderedSame
+        }) {
             result["STANDARD"] = .default
         }
         return result
+    }
+
+    /// Maps DXF group 52 (degrees) to the session obliquing angle (radians
+    /// from the dimension-line direction). Absent (0) and explicit-normal
+    /// (90) both mean perpendicular, so both map to nil; anything else is
+    /// negated for the engine's Y-down space, mirroring text rotation.
+    static func dimensionObliqueAngle(_ degrees: Double) -> Double? {
+        guard degrees != 0, abs(degrees - 90) > 1e-9 else { return nil }
+        return -degrees * .pi / 180.0
     }
 
     private static func dimensionMetadata(from dimension: DXFDimensionEntity) -> CADDimensionMetadata? {
@@ -2299,6 +2503,7 @@ public enum DXFImporter {
         let textOverride = text.isEmpty || text == "<>" ? nil : dimension.text
         let flags = (dimension.type & ~0x0F) & ~32
         let styleName = dimension.style.isEmpty ? "STANDARD" : dimension.style
+        let obliqueAngle = dimensionObliqueAngle(dimension.oblique)
 
         switch type {
         case .linearOrRotated, .aligned:
@@ -2315,6 +2520,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .angular:
@@ -2333,6 +2539,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .angular3Point:
@@ -2350,6 +2557,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .diameter:
@@ -2365,6 +2573,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .radius:
@@ -2380,6 +2589,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .ordinate:
@@ -2396,6 +2606,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .arcLength:
@@ -2414,6 +2625,7 @@ public enum DXFImporter {
                 textRotationAngle: dimension.hasTextRotation
                     ? -dimension.rot * .pi / 180.0
                     : nil,
+                obliqueAngle: obliqueAngle,
                 flags: flags)
 
         case .jogged:
@@ -2437,9 +2649,12 @@ public enum DXFImporter {
             metadata.textMidpoint = position
             metadata.textRotationAngle = rotation
 
-            var style = metadata.styleOverrides
+            // Bake the table style fully (stored tables keep raw values now)
+            // so the override matches the old folded representation, then
+            // overwrite with the cached file-scaled text.
+            var style = (metadata.styleOverrides
                 ?? dimensionStyles[metadata.styleName]
-                ?? CADDimensionStyle.default
+                ?? CADDimensionStyle.default).scaled()
             style.textHeight = height
             style.textStyle = textStyle
             if let primitiveStyle = block.primitiveStyles[primitiveIndex],

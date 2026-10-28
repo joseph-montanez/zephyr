@@ -135,13 +135,14 @@ public final class DimRadiusCommand: FeatureCommand {
         let n = dir.normalized
         let arcPoint = Vector3(x: center.x + n.x * radius, y: center.y + n.y * radius, z: 0)
         
-        let style = CADDimensionStyle.default
+        let style = engine.document.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatMeasurement(radius, prefix: "R")
         
         let angle = atan2(n.y, n.x)
         
         let metadata = CADDimensionMetadata(
+            styleName: engine.document.currentDimensionStyleName,
             type: .radius,
             measurement: radius,
             defPoint: center,

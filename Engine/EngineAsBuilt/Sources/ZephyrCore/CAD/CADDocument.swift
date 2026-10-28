@@ -36,6 +36,9 @@ public struct CADDocumentSnapshot: Sendable {
     public let dimensionStyles: [String: CADDimensionStyle]
     public let leaderStyles: [String: CADLeaderStyle]
     public let currentLeaderStyleName: String
+    public let currentDimensionStyleName: String
+    public let mlineStyles: [String: CADMlineStyle]
+    public let currentMlineStyleName: String
     public let linetypePatterns: [String: [Double]]
     public let globalLineTypeScale: Double
     public let autoContrastTrueColor: Bool
@@ -56,6 +59,12 @@ public struct CADDocumentSnapshot: Sendable {
     /// this set render as placeholder frames.
     public let availableImageAssetNames: Set<String>
     public let layoutSettings: CADLayoutSettings?
+    /// Per-entity isolation (ISOLATEOBJECTS/HIDEOBJECTS) at snapshot time.
+    /// Render-only session state: restore paths ignore it, so undo/redo
+    /// never changes isolation, and it is never persisted to DXF/EAB.
+    public let isolatedHiddenHandles: Set<UUID>
+    /// Named selection groups (GROUP/UNGROUP) at snapshot time.
+    public let groups: [String: CADGroup]
 
     public init(
         layers: [UUID: Layer],
@@ -69,6 +78,9 @@ public struct CADDocumentSnapshot: Sendable {
         dimensionStyles: [String: CADDimensionStyle] = [:],
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
+        currentDimensionStyleName: String = "Standard",
+        mlineStyles: [String: CADMlineStyle] = ["Standard": .standard],
+        currentMlineStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -81,8 +93,12 @@ public struct CADDocumentSnapshot: Sendable {
         imageDefinitions: [String: CADImageDefinition] = [:],
         pdfDefinitions: [String: CADPdfDefinition] = [:],
         availableImageAssetNames: Set<String> = [],
-        layoutSettings: CADLayoutSettings? = nil
+        layoutSettings: CADLayoutSettings? = nil,
+        isolatedHiddenHandles: Set<UUID> = [],
+        groups: [String: CADGroup] = [:]
     ) {
+        self.groups = groups
+        self.isolatedHiddenHandles = isolatedHiddenHandles
         self.layoutSettings = layoutSettings
         self.xrefFadePercent = xrefFadePercent
         self.imageDefinitions = imageDefinitions
@@ -96,9 +112,12 @@ public struct CADDocumentSnapshot: Sendable {
         self.activeLayerID = activeLayerID
         self.unit = unit
         self.textStyles = textStyles
-        self.dimensionStyles = dimensionStyles
+        self.dimensionStyles = dimensionStyles.isEmpty ? ["Standard": .default] : dimensionStyles
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.currentLeaderStyleName = currentLeaderStyleName
+        self.currentDimensionStyleName = currentDimensionStyleName
+        self.mlineStyles = mlineStyles.isEmpty ? ["Standard": .standard] : mlineStyles
+        self.currentMlineStyleName = currentMlineStyleName
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
         self.autoContrastTrueColor = autoContrastTrueColor
@@ -121,6 +140,7 @@ public struct CADDocumentSnapshot: Sendable {
         dimensionStyles: [String: CADDimensionStyle] = [:],
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
+        currentDimensionStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -146,6 +166,7 @@ public struct CADDocumentSnapshot: Sendable {
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
+            currentDimensionStyleName: currentDimensionStyleName,
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
@@ -417,7 +438,7 @@ public final class CADDocument {
     }
     
     /// Map of dimension style name -> CADDimensionStyle
-    public var dimensionStyles: [String: CADDimensionStyle] = [:]
+    public var dimensionStyles: [String: CADDimensionStyle] = ["Standard": .default]
 
     /// Referenced image definitions (DXF IMAGEDEF), keyed by name.
     /// Document data: part of undo snapshots and saves; decoded
@@ -430,6 +451,7 @@ public final class CADDocument {
     /// Named multileader styles and the active style used by new leaders.
     public var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
     public var currentLeaderStyleName: String = "Standard"
+    public var currentDimensionStyleName: String = "Standard"
 
     /// DXF linetype dash pattern definitions (e.g. "DASHED" -> [10.0, 5.0]).
     /// Key is the uppercased linetype name. Saved/loaded in EAB for accurate round-trip.
@@ -491,6 +513,26 @@ public final class CADDocument {
     public var lengthPrecision: Int = 4 {
         didSet { lengthPrecision = max(0, min(8, lengthPrecision)) }
     }
+
+    /// SELECTSIMILARMODE bitmask (type 1, layer 2, color 4, linetype 8,
+    /// lineweight 16, name 128; default 130 = layer+name like AutoCAD).
+    /// Session state, not snapshotted.
+    public var selectSimilarMode: Int = EntityFilter.defaultMode
+
+    /// Named selection groups (GROUP/UNGROUP), keyed by group name.
+    /// Model data: snapshotted (undoable), persisted to DXF/EAB.
+    public var groups: [String: CADGroup] = [:]
+
+    /// PICKSTYLE (0 = none, 1 = group select, 2 = associative hatch
+    /// select, 3 = both; default 1 like AutoCAD). Bit 0 drives group
+    /// expansion in `selectionExpansion(for:)`; bit 1 is reserved until
+    /// associative hatches land. Session state, not snapshotted.
+    public var pickStyle: Int = 1
+
+    /// Insertion base point (BASE, DXF $INSBASE). Session state like a
+    /// sysvar, never undoable; round-tripped via DXF HEADER and EAB
+    /// metadata (custom bytes).
+    public var insertionBase: Vector3 = .zero
     public var anglePrecision: Int = 0 {
         didSet { anglePrecision = max(0, min(8, anglePrecision)) }
     }
@@ -531,6 +573,63 @@ public final class CADDocument {
     public var lastArea: Double = 0
     public var lastPerimeter: Double = 0
     public var lastPoint: Vector3?
+
+    /// Open-time file identity for FIELD evaluation ($FILENAME/$TABNAME).
+    /// Recorded by `finalizeOpen`; session state, never undoable or persisted.
+    public var sourceFileName: String?
+    public var layoutName: String?
+
+    /// Records open-time identity and refreshes every FIELD expression.
+    /// Called by the file-open funnels (DXF + EAB); returns refreshed count.
+    @discardableResult
+    public func finalizeOpen(sourceFileName: String?, layoutName: String?) -> Int {
+        self.sourceFileName = sourceFileName
+        self.layoutName = layoutName
+        return evaluateFields()
+    }
+
+    /// Re-evaluates every `field.expr` carrier in one undo entry.
+    /// Unresolvable expressions keep their last text.
+    @discardableResult
+    public func evaluateFields() -> Int {
+        var staged: [(UUID, CADEntity)] = []
+        for entity in allEntities {
+            guard case .string(let expr) = entity.xdata[FieldEval.exprKey],
+                  let value = FieldEval.evaluate(expr, in: self),
+                  var geom = entity.localGeometry else {
+                continue
+            }
+            var changed = false
+            for i in 0..<geom.count {
+                guard case .text(
+                    let pos, let current, let height, let rotation, let style,
+                    let alignH, let alignV, let mtextWidth, let color) = geom[i] else {
+                    continue
+                }
+                if current == value { continue }
+                geom[i] = .text(
+                    position: pos, text: value, height: height, rotation: rotation,
+                    style: style, alignH: alignH, alignV: alignV,
+                    mtextWidth: mtextWidth, color: color)
+                changed = true
+                break
+            }
+            guard changed else { continue }
+            var updated = entity
+            updated.localGeometry = geom
+            updated.xdata["dxf.text"] = .string(value)
+            staged.append((entity.handle, updated))
+        }
+        guard !staged.isEmpty else { return 0 }
+        let before = snapshot()
+        for (handle, updated) in staged {
+            guard entityRegistry[handle] != nil else { continue }
+            updateEntityLive(updated)
+        }
+        invalidateEntityGrid()
+        pushUndo(before)
+        return staged.count
+    }
 
     /// Bumped whenever rendering must refresh, including non-dirty
     /// changes (xref load/unload/reload, fade). Secondary render
@@ -838,6 +937,187 @@ public final class CADDocument {
         layerTable[handle]
     }
 
+    /// Reachability sweep for PURGE: unreferenced layers, blocks, text /
+    /// dimension / leader styles, and linetype patterns. Protected (never
+    /// listed): referenced definitions, layer "0", the current layer,
+    /// "Standard" styles, the current text/dimension/leader styles,
+    /// "CONTINUOUS", xref blocks, and xref-dependent layers. Name matching
+    /// is case-insensitive throughout.
+    public func purgeableDefinitions(currentTextStyle: String) -> PurgeReport {
+        var items: [PurgeItem] = []
+        var kept: [PurgeKind: Int] = [:]
+        func keep(_ kind: PurgeKind) {
+            kept[kind, default: 0] += 1
+        }
+
+        let usedBlockIDs = Set(entityRegistry.values.compactMap(\.blockID))
+        var usedTextStyles = Set<String>()
+        var usedDimStyles = Set<String>()
+        var usedLeaderStyles = Set<String>()
+        var usedLinetypes = Set<String>()
+        for entity in entityRegistry.values {
+            for prim in entity.localGeometry ?? [] {
+                if case .text(_, _, _, _, let style, _, _, _, _) = prim,
+                   let style {
+                    usedTextStyles.insert(style.uppercased())
+                }
+            }
+            if case .string(let style) = entity.xdata["dxf.textStyle"],
+               !style.isEmpty {
+                usedTextStyles.insert(style.uppercased())
+            }
+            if case .string(let name) = entity.xdata["dxf.lineType"],
+               !name.isEmpty {
+                usedLinetypes.insert(name.uppercased())
+            }
+            if let box = entity.dimensionMetadata {
+                usedDimStyles.insert(box.value.styleName.uppercased())
+            }
+            if let leader = entity.leaderData?.value {
+                usedLeaderStyles.insert(leader.styleName.uppercased())
+            }
+        }
+        for block in blockTable.values {
+            for prim in block.geometry {
+                if case .text(_, _, _, _, let style, _, _, _, _) = prim,
+                   let style {
+                    usedTextStyles.insert(style.uppercased())
+                }
+            }
+            for style in block.primitiveStyles.values {
+                if let name = style.lineType {
+                    usedLinetypes.insert(name.uppercased())
+                }
+            }
+        }
+        for layer in layerTable.values {
+            usedLinetypes.insert(layer.lineType.uppercased())
+        }
+        let currentDim = currentDimensionStyleName.uppercased()
+        let currentLeader = currentLeaderStyleName.uppercased()
+        let currentText = currentTextStyle.uppercased()
+
+        for layer in allLayers.sorted(by: { $0.name < $1.name }) {
+            if layer.name.caseInsensitiveCompare("0") == .orderedSame
+                || layer.handle == activeLayerID
+                || isXrefDependentLayer(layer)
+                || isLayerStillReferenced(layer) {
+                keep(.layer)
+            } else {
+                items.append(PurgeItem(
+                    kind: .layer, key: layer.handle.uuidString,
+                    displayName: layer.name))
+            }
+        }
+
+        for block in allBlocks.sorted(by: { $0.name < $1.name }) {
+            if block.isXref || usedBlockIDs.contains(block.handle) {
+                keep(.block)
+            } else {
+                items.append(PurgeItem(
+                    kind: .block, key: block.handle.uuidString,
+                    displayName: block.name))
+            }
+        }
+
+        for name in textStyles.keys.sorted() {
+            let upper = name.uppercased()
+            if upper == "STANDARD" || upper == currentText || usedTextStyles.contains(upper) {
+                keep(.textStyle)
+            } else {
+                items.append(PurgeItem(kind: .textStyle, key: name, displayName: name))
+            }
+        }
+
+        for name in dimensionStyles.keys.sorted() {
+            let upper = name.uppercased()
+            if upper == "STANDARD" || upper == currentDim || usedDimStyles.contains(upper) {
+                keep(.dimStyle)
+            } else {
+                items.append(PurgeItem(kind: .dimStyle, key: name, displayName: name))
+            }
+        }
+
+        for name in leaderStyles.keys.sorted() {
+            let upper = name.uppercased()
+            if upper == "STANDARD" || upper == currentLeader || usedLeaderStyles.contains(upper) {
+                keep(.leaderStyle)
+            } else {
+                items.append(PurgeItem(kind: .leaderStyle, key: name, displayName: name))
+            }
+        }
+
+        for key in linetypePatterns.keys.sorted() {
+            if key.uppercased() == "CONTINUOUS" || usedLinetypes.contains(key.uppercased()) {
+                keep(.linetype)
+            } else {
+                items.append(PurgeItem(kind: .linetype, key: key, displayName: key))
+            }
+        }
+
+        return PurgeReport(items: items, protectedCounts: kept)
+    }
+
+    /// Removes every item in a purge report under ONE undo entry. Returns
+    /// per-kind removal counts. Items whose definitions vanished since the
+    /// report (or that became protected) are skipped, never forced.
+    @discardableResult
+    public func applyPurge(_ report: PurgeReport) -> [PurgeKind: Int] {
+        guard !report.items.isEmpty else { return [:] }
+        pushUndo()
+        var removed: [PurgeKind: Int] = [:]
+        for item in report.items {
+            switch item.kind {
+            case .layer:
+                guard let handle = UUID(uuidString: item.key),
+                      let layer = layerTable[handle],
+                      layer.handle != activeLayerID,
+                      !isXrefDependentLayer(layer),
+                      !isLayerStillReferenced(layer) else {
+                    continue
+                }
+                layerTable.removeValue(forKey: handle)
+                removed[.layer, default: 0] += 1
+            case .block:
+                guard let handle = UUID(uuidString: item.key),
+                      blockTable[handle] != nil,
+                      !entityRegistry.values.contains(where: { $0.blockID == handle }) else {
+                    continue
+                }
+                blockTable.removeValue(forKey: handle)
+                blockGridCache.removeValue(forKey: handle)
+                removed[.block, default: 0] += 1
+            case .textStyle:
+                guard textStyles[item.key] != nil,
+                      item.key.caseInsensitiveCompare("Standard") != .orderedSame else {
+                    continue
+                }
+                textStyles.removeValue(forKey: item.key)
+                removed[.textStyle, default: 0] += 1
+            case .dimStyle:
+                guard dimensionStyles[item.key] != nil,
+                      item.key.caseInsensitiveCompare("Standard") != .orderedSame else {
+                    continue
+                }
+                dimensionStyles.removeValue(forKey: item.key)
+                removed[.dimStyle, default: 0] += 1
+            case .leaderStyle:
+                guard leaderStyles[item.key] != nil,
+                      item.key.caseInsensitiveCompare("Standard") != .orderedSame else {
+                    continue
+                }
+                leaderStyles.removeValue(forKey: item.key)
+                removed[.leaderStyle, default: 0] += 1
+            case .linetype:
+                guard linetypePatterns[item.key] != nil else { continue }
+                linetypePatterns.removeValue(forKey: item.key)
+                removed[.linetype, default: 0] += 1
+            }
+        }
+        markEdited(regenerate: true)
+        return removed
+    }
+
     // Legacy Array copy (Avoid using in performance loops)
     public var allLayers: [Layer] { Array(layerTable.values) }
 
@@ -864,6 +1144,151 @@ public final class CADDocument {
         layer.name = name
         layerTable[handle] = layer
         markEdited(regenerate: true)
+    }
+
+    // MARK: - RENAME per-type renames (see CADRename for validation)
+
+    func renameBlockDefinition(from oldName: String, to newName: String) -> String? {
+        guard var block = allBlocks.first(where: {
+            $0.name.caseInsensitiveCompare(oldName) == .orderedSame
+        }) else { return "Block '\(oldName)' not found." }
+        if block.name.hasPrefix("*") || block.name.contains("|") {
+            return "Anonymous and xref-dependent blocks cannot be renamed."
+        }
+        if block.isXref {
+            return "External references cannot be renamed (Bind it first)."
+        }
+        if allBlocks.contains(where: {
+            $0.handle != block.handle
+                && $0.name.caseInsensitiveCompare(newName) == .orderedSame
+        }) { return "A block named '\(newName)' already exists." }
+        pushUndo()
+        block.name = newName
+        blockTable[block.handle] = block
+        markEdited(regenerate: true)
+        return nil
+    }
+
+    func renameLayerByName(from oldName: String, to newName: String) -> String? {
+        if oldName.caseInsensitiveCompare("0") == .orderedSame {
+            return "Layer '0' cannot be renamed."
+        }
+        guard let layer = allLayers.first(where: {
+            $0.name.caseInsensitiveCompare(oldName) == .orderedSame
+        }) else { return "Layer '\(oldName)' not found." }
+        if allLayers.contains(where: {
+            $0.handle != layer.handle
+                && $0.name.caseInsensitiveCompare(newName) == .orderedSame
+        }) { return "A layer named '\(newName)' already exists." }
+        renameLayer(handle: layer.handle, name: newName)
+        return nil
+    }
+
+    func renameTextStyleDefinition(from oldName: String, to newName: String) -> String? {
+        // Key-based (not value-name-based): a value filed under a key
+        // keeps the key's identity, so protection and collisions use keys.
+        guard let key = textStyles.keys.first(where: {
+            $0.caseInsensitiveCompare(oldName) == .orderedSame
+        }), let existing = textStyles[key] else {
+            return "Text style '\(oldName)' not found."
+        }
+        if key.caseInsensitiveCompare("Standard") == .orderedSame {
+            return "The 'Standard' text style cannot be renamed."
+        }
+        if textStyles.keys.contains(where: {
+            $0.caseInsensitiveCompare(newName) == .orderedSame
+                && $0.caseInsensitiveCompare(key) != .orderedSame
+        }) { return "A text style named '\(newName)' already exists." }
+        var renamed = existing
+        renamed.name = newName
+        return applyTextStyle(renamed, replacing: key) ? nil
+            : "Could not rename text style."
+    }
+
+    func renameDimensionStyleDefinition(from oldName: String, to newName: String) -> String? {
+        guard let key = dimensionStyles.keys.first(where: {
+            $0.caseInsensitiveCompare(oldName) == .orderedSame
+        }), var style = dimensionStyles[key] else {
+            return "Dimension style '\(oldName)' not found."
+        }
+        if key.caseInsensitiveCompare("Standard") == .orderedSame {
+            return "The 'Standard' dimension style cannot be renamed."
+        }
+        if dimensionStyles.keys.contains(where: {
+            $0.caseInsensitiveCompare(newName) == .orderedSame
+                && $0.caseInsensitiveCompare(key) != .orderedSame
+        }) { return "A dimension style named '\(newName)' already exists." }
+        style.name = newName
+        return applyDimensionStyle(style, replacing: key) ? nil
+            : "Could not rename dimension style."
+    }
+
+    func renameLeaderStyleDefinition(from oldName: String, to newName: String) -> String? {
+        // Key-based: see renameTextStyleDefinition.
+        guard let key = leaderStyles.keys.first(where: {
+            $0.caseInsensitiveCompare(oldName) == .orderedSame
+        }), let existing = leaderStyles[key] else {
+            return "Leader style '\(oldName)' not found."
+        }
+        if key.caseInsensitiveCompare("Standard") == .orderedSame {
+            return "The 'Standard' leader style cannot be renamed."
+        }
+        if leaderStyles.keys.contains(where: {
+            $0.caseInsensitiveCompare(newName) == .orderedSame
+                && $0.caseInsensitiveCompare(key) != .orderedSame
+        }) { return "A leader style named '\(newName)' already exists." }
+        var renamed = existing
+        renamed.name = newName
+        return applyLeaderStyle(renamed, replacing: key) ? nil
+            : "Could not rename leader style."
+    }
+
+    func renameLinetypeDefinition(from oldName: String, to newName: String) -> String? {
+        guard let key = linetypePatterns.keys.first(where: {
+            $0.caseInsensitiveCompare(oldName) == .orderedSame
+        }) else { return "Linetype '\(oldName)' not found." }
+        for reserved in ["CONTINUOUS", "BYLAYER", "BYBLOCK"] {
+            if key.caseInsensitiveCompare(reserved) == .orderedSame {
+                return "Linetype '\(key)' cannot be renamed."
+            }
+        }
+        if linetypePatterns.keys.contains(where: {
+            $0.caseInsensitiveCompare(newName) == .orderedSame
+                && $0.caseInsensitiveCompare(key) != .orderedSame
+        }) { return "A linetype named '\(newName)' already exists." }
+        pushUndo()
+        let pattern = linetypePatterns[key] ?? []
+        linetypePatterns.removeValue(forKey: key)
+        linetypePatterns[newName] = pattern
+        for handle in Array(entityRegistry.keys) {
+            guard var entity = entityRegistry[handle] else { continue }
+            if case .string(let name) = entity.xdata["dxf.lineType"],
+               name.caseInsensitiveCompare(key) == .orderedSame {
+                entity.xdata["dxf.lineType"] = .string(newName)
+                entityRegistry[handle] = entity
+            }
+        }
+        for (handle, var block) in blockTable {
+            var changed = false
+            for (index, var style) in block.primitiveStyles {
+                if let name = style.lineType,
+                   name.caseInsensitiveCompare(key) == .orderedSame {
+                    style.lineType = newName
+                    block.primitiveStyles[index] = style
+                    changed = true
+                }
+            }
+            if changed { blockTable[handle] = block }
+        }
+        for layer in allLayers
+        where layer.lineType.caseInsensitiveCompare(key) == .orderedSame {
+            if var updated = layerTable[layer.handle] {
+                updated.lineType = newName
+                layerTable[layer.handle] = updated
+            }
+        }
+        markEdited(regenerate: true)
+        return nil
     }
 
     public func setLayerOpacity(_ handle: UUID, opacity: Double) {
@@ -944,6 +1369,52 @@ public final class CADDocument {
         }
         markEdited(regenerate: true)
         return true
+    }
+
+    // MARK: - Per-entity isolation (ISOLATEOBJECTS/HIDEOBJECTS)
+
+    /// Handles hidden by per-entity isolation. Render-only session state:
+    /// these methods never push undo, snapshots carry the set for the
+    /// renderer but restore paths ignore it, and file IO never sees it.
+    public var isolatedHiddenHandles: Set<UUID> = []
+
+    public func isIsolatedHidden(_ handle: UUID) -> Bool {
+        documentLock.withLock { isolatedHiddenHandles.contains(handle) }
+    }
+
+    /// Hide exactly these entities (HIDEOBJECTS). Unknown handles are
+    /// ignored so UNISOLATE counts stay exact.
+    public func hideEntitiesIsolated(_ handles: Set<UUID>) {
+        documentLock.withLock {
+            isolatedHiddenHandles.formUnion(handles.filter {
+                entityRegistry[$0] != nil
+            })
+            markEdited(regenerate: true)
+        }
+    }
+
+    /// Hide every entity except the kept ones (ISOLATEOBJECTS).
+    public func isolateEntities(keeping handles: Set<UUID>) {
+        documentLock.withLock {
+            isolatedHiddenHandles = Set(entityRegistry.keys.filter {
+                !handles.contains($0)
+            })
+            markEdited(regenerate: true)
+        }
+    }
+
+    /// Restore all per-entity isolated entities. Returns the restored count.
+    /// Handles whose entity is already gone are pruned, not counted.
+    @discardableResult
+    public func unisolateEntities() -> Int {
+        documentLock.withLock {
+            let live = isolatedHiddenHandles.filter { entityRegistry[$0] != nil }
+            isolatedHiddenHandles.removeAll()
+            if !live.isEmpty {
+                markEdited(regenerate: true)
+            }
+            return live.count
+        }
     }
 
     public func setLayerLineType(_ handle: UUID, lineType: String) {
@@ -1360,6 +1831,197 @@ public final class CADDocument {
         return newName
     }
 
+    /// Binds one xref-dependent style or linetype (`Owner|Name`) into the
+    /// host: rename per BINDTYPE, or merge when BINDTYPE=1 and the leaf
+    /// name already exists. Covers text, dimension, and leader styles plus
+    /// linetype patterns. Returns the bound name, or nil when `name` is
+    /// not a dependent symbol of any known category.
+    /// Stored dict key matching `name` case-insensitively (table keys
+    /// preserve authoring case; lookups must not assume uppercasing).
+    private static func styleKey<V>(
+        in dict: [String: V], matching name: String
+    ) -> String? {
+        let wanted = name.uppercased()
+        if dict[name] != nil { return name }
+        return dict.keys.first(where: { $0.uppercased() == wanted })
+    }
+
+    @discardableResult
+    public func xbindStyle(named name: String, bindType: Int) -> String? {
+        guard name.contains("|") else { return nil }
+        let key = name.uppercased()
+        if let stored = Self.styleKey(in: textStyles, matching: name) {
+            let existing = Set(textStyles.keys.map { $0.uppercased() })
+            guard let newName = Self.boundSymbolName(
+                name, bindType: bindType, existingUpperNames: existing) else {
+                return nil
+            }
+            pushUndo()
+            if bindType == 1,
+               Self.styleKey(in: textStyles, matching: newName) != nil {
+                textStyles.removeValue(forKey: stored)
+            } else {
+                var style = textStyles.removeValue(forKey: stored)!
+                style.name = newName
+                textStyles[newName] = style
+            }
+            // Text-style references in host blocks and loose entities
+            // follow the rename (mirrors bindXref's remapXData).
+            for (handle, var block) in blockTable {
+                var changed = false
+                for (index, var entry) in block.primitiveXData {
+                    if case .string(let name) = entry["dxf.textStyle"],
+                       name.uppercased() == key {
+                        entry["dxf.textStyle"] = .string(newName)
+                        block.primitiveXData[index] = entry
+                        changed = true
+                    }
+                }
+                if changed { blockTable[handle] = block }
+            }
+            for (handle, var entity) in entityRegistry {
+                if case .string(let name) = entity.xdata["dxf.textStyle"],
+                   name.uppercased() == key {
+                    entity.xdata["dxf.textStyle"] = .string(newName)
+                    entityRegistry[handle] = preparedEntityForStorage(entity)
+                }
+            }
+            markEdited(regenerate: true)
+            return newName
+        }
+        if let stored = Self.styleKey(in: dimensionStyles, matching: name) {
+            guard let newName = Self.boundSymbolName(
+                name, bindType: bindType,
+                existingUpperNames: Set(dimensionStyles.keys.map {
+                    $0.uppercased()
+                })) else {
+                return nil
+            }
+            pushUndo()
+            if bindType == 1,
+               Self.styleKey(in: dimensionStyles, matching: newName) != nil {
+                dimensionStyles.removeValue(forKey: stored)
+            } else {
+                var style = dimensionStyles.removeValue(forKey: stored)!
+                style.name = newName
+                dimensionStyles[newName] = style
+            }
+            markEdited(regenerate: true)
+            return newName
+        }
+        if let stored = Self.styleKey(in: leaderStyles, matching: name) {
+            guard let newName = Self.boundSymbolName(
+                name, bindType: bindType,
+                existingUpperNames: Set(leaderStyles.keys.map {
+                    $0.uppercased()
+                })) else {
+                return nil
+            }
+            pushUndo()
+            if bindType == 1,
+               Self.styleKey(in: leaderStyles, matching: newName) != nil {
+                leaderStyles.removeValue(forKey: stored)
+            } else {
+                var style = leaderStyles.removeValue(forKey: stored)!
+                style.name = newName
+                leaderStyles[newName] = style
+            }
+            markEdited(regenerate: true)
+            return newName
+        }
+        if let stored = Self.styleKey(in: linetypePatterns, matching: name) {
+            guard let newName = Self.boundSymbolName(
+                name, bindType: bindType,
+                existingUpperNames: Set(linetypePatterns.keys.map {
+                    $0.uppercased()
+                })) else {
+                return nil
+            }
+            pushUndo()
+            if bindType == 1,
+               Self.styleKey(in: linetypePatterns, matching: newName) != nil {
+                linetypePatterns.removeValue(forKey: stored)
+            } else {
+                let pattern = linetypePatterns.removeValue(forKey: stored)!
+                linetypePatterns[newName] = pattern
+            }
+            // Layers, block styles, and xdata referencing the old
+            // pattern follow along (mirrors bindXref's remap).
+            for (handle, var layer) in layerTable
+                where layer.lineType.uppercased() == key {
+                layer.lineType = newName
+                layerTable[handle] = layer
+            }
+            for (handle, var block) in blockTable {
+                var changed = false
+                for (index, var style) in block.primitiveStyles
+                    where style.lineType?.uppercased() == key {
+                    style.lineType = newName
+                    block.primitiveStyles[index] = style
+                    changed = true
+                }
+                for (index, var entry) in block.primitiveXData {
+                    if case .string(let name) = entry["dxf.lineType"],
+                       name.uppercased() == key {
+                        entry["dxf.lineType"] = .string(newName)
+                        block.primitiveXData[index] = entry
+                        changed = true
+                    }
+                }
+                if changed { blockTable[handle] = block }
+            }
+            markEdited(regenerate: true)
+            return newName
+        }
+        return nil
+    }
+
+    // MARK: - Multiline Styles (MLSTYLE)
+
+    /// Named multiline styles by exact name. "Standard" is guaranteed.
+    public var mlineStyles: [String: CADMlineStyle] = ["Standard": .standard]
+    /// Current multiline style for the MLINE command (CMLSTYLE).
+    public var currentMlineStyleName: String = "Standard"
+    /// Default multiline scale for the MLINE command (CMLSCALE).
+    public var mlineScale: Double = 1.0
+    /// Default multiline justification: 0 top, 1 zero, 2 bottom (CMLJUST).
+    public var mlineJustification: Int = 0
+
+    /// Case-insensitive style lookup with Standard fallback.
+    public func mlineStyle(named name: String) -> CADMlineStyle {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let exact = mlineStyles[trimmed] { return exact }
+        if let match = mlineStyles.values.first(where: {
+            $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) { return match }
+        return mlineStyles["Standard"] ?? .standard
+    }
+
+    /// Adds or replaces a style. Standard cannot be removed, only replaced.
+    public func setMlineStyle(_ style: CADMlineStyle) {
+        pushUndo()
+        mlineStyles[style.name] = style
+        markEdited(regenerate: true)
+    }
+
+    /// Deletes a style. Returns false for Standard or unknown names.
+    @discardableResult
+    public func deleteMlineStyle(named name: String) -> Bool {
+        guard name.caseInsensitiveCompare("Standard") != .orderedSame,
+              let key = mlineStyles.keys.first(where: {
+                  $0.caseInsensitiveCompare(name) == .orderedSame
+              }) else {
+            return false
+        }
+        pushUndo()
+        mlineStyles.removeValue(forKey: key)
+        if currentMlineStyleName.caseInsensitiveCompare(name) == .orderedSame {
+            currentMlineStyleName = "Standard"
+        }
+        markEdited(regenerate: true)
+        return true
+    }
+
     public func removeBlock(handle: UUID) {
         pushUndo()
         blockTable.removeValue(forKey: handle)
@@ -1403,6 +2065,73 @@ public final class CADDocument {
         invalidateEntityGrid()   // instance world boxes changed
     }
 
+    // MARK: - Block Attributes (ATTDEF / ATTEDIT / ATTSYNC)
+
+    /// Adds an attribute definition to an edit-side block (never an xref).
+    /// Returns false when the block is missing, an xref, or the tag exists.
+    @discardableResult
+    public func addAttributeDefinition(
+        _ definition: CADAttributeDefinition, to blockHandle: UUID
+    ) -> Bool {
+        guard var block = blockTable[blockHandle], !block.isXref else { return false }
+        let key = definition.key
+        guard !key.isEmpty,
+              !block.attributeDefinitions.contains(where: { $0.key == key }) else {
+            return false
+        }
+        pushUndo()
+        block.attributeDefinitions.append(definition)
+        blockTable[blockHandle] = block
+        markEdited(regenerate: true)
+        return true
+    }
+
+    /// ATTSYNC for one insert: missing tags gain defaults, orphaned tags
+    /// are dropped, edited values survive, placement overrides reset.
+    /// Returns false when the entity is not an insert of a local block.
+    @discardableResult
+    public func syncAttributes(for handle: UUID) -> Bool {
+        guard var entity = entityRegistry[handle],
+              let blockID = entity.blockID,
+              let block = blockTable[blockID],
+              !block.isXref else { return false }
+        pushUndo()
+        entity.attributeValues = CADAttributeSync.apply(
+            definitions: block.attributeDefinitions, to: entity.attributeValues)
+        entityRegistry[handle] = preparedEntityForStorage(entity)
+        refreshPathArrays(dependingOn: handle)
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return true
+    }
+
+    /// ATTSYNC across inserts: every insert of `blockHandle` (or every
+    /// insert in the document when nil). One undo entry. Returns the
+    /// synced insert count.
+    @discardableResult
+    public func syncAttributesForBlock(_ blockHandle: UUID? = nil) -> Int {
+        let targets = entityRegistry.values.filter {
+            guard let bid = $0.blockID else { return false }
+            if let wanted = blockHandle { return bid == wanted }
+            return true
+        }
+        guard !targets.isEmpty else { return 0 }
+        pushUndo()
+        var synced = 0
+        for var entity in targets {
+            guard let bid = entity.blockID,
+                  let block = blockTable[bid], !block.isXref else { continue }
+            entity.attributeValues = CADAttributeSync.apply(
+                definitions: block.attributeDefinitions, to: entity.attributeValues)
+            entityRegistry[entity.handle] = preparedEntityForStorage(entity)
+            refreshPathArrays(dependingOn: entity.handle)
+            synced += 1
+        }
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return synced
+    }
+
     // MARK: - Entity Operations
 
     public func addEntity(_ entity: CADEntity) {
@@ -1434,9 +2163,36 @@ public final class CADDocument {
     public func removeEntity(handle: UUID) {
         documentLock.withLock {
             pushUndo()
+            if let erased = entityRegistry[handle] {
+                oopsBuffer = [erased]
+            }
             entityRegistry.removeValue(forKey: handle)
             markEdited(regenerate: true)
             invalidateEntityGrid()
+        }
+    }
+
+    /// Last erased entity set for OOPS. Session state: replaced on every
+    /// `removeEntity`/`removeEntities`, never snapshotted or persisted,
+    /// consumed (cleared) by `oopsRestore()`.
+    public var oopsBuffer: [CADEntity] = []
+
+    /// Restore the last erased set (OOPS). Re-inserts with original
+    /// handles under one undo entry and clears the buffer. Returns the
+    /// restored count; pushes no undo when the buffer is empty.
+    @discardableResult
+    public func oopsRestore() -> Int {
+        documentLock.withLock {
+            guard !oopsBuffer.isEmpty else { return 0 }
+            pushUndo()
+            for entity in oopsBuffer {
+                entityRegistry[entity.handle] = preparedEntityForStorage(entity)
+            }
+            let count = oopsBuffer.count
+            oopsBuffer.removeAll()
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+            return count
         }
     }
 
@@ -1590,6 +2346,7 @@ public final class CADDocument {
         for entity in entityRegistry.values {
             guard let layer = layerTable[entity.layerID] else { continue }
             if visibleLayersOnly && !layer.isVisible { continue }
+            if visibleLayersOnly && isolatedHiddenHandles.contains(entity.handle) { continue }
 
             let entityBackgroundScale: Double?
             if let value = entity.xdata["dxf.mtextBackgroundScale"],
@@ -1679,7 +2436,7 @@ public final class CADDocument {
                 continue
             }
 
-            let geometry: [CADPrimitive]
+            var geometry: [CADPrimitive]
             let primitiveStyles: [Int: CADPrimitiveStyle]
             let primitiveXData: [Int: [String: XDataValue]]
             if let blockID = entity.blockID {
@@ -1708,10 +2465,18 @@ public final class CADDocument {
                     }
                 }
                 guard let block = effectiveBlock(for: blockID),
-                      !block.geometry.isEmpty else { continue }
+                      !block.geometry.isEmpty || !block.attributeDefinitions.isEmpty
+                else { continue }
                 geometry = block.geometry
                 primitiveStyles = block.primitiveStyles
                 primitiveXData = block.primitiveXData
+                // Attribute value text participates in extents like any
+                // other visible block member.
+                if !block.attributeDefinitions.isEmpty {
+                    geometry += CADAttributeDisplay.textPrimitives(
+                        definitions: block.attributeDefinitions,
+                        values: entity.attributeValues)
+                }
             } else {
                 guard let localGeometry = entity.localGeometry,
                       !localGeometry.isEmpty else { continue }
@@ -2809,10 +3574,19 @@ public final class CADDocument {
             // 2. Block Reference (non-array)
             if let blockID = entity.blockID, entity.arrayData == nil {
                 if blockTable[blockID]?.isXref == true { continue }
-                guard let block = effectiveBlock(for: blockID), !block.geometry.isEmpty else { continue }
+                guard let block = effectiveBlock(for: blockID),
+                      !block.geometry.isEmpty || !block.attributeDefinitions.isEmpty
+                else { continue }
 
                 handlesToRemove.insert(entity.handle)
                 for (index, prim) in block.geometry.enumerated() {
+                    // Baked ATTDEF placeholders are replaced by live
+                    // attribute text below once definitions exist.
+                    if !block.attributeDefinitions.isEmpty,
+                       case .string(let type) = block.primitiveXData[index]?["dxf.attributeType"],
+                       type.caseInsensitiveCompare("ATTDEF") == .orderedSame {
+                        continue
+                    }
                     var layerID = entity.layerID
                     if let style = block.primitiveStyles[index],
                        let l = layersView.first(where: { $0.name == style.layerName }) {
@@ -2830,6 +3604,29 @@ public final class CADDocument {
                             drawOrder: entity.drawOrder
                         )
                         entitiesToAdd.append(loose)
+                    }
+                }
+                if !block.attributeDefinitions.isEmpty {
+                    for item in CADAttributeDisplay.styledPrimitives(
+                        definitions: block.attributeDefinitions,
+                        values: entity.attributeValues) {
+                        var layerID = entity.layerID
+                        if let name = item.layerName,
+                           let l = layersView.first(where: { $0.name == name }) {
+                            layerID = l.handle
+                        }
+                        let transformed = CADGeometryMath.transformPrimitives(
+                            [item.primitive], by: entity.transform)
+                        for tp in transformed {
+                            let loose = CADEntity(
+                                layerID: layerID,
+                                localGeometry: [tp],
+                                transform: .identity,
+                                xdata: entity.xdata,
+                                drawOrder: entity.drawOrder
+                            )
+                            entitiesToAdd.append(loose)
+                        }
                     }
                 }
                 continue
@@ -3061,6 +3858,10 @@ public final class CADDocument {
 
     public func removeEntities(handles: Set<UUID>) {
         pushUndo()
+        let erased = handles.compactMap { entityRegistry[$0] }
+        if !erased.isEmpty {
+            oopsBuffer = erased
+        }
         for handle in handles {
             entityRegistry.removeValue(forKey: handle)
         }
@@ -3290,6 +4091,7 @@ public final class CADDocument {
         dimensionStyles: [String: CADDimensionStyle],
         leaderStyles: [String: CADLeaderStyle],
         linetypePatterns: [String: [Double]],
+        mlineStyles: [String: CADMlineStyle] = [:],
         resetExisting: Bool = false
     ) {
         let existingNames = Set(layerTable.values.map { $0.name.uppercased() })
@@ -3322,6 +4124,9 @@ public final class CADDocument {
         }
         for (key, value) in linetypePatterns where self.linetypePatterns[key] == nil {
             self.linetypePatterns[key] = value
+        }
+        for (key, value) in mlineStyles where self.mlineStyles[key] == nil {
+            self.mlineStyles[key] = value
         }
     }
 
@@ -3391,6 +4196,71 @@ public final class CADDocument {
     public var constraintCount: Int { constraintTable.count }
     public var constraintsView: Dictionary<UUID, CADConstraint>.Values { constraintTable.values }
 
+    /// Constraints touching an entity, sorted by handle for determinism.
+    public func constraintsAffecting(_ handle: UUID) -> [CADConstraint] {
+        constraintTable.values.filter {
+            $0.entityA == handle || $0.entityB == handle
+        }.sorted { $0.handle.uuidString < $1.handle.uuidString }
+    }
+
+    /// CONSTRAINTBAR visibility. Session-only view state: never
+    /// snapshotted, undone, or persisted (like isolation, it describes
+    /// how to look, not what to save).
+    public var showConstraintBadges: Bool = false
+
+    /// World-space endpoints of every solver-eligible entity: loose
+    /// (non-block) entities with exactly one `.line` in local geometry.
+    public func solvableLines() -> [UUID: (a: Vector3, b: Vector3)] {
+        var out: [UUID: (a: Vector3, b: Vector3)] = [:]
+        for entity in entitiesView {
+            guard entity.blockID == nil,
+                  let geom = entity.localGeometry, geom.count == 1,
+                  case .line(let a, let b, _) = geom[0] else { continue }
+            out[entity.handle] = (
+                a: entity.transform.transformPoint(a),
+                b: entity.transform.transformPoint(b))
+        }
+        return out
+    }
+
+    /// Runs the line solver over all enabled constraints and writes the
+    /// solved endpoints back (transforms preserved via inverse mapping)
+    /// under a single undo snapshot. Returns the raw outcome so callers
+    /// can report unsatisfied (conflicting/unsupported) constraints.
+    @discardableResult
+    public func solveConstraints(
+        tolerance: Double = 1e-6, maxIterations: Int = 100
+    ) -> ConstraintSolver.Outcome {
+        let outcome = ConstraintSolver.solve(
+            lines: solvableLines(), constraints: allConstraints,
+            tolerance: tolerance, maxIterations: maxIterations)
+        var colors: [UUID: ColorRGBA?] = [:]
+        for entity in entitiesView {
+            if case .line(_, _, let color) = entity.localGeometry?.first {
+                colors[entity.handle] = color
+            }
+        }
+        pushUndo()
+        for (handle, ends) in outcome.lines {
+            guard var entity = entityRegistry[handle],
+                  entity.blockID == nil,
+                  entity.localGeometry?.count == 1 else { continue }
+            let inv = entity.transform.inverse()
+            let geometry: [CADPrimitive] = [.line(
+                start: inv.transformPoint(ends.a),
+                end: inv.transformPoint(ends.b),
+                color: colors[handle] ?? nil)]
+            entity.localGeometry = geometry
+            entity.localBoundingBox = CADEntity.computeLocalBoundingBox(
+                blockID: entity.blockID, localGeometry: geometry)
+            entity.updateAnchorCache()
+            entityRegistry[handle] = preparedEntityForStorage(entity)
+        }
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return outcome
+    }
+
     // MARK: - Solved Transforms
 
     /// Store the result of a constraint solve.
@@ -3456,7 +4326,13 @@ public final class CADDocument {
 
         self.textStyles = imported.textStyles.isEmpty ? ["Standard": .standard] : imported.textStyles
         self.linetypePatterns = imported.linetypePatterns
-        self.dimensionStyles = imported.dimensionStyles
+        self.dimensionStyles = imported.dimensionStyles.isEmpty ? ["Standard": .default] : imported.dimensionStyles
+        self.mlineStyles = imported.mlineStyles.isEmpty ? ["Standard": .standard] : imported.mlineStyles
+        if !mlineStyles.keys.contains(where: {
+            $0.caseInsensitiveCompare(currentMlineStyleName) == .orderedSame
+        }) {
+            currentMlineStyleName = "Standard"
+        }
         self.dxfRoundTripPayload = imported.roundTripPayload
         for layer in imported.layers { layerTable[layer.handle] = layer }
         if activeLayerID == nil, let first = imported.layers.first { activeLayerID = first.handle }
@@ -3467,6 +4343,9 @@ public final class CADDocument {
         }
         markEdited(regenerate: true)
         rebuildEntityGrid()
+        finalizeOpen(
+            sourceFileName: url.lastPathComponent,
+            layoutName: imported.views.first?.name)
     }
 
     @MainActor
@@ -3512,6 +4391,9 @@ public final class CADDocument {
         dimensionStyles: [String: CADDimensionStyle] = [:],
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
+        currentDimensionStyleName: String = "Standard",
+        mlineStyles: [String: CADMlineStyle] = ["Standard": .standard],
+        currentMlineStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -3520,15 +4402,22 @@ public final class CADDocument {
         xrefHostFolder: String? = nil,
         unloadedXrefs: Set<UUID> = [],
         imageDefinitions: [CADImageDefinition] = [],
-        pdfDefinitions: [CADPdfDefinition] = []
+        pdfDefinitions: [CADPdfDefinition] = [],
+        groups: [CADGroup] = [],
+        insertionBase: Vector3 = .zero
     ) {
         self.unit = unit
+        self.groups = Dictionary(uniqueKeysWithValues: groups.map { ($0.name, $0) })
+        self.insertionBase = insertionBase
         self.xrefSourceFolder = xrefHostFolder
         self.eabUnloadedXrefHandles = unloadedXrefs
         self.textStyles = textStyles.isEmpty ? ["Standard": .standard] : textStyles
-        self.dimensionStyles = dimensionStyles
+        self.dimensionStyles = dimensionStyles.isEmpty ? ["Standard": .default] : dimensionStyles
         self.leaderStyles = leaderStyles.isEmpty ? ["Standard": .standard] : leaderStyles
         self.currentLeaderStyleName = self.leaderStyles.keys.first(where: { $0.caseInsensitiveCompare(currentLeaderStyleName) == .orderedSame }) ?? "Standard"
+        self.currentDimensionStyleName = self.dimensionStyles.keys.first(where: { $0.caseInsensitiveCompare(currentDimensionStyleName) == .orderedSame }) ?? "Standard"
+        self.mlineStyles = mlineStyles.isEmpty ? ["Standard": .standard] : mlineStyles
+        self.currentMlineStyleName = self.mlineStyles.keys.first(where: { $0.caseInsensitiveCompare(currentMlineStyleName) == .orderedSame }) ?? "Standard"
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
         self.autoContrastTrueColor = autoContrastTrueColor
@@ -3565,6 +4454,7 @@ public final class CADDocument {
         dimensionStyles: [String: CADDimensionStyle] = [:],
         leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard],
         currentLeaderStyleName: String = "Standard",
+        currentDimensionStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         autoContrastTrueColor: Bool = true,
@@ -3585,6 +4475,7 @@ public final class CADDocument {
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
+            currentDimensionStyleName: currentDimensionStyleName,
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
@@ -3606,7 +4497,7 @@ public final class CADDocument {
             return CADDocumentSnapshot(
                 layers: [:], blocks: [:], entities: [:], constraints: [:],
                 solvedTransforms: [:], activeLayerID: nil, unit: unit,
-                textStyles: ["Standard": .standard], dimensionStyles: [:],
+                textStyles: ["Standard": .standard], dimensionStyles: ["Standard": .default],
                 leaderStyles: ["Standard": .standard], currentLeaderStyleName: "Standard", linetypePatterns: [:],
                 imageAssetNames: [])
         }
@@ -3615,7 +4506,7 @@ public final class CADDocument {
             return CADDocumentSnapshot(
                 layers: [:], blocks: [:], entities: [:], constraints: [:],
                 solvedTransforms: [:], activeLayerID: nil, unit: unit,
-                textStyles: ["Standard": .standard], dimensionStyles: [:],
+                textStyles: ["Standard": .standard], dimensionStyles: ["Standard": .default],
                 leaderStyles: ["Standard": .standard], currentLeaderStyleName: "Standard", linetypePatterns: [:],
                 imageAssetNames: [])
         }
@@ -3647,6 +4538,9 @@ public final class CADDocument {
             dimensionStyles: dimensionStyles,
             leaderStyles: leaderStyles,
             currentLeaderStyleName: currentLeaderStyleName,
+            currentDimensionStyleName: currentDimensionStyleName,
+            mlineStyles: mlineStyles,
+            currentMlineStyleName: currentMlineStyleName,
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
@@ -3659,7 +4553,9 @@ public final class CADDocument {
             imageDefinitions: imageDefinitions,
             pdfDefinitions: pdfDefinitions,
             availableImageAssetNames: Set(imageStore.keys),
-            layoutSettings: layoutSettings
+            layoutSettings: layoutSettings,
+            isolatedHiddenHandles: isolatedHiddenHandles,
+            groups: groups
         )
     }
 
@@ -3698,6 +4594,9 @@ public final class CADDocument {
             textStyles: base.textStyles, dimensionStyles: base.dimensionStyles,
             leaderStyles: base.leaderStyles,
             currentLeaderStyleName: base.currentLeaderStyleName,
+            currentDimensionStyleName: base.currentDimensionStyleName,
+            mlineStyles: base.mlineStyles,
+            currentMlineStyleName: base.currentMlineStyleName,
             linetypePatterns: base.linetypePatterns,
             globalLineTypeScale: base.globalLineTypeScale,
             autoContrastTrueColor: base.autoContrastTrueColor,
@@ -3710,7 +4609,9 @@ public final class CADDocument {
             imageDefinitions: base.imageDefinitions,
             pdfDefinitions: base.pdfDefinitions,
             availableImageAssetNames: available,
-            layoutSettings: base.layoutSettings)
+            layoutSettings: base.layoutSettings,
+            isolatedHiddenHandles: base.isolatedHiddenHandles,
+            groups: base.groups)
         }
     }
 
@@ -3756,6 +4657,9 @@ public final class CADDocument {
         dimensionStyles = snapshot.dimensionStyles
         leaderStyles = snapshot.leaderStyles
         currentLeaderStyleName = snapshot.currentLeaderStyleName
+        currentDimensionStyleName = snapshot.currentDimensionStyleName
+        mlineStyles = snapshot.mlineStyles
+        currentMlineStyleName = snapshot.currentMlineStyleName
         linetypePatterns = snapshot.linetypePatterns
         globalLineTypeScale = snapshot.globalLineTypeScale
         autoContrastTrueColor = snapshot.autoContrastTrueColor
@@ -3763,6 +4667,7 @@ public final class CADDocument {
         imageDefinitions = snapshot.imageDefinitions
         pdfDefinitions = snapshot.pdfDefinitions
         layoutSettings = snapshot.layoutSettings
+        groups = snapshot.groups
         // Prune image assets no longer referenced by any entity after restore
         pruneUnreferencedImageAssets()
         resyncXrefInstanceBounds()

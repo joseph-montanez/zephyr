@@ -77,6 +77,7 @@ public enum CADGripSystem {
         for handle in handles {
             guard let entity = document.entity(for: handle) else { continue }
             guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+            guard !document.isIsolatedHidden(entity.handle) else { continue }
 
             if let leaderData = entity.leaderData?.value {
                 results.append(contentsOf: leaderGrips(

@@ -395,6 +395,29 @@ public final class CADRendererBridge {
             usesViewportBackground: usesViewportColor)
     }
 
+    /// Sprite alpha multiplier for raster/PDF underlays from per-instance
+    /// adjust state (IMAGEADJUST fade via `CADImageAdjustMetadata`,
+    /// PDFADJUST fade via `CADPdfUnderlayParams`). 1 = opaque.
+    nonisolated static func imageFadeMultiplier(for entity: CADEntity) -> Double {
+        if let params = CADPdfUnderlayMetadata.value(from: entity) {
+            return max(0, min(1, 1 - Double(params.fade) / 100))
+        }
+        if let adjust = CADImageAdjustMetadata.value(from: entity) {
+            return adjust.alphaMultiplier
+        }
+        return 1
+    }
+
+    /// Tint with alpha scaled by a fade multiplier (no-op at 1).
+    nonisolated static func fadedTint(
+        _ color: ColorRGBA, multiplier: Double
+    ) -> ColorRGBA {
+        guard multiplier < 1 else { return color }
+        var faded = color
+        faded.a = UInt8((Double(color.a) * multiplier).rounded())
+        return faded
+    }
+
     /// Pure computation from a value-typed snapshot. Safe for any thread —
     /// the snapshot is an independent copy of all document state.
     nonisolated static func computeSpecs(
@@ -420,7 +443,8 @@ public final class CADRendererBridge {
                 textBackgroundColor: ColorRGBA?,
                 textBackgroundUsesViewportColor: Bool,
                 clipData: CADClipData?,
-                showClipFrame: Bool
+                showClipFrame: Bool,
+                imageFade: Double
             )] = []
         var visibleText: [(index: Int, handle: UUID, text: String, height: Double,
                             heightOverride: Bool, textStyle: String?,
@@ -449,6 +473,9 @@ public final class CADRendererBridge {
 
         for entity in sortedEntities {
             guard let layer = snapshot.layers[entity.layerID], layer.isVisible else {
+                continue
+            }
+            guard !snapshot.isolatedHiddenHandles.contains(entity.handle) else {
                 continue
             }
             
@@ -664,6 +691,23 @@ public final class CADRendererBridge {
                 primitiveXData = [:]
             }
 
+            // Block attributes: value text synthesized from the block's
+            // definitions so ATTEDIT/ATTSYNC results display without
+            // touching shared definition geometry.
+            if let bid = entity.blockID,
+               let block = snapshot.blocks[bid],
+               !block.attributeDefinitions.isEmpty {
+                for item in CADAttributeDisplay.styledPrimitives(
+                    definitions: block.attributeDefinitions,
+                    values: entity.attributeValues) {
+                    if let layer = item.layerName, !layer.isEmpty {
+                        primitiveStyles[geometry.count] = CADPrimitiveStyle(
+                            layerName: layer)
+                    }
+                    geometry.append(item.primitive)
+                }
+            }
+
             // Xrefs are exempt from SIMPLIFY collapse: a floorplan must
             // not vanish because furniture blocks are simplified.
             let isXrefEntity = entity.blockID.map {
@@ -729,7 +773,8 @@ public final class CADRendererBridge {
                                     penStrokeBrushSettings, penStrokeStabilizationSettings,
                                     combinedLayerOpacity, entityTextBackgroundScale,
                                     entityTextBackgroundColor, entityTextBackgroundUsesViewportColor,
-                                    entityClipData, showEntityClipFrame))
+                                    entityClipData, showEntityClipFrame,
+                                    Self.imageFadeMultiplier(for: entity)))
                     index += 1
                 }
             } else {
@@ -739,7 +784,8 @@ public final class CADRendererBridge {
                                 penStrokeStabilizationSettings, combinedLayerOpacity,
                                 entityTextBackgroundScale, entityTextBackgroundColor,
                                 entityTextBackgroundUsesViewportColor,
-                                entityClipData, showEntityClipFrame))
+                                entityClipData, showEntityClipFrame,
+                                Self.imageFadeMultiplier(for: entity)))
                 index += 1
             }
         }
@@ -1090,7 +1136,9 @@ public final class CADRendererBridge {
                                         from: primitive,
                                         transform: v.transform,
                                         z: baseZ + 500000.0,
-                                        tint: drawStyle.color,
+                                        tint: Self.fadedTint(
+                                            drawStyle.color,
+                                            multiplier: v.imageFade),
                                         renderOrigin: renderOrigin
                                     ) {
                                         imageSpecs.append(imgSpec)

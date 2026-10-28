@@ -214,11 +214,12 @@ public final class DimAngularCommand: FeatureCommand {
         var diff = a2 - a1
         if diff < 0 { diff += 2 * .pi }
         
-        let style = CADDimensionStyle.default
+        let style = engine.document.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatAngle(diff)
         
         let metadata = CADDimensionMetadata(
+            styleName: engine.document.currentDimensionStyleName,
             type: .angular,
             measurement: diff * 180 / .pi,
             defPoint: dimPos,

@@ -61,7 +61,12 @@ public enum EABReader {
     /// Returns an array of `DrawingView` ready for `TabManager`.
     public static func readViews(from url: URL) throws -> [DrawingView] {
         let data = try Data(contentsOf: url)  // no .mappedIfSafe — file may be replaced atomically
-        return try readViews(from: data)
+        let views = try readViews(from: data)
+        let fileName = url.lastPathComponent
+        for view in views {
+            view.document.finalizeOpen(sourceFileName: fileName, layoutName: view.name)
+        }
+        return views
     }
 
     /// Read views from in-memory Data.
@@ -97,6 +102,8 @@ public enum EABReader {
                 dimensionStyles: components.dimensionStyles,
                 leaderStyles: components.leaderStyles,
                 currentLeaderStyleName: components.currentLeaderStyleName,
+                mlineStyles: components.mlineStyles,
+                currentMlineStyleName: components.currentMlineStyleName,
                 linetypePatterns: components.linetypePatterns,
                 globalLineTypeScale: components.globalLineTypeScale,
                 autoContrastTrueColor: components.autoContrastTrueColor,
@@ -105,7 +112,9 @@ public enum EABReader {
                 xrefHostFolder: components.xrefHostFolder,
                 unloadedXrefs: components.unloadedXrefs,
                 imageDefinitions: components.imageDefinitions,
-                pdfDefinitions: components.pdfDefinitions
+                pdfDefinitions: components.pdfDefinitions,
+                groups: components.groups,
+                insertionBase: components.insertionBase
             )
             return [DrawingView(name: "Model", kind: .model, document: doc)]
         }
@@ -124,6 +133,8 @@ public enum EABReader {
         dimensionStyles: [String: CADDimensionStyle],
         leaderStyles: [String: CADLeaderStyle],
         currentLeaderStyleName: String,
+        mlineStyles: [String: CADMlineStyle],
+        currentMlineStyleName: String,
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset],
@@ -131,8 +142,10 @@ public enum EABReader {
         unloadedXrefs: Set<UUID>,
         imageDefinitions: [CADImageDefinition],
         pdfDefinitions: [CADPdfDefinition],
+        groups: [CADGroup],
         globalLineTypeScale: Double,
-        autoContrastTrueColor: Bool
+        autoContrastTrueColor: Bool,
+        insertionBase: Vector3
     ) {
         let data = try Data(contentsOf: url)
         return try readDocument(from: data)
@@ -219,6 +232,8 @@ public enum EABReader {
                 dimensionStyles: components.dimensionStyles,
                 leaderStyles: components.leaderStyles,
                 currentLeaderStyleName: components.currentLeaderStyleName,
+                mlineStyles: components.mlineStyles,
+                currentMlineStyleName: components.currentMlineStyleName,
                 linetypePatterns: components.linetypePatterns,
                 globalLineTypeScale: components.globalLineTypeScale,
                 autoContrastTrueColor: components.autoContrastTrueColor,
@@ -227,7 +242,9 @@ public enum EABReader {
                 xrefHostFolder: components.xrefHostFolder,
                 unloadedXrefs: components.unloadedXrefs,
                 imageDefinitions: components.imageDefinitions,
-                pdfDefinitions: components.pdfDefinitions
+                pdfDefinitions: components.pdfDefinitions,
+                groups: components.groups,
+                insertionBase: components.insertionBase
             )
 
             views.append(DrawingView(name: entry.name, kind: entry.kind,
@@ -269,7 +286,9 @@ public enum EABReader {
                     xrefHostFolder: components.xrefHostFolder,
                     unloadedXrefs: components.unloadedXrefs,
                     imageDefinitions: components.imageDefinitions,
-                    pdfDefinitions: components.pdfDefinitions
+                    pdfDefinitions: components.pdfDefinitions,
+                    groups: components.groups,
+                    insertionBase: components.insertionBase
                 )
                 views.append(DrawingView(name: "Recovered", kind: .model, document: doc,
                                          cameraState: CameraState(offsetX: 0, offsetY: 0, zoom: 1, rotation: 0)))
@@ -294,6 +313,8 @@ public enum EABReader {
         dimensionStyles: [String: CADDimensionStyle],
         leaderStyles: [String: CADLeaderStyle],
         currentLeaderStyleName: String,
+        mlineStyles: [String: CADMlineStyle],
+        currentMlineStyleName: String,
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset],
@@ -301,8 +322,10 @@ public enum EABReader {
         unloadedXrefs: Set<UUID>,
         imageDefinitions: [CADImageDefinition],
         pdfDefinitions: [CADPdfDefinition],
+        groups: [CADGroup],
         globalLineTypeScale: Double,
-        autoContrastTrueColor: Bool
+        autoContrastTrueColor: Bool,
+        insertionBase: Vector3
     ) {
         let header = try parseHeader(from: data)
         let rawTableOffset = header.sectionTableOffset; guard rawTableOffset <= UInt64(Int.max) else { throw EABError.readError("Section table offset exceeds Int.max") }; let entries = try parseSectionTable(from: data, at: Int(rawTableOffset))
@@ -316,16 +339,20 @@ public enum EABReader {
         var dimensionStyles: [String: CADDimensionStyle] = [:]
         var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
         var currentLeaderStyleName = "Standard"
+        var mlineStyles: [String: CADMlineStyle] = ["Standard": .standard]
+        var currentMlineStyleName = "Standard"
         var linetypePatterns: [String: [Double]] = [:]
         var activeLayerID: UUID? = nil
         var autoContrastTrueColor = true
         var globalLineTypeScale = 1.0
+        var insertionBase: Vector3 = .zero
         var loadedImageStore: [String: CADImageAsset] = [:]
         var xrefHostFolder: String? = nil
         var unloadedXrefs: Set<UUID> = []
         var xrefDescriptors: [UUID: CADXrefDescriptor] = [:]
         var imageDefinitions: [CADImageDefinition] = []
         var pdfDefinitions: [CADPdfDefinition] = []
+        var groups: [CADGroup] = []
 
         for entry in entries {
             let reader = BinaryReader(
@@ -350,6 +377,10 @@ public enum EABReader {
                 let parsed = try parseLeaderStyles(reader)
                 leaderStyles = parsed.styles
                 currentLeaderStyleName = parsed.currentName
+            case .mlineStyles:
+                let parsed = try parseMlineStyles(reader)
+                mlineStyles = parsed.styles
+                currentMlineStyleName = parsed.currentName
             case .lineTypes:
                 linetypePatterns = try parseLinetypePatterns(reader)
             case .images:
@@ -359,6 +390,7 @@ public enum EABReader {
                 activeLayerID = meta.activeLayerID
                 autoContrastTrueColor = meta.autoContrastTrueColor
                 globalLineTypeScale = meta.globalLineTypeScale
+                insertionBase = meta.insertionBase
             case .xrefs:
                 let parsed = parseXrefs(reader)
                 xrefHostFolder = parsed.hostFolder
@@ -368,6 +400,8 @@ public enum EABReader {
                 let parsed = parseMediaDefinitions(reader)
                 imageDefinitions = parsed.image
                 pdfDefinitions = parsed.pdf
+            case .groups:
+                groups = parseGroups(reader)
             default:
                 break  // skip unknown sections
             }
@@ -381,9 +415,10 @@ public enum EABReader {
         }
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
                 textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
+                mlineStyles, currentMlineStyleName,
                 linetypePatterns, activeLayerID, loadedImageStore,
-                xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions,
-                globalLineTypeScale, autoContrastTrueColor)
+                xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
+                globalLineTypeScale, autoContrastTrueColor, insertionBase)
     }
 
     private static func parseXrefs(
@@ -402,6 +437,46 @@ public enum EABReader {
             if isUnloaded { unloaded.insert(handle) }
         }
         return (folder.isEmpty ? nil : folder, descriptors, unloaded)
+    }
+
+    private static func parseMlineStyles(
+        _ r: BinaryReader
+    ) throws -> (styles: [String: CADMlineStyle], currentName: String) {
+        let currentName = r.readString()
+        let count = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "mlineStyles")
+        var styles: [String: CADMlineStyle] = [:]
+        let decoder = JSONDecoder()
+        for _ in 0..<count {
+            let styleName = r.readString()
+            let jsonString = r.readString()
+            if let data = jsonString.data(using: .utf8),
+               var style = try? decoder.decode(CADMlineStyle.self, from: data) {
+                style.name = styleName
+                styles[styleName] = style
+            } else {
+                styles[styleName] = CADMlineStyle(name: styleName)
+            }
+        }
+        if styles.isEmpty { styles["Standard"] = .standard }
+        return (styles, currentName.isEmpty ? "Standard" : currentName)
+    }
+
+    private static func parseGroups(
+        _ r: BinaryReader
+    ) -> [CADGroup] {
+        let count = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "groups")
+        var groups: [CADGroup] = []
+        for _ in 0..<count {
+            let name = r.readString()
+            let memberCount = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "groups.members")
+            var members: [UUID] = []
+            for _ in 0..<memberCount {
+                members.append(r.readUUID())
+            }
+            let isSelectable = r.readUInt8() != 0
+            groups.append(CADGroup(name: name, members: members, isSelectable: isSelectable))
+        }
+        return groups
     }
 
     private static func parseMediaDefinitions(
@@ -432,12 +507,16 @@ public enum EABReader {
             let styleName = r.readString()
             let jsonString = r.readString()
             if let data = jsonString.data(using: .utf8),
-               let style = try? decoder.decode(CADDimensionStyle.self, from: data) {
+               var style = try? decoder.decode(CADDimensionStyle.self, from: data) {
+                // Keys are canonical: archives predate the embedded name,
+                // so re-stamp it from the key on every load.
+                style.name = styleName
                 styles[styleName] = style
             } else {
                 styles[styleName] = CADDimensionStyle.default
             }
         }
+        if styles.isEmpty { styles["Standard"] = .default }
         return styles
     }
 
@@ -486,6 +565,8 @@ public enum EABReader {
         dimensionStyles: [String: CADDimensionStyle],
         leaderStyles: [String: CADLeaderStyle],
         currentLeaderStyleName: String,
+        mlineStyles: [String: CADMlineStyle],
+        currentMlineStyleName: String,
         linetypePatterns: [String: [Double]],
         activeLayerID: UUID?,
         imageStore: [String: CADImageAsset],
@@ -493,8 +574,10 @@ public enum EABReader {
         unloadedXrefs: Set<UUID>,
         imageDefinitions: [CADImageDefinition],
         pdfDefinitions: [CADPdfDefinition],
+        groups: [CADGroup],
         globalLineTypeScale: Double,
-        autoContrastTrueColor: Bool
+        autoContrastTrueColor: Bool,
+        insertionBase: Vector3
     ) {
         let data = try Data(contentsOf: url)
         let header = try parseHeader(from: data)
@@ -519,16 +602,20 @@ public enum EABReader {
         var dimensionStyles: [String: CADDimensionStyle] = [:]
         var leaderStyles: [String: CADLeaderStyle] = ["Standard": .standard]
         var currentLeaderStyleName = "Standard"
+        var mlineStyles: [String: CADMlineStyle] = ["Standard": .standard]
+        var currentMlineStyleName = "Standard"
         var linetypePatterns: [String: [Double]] = [:]
         var activeLayerID: UUID? = nil
         var autoContrastTrueColor = true
         var globalLineTypeScale = 1.0
+        var insertionBase: Vector3 = .zero
         var loadedImageStore: [String: CADImageAsset] = [:]
         var xrefHostFolder: String? = nil
         var unloadedXrefs: Set<UUID> = []
         var xrefDescriptors: [UUID: CADXrefDescriptor] = [:]
         var imageDefinitions: [CADImageDefinition] = []
         var pdfDefinitions: [CADPdfDefinition] = []
+        var groups: [CADGroup] = []
 
         for entry in entries {
             let reader = BinaryReader(
@@ -557,6 +644,10 @@ public enum EABReader {
                 let parsed = try parseLeaderStyles(reader)
                 leaderStyles = parsed.styles
                 currentLeaderStyleName = parsed.currentName
+            case .mlineStyles:
+                let parsed = try parseMlineStyles(reader)
+                mlineStyles = parsed.styles
+                currentMlineStyleName = parsed.currentName
             case .lineTypes:
                 linetypePatterns = try parseLinetypePatterns(reader)
             case .images:
@@ -566,6 +657,7 @@ public enum EABReader {
                 activeLayerID = meta.activeLayerID
                 autoContrastTrueColor = meta.autoContrastTrueColor
                 globalLineTypeScale = meta.globalLineTypeScale
+                insertionBase = meta.insertionBase
             case .xrefs:
                 let parsed = parseXrefs(reader)
                 xrefHostFolder = parsed.hostFolder
@@ -575,6 +667,8 @@ public enum EABReader {
                 let parsed = parseMediaDefinitions(reader)
                 imageDefinitions = parsed.image
                 pdfDefinitions = parsed.pdf
+            case .groups:
+                groups = parseGroups(reader)
             default:
                 break
             }
@@ -588,9 +682,10 @@ public enum EABReader {
         }
         return (layers, blocks, entities, constraints, solvedTransforms, header.unit,
                 textStyles, dimensionStyles, leaderStyles, currentLeaderStyleName,
+                mlineStyles, currentMlineStyleName,
                 linetypePatterns, activeLayerID, loadedImageStore,
-                xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions,
-                globalLineTypeScale, autoContrastTrueColor)
+                xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
+                globalLineTypeScale, autoContrastTrueColor, insertionBase)
     }
 
     // MARK: - Header Parsing
@@ -739,15 +834,73 @@ public enum EABReader {
                 ? r.readUInt8() != 0
                 : name.uppercased().hasPrefix("*T")
             let primitiveXData = version >= 12 ? try parsePrimitiveXData(r) : [:]
+            let attributeDefinitions = version >= 22
+                ? try parseAttributeDefinitions(r) : []
             var block = CADBlock(handle: handle, name: name, geometry: geometry,
                                  primitiveStyles: primitiveStyles,
                                  primitiveXData: primitiveXData,
                                  dxfFlags: dxfFlags,
-                                 isInternalTableDisplayBlock: isInternalTableDisplayBlock)
+                                 isInternalTableDisplayBlock: isInternalTableDisplayBlock,
+                                 attributeDefinitions: attributeDefinitions)
             block.localBoundingBox = bbox
             blocks.append(block)
         }
         return blocks
+    }
+
+    private static func parseAttributeDefinitions(
+        _ r: BinaryReader
+    ) throws -> [CADAttributeDefinition] {
+        let count = safeCount(r.readUInt32(), limit: maxSafeStyleCount, label: "attributeDefinitions")
+        var defs: [CADAttributeDefinition] = []
+        defs.reserveCapacity(count)
+        for _ in 0..<count {
+            let tag = r.readString()
+            let prompt = r.readString()
+            let defaultValue = r.readString()
+            let position = Vector3(
+                x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+            let height = r.readFloat64()
+            let rotation = r.readFloat64()
+            let styleRaw = r.readString()
+            let alignH = Int(r.readInt32())
+            let alignV = Int(r.readInt32())
+            let flags = Int(r.readInt32())
+            let layerRaw = r.readString()
+            defs.append(CADAttributeDefinition(
+                tag: tag,
+                prompt: prompt,
+                defaultValue: defaultValue,
+                position: position,
+                height: height,
+                rotation: rotation,
+                style: styleRaw.isEmpty ? nil : styleRaw,
+                alignH: alignH,
+                alignV: alignV,
+                flags: flags,
+                layerName: layerRaw.isEmpty ? nil : layerRaw))
+        }
+        return defs
+    }
+
+    private static func parseAttributeValues(
+        _ r: BinaryReader
+    ) throws -> [String: CADAttributeValue] {
+        let count = safeCount(r.readUInt32(), limit: maxSafeStyleCount, label: "attributeValues")
+        var values: [String: CADAttributeValue] = [:]
+        values.reserveCapacity(count)
+        for _ in 0..<count {
+            let key = r.readString()
+            let value = r.readString()
+            let position: Vector3? = r.readUInt8() != 0
+                ? Vector3(x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                : nil
+            let height: Double? = r.readUInt8() != 0 ? r.readFloat64() : nil
+            let rotation: Double? = r.readUInt8() != 0 ? r.readFloat64() : nil
+            values[key] = CADAttributeValue(
+                value: value, position: position, height: height, rotation: rotation)
+        }
+        return values
     }
 
     private static func parsePrimitiveXData(
@@ -838,6 +991,7 @@ public enum EABReader {
             let hasDimensionMetadata = (flags & 0x08) != 0
             let hasArrayData = version >= 14 && (flags & 0x10) != 0
             let hasLeaderData = version >= 15 && (flags & 0x20) != 0
+            let hasAttributeValues = version >= 22 && (flags & 0x40) != 0
 
             // bbox
             let bminX = Double(r.readFloat32())
@@ -898,12 +1052,18 @@ public enum EABReader {
                 }
             }
 
+            var attributeValues: [String: CADAttributeValue] = [:]
+            if hasAttributeValues {
+                attributeValues = try parseAttributeValues(r)
+            }
+
             var entity = CADEntity(
                 handle: handle, layerID: layerID, blockID: blockID,
                 localGeometry: localGeom, dimensionMetadata: dimensionMetadataBox,
                 leaderData: leaderData,
                 arrayData: arrayData,
                 transform: transform, xdata: xdata,
+                attributeValues: attributeValues,
                 drawOrder: drawOrder,
                 localBoundingBox: isEmptyBBox ? nil : bbox
             )
@@ -973,11 +1133,15 @@ public enum EABReader {
             let entityA = r.readUUID()
             let entityBUUID = r.readUUID()
             let entityB: UUID? = (entityBUUID == UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0))) ? nil : entityBUUID
-            guard let subA = ConstraintSubEntity(rawValue: r.readUInt8()),
-                  let subB = ConstraintSubEntity(rawValue: r.readUInt8()) else {
+            // Field order matches the writer (and CADConstraint
+            // declaration order): subA, idxA, subB, idxB.
+            guard let subA = ConstraintSubEntity(rawValue: r.readUInt8()) else {
                 throw EABError.corruptedSectionTable
             }
             let subIdxA = r.readUInt8()
+            guard let subB = ConstraintSubEntity(rawValue: r.readUInt8()) else {
+                throw EABError.corruptedSectionTable
+            }
             let subIdxB = r.readUInt8()
             let paramCount = Int(r.readUInt8())
             var params: [Double] = []
@@ -1137,6 +1301,7 @@ public enum EABReader {
         let activeLayerID: UUID?
         let autoContrastTrueColor: Bool
         let globalLineTypeScale: Double
+        let insertionBase: Vector3
     }
 
     /// Reads activeLayerID, autoContrastTrueColor, and globalLineTypeScale from the metadata section.
@@ -1157,14 +1322,24 @@ public enum EABReader {
 
         var autoContrastTrueColor = true
         var globalLineTypeScale = 1.0
+        var insertionBase: Vector3 = .zero
 
         if r.remaining >= 4 {
             let customByteCount = r.readUInt32()
             if customByteCount >= 9 && r.remaining >= 9 {
                 autoContrastTrueColor = r.readUInt8() != 0
                 globalLineTypeScale = r.readFloat64()
-                if customByteCount > 9 && r.remaining >= Int(customByteCount - 9) {
-                    _ = r.readBytes(count: Int(customByteCount - 9))
+                var consumed: UInt32 = 9
+                // Insertion base (3×f64) appended after the v4 bytes.
+                // Older files stop at 9; newer unknown tails are skipped.
+                if customByteCount >= 33 && r.remaining >= 24 {
+                    insertionBase = Vector3(
+                        x: r.readFloat64(), y: r.readFloat64(), z: r.readFloat64())
+                    consumed = 33
+                }
+                if customByteCount > consumed
+                    && r.remaining >= Int(customByteCount - consumed) {
+                    _ = r.readBytes(count: Int(customByteCount - consumed))
                 }
             } else if customByteCount > 0 && r.remaining >= Int(customByteCount) {
                 _ = r.readBytes(count: Int(customByteCount))
@@ -1174,7 +1349,8 @@ public enum EABReader {
         return MetadataPayload(
             activeLayerID: activeID,
             autoContrastTrueColor: autoContrastTrueColor,
-            globalLineTypeScale: globalLineTypeScale
+            globalLineTypeScale: globalLineTypeScale,
+            insertionBase: insertionBase
         )
     }
 

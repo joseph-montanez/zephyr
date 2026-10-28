@@ -260,7 +260,29 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "DIMARC",     aliases: ["DAR", "DIMARCLENGTH"], category: .draw, syntax: "", description: "Arc length dimension along a curve"),
         CommandDescriptor(canonicalName: "DIMORDINATE",aliases: ["DOR", "DIMORD"], category: .draw, syntax: "", description: "X or Y ordinate dimension from origin"),
         CommandDescriptor(canonicalName: "DIMJOGGED",  aliases: ["DJO", "DIMJOG", "JOG"], category: .draw, syntax: "", description: "Jogged radius dimension for large radii"),
+        CommandDescriptor(canonicalName: "DIMCONTINUE", aliases: ["DCO"], category: .draw, syntax: "", description: "Chain dimensions from the previous extension origin"),
+        CommandDescriptor(canonicalName: "DIMBASELINE", aliases: ["DBA"], category: .draw, syntax: "", description: "Stack dimensions from a shared base origin"),
+        CommandDescriptor(canonicalName: "DIM", aliases: [], category: .draw, syntax: "", description: "Dimension the selection with the matching type"),
+        CommandDescriptor(canonicalName: "CENTERMARK", aliases: ["CM"], category: .draw, syntax: "", description: "Draw a center cross for a circle or arc"),
+        CommandDescriptor(canonicalName: "DIMCENTER", aliases: ["DCE"], category: .draw, syntax: "", description: "Draw a center mark for a circle or arc"),
+        CommandDescriptor(canonicalName: "-DIMSTYLE",  aliases: [], category: .settings, syntax: "Restore <name> | Save <name> | Apply <name>", description: "Set the current dimension style from the command line"),
         CommandDescriptor(canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw, syntax: "", description: "Draw a centerline between two lines"),
+        CommandDescriptor(canonicalName: "DIMREASSOCIATE", aliases: ["DRE"], category: .draw, syntax: "", description: "Re-point a dimension at new extension origins and re-measure"),
+        CommandDescriptor(canonicalName: "DIMDISASSOCIATE", aliases: ["DDA"], category: .draw, syntax: "", description: "Drop associativity from dimensions (no-op: dimensions store snapshots)"),
+        CommandDescriptor(canonicalName: "DIMEDIT", aliases: ["DED"], category: .draw, syntax: "[Home/New/Rotate/Oblique]", description: "Move, replace, rotate, or oblique dimension text"),
+        CommandDescriptor(canonicalName: "DIMTEDIT", aliases: [], category: .draw, syntax: "[Home/New/Left/Right/Center/Angle]", description: "Move or rotate dimension text along the dimension line"),
+        CommandDescriptor(canonicalName: "DIMBREAK", aliases: [], category: .draw, syntax: "[Manual/Auto/Remove]", description: "Break dimension lines around crossing geometry"),
+        CommandDescriptor(canonicalName: "DIMSPACE", aliases: [], category: .draw, syntax: "", description: "Space dimension lines evenly or align them"),
+        CommandDescriptor(canonicalName: "FIND", aliases: [], category: .modify, syntax: "", description: "Find and replace text across the drawing"),
+        CommandDescriptor(canonicalName: "TEXTALIGN", aliases: ["TA"], category: .modify, syntax: "[Align/Distribute]", description: "Align or distribute text along a baseline"),
+        CommandDescriptor(canonicalName: "TXT2MTXT", aliases: [], category: .modify, syntax: "", description: "Merge single-line texts into one mtext"),
+        CommandDescriptor(canonicalName: "FIELD", aliases: [], category: .draw, syntax: "[Date/Filename/Tabname/Area/Length]", description: "Insert a live-updating field value"),
+        CommandDescriptor(canonicalName: "SELECTSIMILAR", aliases: [], category: .modify, syntax: "[Settings]", description: "Select objects matching a reference (SELECTSIMILARMODE)"),
+        CommandDescriptor(canonicalName: "QSELECT", aliases: [], category: .modify, syntax: "", description: "Select objects by type, property, and operator"),
+        CommandDescriptor(canonicalName: "FILTER", aliases: ["FI"], category: .modify, syntax: "", description: "Select objects by combined property criteria"),
+        CommandDescriptor(canonicalName: "PURGE", aliases: ["PU"], category: .modify, syntax: "", description: "Remove unused definitions (confirms first)"),
+        CommandDescriptor(canonicalName: "-PURGE", aliases: [], category: .modify, syntax: "", description: "Remove unused definitions without confirming"),
+        CommandDescriptor(canonicalName: "SPELL", aliases: ["SP"], category: .modify, syntax: "", description: "Spell-check drawing text (unavailable: no platform checker reachable)"),
         // --- History ---
         CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)", bareEnterExecutes: true),
         CommandDescriptor(canonicalName: "REDO",       aliases: [],                category: .modify,  syntax: "[<count>]", description: "Re-apply the last undone change (Cmd/Ctrl+Y)", bareEnterExecutes: true),
@@ -357,7 +379,13 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "PDFATTACH",  aliases: [],                category: .block,   syntax: "", description: "Attach a PDF page as a live underlay reference"),
         CommandDescriptor(canonicalName: "-ATTACH",    aliases: [],                category: .block,   syntax: "", description: "Attach a reference file from the command line"),
         CommandDescriptor(canonicalName: "-XREF",      aliases: [],                category: .block,   syntax: "", description: "Manage external references from the command line"),
-        CommandDescriptor(canonicalName: "XBIND",      aliases: [],                category: .block,   syntax: "", description: "Bind one xref-dependent layer into the host"),
+        CommandDescriptor(canonicalName: "XBIND",      aliases: ["XB"],           category: .block,   syntax: "", description: "Bind one xref-dependent layer, style, or linetype into the host"),
+        CommandDescriptor(canonicalName: "REFEDIT",    aliases: [],                category: .block,   syntax: "", description: "Edit a block or xref in place"),
+        CommandDescriptor(canonicalName: "REFCLOSE",   aliases: [],                category: .block,   syntax: "", description: "Save or discard in-place reference edits"),
+        CommandDescriptor(canonicalName: "NCOPY",      aliases: [],                category: .modify,  syntax: "", description: "Copy nested geometry out of blocks and xrefs"),
+        CommandDescriptor(canonicalName: "MLINE",      aliases: ["ML"],           category: .draw,    syntax: "", description: "Draw multilines with justification/scale/style options"),
+        CommandDescriptor(canonicalName: "MLSTYLE",    aliases: [],                category: .draw,    syntax: "", description: "Manage multiline styles (offsets, current style)"),
+        CommandDescriptor(canonicalName: "ALIASEDIT",  aliases: [],                category: .settings, syntax: "", description: "Edit and reload user command aliases"),
         // --- Settings ---
         CommandDescriptor(canonicalName: "STYLE",      aliases: ["ST"], category: .settings, syntax: "", description: "Create and edit text styles"),
         CommandDescriptor(canonicalName: "MLEADERSTYLE", aliases: ["MLS"], category: .settings, syntax: "", description: "Create and edit multileader styles"),
@@ -478,6 +506,43 @@ public final class CADCommandProcessor {
     /// Key → canonical-name map of the feature registry (parity-test seam).
     public var featureCommandKeys: [String: String] {
         featureCommandCanonicalByKey
+    }
+
+    /// User aliases from the PGP file (alias → canonical). Applied at
+    /// execution before anything else; the user always wins.
+    private var userAliases: [String: String] = [:]
+
+    /// Resolves one input token through user aliases (identity when none).
+    public func resolveUserAlias(_ token: String) -> String {
+        let key = token.uppercased().trimmingCharacters(in: .whitespaces)
+        return userAliases[key] ?? token
+    }
+
+    /// Registers a user alias. Returns nil on success, else a warning
+    /// (unknown command, self-alias). Overriding a built-in key succeeds
+    /// with a collision warning — the user wins, never silently.
+    @discardableResult
+    public func registerUserAlias(_ alias: String, for command: String) -> String? {
+        let key = alias.uppercased().trimmingCharacters(in: .whitespaces)
+        let target = command.uppercased().trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty, !target.isEmpty else { return "ignoring empty alias" }
+        guard key != target else { return "ignoring self-alias '\(alias)'" }
+        var known = Set(CommandDescriptor.allCommands.map { $0.canonicalName.uppercased() })
+        known.formUnion(featureCommandRegistry.keys.map { $0.uppercased() })
+        guard known.contains(target) else {
+            return "unknown command '\(command)' for alias '\(alias)'"
+        }
+        var warning: String?
+        if let owner = featureCommandCanonicalByKey[key], owner != target {
+            warning = "user alias '\(alias)' overrides \(owner)"
+        } else if CommandDescriptor.allCommands.contains(where: {
+            $0.canonicalName.uppercased() == key
+                || $0.aliases.map({ $0.uppercased() }).contains(key)
+        }) {
+            warning = "user alias '\(alias)' overrides a built-in"
+        }
+        userAliases[key] = target
+        return warning
     }
 
     /// Backing store for `lispInvocationDepth` (see LispInvocationContext.swift).
@@ -706,7 +771,9 @@ public final class CADCommandProcessor {
         // other command may start. Must precede lastExecutedCommand so a
         // rejected command never poisons spacebar repeat.
         if rejectCommandIfLispActive(text) { return }
-        let upper = text.uppercased().trimmingCharacters(in: .whitespaces)
+        var upper = text.uppercased().trimmingCharacters(in: .whitespaces)
+        // User PGP aliases resolve before everything (user wins).
+        upper = userAliases[upper] ?? upper
         if upper.isEmpty {
             if isSelectingObjects {
                 confirmObjectSelection()
@@ -735,7 +802,8 @@ public final class CADCommandProcessor {
             let uy = dist > 1e-9 ? offsetY / dist : 0.0
             print("[CAD] MOVE direct distance: \(distance) units along (\(String(format: "%.4f", ux)), \(String(format: "%.4f", uy)))")
             engine.cadBridge.movePrimitivesDirect(
-                handles: engine.cadSelection.selectedHandles,
+                handles: engine.document.centerLinkedHandles(
+                    following: engine.cadSelection.selectedHandles),
                 by: (offsetX, offsetY), in: engine.geometryManager,
                 spriteManager: engine.spriteManager)
             engine.cadSelection.moveAllSelected(by: Vector3(x: offsetX, y: offsetY, z: 0), document: engine.document)
@@ -1453,6 +1521,12 @@ public final class CADCommandProcessor {
         case _ where upper.hasPrefix("-LAYER ") || upper.hasPrefix("-LA "):
             guard let engine = engine else { clearCommand(); return }
             runDashLayerCommand(text: text, upper: upper, engine: engine)
+        case "-DIMSTYLE":
+            print("[CAD] -DIMSTYLE Restore <name> | Save <name> | Apply <name>")
+            clearCommand()
+        case _ where upper.hasPrefix("-DIMSTYLE "):
+            guard let engine = engine else { clearCommand(); return }
+            runDashDimStyleCommand(text: text, upper: upper, engine: engine)
         case _ where upper.hasPrefix("LAYER DELETE ") || upper.hasPrefix("LAYER DEL ") || upper.hasPrefix("LA DELETE ") || upper.hasPrefix("LA DEL "):
             guard let engine = engine else { clearCommand(); return }
             let prefixLen: Int
@@ -2169,6 +2243,81 @@ public final class CADCommandProcessor {
         cmd.start(engine: engine, processor: self)
     }
 
+    /// `-DIMSTYLE` Restore/Save/Apply over the document dimension-style
+    /// table (Phase 2.1). Restore makes the named style current; Save
+    /// snapshots the current row under a new name; Apply re-points the
+    /// current selection's dimensions at the named style.
+    private func runDashDimStyleCommand(text: String, upper: String, engine: PhrostEngine) {
+        let args = String(text.dropFirst(10)).trimmingCharacters(in: .whitespaces)
+        let tokens = args.split(whereSeparator: \.isWhitespace).map(String.init)
+        let usage = "-DIMSTYLE Restore <name> | Save <name> | Apply <name>"
+        guard let verb = tokens.first?.uppercased() else {
+            print("[CAD] \(usage)")
+            clearCommand()
+            return
+        }
+        let name = tokens.dropFirst().joined(separator: " ").trimmingCharacters(in: .whitespaces)
+        let doc = engine.document
+        switch verb {
+        case "RESTORE":
+            guard !name.isEmpty else {
+                print("[CAD] -DIMSTYLE Restore requires a style name. \(usage)")
+                clearCommand()
+                return
+            }
+            if doc.setCurrentDimensionStyle(named: name) {
+                print("[CAD] Current dimension style: \(doc.currentDimensionStyleName).")
+            } else {
+                let known = doc.dimensionStyles.keys.sorted().joined(separator: ", ")
+                print("[CAD] Dimension style '\(name)' not found. Styles: \(known).")
+            }
+            clearCommand()
+        case "SAVE":
+            guard !name.isEmpty else {
+                print("[CAD] -DIMSTYLE Save requires a new style name. \(usage)")
+                clearCommand()
+                return
+            }
+            let exists = doc.dimensionStyles.keys.contains(where: {
+                $0.caseInsensitiveCompare(name) == .orderedSame
+            })
+            if exists {
+                print("[CAD] Dimension style '\(name)' already exists.")
+                clearCommand()
+                return
+            }
+            var snapshot = doc.dimensionStyle(named: doc.currentDimensionStyleName)
+            snapshot.name = name
+            if doc.applyDimensionStyle(snapshot) {
+                print("[CAD] Dimension style '\(name)' saved from current settings.")
+            } else {
+                print("[CAD] Could not save dimension style '\(name)'.")
+            }
+            clearCommand()
+        case "APPLY":
+            guard !name.isEmpty else {
+                print("[CAD] -DIMSTYLE Apply requires a style name. \(usage)")
+                clearCommand()
+                return
+            }
+            let handles = engine.cadSelection.selectedHandles
+            guard !handles.isEmpty else {
+                print("[CAD] -DIMSTYLE Apply needs selected dimensions first.")
+                clearCommand()
+                return
+            }
+            if let count = doc.applyDimensionStyleToEntities(named: name, handles: handles) {
+                print("[CAD] Applied '\(name)' to \(count) dimension(s); overrides cleared.")
+            } else {
+                print("[CAD] Dimension style '\(name)' not found.")
+            }
+            clearCommand()
+        default:
+            print("[CAD] Unknown -DIMSTYLE option '\(verb)'. \(usage)")
+            clearCommand()
+        }
+    }
+
     /// Interactive `-LAYER` sub-keywords over the document layer APIs.
     /// Lock/Freeze/Thaw/Unlock wait for the 1C layer model (reported, not silent).
     private func runDashLayerCommand(text: String, upper: String, engine: PhrostEngine) {
@@ -2546,7 +2695,8 @@ public final class CADCommandProcessor {
                 let dy = _moveGhostWorldY - commandRefPoint!.1
                 // Update GPU geometry immediately so grips/selection update
                 engine.cadBridge.movePrimitivesDirect(
-                    handles: engine.cadSelection.selectedHandles,
+                    handles: engine.document.centerLinkedHandles(
+                        following: engine.cadSelection.selectedHandles),
                     by: (dx, dy), in: engine.geometryManager,
                     spriteManager: engine.spriteManager)
                 engine.cadSelection.moveAllSelected(by: Vector3(x: dx, y: dy, z: 0), document: engine.document)

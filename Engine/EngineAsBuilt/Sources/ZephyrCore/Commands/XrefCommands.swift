@@ -381,7 +381,7 @@ public final class XBindCommand: FeatureCommand {
 
     public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
         XrefCommandSupport.openTextPrompt(
-            "Dependent layer name to bind (e.g. SitePlan|Walls):", processor: processor)
+            "Dependent symbol to bind (e.g. SitePlan|Walls):", processor: processor)
     }
 
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) { done = true }
@@ -410,12 +410,14 @@ public final class XBindCommand: FeatureCommand {
         for doc in tab.drawingViews.map(\.document) {
             if let result = doc.xbindLayer(named: input, bindType: XrefSysvars.bindType) {
                 bound = result
+            } else if let result = doc.xbindStyle(named: input, bindType: XrefSysvars.bindType) {
+                bound = result
             }
         }
         if let bound {
             print("[Xref] Bound layer '\(input)' as '\(bound)'.")
         } else {
-            print("[Xref] '\(input)' is not an xref-dependent layer.")
+            print("[Xref] '\(input)' is not an xref-dependent layer, style, or linetype.")
         }
         return .finished
     }

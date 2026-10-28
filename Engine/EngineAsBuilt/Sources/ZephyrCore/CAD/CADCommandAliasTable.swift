@@ -98,8 +98,11 @@ public enum CADCommandAliasTable {
         CADCommandAliasEntry(
             canonicalName: "DIMSTYLE", aliases: ["D", "DST"],
             category: .settings,
-            description: "Manage dimension styles",
-            isReservedStub: true),
+            description: "Manage dimension styles"),
+        CADCommandAliasEntry(
+            canonicalName: "-DIMSTYLE", aliases: [],
+            category: .settings,
+            description: "Set the current dimension style (command-line)"),
         CADCommandAliasEntry(
             canonicalName: "DRAW", aliases: ["TOOLS"], category: .draw,
             description: "Open the draw tools palette"),
@@ -116,7 +119,61 @@ public enum CADCommandAliasTable {
             description: "Clip blocks, raster images, and PDF underlays"),
         CADCommandAliasEntry(
             canonicalName: "CENTERLINE", aliases: ["CL"], category: .draw,
-            description: "Draw a centerline between two lines",
+            description: "Draw a centerline between two lines"),
+        CADCommandAliasEntry(
+            canonicalName: "CENTERMARK", aliases: ["CM"], category: .draw,
+            description: "Draw a center cross for a circle or arc"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMCENTER", aliases: ["DCE"], category: .draw,
+            description: "Draw a center mark for a circle or arc"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMREASSOCIATE", aliases: ["DRE"], category: .draw,
+            description: "Re-point a dimension at new extension origins and re-measure"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMDISASSOCIATE", aliases: ["DDA"], category: .draw,
+            description: "Drop associativity from dimensions (no-op: dimensions store snapshots)"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMEDIT", aliases: ["DED"], category: .draw,
+            description: "Move, replace, rotate, or oblique dimension text"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMTEDIT", category: .draw,
+            description: "Move or rotate dimension text along the dimension line"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMBREAK", category: .draw,
+            description: "Break dimension lines around crossing geometry"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMSPACE", category: .draw,
+            description: "Space dimension lines evenly or align them"),
+        CADCommandAliasEntry(
+            canonicalName: "FIND", category: .modify,
+            description: "Find and replace text across the drawing"),
+        CADCommandAliasEntry(
+            canonicalName: "TEXTALIGN", aliases: ["TA"], category: .modify,
+            description: "Align or distribute text along a baseline"),
+        CADCommandAliasEntry(
+            canonicalName: "TXT2MTXT", category: .modify,
+            description: "Merge single-line texts into one mtext"),
+        CADCommandAliasEntry(
+            canonicalName: "FIELD", category: .draw,
+            description: "Insert a live-updating field value"),
+        CADCommandAliasEntry(
+            canonicalName: "SELECTSIMILAR", category: .modify,
+            description: "Select objects matching a reference (SELECTSIMILARMODE)"),
+        CADCommandAliasEntry(
+            canonicalName: "QSELECT", category: .modify,
+            description: "Select objects by type, property, and operator"),
+        CADCommandAliasEntry(
+            canonicalName: "FILTER", aliases: ["FI"], category: .modify,
+            description: "Select objects by combined property criteria"),
+        CADCommandAliasEntry(
+            canonicalName: "PURGE", aliases: ["PU"], category: .modify,
+            description: "Remove unused definitions (confirms first)"),
+        CADCommandAliasEntry(
+            canonicalName: "-PURGE", category: .modify,
+            description: "Remove unused definitions without confirming"),
+        CADCommandAliasEntry(
+            canonicalName: "SPELL", aliases: ["SP"], category: .modify,
+            description: "Spell-check drawing text (unavailable: no platform checker reachable)",
             isReservedStub: true),
         CADCommandAliasEntry(
             canonicalName: "AALINES", category: .view,
@@ -151,6 +208,18 @@ public enum CADCommandAliasTable {
             canonicalName: "DIMJOGGED", aliases: ["DJO", "DIMJOG", "JOG"],
             category: .draw,
             description: "Jogged radius dimension for large radii"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMCONTINUE", aliases: ["DCO"],
+            category: .draw,
+            description: "Chain dimensions from the previous extension origin"),
+        CADCommandAliasEntry(
+            canonicalName: "DIMBASELINE", aliases: ["DBA"],
+            category: .draw,
+            description: "Stack dimensions from a shared base origin"),
+        CADCommandAliasEntry(
+            canonicalName: "DIM", aliases: [],
+            category: .draw,
+            description: "Dimension the selection with the matching type"),
         CADCommandAliasEntry(
             canonicalName: "BLOCK", aliases: ["B", "BMAKE"],
             category: .block,

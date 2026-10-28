@@ -87,6 +87,27 @@ public enum CADClipMetadata {
         return false
     }
 
+    /// Clip target kind for XCLIP/IMAGECLIP/PDFCLIP routing. PDF first:
+    /// underlays also carry `.image` primitives for their pixels.
+    public enum TargetKind {
+        case block
+        case image
+        case pdf
+    }
+
+    public static func kind(of entity: CADEntity) -> TargetKind? {
+        guard isSupportedTarget(entity) else { return nil }
+        if case .string(let type) = entity.xdata[underlayTypeKey],
+           type.uppercased() == "PDF" {
+            return .pdf
+        }
+        if entity.localGeometry?.contains(where: {
+            if case .image = $0 { return true }
+            return false
+        }) == true { return .image }
+        return .block
+    }
+
     public static func frameVariableName(for entity: CADEntity) -> String {
         if case .string(let type) = entity.xdata[underlayTypeKey], type.uppercased() == "PDF" {
             return "PDFFRAME"

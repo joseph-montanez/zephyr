@@ -123,6 +123,7 @@ public enum XrefLoader {
         var dimensionStyles: [String: CADDimensionStyle] = [:]
         var leaderStyles: [String: CADLeaderStyle] = [:]
         var linetypePatterns: [String: [Double]] = [:]
+        var mlineStyles: [String: CADMlineStyle] = [:]
         var children: [XrefChildInfo] = []
     }
 
@@ -254,6 +255,7 @@ public enum XrefLoader {
                     dimensionStyles: outcome.dimensionStyles,
                     leaderStyles: outcome.leaderStyles,
                     linetypePatterns: outcome.linetypePatterns,
+                    mlineStyles: outcome.mlineStyles,
                     resetExisting: XrefSysvars.visRetain == 0)
             }
         }
@@ -370,6 +372,7 @@ public enum XrefLoader {
                 dimensionStyles: built.dimensionStyles,
                 leaderStyles: built.leaderStyles,
                 linetypePatterns: built.linetypePatterns,
+                mlineStyles: built.mlineStyles,
                 children: built.children)
         } catch let error as DrawingFileInsert.InsertError {
             return LoadOutcome(
@@ -392,6 +395,7 @@ public enum XrefLoader {
         var dimensionStyles: [String: CADDimensionStyle] = [:]
         var leaderStyles: [String: CADLeaderStyle] = [:]
         var linetypePatterns: [String: [Double]] = [:]
+        var mlineStyles: [String: CADMlineStyle] = [:]
         var children: [XrefChildInfo] = []
     }
 
@@ -522,6 +526,9 @@ public enum XrefLoader {
         let linetypeMap = Dictionary(uniqueKeysWithValues: imported.linetypePatterns.keys.compactMap { key -> (String, String)? in
             builtinLinetypes.contains(key.uppercased()) ? nil : (key.uppercased(), prefixed(key))
         })
+        let mlineStyleMap = Dictionary(uniqueKeysWithValues: imported.mlineStyles.keys.map {
+            ($0.uppercased(), prefixed($0))
+        })
         let textStyleMap = Dictionary(uniqueKeysWithValues: imported.textStyles.keys.map {
             ($0.uppercased(), prefixed($0))
         })
@@ -545,6 +552,11 @@ public enum XrefLoader {
             copy.name = prefixed(name)
             built.leaderStyles[prefixed(name)] = copy
         }
+        for (name, style) in imported.mlineStyles {
+            var copy = style
+            copy.name = prefixed(name)
+            built.mlineStyles[prefixed(name)] = copy
+        }
         for (name, pattern) in imported.linetypePatterns
         where !builtinLinetypes.contains(name.uppercased()) {
             built.linetypePatterns[prefixed(name)] = pattern
@@ -565,6 +577,10 @@ public enum XrefLoader {
             if case .string(let name) = xdata["dxf.textStyle"],
                let mapped = rewrite(name, via: textStyleMap) {
                 xdata["dxf.textStyle"] = .string(mapped)
+            }
+            if case .string(let name) = xdata["dxf.mlineStyle"],
+               let mapped = rewrite(name, via: mlineStyleMap) {
+                xdata["dxf.mlineStyle"] = .string(mapped)
             }
             if case .string(let name) = xdata["dxf.lineType"],
                let mapped = rewrite(name, via: linetypeMap) {

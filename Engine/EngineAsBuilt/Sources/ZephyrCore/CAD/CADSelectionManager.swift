@@ -87,9 +87,22 @@ public final class CADSelectionManager {
         _markSelectionChanged()
     }
 
+    /// Group-expansion hook (PICKSTYLE bit 0). When set, adding or removing
+    /// one member adds/removes its whole selectable group; the provider
+    /// returns the handle alone when group selection is off or the handle
+    /// is in no selectable group. Wired once at engine startup to the
+    /// active document; nil in unit tests (plain single-handle behavior).
+    public var groupExpansionProvider: ((UUID) -> Set<UUID>)?
+
     /// Add a handle to the selection set (AutoCAD default click behavior).
     public func addToSelection(_ handle: UUID) {
-        selectedHandles.insert(handle)
+        if let expand = groupExpansionProvider {
+            for member in expand(handle) {
+                selectedHandles.insert(member)
+            }
+        } else {
+            selectedHandles.insert(handle)
+        }
         lastSelectedHandle = handle
         selectedLeaderContentHandle = nil
         _markSelectionChanged()
@@ -97,9 +110,19 @@ public final class CADSelectionManager {
 
     /// Remove a handle from the selection set (AutoCAD shift+click behavior).
     public func removeFromSelection(_ handle: UUID) {
-        selectedHandles.remove(handle)
-        if lastSelectedHandle == handle { lastSelectedHandle = nil }
-        if selectedLeaderContentHandle == handle { selectedLeaderContentHandle = nil }
+        if let expand = groupExpansionProvider {
+            for member in expand(handle) {
+                selectedHandles.remove(member)
+                if lastSelectedHandle == member { lastSelectedHandle = nil }
+                if selectedLeaderContentHandle == member {
+                    selectedLeaderContentHandle = nil
+                }
+            }
+        } else {
+            selectedHandles.remove(handle)
+            if lastSelectedHandle == handle { lastSelectedHandle = nil }
+            if selectedLeaderContentHandle == handle { selectedLeaderContentHandle = nil }
+        }
         _markSelectionChanged()
     }
 
@@ -122,6 +145,7 @@ public final class CADSelectionManager {
         selectedLeaderContentHandle = nil
         for entity in document.entitiesView {
             guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+            guard !document.isIsolatedHidden(entity.handle) else { continue }
             selectedHandles.insert(entity.handle)
             lastSelectedHandle = entity.handle
         }
@@ -238,11 +262,16 @@ public final class CADSelectionManager {
     }
 
     public func moveAllSelected(by delta: Vector3, document: CADDocument) {
-        document.moveEntities(handles: selectedHandles, by: delta)
+        // Associative-lite center marks/lines travel with their sources.
+        document.moveEntities(
+            handles: document.centerLinkedHandles(following: selectedHandles),
+            by: delta)
     }
 
     public func moveAllSelectedLive(by delta: Vector3, document: CADDocument) {
-        document.moveEntitiesLive(handles: selectedHandles, by: delta)
+        document.moveEntitiesLive(
+            handles: document.centerLinkedHandles(following: selectedHandles),
+            by: delta)
     }
 
     public func rotateAllSelected(

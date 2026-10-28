@@ -41,9 +41,19 @@ final class LispVarStore: @unchecked Sendable {
         "CHAMFERA": .real(0),
         "CHAMFERB": .real(0),
         "CMDECHO": .int(1),
+        "CMLJUST": .int(0),
+        "CMLSCALE": .real(1),
+        "CMLSTYLE": .string("Standard"),
         "CURSORSIZE": .int(5),
         "DATE": .real(2460600.5),
         "DIMSCALE": .real(1),
+        "DIMASZ": .real(2.5),
+        "DIMTXT": .real(2.5),
+        "DIMGAP": .real(0.625),
+        "DIMEXO": .real(0.625),
+        "DIMEXE": .real(1.25),
+        "DIMDEC": .int(2),
+        "DIMLUNIT": .int(2),
         "DWGNAME": .string("Drawing1.dxf"),
         "DWGPREFIX": .string(""),
         "DWGTITLED": .int(0),
@@ -89,9 +99,11 @@ final class LispVarStore: @unchecked Sendable {
         "PICKBOX": .int(3),
         "PICKDRAG": .int(0),
         "PICKFIRST": .int(1),
+        "PICKSTYLE": .int(1),
         "PLATFORM": .string("Zephyr"),
         "QTEXTMODE": .int(0),
         "REGENMODE": .int(1),
+        "SELECTSIMILARMODE": .int(130),
         "SKETCHINC": .real(0.1),
         "SNAPMODE": .int(0),
         "SPLINESEGS": .int(8),
@@ -123,6 +135,22 @@ final class LispVarStore: @unchecked Sendable {
             return .int(document.autoContrastTrueColor ? 1 : 0)
         case "LTSCALE":
             return .real(document.globalLineTypeScale)
+        case "DIMSCALE", "DIMASZ", "DIMTXT", "DIMGAP", "DIMEXO", "DIMEXE":
+            // Raw stored values of the current dimension style (Phase 2.1):
+            // DIMSCALE is the overall factor, the rest are unscaled metrics.
+            let style = document.dimensionStyle(named: document.currentDimensionStyleName)
+            switch name {
+            case "DIMSCALE": return .real(style.overallScale)
+            case "DIMASZ": return .real(style.arrowSize)
+            case "DIMTXT": return .real(style.textHeight)
+            case "DIMGAP": return .real(style.textOffset)
+            case "DIMEXO": return .real(style.extensionLineOffset)
+            default: return .real(style.extensionLineExtend)
+            }
+        case "DIMDEC":
+            return .int(document.dimensionStyle(named: document.currentDimensionStyleName).unitsPrecision)
+        case "DIMLUNIT":
+            return .int(document.dimensionStyle(named: document.currentDimensionStyleName).unitsFormat.rawValue)
         case "CLAYER":
             guard let id = document.activeLayerID,
                   let layer = document.layer(for: id)
@@ -151,6 +179,10 @@ final class LispVarStore: @unchecked Sendable {
             return .real(document.lastPerimeter)
         case "LUPREC":
             return .int(document.lengthPrecision)
+        case "SELECTSIMILARMODE":
+            return .int(document.selectSimilarMode)
+        case "PICKSTYLE":
+            return .int(document.pickStyle)
         case "AUPREC":
             return .int(document.anglePrecision)
         case "PDMODE":
@@ -159,6 +191,12 @@ final class LispVarStore: @unchecked Sendable {
             return .real(document.pointDisplaySize)
         case "FILLMODE":
             return .int(document.fillMode ? 1 : 0)
+        case "CMLJUST":
+            return .int(document.mlineJustification)
+        case "CMLSCALE":
+            return .real(document.mlineScale)
+        case "CMLSTYLE":
+            return .string(document.currentMlineStyleName)
         case "BINDTYPE":
             return .int(XrefSysvars.bindType)
         case "REFPATHTYPE":
@@ -212,6 +250,35 @@ final class LispVarStore: @unchecked Sendable {
             document.markNeedsRegeneration()
             store(name, value)
             return nil
+        case "DIMSCALE":
+            guard let realVal = numericReal(value), realVal > 0, realVal.isFinite else {
+                return "DIMSCALE requires a positive non-zero real number"
+            }
+            return setDimensionStyleValue(name, document: document) { $0.overallScale = realVal }
+        case "DIMASZ", "DIMTXT", "DIMGAP", "DIMEXO", "DIMEXE":
+            guard let realVal = numericReal(value), realVal >= 0, realVal.isFinite else {
+                return "\(name) requires a non-negative real number"
+            }
+            return setDimensionStyleValue(name, document: document) {
+                switch name {
+                case "DIMASZ": $0.arrowSize = realVal
+                case "DIMTXT": $0.textHeight = realVal
+                case "DIMGAP": $0.textOffset = realVal
+                case "DIMEXO": $0.extensionLineOffset = realVal
+                default: $0.extensionLineExtend = realVal
+                }
+            }
+        case "DIMDEC":
+            guard case let .int(intVal) = value, (0...8).contains(intVal) else {
+                return "DIMDEC requires an integer 0-8"
+            }
+            return setDimensionStyleValue(name, document: document) { $0.unitsPrecision = intVal }
+        case "DIMLUNIT":
+            guard case let .int(intVal) = value,
+                  let format = DimUnitsFormat(rawValue: intVal) else {
+                return "DIMLUNIT requires an integer 1-6"
+            }
+            return setDimensionStyleValue(name, document: document) { $0.unitsFormat = format }
         case "CLAYER":
             guard case let .string(layerName) = value else {
                 return "CLAYER requires a layer name string"
@@ -243,6 +310,20 @@ final class LispVarStore: @unchecked Sendable {
                 return "LUPREC requires an integer 0..8"
             }
             document.lengthPrecision = i
+            store(name, value)
+            return nil
+        case "SELECTSIMILARMODE":
+            guard case let .int(i) = value, (0...255).contains(i) else {
+                return "SELECTSIMILARMODE requires an integer 0..255"
+            }
+            document.selectSimilarMode = i
+            store(name, value)
+            return nil
+        case "PICKSTYLE":
+            guard case let .int(i) = value, (0...3).contains(i) else {
+                return "PICKSTYLE requires an integer 0..3"
+            }
+            document.pickStyle = i
             store(name, value)
             return nil
         case "AUPREC":
@@ -281,6 +362,37 @@ final class LispVarStore: @unchecked Sendable {
             }
             document.fillMode = (i != 0)
             document.markNeedsRegeneration()
+            store(name, value)
+            return nil
+        case "CMLJUST":
+            guard case let .int(i) = value, (0...2).contains(i) else {
+                return "CMLJUST requires 0 (Top), 1 (Zero), or 2 (Bottom)"
+            }
+            document.mlineJustification = i
+            store(name, value)
+            return nil
+        case "CMLSCALE":
+            let numeric: Double?
+            switch value {
+            case .real(let r): numeric = r
+            case .int(let i): numeric = Double(i)
+            default: numeric = nil
+            }
+            guard let numeric, numeric > 0, numeric.isFinite else {
+                return "CMLSCALE requires a positive scale"
+            }
+            document.mlineScale = numeric
+            store(name, value)
+            return nil
+        case "CMLSTYLE":
+            guard case let .string(s) = value, !s.isEmpty else {
+                return "CMLSTYLE requires a style name"
+            }
+            let resolved = document.mlineStyle(named: s)
+            guard resolved.name.caseInsensitiveCompare(s) == .orderedSame else {
+                return "CMLSTYLE: no multiline style named '\(s)'"
+            }
+            document.currentMlineStyleName = resolved.name
             store(name, value)
             return nil
         case "AUNITS":
@@ -357,5 +469,35 @@ final class LispVarStore: @unchecked Sendable {
 
     private func store(_ name: String, _ value: LispValue) {
         lock.withLock { memory[name] = value }
+    }
+
+    private func numericReal(_ value: LispValue) -> Double? {
+        switch value {
+        case .real(let r): return r
+        case .int(let i): return Double(i)
+        default: return nil
+        }
+    }
+
+    /// Validated write into the current dimension style's table row
+    /// (Phase 2.1). Mirrors the LTSCALE set tail: mutate, regenerate,
+    /// echo to memory. Like LTSCALE, style edits ride the snapshot stream
+    /// rather than pushing their own undo entry.
+    private func setDimensionStyleValue(
+        _ name: String, document: CADDocument,
+        apply: (inout CADDimensionStyle) -> Void
+    ) -> String? {
+        let key = document.resolvedDimensionStyleName(document.currentDimensionStyleName)
+        var style = document.dimensionStyle(named: key)
+        apply(&style)
+        style.name = key
+        document.dimensionStyles[key] = style
+        document.markNeedsRegeneration()
+        store(name, documentValue(for: name, document: document))
+        return nil
+    }
+
+    private func documentValue(for name: String, document: CADDocument) -> LispValue {
+        get(name, document: document, activeCommand: nil) ?? .int(0)
     }
 }

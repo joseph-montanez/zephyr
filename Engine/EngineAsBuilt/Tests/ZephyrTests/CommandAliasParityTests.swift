@@ -33,6 +33,27 @@ final class CommandAliasParityTests: XCTestCase {
         ("EPDF", "EXPORTPDF"), ("PDFEXPORT", "EXPORTPDF"),
         ("EXPORTPDF", "EXPORTPDF"),
         ("ME", "MEASURE"), ("JOG", "DIMJOGGED"),
+        ("DCO", "DIMCONTINUE"), ("DIMCONTINUE", "DIMCONTINUE"),
+        ("DBA", "DIMBASELINE"), ("DIMBASELINE", "DIMBASELINE"),
+        ("DIM", "DIM"),
+        ("CM", "CENTERMARK"), ("CENTERMARK", "CENTERMARK"),
+        ("DCE", "DIMCENTER"), ("DIMCENTER", "DIMCENTER"),
+        ("DIMREASSOCIATE", "DIMREASSOCIATE"), ("DRE", "DIMREASSOCIATE"),
+        ("DIMDISASSOCIATE", "DIMDISASSOCIATE"), ("DDA", "DIMDISASSOCIATE"),
+        ("DIMEDIT", "DIMEDIT"), ("DED", "DIMEDIT"),
+        ("DIMTEDIT", "DIMTEDIT"),
+        ("DIMBREAK", "DIMBREAK"),
+        ("DIMSPACE", "DIMSPACE"),
+        ("FIND", "FIND"),
+        ("TEXTALIGN", "TEXTALIGN"), ("TA", "TEXTALIGN"),
+        ("TXT2MTXT", "TXT2MTXT"),
+        ("FIELD", "FIELD"),
+        ("SPELL", "SPELL"), ("SP", "SPELL"),
+        ("SELECTSIMILAR", "SELECTSIMILAR"),
+        ("QSELECT", "QSELECT"),
+        ("FILTER", "FILTER"), ("FI", "FILTER"),
+        ("PURGE", "PURGE"), ("PU", "PURGE"),
+        ("-PURGE", "-PURGE"),
         ("B", "BLOCK"), ("BMAKE", "BLOCK"),
         ("XR", "XREF"), ("ER", "XREF"),
         ("IAT", "IMAGEATTACH"),
@@ -135,8 +156,8 @@ final class CommandAliasParityTests: XCTestCase {
 
     /// Reserved stubs report honestly and real commands never stub-report.
     func testStubMessages() {
-        for stub in ["S", "STRETCH", "D", "DIMSTYLE", "PS", "PSPACE",
-                     "CL", "CENTERLINE", "G", "GROUP", "W", "WBLOCK"] {
+        for stub in ["S", "STRETCH", "PS", "PSPACE",
+                     "G", "GROUP", "W", "WBLOCK", "SP", "SPELL"] {
             XCTAssertNotNil(
                 CADCommandAliasTable.stubMessage(for: stub),
                 "'\(stub)' should report not-implemented-yet")

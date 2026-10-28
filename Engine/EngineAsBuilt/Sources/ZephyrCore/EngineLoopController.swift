@@ -726,7 +726,7 @@ public final class EngineLoopController {
                     metadata.measurement = hypot(metadata.defPoint2.x - metadata.defPoint.x, metadata.defPoint2.y - metadata.defPoint.y)
                 }
                 // Regenerate dimension primitives
-                let style = metadata.styleOverrides ?? engine.document.dimensionStyles[metadata.styleName] ?? CADDimensionStyle.default
+                let style = engine.document.resolvedDimensionStyle(for: metadata)
                 let color = DimensionPrimitives.resolvedColor(for: entity, in: engine.document)
                 let newPrimitives = DimensionPrimitives.generatePrimitives(for: metadata, style: style, color: color)
                 engine.document.updateBlockGeometryLive(handle: bid, geometry: newPrimitives)
@@ -794,7 +794,7 @@ public final class EngineLoopController {
                     constrainedTextMid = Vector3(x: center.x + cos(cursorAngle) * dimRadius, y: center.y + sin(cursorAngle) * dimRadius, z: 0)
                 }
                 metadata.textMidpoint = constrainedTextMid
-                let style = metadata.styleOverrides ?? engine.document.dimensionStyles[metadata.styleName] ?? CADDimensionStyle.default
+                let style = engine.document.resolvedDimensionStyle(for: metadata)
                 let color = DimensionPrimitives.resolvedColor(for: entity, in: engine.document)
                 let newPrimitives = DimensionPrimitives.generatePrimitives(for: metadata, style: style, color: color)
                 engine.document.updateBlockGeometryLive(handle: bid, geometry: newPrimitives)
@@ -1119,12 +1119,14 @@ public final class EngineLoopController {
                 if interaction.dragActive, engine.cadSelection.selectedHandles.contains(handle) { return nil }
                 guard let entity = engine.document.entity(for: handle) else { return nil }
                 guard let layer = engine.document.layer(for: entity.layerID), layer.isVisible else { return nil }
+                guard !engine.document.isIsolatedHidden(entity.handle) else { return nil }
                 return entity
             }
         } else {
             visibleEntities = engine.document.entitiesView.filter { entity in
                 if interaction.gripActive, let gripHandle = interaction.gripHandle, entity.handle == gripHandle { return false }
                 if interaction.dragActive, engine.cadSelection.selectedHandles.contains(entity.handle) { return false }
+                guard !engine.document.isIsolatedHidden(entity.handle) else { return false }
                 guard let layer = engine.document.layer(for: entity.layerID) else { return false }
                 return layer.isVisible
             }

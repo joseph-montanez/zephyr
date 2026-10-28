@@ -222,11 +222,37 @@ struct AppCommandRegistration {
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "XBIND",
+            aliases: ["XB"],
             descriptor: CommandDescriptor(
                 canonicalName: "XBIND",
+                aliases: ["XB"],
                 category: .block,
-                description: "Bind one xref-dependent layer into the host"),
+                description: "Bind one xref-dependent layer, style, or linetype into the host"),
             factory: { XBindCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "REFEDIT",
+            descriptor: CommandDescriptor(
+                canonicalName: "REFEDIT",
+                category: .block,
+                description: "Edit a block or xref in place"),
+            factory: { RefeditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "REFCLOSE",
+            descriptor: CommandDescriptor(
+                canonicalName: "REFCLOSE",
+                category: .block,
+                description: "Save or discard in-place reference edits"),
+            factory: { RefcloseCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "NCOPY",
+            descriptor: CommandDescriptor(
+                canonicalName: "NCOPY",
+                category: .modify,
+                description: "Copy nested geometry out of blocks and xrefs"),
+            factory: { NCopyCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "CLIP",
@@ -580,6 +606,270 @@ struct AppCommandRegistration {
             aliases: ["DJO", "DIMJOG", "JOG"],
             factory: { DimJoggedCommand() }
         )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMSTYLE",
+            aliases: ["D", "DST"],
+            factory: { DimStyleCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMCONTINUE",
+            aliases: ["DCO"],
+            factory: { DimChainCommand(mode: .cont) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMBASELINE",
+            aliases: ["DBA"],
+            factory: { DimChainCommand(mode: .base) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIM",
+            aliases: [],
+            factory: { DimSmartCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "CENTERMARK",
+            aliases: ["CM"],
+            factory: { CenterMarkCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMCENTER",
+            aliases: ["DCE"],
+            factory: { CenterMarkCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "CENTERLINE",
+            aliases: ["CL"],
+            factory: { CenterLineCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMREASSOCIATE",
+            aliases: ["DRE"],
+            factory: { DimReassociateCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMDISASSOCIATE",
+            aliases: ["DDA"],
+            factory: { DimDisassociateCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMEDIT",
+            aliases: ["DED"],
+            factory: { DimEditCommand(mode: .dimedit) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMTEDIT",
+            aliases: [],
+            factory: { DimEditCommand(mode: .dimtedit) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMBREAK",
+            aliases: [],
+            factory: { DimBreakCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DIMSPACE",
+            aliases: [],
+            factory: { DimSpaceCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "FIND",
+            aliases: [],
+            factory: { FindCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "TEXTALIGN",
+            aliases: ["TA"],
+            factory: { TextAlignCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "TXT2MTXT",
+            aliases: [],
+            factory: { Txt2MtxtCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "FIELD",
+            aliases: [],
+            factory: { FieldCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "SELECTSIMILAR",
+            aliases: [],
+            factory: { SelectSimilarCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "QSELECT",
+            aliases: [],
+            factory: { SelectFilterCommand(mode: .qselect) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "FILTER",
+            aliases: ["FI"],
+            factory: { SelectFilterCommand(mode: .filter) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PURGE",
+            aliases: ["PU"],
+            factory: { PurgeCommand(mode: .confirm) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-PURGE",
+            aliases: [],
+            factory: { PurgeCommand(mode: .scripted) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "AUDIT",
+            aliases: [],
+            factory: { AuditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "RECOVER",
+            aliases: [],
+            factory: { RecoverCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ISOLATEOBJECTS",
+            aliases: [],
+            factory: { IsolateCommand(mode: .isolate) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "HIDEOBJECTS",
+            aliases: [],
+            factory: { IsolateCommand(mode: .hide) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "UNISOLATEOBJECTS",
+            aliases: [],
+            factory: { IsolateCommand(mode: .unisolate) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "GROUP",
+            aliases: ["G"],
+            factory: { GroupCommand(mode: .group) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "UNGROUP",
+            aliases: [],
+            factory: { GroupCommand(mode: .ungroup) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "OOPS",
+            aliases: [],
+            factory: { OopsCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "REVERSE",
+            aliases: [],
+            factory: { ReverseCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "RENAME",
+            aliases: [],
+            factory: { RenameCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "WBLOCK",
+            aliases: ["W"],
+            factory: { WblockCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-WBLOCK",
+            aliases: [],
+            factory: { WblockCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "BASE",
+            aliases: [],
+            factory: { BaseCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "XCLIP",
+            aliases: ["XC"],
+            factory: { ClipCommand(filter: .blocks) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "IMAGECLIP",
+            aliases: ["ICL"],
+            factory: { ClipCommand(filter: .images) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PDFCLIP",
+            aliases: [],
+            factory: { ClipCommand(filter: .pdfs) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "IMAGEADJUST",
+            aliases: ["IAD"],
+            factory: { ImageAdjustCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PDFADJUST",
+            aliases: [],
+            factory: { PdfAdjustCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ATTDEF",
+            aliases: ["ATT"],
+            factory: { AttdefCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ATTEDIT",
+            aliases: ["ATE"],
+            factory: { AtteditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ATTSYNC",
+            aliases: [],
+            factory: { AttsyncCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLINE",
+            aliases: ["ML"],
+            factory: { MlineCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MLSTYLE",
+            aliases: [],
+            factory: { MlstyleCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "ALIASEDIT",
+            aliases: [],
+            factory: { AliaseditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "GEOMCONSTRAINT",
+            aliases: ["GCON"],
+            factory: { GeomconstraintCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "DELCONSTRAINT",
+            aliases: [],
+            factory: { DelconstraintCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "CONSTRAINTBAR",
+            aliases: ["CBAR"],
+            factory: { ConstraintbarCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "AUTOCONSTRAIN",
+            aliases: [],
+            factory: { AutoconstrainCommand() }
+        )
+        // User PGP aliases load last so they win over built-ins.
+        let pgp = PGPAliasLoader.loadIfPresent(
+            into: engine.commandProcessor)
+        if pgp.loaded > 0 || !pgp.warnings.isEmpty {
+            print("[CAD] PGP aliases: \(pgp.loaded) loaded" +
+                (pgp.warnings.isEmpty ? "" :
+                    "; warnings: " + pgp.warnings.joined(separator: "; ")))
+        }
+        // PICKSTYLE group selection: one member in, whole selectable
+        // group in. Resolves the active document per call (tabs switch).
+        engine.cadSelection.groupExpansionProvider = { [weak engine] handle in
+            guard let document = engine?.document else { return [handle] }
+            return document.selectionExpansion(for: handle)
+        }
 
         // ODA FileConverter installation (for DWG support).
         engine.commandProcessor.registerFeatureCommand(

@@ -104,6 +104,8 @@ public class DXFWriter {
     private var entityHandleByObject: [ObjectIdentifier: String] = [:]
     private var mleaderStyleDictionaryHandle: String = ""
     private var mleaderStyleHandleByName: [String: String] = [:]
+    private var mlineStyleHandleByName: [String: String] = [:]
+    private var mlineStyleEntryByName: [String: DXFMlineStyleEntry] = [:]
     private var activeViewportHandleByBlockName: [String: String] = [:]
     private var outputLayouts: [DXFLayoutDefinition] = []
 
@@ -204,6 +206,8 @@ public class DXFWriter {
         entityHandleByObject.removeAll(keepingCapacity: true)
         mleaderStyleDictionaryHandle = ""
         mleaderStyleHandleByName.removeAll(keepingCapacity: true)
+        mlineStyleHandleByName.removeAll(keepingCapacity: true)
+        mlineStyleEntryByName.removeAll(keepingCapacity: true)
         activeViewportHandleByBlockName.removeAll(keepingCapacity: true)
         outputLayouts = resolvedLayouts()
         prepareObjectHandles()
@@ -518,6 +522,34 @@ public class DXFWriter {
             }) {
                 mleaderStyleHandleByName[normalizedName(name)] = preservedOrAllocatedHandle(
                     styleEntries[normalizedName(name)])
+            }
+        }
+
+        // MLINESTYLE objects for styles referenced by MLINE entities.
+        // Fresh handles always win over preserved records (an edited
+        // style must persist, not silently revert); same-named preserved
+        // records are suppressed at OBJECTS emission.
+        let allMlineEntities = entities.compactMap { $0 as? DXFMlineEntity }
+            + blocks.flatMap { $0.entities.compactMap { $0 as? DXFMlineEntity } }
+        for ml in allMlineEntities {
+            let name = ml.styleName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedName = name.isEmpty ? "Standard" : name
+            let key = normalizedName(resolvedName)
+            if mlineStyleHandleByName[key] == nil {
+                mlineStyleHandleByName[key] = allocHandle()
+            }
+            if mlineStyleEntryByName[key] == nil {
+                if let entry = ml.resolvedStyle {
+                    mlineStyleEntryByName[key] = entry
+                } else {
+                    var fallback = DXFMlineStyleEntry()
+                    fallback.name = resolvedName
+                    fallback.elements = [
+                        DXFMlineStyleElement(offset: 0.5),
+                        DXFMlineStyleElement(offset: -0.5),
+                    ]
+                    mlineStyleEntryByName[key] = fallback
+                }
             }
         }
 
@@ -1768,6 +1800,11 @@ public class DXFWriter {
             out += "100\r\nAcDbSymbolTableRecord\r\n"
             out += "100\r\nAcDbDimStyleTableRecord\r\n"
             writeStr(2, ds.name, &out)
+            writeStr(3, ds.dimpost, &out)
+            writeStr(4, ds.dimapost, &out)
+            writeStr(5, ds.dimblk, &out)
+            writeStr(6, ds.dimblk1, &out)
+            writeStr(7, ds.dimblk2, &out)
             writeInt(70, ds.flags, &out)
             writeDbl(40, ds.dimscale, &out)
             writeDbl(41, ds.dimasz, &out)
@@ -2162,6 +2199,64 @@ public class DXFWriter {
             writeInt(71, ins.rowCount, &out)
             writeDbl(44, ins.colSpace, &out)
             writeDbl(45, ins.rowSpace, &out)
+            if ins.attributesFollow || !ins.attributes.isEmpty {
+                writeInt(66, 1, &out)
+                for text in ins.attributes {
+                    writeAttributeText(
+                        text, isDefinition: false,
+                        handle: allocHandle(), ownerHandle: h, &out)
+                }
+                let seqendHandle = allocHandle()
+                out += "  0\r\nSEQEND\r\n  5\r\n\(seqendHandle)\r\n"
+                if isModern { out += "330\r\n\(h)\r\n100\r\nAcDbEntity\r\n" }
+                writeStr(8, esc(layer: ins.layer), &out)
+            }
+
+        case .aTTDEF:
+            guard let attdef = e as? DXFTextEntity else { return }
+            writeAttributeText(
+                attdef, isDefinition: true,
+                handle: h, ownerHandle: ownerHandle, &out)
+
+        case .aTTRIB:
+            guard let attrib = e as? DXFTextEntity else { return }
+            writeAttributeText(
+                attrib, isDefinition: false,
+                handle: h, ownerHandle: ownerHandle, &out)
+
+        case .mLINE:
+            guard let ml = e as? DXFMlineEntity else { return }
+            writeEntityHeader("MLINE", entity: ml, handle: h, ownerHandle: ownerHandle, &out)
+            out += "100\r\nAcDbMline\r\n"
+            writeStr(2, ml.styleName, &out)
+            writeStr(340, mlineStyleHandleByName[normalizedName(ml.styleName)] ?? "0", &out)
+            writeDbl(40, ml.scale, &out)
+            writeInt(70, ml.justification, &out)
+            writeInt(71, ml.flags, &out)
+            writeInt(72, ml.vertices.count, &out)
+            writeInt(73, ml.elementCount, &out)
+            for vertex in ml.vertices {
+                writePoint3(11, vertex.position, &out)
+                writePoint3(12, vertex.direction, &out)
+                writePoint3(13, vertex.miter, &out)
+                let elementCount = max(ml.elementCount, vertex.elements.count)
+                for index in 0..<elementCount {
+                    let segment = index < vertex.elements.count
+                        ? vertex.elements[index] : nil
+                    let params = segment?.params ?? []
+                    writeInt(74, params.isEmpty ? 2 : params.count, &out)
+                    if params.isEmpty {
+                        writeDbl(41, 0.0, &out)
+                        writeDbl(41, 0.0, &out)
+                    } else {
+                        for param in params { writeDbl(41, param, &out) }
+                    }
+                    writeInt(75, segment?.areaFillParams.count ?? 0, &out)
+                    for fill in segment?.areaFillParams ?? [] {
+                        writeDbl(42, fill, &out)
+                    }
+                }
+            }
 
         case .sOLID:
             guard let sd = e as? DXFSolidEntity else { return }
@@ -2753,6 +2848,36 @@ public class DXFWriter {
         writeCommonEntityData(entity, &out)
     }
 
+    /// Shared ATTDEF/ATTRIB emitter. Coordinates arrive in file space
+    /// (Y-flipped); `angle_p` is file degrees.
+    private func writeAttributeText(
+        _ tx: DXFTextEntity,
+        isDefinition: Bool,
+        handle: String,
+        ownerHandle: String?,
+        _ out: inout String
+    ) {
+        writeEntityHeader(
+            isDefinition ? "ATTDEF" : "ATTRIB",
+            entity: tx, handle: handle, ownerHandle: ownerHandle, &out)
+        out += isDefinition ? "100\r\nAcDbAttributeDefinition\r\n" : "100\r\nAcDbAttribute\r\n"
+        writePoint3(10, tx.basePoint, &out)
+        writeDbl(40, tx.height, &out)
+        writeStr(1, tx.text, &out)
+        writeDbl(50, tx.angle_p, &out)
+        if !tx.style.isEmpty { writeStr(7, tx.style, &out) }
+        writeInt(72, tx.alignH, &out)
+        writeInt(74, tx.alignV, &out)
+        if tx.alignH != 0 || tx.alignV != 0 {
+            writePoint3(11, tx.secPoint, &out)
+        }
+        writeStr(2, tx.attributeTag, &out)
+        if isDefinition, !tx.attributePrompt.isEmpty {
+            writeStr(3, tx.attributePrompt, &out)
+        }
+        writeInt(70, tx.attributeFlags, &out)
+    }
+
     private func writeVertex(
         _ v: DXFVertexEntity,
         ownerHandle: String,
@@ -2987,6 +3112,7 @@ public class DXFWriter {
             generatedHandles.insert(normalizedHandle(mleaderStyleDictionaryHandle))
             generatedHandles.formUnion(mleaderStyleHandleByName.values.map { normalizedHandle($0) })
         }
+        generatedHandles.formUnion(mlineStyleHandleByName.values.map { normalizedHandle($0) })
         for handles in spatialFilterHandlesByObject.values {
             generatedHandles.insert(normalizedHandle(handles.extDict))
             generatedHandles.insert(normalizedHandle(handles.filterDict))
@@ -3001,9 +3127,17 @@ public class DXFWriter {
             generatedHandles.formUnion(pdfDefinitionHandleByKey.values.map { normalizedHandle($0) })
         }
 
+        let emittedMlineStyleNames = Set(mlineStyleHandleByName.keys)
         let preservedCandidates = preservedObjects.filter { record in
             let handle = recordHandle(record) ?? ""
             let owner = normalizedHandle(record.groups.first(where: { $0.code == 330 })?.value ?? "")
+            // Freshly emitted MLINESTYLE objects supersede preserved ones.
+            if !emittedMlineStyleNames.isEmpty,
+               normalizedName(record.type) == "MLINESTYLE" {
+                let recordName = record.groups.first(where: { $0.code == 2 })
+                    .map { normalizedName($0.value) } ?? ""
+                if emittedMlineStyleNames.contains(recordName) { return false }
+            }
             if !pdfUnderlays.isEmpty, normalizedName(record.type) == "PDFDEFINITION" {
                 return false
             }
@@ -3128,6 +3262,13 @@ public class DXFWriter {
                     name: name.isEmpty ? "Standard" : name,
                     handle: handle,
                     &out)
+            }
+        }
+
+        if !mlineStyleHandleByName.isEmpty {
+            for (key, handle) in mlineStyleHandleByName.sorted(by: { $0.key < $1.key }) {
+                guard let entry = mlineStyleEntryByName[key] else { continue }
+                writeMlineStyleObject(entry, handle: handle, &out)
             }
         }
 
@@ -3311,6 +3452,27 @@ public class DXFWriter {
         writeInt(271, leader.attachmentDirection, &out)
         writeInt(272, leader.bottomAttachment, &out)
         writeInt(273, leader.topAttachment, &out)
+    }
+
+    private func writeMlineStyleObject(
+        _ entry: DXFMlineStyleEntry,
+        handle: String,
+        _ out: inout String
+    ) {
+        out += "  0\r\nMLINESTYLE\r\n  5\r\n\(handle)\r\n"
+        out += "100\r\nAcDbMlineStyle\r\n"
+        writeStr(2, entry.name, &out)
+        writeInt(70, entry.flags, &out)
+        writeStr(3, entry.desc, &out)
+        writeInt(62, Int(entry.fillColor), &out)
+        writeDbl(51, entry.startAngle, &out)
+        writeDbl(52, entry.endAngle, &out)
+        writeInt(71, entry.elements.count, &out)
+        for element in entry.elements {
+            writeDbl(49, element.offset, &out)
+            writeInt(62, Int(element.color), &out)
+            writeStr(6, element.lineType.isEmpty ? "BYLAYER" : element.lineType, &out)
+        }
     }
 
     private func writePlotStyleObjects(_ out: inout String) {

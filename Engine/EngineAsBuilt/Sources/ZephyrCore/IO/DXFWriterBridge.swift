@@ -117,13 +117,17 @@ public enum DXFWriterBridge {
         var blocks: [CADBlock]
         var entities: [CADEntity]
         var textStyles: [String: CADTextStyle]
+        var dimensionStyles: [String: CADDimensionStyle]
         var leaderStyles: [String: CADLeaderStyle]
+        var mlineStyles: [String: CADMlineStyle]
         var linetypePatterns: [String: [Double]]
         var unit: CADUnit
         var roundTripPayload: DXFRoundTripPayload?
         var imageDefinitions: [String: CADImageDefinition] = [:]
         var pdfDefinitions: [String: CADPdfDefinition] = [:]
         var imageAssets: [String: CADImageAsset] = [:]
+        var groups: [String: CADGroup] = [:]
+        var insertionBase: Vector3 = .zero
     }
 
 
@@ -160,13 +164,17 @@ public enum DXFWriterBridge {
             blocks: document.allBlocks,
             entities: document.allEntities,
             textStyles: document.textStyles,
+            dimensionStyles: document.dimensionStyles,
             leaderStyles: document.leaderStyles,
+            mlineStyles: document.mlineStyles,
             linetypePatterns: document.linetypePatterns,
             unit: document.unit,
             roundTripPayload: document.dxfRoundTripPayload,
             imageDefinitions: document.imageDefinitions,
             pdfDefinitions: document.pdfDefinitions,
-            imageAssets: document.imageStore)
+            imageAssets: document.imageStore,
+            groups: document.groups,
+            insertionBase: document.insertionBase)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion)
     }
 
@@ -183,13 +191,17 @@ public enum DXFWriterBridge {
                 blocks: $0.document.allBlocks,
                 entities: $0.document.allEntities,
                 textStyles: $0.document.textStyles,
+                dimensionStyles: $0.document.dimensionStyles,
                 leaderStyles: $0.document.leaderStyles,
+                mlineStyles: $0.document.mlineStyles,
                 linetypePatterns: $0.document.linetypePatterns,
                 unit: $0.document.unit,
                 roundTripPayload: $0.document.dxfRoundTripPayload,
                 imageDefinitions: $0.document.imageDefinitions,
                 pdfDefinitions: $0.document.pdfDefinitions,
-                imageAssets: $0.document.imageStore)
+                imageAssets: $0.document.imageStore,
+                groups: $0.document.groups,
+                insertionBase: $0.document.insertionBase)
         }
         try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion)
     }
@@ -212,7 +224,9 @@ public enum DXFWriterBridge {
             textStyles: Dictionary(uniqueKeysWithValues: textStyleFonts.map { name, font in
                 (name, CADTextStyle(name: name, fontFile: font))
             }),
+            dimensionStyles: [:],
             leaderStyles: ["Standard": .standard],
+            mlineStyles: ["Standard": .standard],
             linetypePatterns: linetypePatterns,
             unit: .millimeter,
             roundTripPayload: nil)
@@ -360,12 +374,25 @@ public enum DXFWriterBridge {
         }
         writer.codePage = "ANSI_1252"
         writer.headerVars["$INSUNITS"] = modelView.unit.dxfINSUNITS
+        // $INSBASE in DXF file coordinates (Y negated, like $EXTMIN below).
+        let base = modelView.insertionBase
+        writer.headerVars["$INSBASE"] = Vector3(x: base.x, y: -base.y, z: base.z)
         let arrayAppID = DXFAppIdEntry()
         arrayAppID.name = CADArrayDXFCodec.appID
         writer.addAppId(arrayAppID)
         let revisionCloudAppID = DXFAppIdEntry()
         revisionCloudAppID.name = RevCloudDXFCodec.appID
         writer.addAppId(revisionCloudAppID)
+        let fieldAppID = DXFAppIdEntry()
+        fieldAppID.name = FieldEval.dxfAppID
+        writer.addAppId(fieldAppID)
+        // Registered only when the drawing actually has groups, so
+        // group-free files stay byte-identical to before.
+        if orderedViews.contains(where: { !$0.groups.isEmpty }) {
+            let groupAppID = DXFAppIdEntry()
+            groupAppID.name = CADGroup.dxfAppID
+            writer.addAppId(groupAppID)
+        }
 
         revisionCloudArcLength: for view in orderedViews {
             for entity in view.entities {
@@ -386,6 +413,8 @@ public enum DXFWriterBridge {
         var linetypeNames = Set<String>()
         var textStyles: [String: CADTextStyle] = [:]
         var textStyleNames = Set<String>()
+        var dimstyles: [String: CADDimensionStyle] = [:]
+        var dimstyleNames = Set<String>()
         for view in orderedViews {
             for (name, pattern) in view.linetypePatterns {
                 let key = name.uppercased()
@@ -394,6 +423,10 @@ public enum DXFWriterBridge {
             for style in view.textStyles.values {
                 let key = style.name.uppercased()
                 if textStyleNames.insert(key).inserted { textStyles[style.name] = style }
+            }
+            for (name, style) in view.dimensionStyles where !name.isEmpty {
+                let key = name.uppercased()
+                if dimstyleNames.insert(key).inserted { dimstyles[name] = style }
             }
         }
         if textStyleNames.contains("STANDARD") == false {
@@ -408,6 +441,7 @@ public enum DXFWriterBridge {
         })
         addLinetypes(linetypes, to: writer, xrefBlockNames: xrefBlockNames)
         addTextStyles(textStyles, to: writer, xrefBlockNames: xrefBlockNames)
+        addDimstyles(dimstyles, to: writer, xrefBlockNames: xrefBlockNames)
 
         var layerNames = Set<String>()
         for view in orderedViews {
@@ -431,10 +465,12 @@ public enum DXFWriterBridge {
         }
 
         var blockNameByID: [UUID: String] = [:]
+        var blockByID: [UUID: CADBlock] = [:]
         var exportedBlockNames = Set<String>()
         for view in orderedViews {
             for block in view.blocks where !block.name.isEmpty && !isSpaceBlockName(block.name) {
                 blockNameByID[block.handle] = block.name
+                blockByID[block.handle] = block
                 let key = block.name.uppercased()
                 guard exportedBlockNames.insert(key).inserted else { continue }
 
@@ -526,6 +562,11 @@ public enum DXFWriterBridge {
                     if entity.layer.isEmpty { entity.layer = "0" }
                     exported.entities.append(entity)
                 }
+                // Block attribute definitions travel as ATTDEF members so a
+                // save/reopen round-trip preserves tags, prompts, and defaults.
+                for def in block.attributeDefinitions {
+                    exported.entities.append(attributeDefinitionEntity(def))
+                }
                 writer.addBlock(exported)
             }
         }
@@ -571,6 +612,9 @@ public enum DXFWriterBridge {
 
             for entity in exportEntities {
                 let layerName = layerNameByID[entity.layerID] ?? "0"
+                let groupNames = view.groups.values
+                    .filter { $0.members.contains(entity.handle) }
+                    .map(\.name)
 
                 if let box = entity.leaderData, dxfVersion.rawValue >= "AC1021" {
                     let data = box.value
@@ -635,8 +679,10 @@ public enum DXFWriterBridge {
                             }
                         }
                         leader.annotation = annotation
+                        appendGroupXData(groupNames, to: leader)
                         writer.addEntity(leader, ownerBlockName: ownerBlockName)
                         if let annotation {
+                            appendGroupXData(groupNames, to: annotation)
                             writer.addEntity(annotation, ownerBlockName: ownerBlockName)
                         }
                         continue
@@ -741,7 +787,19 @@ public enum DXFWriterBridge {
                             arrowheadName: branchArrowName)
                     }
                     applyEntityStyle(entity.xdata, to: ml)
+                    appendGroupXData(groupNames, to: ml)
                     writer.addEntity(ml, ownerBlockName: ownerBlockName)
+                    continue
+                }
+
+                // Multilines rebuild from centerline xdata; the baked
+                // lines stay out of the file.
+                if let mline = Self.mlineEntity(
+                    entity: entity, layerName: layerName,
+                    isPaperSpace: isPaperSpace, styles: view.mlineStyles) {
+                    applyEntityStyle(entity.xdata, to: mline)
+                    appendGroupXData(groupNames, to: mline)
+                    writer.addEntity(mline, ownerBlockName: ownerBlockName)
                     continue
                 }
 
@@ -772,6 +830,12 @@ public enum DXFWriterBridge {
                                 groupID: groupID,
                                 role: "M",
                                 payloadChunks: payloadChunks)
+                            appendGroupXData(groupNames, to: insert)
+                            Self.attachAttributes(
+                                to: insert, entity: entity,
+                                block: blockByID[blockID],
+                                transform: entity.transform,
+                                layerName: layerName)
                             writer.addEntity(insert, ownerBlockName: ownerBlockName)
                         } else {
                             let instances = array.evaluatedInstances(pathPoints: array.cachedPath)
@@ -788,6 +852,12 @@ public enum DXFWriterBridge {
                                     groupID: groupID,
                                     role: "M",
                                     payloadChunks: payloadChunks)
+                                appendGroupXData(groupNames, to: insert)
+                                Self.attachAttributes(
+                                    to: insert, entity: entity,
+                                    block: blockByID[blockID],
+                                    transform: entity.transform,
+                                    layerName: layerName)
                                 writer.addEntity(insert, ownerBlockName: ownerBlockName)
                             } else {
                                 for (instanceIndex, instance) in instances.enumerated() {
@@ -804,6 +874,12 @@ public enum DXFWriterBridge {
                                         groupID: groupID,
                                         role: instanceIndex == 0 ? "M" : "I",
                                         payloadChunks: instanceIndex == 0 ? payloadChunks : [])
+                                    appendGroupXData(groupNames, to: insert)
+                                    Self.attachAttributes(
+                                        to: insert, entity: entity,
+                                        block: blockByID[blockID],
+                                        transform: transform,
+                                        layerName: layerName)
                                     writer.addEntity(insert, ownerBlockName: ownerBlockName)
                                 }
                             }
@@ -816,6 +892,12 @@ public enum DXFWriterBridge {
                             transform: entity.transform)
                         insert.spatialFilter = spatialFilterData(from: entity, transform: entity.transform)
                         applyEntityStyle(entity.xdata, to: insert)
+                        appendGroupXData(groupNames, to: insert)
+                        Self.attachAttributes(
+                            to: insert, entity: entity,
+                            block: blockByID[blockID],
+                            transform: entity.transform,
+                            layerName: layerName)
                         writer.addEntity(insert, ownerBlockName: ownerBlockName)
                     }
                     continue
@@ -836,6 +918,7 @@ public enum DXFWriterBridge {
                     hatch.layer = layerName
                     hatch.space = isPaperSpace ? 1 : 0
                     applyEntityStyle(entity.xdata, to: hatch)
+                    appendGroupXData(groupNames, to: hatch)
                     writer.addEntity(hatch, ownerBlockName: ownerBlockName)
                     consumedHatchIndices.formUnion(hatchExport.primitiveIndices)
                 }
@@ -850,6 +933,7 @@ public enum DXFWriterBridge {
                             table.layer = layerName
                             table.space = isPaperSpace ? 1 : 0
                             applyEntityStyle(entity.xdata, to: table)
+                            appendGroupXData(groupNames, to: table)
                             writer.addEntity(table, ownerBlockName: ownerBlockName)
                         } else {
                             for visual in DataTableTessellator.explodeForDXF(
@@ -863,6 +947,7 @@ public enum DXFWriterBridge {
                                 exported.layer = layerName
                                 exported.space = isPaperSpace ? 1 : 0
                                 applyEntityStyle(entity.xdata, to: exported)
+                                appendGroupXData(groupNames, to: exported)
                                 writer.addEntity(exported, ownerBlockName: ownerBlockName)
                             }
                         }
@@ -875,6 +960,7 @@ public enum DXFWriterBridge {
                     exported.layer = layerName
                     exported.space = isPaperSpace ? 1 : 0
                     applyEntityStyle(entity.xdata, to: exported)
+                    appendGroupXData(groupNames, to: exported)
                     writer.addEntity(exported, ownerBlockName: ownerBlockName)
                 }
             }
@@ -1441,6 +1527,55 @@ public enum DXFWriterBridge {
             entry.lastHeight = normalized.fixedHeight > 0 ? normalized.fixedHeight : 2.5
             entry.flags |= dependentSymbolFlags(forName: normalized.name, xrefBlockNames: xrefBlockNames)
             writer.addTextStyle(entry)
+        }
+    }
+
+    /// Document dimension styles become generated DIMSTYLE records with
+    /// their RAW values plus DIMSCALE (Phase 2.1), mirroring addTextStyles.
+    /// Keys are canonical: the entry name always writes the table key.
+    private static func addDimstyles(
+        _ styles: [String: CADDimensionStyle], to writer: DXFWriter,
+        xrefBlockNames: Set<String> = []
+    ) {
+        for (key, style) in styles.sorted(by: { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }) where !key.isEmpty {
+            let entry = DXFDimstyleEntry()
+            entry.name = key
+            entry.dimscale = style.overallScale
+            entry.dimasz = style.arrowSize
+            entry.dimexo = style.extensionLineOffset
+            entry.dimdli = style.dimLineOffset
+            entry.dimexe = style.extensionLineExtend
+            entry.dimtxt = style.textHeight
+            entry.dimgap = style.textOffset
+            entry.dimtsz = style.tickSize
+            entry.dimdec = style.unitsPrecision
+            entry.dimtdec = style.unitsPrecision
+            entry.dimlunit = style.unitsFormat.rawValue
+            entry.dimaunit = style.angleFormat.rawValue
+            entry.dimzin = style.zeroSuppression ?? 0
+            if let linearScaleFactor = style.linearScaleFactor {
+                entry.dimlfac = linearScaleFactor
+            }
+            if style.dimensionPrefix != nil || style.dimensionSuffix != nil {
+                entry.dimpost = "\(style.dimensionPrefix ?? "")<>\(style.dimensionSuffix ?? "")"
+            }
+            entry.dimse1 = style.suppressFirstExtension ? 1 : 0
+            entry.dimse2 = style.suppressSecondExtension ? 1 : 0
+            entry.dimsd1 = style.suppressFirstDimLine ? 1 : 0
+            entry.dimsd2 = style.suppressSecondDimLine ? 1 : 0
+            entry.dimtxsty = style.textStyle ?? ""
+            if let first = style.firstArrowBlockName, !first.isEmpty {
+                entry.dimblk1 = first
+            }
+            if let second = style.secondArrowBlockName, !second.isEmpty {
+                entry.dimblk2 = second
+            }
+            if !entry.dimblk1.isEmpty || !entry.dimblk2.isEmpty,
+               entry.dimblk1 != entry.dimblk2 {
+                entry.dimsah = 1
+            }
+            entry.flags |= dependentSymbolFlags(forName: key, xrefBlockNames: xrefBlockNames)
+            writer.addDimstyle(entry)
         }
     }
 
@@ -2165,6 +2300,32 @@ public enum DXFWriterBridge {
         entity.color24 = DXFColorTable.rgbaToTrueColor(color) ?? -1
     }
 
+    /// FIELD expression records: the evaluated text already travels in the
+    /// TEXT/MTEXT value; the expression rides XDATA under our APPID so a
+    /// reimported field keeps refreshing instead of going static.
+    private static func appendFieldXData(
+        _ xdata: [String: XDataValue], to entity: DXFEntity
+    ) {
+        guard case .string(let expr) = xdata[FieldEval.exprKey],
+              !expr.isEmpty else {
+            return
+        }
+        entity.extendedData.append((1001, FieldEval.dxfAppID))
+        entity.extendedData.append((1000, expr))
+    }
+
+    /// Group membership records: one APPID block per group so a reimported
+    /// entity rejoins its groups (rebuilt in `DXFImporter`). Sorted for
+    /// stable output.
+    private static func appendGroupXData(
+        _ groupNames: [String], to entity: DXFEntity
+    ) {
+        for name in groupNames.sorted() {
+            entity.extendedData.append((1001, CADGroup.dxfAppID))
+            entity.extendedData.append((1000, name))
+        }
+    }
+
     private static func xdataString(_ xdata: [String: XDataValue], _ key: String) -> String? {
         guard case .string(let value)? = xdata[key] else { return nil }
         return value
@@ -2535,6 +2696,7 @@ public enum DXFWriterBridge {
                     xdata, "dxf.mtextLineSpacingStyle") == 2 ? 2 : 1
                 applyMTextBackground(xdata, to: entity)
                 applyColor(color, to: entity)
+                appendFieldXData(xdata, to: entity)
                 return entity
             }
 
@@ -2551,6 +2713,7 @@ public enum DXFWriterBridge {
             entity.oblique = xdataDouble(xdata, "dxf.textOblique") ?? 0.0
             entity.textGen = xdataInt(xdata, "dxf.textGenerationFlags") ?? 0
             applyColor(color, to: entity)
+            appendFieldXData(xdata, to: entity)
             return entity
 
         case .ellipse(let center, let majorAxis, let minorRatio, let color):
@@ -2942,6 +3105,154 @@ public enum DXFWriterBridge {
         for chunk in payloadChunks { entity.extendedData.append((1000, chunk)) }
     }
 
+    /// Builds an ATTDEF file entity from a block-space definition.
+    private static func attributeDefinitionEntity(
+        _ def: CADAttributeDefinition
+    ) -> DXFTextEntity {
+        let entity = DXFTextEntity(eType: .aTTDEF)
+        entity.isAttributeDefinition = true
+        entity.layer = def.layerName ?? "0"
+        entity.basePoint = toDXF(def.position)
+        entity.secPoint = toDXF(def.position)
+        entity.height = def.height
+        entity.hasExplicitHeight = true
+        entity.text = def.defaultValue
+        entity.angle_p = -def.rotation * 180.0 / .pi
+        entity.style = def.style ?? ""
+        entity.alignH = def.alignH
+        entity.alignV = def.alignV
+        entity.attributeTag = def.tag
+        entity.attributePrompt = def.prompt
+        entity.attributeFlags = def.flags
+        return entity
+    }
+
+    /// Attaches per-insert ATTRIB file entities (definition order, then
+    /// orphaned tags) so values survive a save/reopen round-trip.
+    /// Placement mirrors the exporter's world-space computation.
+    private static func attachAttributes(
+        to insert: DXFInsertEntity,
+        entity: CADEntity,
+        block: CADBlock?,
+        transform: Transform3D,
+        layerName: String
+    ) {
+        guard let block,
+              !block.attributeDefinitions.isEmpty,
+              !entity.attributeValues.isEmpty else { return }
+        let xAxis = transformedVector(Vector3(x: 1, y: 0, z: 0), by: transform)
+        let yAxis = transformedVector(Vector3(x: 0, y: 1, z: 0), by: transform)
+        let heightScale = max(xAxis.magnitude, yAxis.magnitude, 1e-12)
+        let entityRotation = atan2(xAxis.y, xAxis.x)
+        func makeAttribute(
+            tag: String, stored: CADAttributeValue,
+            def: CADAttributeDefinition?
+        ) -> DXFTextEntity {
+            let blockPos = stored.position ?? def?.position ?? .zero
+            let blockHeight = stored.height ?? def?.height ?? 2.5
+            let blockRotation = stored.rotation ?? def?.rotation ?? 0
+            let text = DXFTextEntity(eType: .aTTRIB)
+            text.isAttribute = true
+            if let defLayer = def?.layerName,
+               !defLayer.isEmpty, defLayer != "0" {
+                text.layer = defLayer
+            } else {
+                text.layer = layerName
+            }
+            let world = transform.transformPoint(blockPos)
+            text.basePoint = toDXF(world)
+            text.secPoint = toDXF(world)
+            text.height = blockHeight * heightScale
+            text.hasExplicitHeight = true
+            text.text = stored.value
+            text.angle_p = -(entityRotation + blockRotation) * 180.0 / .pi
+            text.style = def?.style ?? ""
+            text.alignH = def?.alignH ?? 0
+            text.alignV = def?.alignV ?? 0
+            text.attributeTag = tag
+            text.attributeFlags = def?.flags ?? 0
+            return text
+        }
+        let definedKeys = Set(block.attributeDefinitions.map(\.key))
+        var ordered: [DXFTextEntity] = []
+        for def in block.attributeDefinitions {
+            guard let stored = entity.attributeValues[def.key] else { continue }
+            ordered.append(makeAttribute(tag: def.tag, stored: stored, def: def))
+        }
+        for key in entity.attributeValues.keys.sorted()
+            where !definedKeys.contains(key) {
+            guard let stored = entity.attributeValues[key] else { continue }
+            ordered.append(makeAttribute(tag: key, stored: stored, def: nil))
+        }
+        guard !ordered.isEmpty else { return }
+        insert.attributes = ordered
+        insert.attributesFollow = true
+    }
+
+    /// Rebuilds an MLINE file entity from centerline xdata. Returns nil
+    /// when the entity is not a multiline (no stored centerline), in which
+    /// case the baked lines export as plain geometry.
+    private static func mlineEntity(
+        entity: CADEntity,
+        layerName: String,
+        isPaperSpace: Bool,
+        styles: [String: CADMlineStyle]
+    ) -> DXFMlineEntity? {
+        func string(_ key: String) -> String? {
+            if case .string(let s) = entity.xdata[key] { return s }
+            return nil
+        }
+        func double(_ key: String) -> Double? {
+            if case .double(let d) = entity.xdata[key] { return d }
+            return nil
+        }
+        func int(_ key: String) -> Int? {
+            if case .int(let i) = entity.xdata[key] { return i }
+            return nil
+        }
+        guard string("dxf.mlineStyle") != nil,
+              let centerRaw = string("dxf.mlineCenterline"),
+              let model = MlineMath.decodeCenterline(centerRaw),
+              model.count >= 2 else {
+            return nil
+        }
+        let styleName = string("dxf.mlineStyle") ?? "Standard"
+        let style = styles.first(where: {
+            $0.key.caseInsensitiveCompare(styleName) == .orderedSame
+        })?.value ?? .standard
+        let closed = (int("dxf.mlineClosed") ?? 0) != 0
+        let world = model.map { entity.transform.transformPoint($0) }
+        let ml = DXFMlineEntity()
+        ml.layer = layerName
+        ml.space = isPaperSpace ? 1 : 0
+        ml.styleName = style.name
+        ml.scale = double("dxf.mlineScale") ?? 1.0
+        ml.justification = int("dxf.mlineJustification") ?? 0
+        ml.flags = closed ? 3 : 1
+        ml.vertexCount = world.count
+        ml.elementCount = style.elements.count
+        ml.vertices = MlineMath.exportFrames(centerline: world, closed: closed).map { frame in
+            DXFMlineVertex(
+                position: toDXF(frame.position),
+                direction: toDXFVector(frame.direction),
+                miter: toDXFVector(frame.miter))
+        }
+        var entry = DXFMlineStyleEntry()
+        entry.name = style.name
+        entry.flags = style.fillEnabled ? 1 : 0
+        entry.desc = style.description
+        entry.fillColor = style.fillColorACI
+        entry.startAngle = style.startAngle
+        entry.endAngle = style.endAngle
+        entry.elements = style.elements.map {
+            DXFMlineStyleElement(
+                offset: $0.offset, color: $0.colorACI,
+                lineType: $0.linetype.isEmpty ? "BYLAYER" : $0.linetype)
+        }
+        ml.resolvedStyle = entry
+        return ml
+    }
+
     private static func makeInsert(
         blockName: String,
         layerName: String,
@@ -3048,6 +3359,15 @@ public enum DXFWriterBridge {
                     .map { Vector3(x: $0.a * Double(pixelW), y: $0.b * Double(pixelH), z: 0) }
             }
         }
+        var adjust = CADImageAdjust()
+        if case .string(let json) = xdata[CADImageAdjustMetadata.key],
+           let decoded = try? JSONDecoder().decode(
+               CADImageAdjust.self, from: Data(json.utf8)) {
+            adjust = decoded
+        }
+        entity.brightness = adjust.brightness
+        entity.contrast = adjust.contrast
+        entity.fade = adjust.fade
         return entity
     }
 

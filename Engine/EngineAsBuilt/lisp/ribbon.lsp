@@ -93,7 +93,8 @@
               (zr-item "PASTECLIP" "Paste" nil)
               (zr-item "PASTEORIG" "Paste to Original Coordinates" nil)))
           (zr-sep)
-          (zr-item "MATCHPROP" "Match Properties" (list (zr-enable (zr-sel 1))))))
+          (zr-item "MATCHPROP" "Match Properties" (list (zr-enable (zr-sel 1))))
+          (zr-item "SELECTSIMILAR" "Select Similar" (list (zr-enable (zr-sel 1))))))
 
       (zr-menu "View"
         (list
@@ -351,12 +352,18 @@
               (zr-small "DIMALIGNED" "Aligned" "dim" nil)
               (zr-small "DIMANGULAR" "Angular" "dim" nil)
               (zr-small "DIMRADIUS"  "Radius"  "dim" nil)
+              (zr-small "DIMSTYLE"   "Style"   "dim" nil)
               (zr-drop  "More"
                 (list
                   (zr-small "DIMDIAMETER" "Diameter"   "dim"   nil)
                   (zr-item "DIMARC"      "Arc Length" nil)
                   (zr-item "DIMORDINATE" "Ordinate"   nil)
-                  (zr-item "DIMJOGGED"   "Jogged"     nil)))))
+                  (zr-item "DIMJOGGED"   "Jogged"     nil)
+                  (zr-item "DIMCONTINUE" "Continue"   nil)
+                  (zr-item "DIMBASELINE" "Baseline"   nil)
+                  (zr-item "DIM"         "Smart"      nil)
+                  (zr-item "CENTERMARK"  "Cen Mark"   nil)
+                  (zr-item "CENTERLINE"  "Cen Line"   nil)))))
 
           (zr-panel "Leaders"
             (list
@@ -374,6 +381,16 @@
               (zr-small "AREA"        "Area"     "measure" nil)
               (zr-small "LIST"        "List"     "measure" nil)
               (zr-small "ID"          "Locate Pt" "measure" nil)))))
+
+      ;; =================================================================
+      (zr-tab "Parametric"
+        (list
+          (zr-panel "Geometric"
+            (list
+              (zr-big   "GEOMCONSTRAINT" "Constrain" "align" nil)
+              (zr-small "AUTOCONSTRAIN"  "Auto"      "align" nil)
+              (zr-small "DELCONSTRAINT"  "Delete"    "align" nil)
+              (zr-small "CONSTRAINTBAR"  "Show Bar"  "align" nil)))))
 
       ;; =================================================================
       (zr-tab "View"

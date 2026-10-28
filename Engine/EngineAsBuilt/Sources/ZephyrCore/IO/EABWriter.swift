@@ -420,6 +420,26 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
+        // Multiline styles. Additive section: older readers skip it via
+        // the default case, so no version bump.
+        if !document.mlineStyles.isEmpty {
+            let mlineStylesData = serializeMlineStyles(document: document)
+            entries.append(EABSectionEntry(type: .mlineStyles, offset: UInt64(w.count),
+                                            size: UInt64(mlineStylesData.count), compression: .none))
+            w.writeBytes(mlineStylesData)
+            w.pad(to: 4)
+        }
+
+        // Named selection groups (GROUP/UNGROUP). Additive section: older
+        // readers skip it via the default case, so no version bump.
+        if !document.groups.isEmpty {
+            let groupsData = serializeGroups(document: document)
+            entries.append(EABSectionEntry(type: .groups, offset: UInt64(w.count),
+                                            size: UInt64(groupsData.count), compression: .none))
+            w.writeBytes(groupsData)
+            w.pad(to: 4)
+        }
+
         // Linetype patterns (added in EAB v4)
         if !document.linetypePatterns.isEmpty {
             let lineTypesData = serializeLinetypePatterns(document: document)
@@ -563,9 +583,14 @@ public enum EABWriter {
         // activeLayerID (added in EAB v4)
         w.writeUUID(document.activeLayerID ?? UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)))
         // custom bytes: 1 byte autoContrastTrueColor + 8 bytes globalLineTypeScale
-        w.writeUInt32(9)                                       // custom byte count
+        // + 24 bytes insertionBase (3×f64). Old readers skip the tail via
+        // the count, so no version bump.
+        w.writeUInt32(33)                                      // custom byte count
         w.writeUInt8(document.autoContrastTrueColor ? 1 : 0)
         w.writeFloat64(document.globalLineTypeScale)
+        w.writeFloat64(document.insertionBase.x)
+        w.writeFloat64(document.insertionBase.y)
+        w.writeFloat64(document.insertionBase.z)
         return w.build()
     }
 
@@ -638,8 +663,63 @@ public enum EABWriter {
             serializePrimitiveXData(
                 isXrefBlock ? [:] : block.primitiveXData,
                 geometryCount: isXrefBlock ? 0 : block.geometry.count, to: w)
+            // Attribute definitions (EAB v22).
+            serializeAttributeDefinitions(
+                isXrefBlock ? [] : block.attributeDefinitions, to: w)
         }
         return w.build()
+    }
+
+    private static func serializeAttributeDefinitions(
+        _ defs: [CADAttributeDefinition], to w: BinaryWriter
+    ) {
+        w.writeUInt32(UInt32(defs.count))
+        for def in defs {
+            w.writeString(def.tag)
+            w.writeString(def.prompt)
+            w.writeString(def.defaultValue)
+            w.writeFloat64(def.position.x)
+            w.writeFloat64(def.position.y)
+            w.writeFloat64(def.position.z)
+            w.writeFloat64(def.height)
+            w.writeFloat64(def.rotation)
+            w.writeString(def.style ?? "")
+            w.writeInt32(Int32(def.alignH))
+            w.writeInt32(Int32(def.alignV))
+            w.writeInt32(Int32(def.flags))
+            w.writeString(def.layerName ?? "")
+        }
+    }
+
+    private static func serializeAttributeValues(
+        _ values: [String: CADAttributeValue], to w: BinaryWriter
+    ) {
+        let ordered = values.sorted(by: { $0.key < $1.key })
+        w.writeUInt32(UInt32(ordered.count))
+        for (key, value) in ordered {
+            w.writeString(key)
+            w.writeString(value.value)
+            if let position = value.position {
+                w.writeUInt8(1)
+                w.writeFloat64(position.x)
+                w.writeFloat64(position.y)
+                w.writeFloat64(position.z)
+            } else {
+                w.writeUInt8(0)
+            }
+            if let height = value.height {
+                w.writeUInt8(1)
+                w.writeFloat64(height)
+            } else {
+                w.writeUInt8(0)
+            }
+            if let rotation = value.rotation {
+                w.writeUInt8(1)
+                w.writeFloat64(rotation)
+            } else {
+                w.writeUInt8(0)
+            }
+        }
     }
 
     private static func serializePrimitiveXData(
@@ -733,6 +813,7 @@ public enum EABWriter {
             if entity.dimensionMetadata != nil { flags |= 0x08 }
             if entity.arrayData != nil { flags |= 0x10 }
             if entity.leaderData != nil { flags |= 0x20 }
+            if !entity.attributeValues.isEmpty { flags |= 0x40 }
             w.writeUInt8(flags)
             // bbox (local-space)
             if let bb = entity.localBoundingBox {
@@ -771,6 +852,10 @@ public enum EABWriter {
                 let data = (try? JSONEncoder().encode(leader)) ?? Data()
                 w.writeUInt32(UInt32(data.count))
                 w.writeBytes(data)
+            }
+            // Per-insert attribute values (EAB v22, flag 0x40).
+            if flags & 0x40 != 0 {
+                serializeAttributeValues(entity.attributeValues, to: w)
             }
         }
         return w.build()
@@ -1152,6 +1237,44 @@ public enum EABWriter {
             w.writeFloat64(normalized.widthFactor)
             w.writeFloat64(normalized.obliqueAngle)
             w.writeUInt8(normalized.isAnnotative ? 1 : 0)
+        }
+        return w.build()
+    }
+
+    // MARK: - Multiline Styles
+
+    private static func serializeMlineStyles(document: CADDocument) -> Data {
+        let w = BinaryWriter()
+        w.writeString(document.currentMlineStyleName)
+        w.writeUInt32(UInt32(document.mlineStyles.count))
+        let encoder = JSONEncoder()
+        for (styleName, style) in document.mlineStyles {
+            w.writeString(styleName)
+            if let data = try? encoder.encode(style),
+               let json = String(data: data, encoding: .utf8) {
+                w.writeString(json)
+            } else {
+                w.writeString("{}")
+            }
+        }
+        return w.build()
+    }
+
+    // MARK: - Groups
+
+    private static func serializeGroups(document: CADDocument) -> Data {
+        let w = BinaryWriter()
+        let ordered = document.groups.values.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        w.writeUInt32(UInt32(ordered.count))
+        for group in ordered {
+            w.writeString(group.name)
+            w.writeUInt32(UInt32(group.members.count))
+            for member in group.members {
+                w.writeUUID(member)
+            }
+            w.writeUInt8(group.isSelectable ? 1 : 0)
         }
         return w.build()
     }
