@@ -98,6 +98,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Swift 6.4 branch** — performance harness and baseline
 - **Large-selection cursor lag** — the Properties panel picker rebuilt, relabeled, and re-sorted the whole selection every frame (plus a console print per frame); it is now cached and rebuilt only when the selection or document changes, with no per-frame allocation in the comparator. Also cached: rect-select preview queries (per frame → per changed rect), renderable world bounds, and layer lookups; hover hit-tests are throttled (8 ms) with grip early-outs, live-drag transforms skip full storage prep, and the vertex rebuild no longer launches mid-rect-drag
 - **ImGui uploads** — transfer buffers are reused across frames instead of created/released per frame (amortized growth with headroom)
+- **Bulk-move path-array refresh** — moving N objects rescanned the whole registry N times to refresh path arrays; the scan now runs once over the union of moved handles, ~92x fewer scans (measured 19.3s to 0.21s moving 150 objects in a 336k-entity file)
 
 ## September 2026
 
