@@ -48,7 +48,7 @@ struct ArrayRibbonUI {
             case .polar:
                 changed = polarFields(array: &array)
             case .path:
-                changed = pathFields(array: &array)
+                changed = pathFields(array: &array, engine: engine, handle: handle)
             }
 
             let actionSectionWidth: Float = 340
@@ -192,7 +192,7 @@ struct ArrayRibbonUI {
         return changed
     }
 
-    private static func pathFields(array: inout CADArrayData) -> Bool {
+    private static func pathFields(array: inout CADArrayData, engine: PhrostEngine, handle: UUID) -> Bool {
         var changed = false
         ImGuiTextV("Method")
         ImGuiSameLine(0, 4)
@@ -221,8 +221,39 @@ struct ArrayRibbonUI {
         }
         ImGuiSameLine(0, 6)
         changed = ImGuiCheckbox("Align Items", &array.alignItems) || changed
+        if array.alignItems {
+            ImGuiSameLine(0, 6)
+            ImGuiTextV("Align")
+            ImGuiSameLine(0, 4)
+            ImGuiSetNextItemWidth(132)
+            let alignLabel: String
+            switch array.pathAlignment {
+            case .relativeToStart: alignLabel = "Relative to Start"
+            case .tangent: alignLabel = "Tangent"
+            case .normal: alignLabel = "Normal"
+            }
+            if ImGuiBeginCombo("##PathArrayAlign", alignLabel, 0) {
+                if ImGuiSelectable("Relative to Start", array.pathAlignment == .relativeToStart, 0, ImVec2(x: 0, y: 0)) {
+                    array.pathAlignment = .relativeToStart
+                    changed = true
+                }
+                if ImGuiSelectable("Tangent", array.pathAlignment == .tangent, 0, ImVec2(x: 0, y: 0)) {
+                    array.pathAlignment = .tangent
+                    changed = true
+                }
+                if ImGuiSelectable("Normal", array.pathAlignment == .normal, 0, ImVec2(x: 0, y: 0)) {
+                    array.pathAlignment = .normal
+                    changed = true
+                }
+                ImGuiEndCombo()
+            }
+        }
         ImGuiSameLine(0, 6)
         changed = ImGuiCheckbox("Reverse", &array.reversePath) || changed
+        ImGuiSameLine(0, 6)
+        if ribbonButton("Base Point...") {
+            engine.commandProcessor.executeCommand("ARRAYBASEPOINT")
+        }
 
         ImGuiSameLine(0, 10)
         divider()

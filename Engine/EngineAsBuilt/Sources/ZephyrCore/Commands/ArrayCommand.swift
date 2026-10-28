@@ -640,6 +640,171 @@ public final class ArrayEditCommand: FeatureCommand {
     }
 }
 
+/// Post-creation Base Point edit for a path array (ribbon "Base Point"
+/// button / ARRAYBASEPOINT): pick a point on the first item and every copy
+/// shifts so that source point rides the path. Enter keeps the current base.
+@MainActor
+public final class ArrayBasePointCommand: FeatureCommand {
+    private enum Step {
+        case pickArray
+        case pickBase
+    }
+
+    private var step: Step = .pickArray
+    private var targetHandle: UUID?
+
+    public init() {}
+
+    public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
+        // Ribbon flow: the path array is already selected.
+        if adoptSelectedArray(engine: engine) {
+            step = .pickBase
+            processor.commandPrompt = Self.basePrompt
+        } else {
+            targetHandle = nil
+            step = .pickArray
+            processor.commandPrompt = Self.arrayPrompt
+        }
+    }
+
+    public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
+        targetHandle = nil
+        processor.commandPrompt = nil
+    }
+
+    public func handleMouseClick(
+        worldX: Double,
+        worldY: Double,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        switch step {
+        case .pickArray:
+            let threshold = 8.0 / max(engine.camera.zoom, 0.001)
+            guard let handle = engine.cadSelection.hitTest(
+                worldX: worldX,
+                worldY: worldY,
+                document: engine.document,
+                threshold: threshold,
+                simplifyComplexBlocks: engine.simplifyComplexBlocks),
+                isPathArray(handle: handle, engine: engine)
+            else {
+                processor.commandPrompt = Self.arrayPrompt
+                return .handled
+            }
+            engine.cadSelection.select(handle)
+            targetHandle = handle
+            step = .pickBase
+            processor.commandPrompt = Self.basePrompt
+            return .handled
+        case .pickBase:
+            return applyBase(
+                worldPoint: Vector3(x: worldX, y: worldY, z: 0),
+                engine: engine,
+                processor: processor)
+        }
+    }
+
+    public func handleMouseMotion(
+        worldX: Double,
+        worldY: Double,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) {}
+
+    public func handleKeyDown(
+        scancode: SDL_Scancode,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        switch scancode {
+        case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER:
+            if step == .pickArray {
+                if adoptSelectedArray(engine: engine) {
+                    step = .pickBase
+                    processor.commandPrompt = Self.basePrompt
+                }
+                return .handled
+            }
+            // Enter keeps the current base.
+            processor.commandPrompt = nil
+            return .finished
+        default:
+            return .continue
+        }
+    }
+
+    public func handleCommandText(
+        _ text: String,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        guard step == .pickBase,
+              text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return .continue }
+        processor.commandPrompt = nil
+        return .finished
+    }
+
+    public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
+
+    private static let arrayPrompt = "Select associative path array"
+    private static let basePrompt =
+        "Specify base point for path array (snaps enabled, Enter to keep current):"
+
+    private func isPathArray(handle: UUID, engine: PhrostEngine) -> Bool {
+        guard let entity = engine.document.entity(for: handle),
+              let array = entity.arrayData
+        else { return false }
+        return array.kind == .path
+    }
+
+    private func adoptSelectedArray(engine: PhrostEngine) -> Bool {
+        guard engine.cadSelection.selectedCount == 1,
+              let handle = engine.cadSelection.lastSelectedHandle,
+              isPathArray(handle: handle, engine: engine)
+        else { return false }
+        engine.cadSelection.select(handle)
+        targetHandle = handle
+        return true
+    }
+
+    private func applyBase(
+        worldPoint: Vector3,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        guard let targetHandle,
+              var entity = engine.document.entity(for: targetHandle),
+              var array = entity.arrayData,
+              array.kind == .path
+        else {
+            step = .pickArray
+            processor.commandPrompt = Self.arrayPrompt
+            return .handled
+        }
+        let path = CADArrayPathResolver.points(
+            for: array,
+            containerTransform: entity.transform,
+            document: engine.document)
+        guard let anchor = CADArrayData.rebasedAnchor(
+            worldPoint: worldPoint,
+            entityTransform: entity.transform,
+            array: array,
+            pathPoints: path)
+        else {
+            processor.commandPrompt = "Unable to set base point"
+            return .handled
+        }
+        array.baseAnchor = anchor
+        entity.arrayData = array
+        engine.document.updateEntity(entity)
+        engine.cadSelection.select(targetHandle)
+        processor.commandPrompt = nil
+        return .finished
+    }
+}
+
 @MainActor
 public final class ArrayCloseCommand: FeatureCommand {
     private let commandLineOnly: Bool

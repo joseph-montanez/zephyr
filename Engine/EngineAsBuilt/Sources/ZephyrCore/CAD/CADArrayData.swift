@@ -11,6 +11,16 @@ public enum CADPathArrayMethod: UInt8, CaseIterable, Codable, Hashable, Sendable
     case measure = 1
 }
 
+/// How path-array items rotate when `alignItems` is on.
+public enum CADArrayPathAlignment: UInt8, CaseIterable, Codable, Hashable, Sendable {
+    /// Rotate by the tangent change since the path start (legacy behavior).
+    case relativeToStart = 0
+    /// Point the object X-axis along the path tangent (no start offset).
+    case tangent = 1
+    /// Point the object X-axis along the path normal (perpendicular rungs).
+    case normal = 2
+}
+
 public struct CADArrayItemIndex: Codable, Hashable, Sendable {
     public var item: Int
     public var row: Int
@@ -55,11 +65,17 @@ public struct CADArrayData: Codable, Hashable, Sendable {
     public var pathMethod: CADPathArrayMethod
     public var itemSpacing: Double
     public var alignItems: Bool
+    public var pathAlignment: CADArrayPathAlignment
     public var zDirection: Bool
     public var reversePath: Bool
     public var pathEntityHandle: UUID?
     public var cachedPath: [Vector3]
     public var pathStartOffset: Double
+    /// Block-local anchor riding the path (default origin = creation base).
+    /// Post-creation Base Point edits move this; instance transforms apply
+    ///  source point lands on the path.
+    /// Rectangular/polar evaluation ignores it (no base UI there).
+    public var baseAnchor: Vector3
 
     public var hiddenItems: Set<CADArrayItemIndex>
 
@@ -82,11 +98,13 @@ public struct CADArrayData: Codable, Hashable, Sendable {
         pathMethod: CADPathArrayMethod = .divide,
         itemSpacing: Double = 10,
         alignItems: Bool = true,
+        pathAlignment: CADArrayPathAlignment = .relativeToStart,
         zDirection: Bool = false,
         reversePath: Bool = false,
         pathEntityHandle: UUID? = nil,
         cachedPath: [Vector3] = [],
         pathStartOffset: Double = 0,
+        baseAnchor: Vector3 = Vector3(x: 0, y: 0, z: 0),
         hiddenItems: Set<CADArrayItemIndex> = []
     ) {
         self.kind = kind
@@ -107,11 +125,13 @@ public struct CADArrayData: Codable, Hashable, Sendable {
         self.pathMethod = pathMethod
         self.itemSpacing = max(abs(itemSpacing), 1e-9)
         self.alignItems = alignItems
+        self.pathAlignment = pathAlignment
         self.zDirection = zDirection
         self.reversePath = reversePath
         self.pathEntityHandle = pathEntityHandle
         self.cachedPath = cachedPath
         self.pathStartOffset = max(0, pathStartOffset)
+        self.baseAnchor = baseAnchor
         self.hiddenItems = hiddenItems
     }
 
@@ -213,6 +233,24 @@ public struct CADArrayData: Codable, Hashable, Sendable {
             result.max.z = max(result.max.z, box.max.z)
         }
         return result
+    }
+
+    /// Block-local anchor that puts the source point under `worldPoint`
+    /// onto the path. Assign the result to `baseAnchor`: every copy then
+    /// shifts so the picked point rides the path (undo via updateEntity).
+    /// Uses the array's first item, matching the Base Point pick flow.
+    public static func rebasedAnchor(
+        worldPoint: Vector3,
+        entityTransform: Transform3D,
+        array: CADArrayData,
+        pathPoints: [Vector3]
+    ) -> Vector3? {
+        let instances = array.evaluatedInstances(pathPoints: pathPoints)
+        guard let first = instances.first(where: { $0.index.item == 0 && $0.index.row == 0 && $0.index.level == 0 }) ?? instances.first else { return nil }
+        let anchor = entityTransform.multiplying(by: first.transform).inverse()
+            .transformPoint(worldPoint)
+        guard anchor.x.isFinite && anchor.y.isFinite && anchor.z.isFinite else { return nil }
+        return anchor
     }
 
     private func rectangularInstances() -> [CADArrayInstance] {
@@ -336,12 +374,23 @@ public struct CADArrayData: Codable, Hashable, Sendable {
                         + normal * (Double(row) * rowSpacing)
                         + Vector3(x: 0, y: 0, z: Double(level) * levelSpacing)
                     let translation = Transform3D.translated(by: position)
+                    let anchorShift = Transform3D.translated(by: Vector3(
+                        x: -baseAnchor.x, y: -baseAnchor.y, z: -baseAnchor.z))
                     let transform: Transform3D
                     if alignItems {
-                        let angle = atan2(tangent.y, tangent.x) - referenceAngle
-                        transform = translation.multiplying(by: .rotated(by: angle))
+                        let tangentAngle = atan2(tangent.y, tangent.x)
+                        let angle: Double
+                        switch pathAlignment {
+                        case .relativeToStart:
+                            angle = tangentAngle - referenceAngle
+                        case .tangent:
+                            angle = tangentAngle
+                        case .normal:
+                            angle = tangentAngle + .pi / 2
+                        }
+                        transform = translation.multiplying(by: .rotated(by: angle)).multiplying(by: anchorShift)
                     } else {
-                        transform = translation
+                        transform = translation.multiplying(by: anchorShift)
                     }
                     result.append(CADArrayInstance(index: index, transform: transform))
                 }
@@ -386,6 +435,41 @@ public struct CADArrayData: Codable, Hashable, Sendable {
     }
 }
 
+extension CADArrayData {
+    // Custom decoding: every stored field decodes strictly except
+    // `pathAlignment`, which older payloads lack (EAB/DXF readers use
+    // silent `try?`, so a missing key must fall back, never nil the
+    // whole array).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(CADArrayKind.self, forKey: .kind)
+        columns = try c.decode(Int.self, forKey: .columns)
+        rows = try c.decode(Int.self, forKey: .rows)
+        levels = try c.decode(Int.self, forKey: .levels)
+        columnSpacing = try c.decode(Double.self, forKey: .columnSpacing)
+        rowSpacing = try c.decode(Double.self, forKey: .rowSpacing)
+        levelSpacing = try c.decode(Double.self, forKey: .levelSpacing)
+        axisAngle = try c.decode(Double.self, forKey: .axisAngle)
+        columnElevationIncrement = try c.decode(Double.self, forKey: .columnElevationIncrement)
+        rowElevationIncrement = try c.decode(Double.self, forKey: .rowElevationIncrement)
+        itemCount = try c.decode(Int.self, forKey: .itemCount)
+        fillAngle = try c.decode(Double.self, forKey: .fillAngle)
+        rotateItems = try c.decode(Bool.self, forKey: .rotateItems)
+        centerPoint = try c.decode(Vector3.self, forKey: .centerPoint)
+        itemElevationIncrement = try c.decode(Double.self, forKey: .itemElevationIncrement)
+        pathMethod = try c.decode(CADPathArrayMethod.self, forKey: .pathMethod)
+        itemSpacing = try c.decode(Double.self, forKey: .itemSpacing)
+        alignItems = try c.decode(Bool.self, forKey: .alignItems)
+        pathAlignment = try c.decodeIfPresent(CADArrayPathAlignment.self, forKey: .pathAlignment) ?? .relativeToStart
+        baseAnchor = try c.decodeIfPresent(Vector3.self, forKey: .baseAnchor) ?? Vector3(x: 0, y: 0, z: 0)
+        zDirection = try c.decode(Bool.self, forKey: .zDirection)
+        reversePath = try c.decode(Bool.self, forKey: .reversePath)
+        pathEntityHandle = try c.decodeIfPresent(UUID.self, forKey: .pathEntityHandle)
+        cachedPath = try c.decode([Vector3].self, forKey: .cachedPath)
+        pathStartOffset = try c.decode(Double.self, forKey: .pathStartOffset)
+        hiddenItems = try c.decode(Set<CADArrayItemIndex>.self, forKey: .hiddenItems)
+    }
+}
 public struct CADArrayDXFPayload: Codable, Sendable {
     public var version: Int
     public var groupID: UUID

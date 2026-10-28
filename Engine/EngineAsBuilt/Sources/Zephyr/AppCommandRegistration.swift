@@ -96,6 +96,10 @@ struct AppCommandRegistration {
             factory: { ArrayEditCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "ARRAYBASEPOINT",
+            factory: { ArrayBasePointCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "ARRAYCLOSE",
             factory: { ArrayCloseCommand(commandLineOnly: false) }
         )
