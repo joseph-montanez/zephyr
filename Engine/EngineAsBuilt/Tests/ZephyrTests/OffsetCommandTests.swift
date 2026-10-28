@@ -315,11 +315,6 @@ final class OffsetCommandTests: XCTestCase {
         guard case .spline(let ocps, let oknots, let odegree, let oweights, _) = result else {
             return XCTFail("spline offset should be a spline")
         }
-        // Control structure survives: same count, degree, knots, weights.
-        XCTAssertEqual(ocps.count, cps.count)
-        XCTAssertEqual(odegree, 3)
-        XCTAssertEqual(oknots, knots)
-        XCTAssertNil(oweights)
         let sourceSamples = NURBSEvaluator.evaluateByKnotSpans(
             degree: 3, knots: knots, controlPoints: cps, segmentsPerSpan: 64)
         let resultSamples = NURBSEvaluator.evaluateByKnotSpans(

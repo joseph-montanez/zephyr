@@ -10,13 +10,10 @@ import ZephyrKernel
 //
 // Supported primitives: line, ray (incl. imported XLINEs, which arrive as
 // lines), circle, arc, ellipse, spline, polyline (straight + bulge arc
-// segments), polygon, and rect outlines. Ellipse offsets are returned as
-// splines fitted through densely sampled offset points — an exact offset
-// is not representable in its own type, which matches AutoCAD (ellipse
-// offsets become splines there too). Spline offsets instead translate
-// the control points along control-polygon normals, so control count,
-// degree, knots, and weights survive untouched; the price is accuracy on
-// tight curves (see limitations).
+// segments), polygon, and rect outlines. Ellipse and spline offsets are
+// returned as splines fitted through densely sampled offset points — an
+// exact offset of either curve is not representable in its own type,
+// which matches AutoCAD (ellipse offsets become splines there too).
 //
 // Limitations (documented, deliberate):
 //   * Spline offsets are not loop-trimmed when the distance exceeds the
@@ -502,11 +499,6 @@ public enum OffsetGeometryEngine {
         weights: [Double]?, color: ColorRGBA?,
         transform: Transform3D, mode: OffsetMode
     ) -> CADPrimitive? {
-        // Control-count-preserving offset: the CONTROL POINTS translate
-        // along control-polygon normals. Samples below drive side
-        // selection and closed detection only — they never become
-        // control points, so count/degree/knots/weights survive.
-        guard controlPoints.count >= 2 else { return nil }
         let worldCPs = controlPoints.map { transform.transformPoint($0) }
         let samples = NURBSEvaluator.evaluateAdaptiveByKnotSpans(
             degree: degree, knots: knots, controlPoints: worldCPs,
@@ -526,27 +518,6 @@ public enum OffsetGeometryEngine {
             let next = closed ? work[(index + 1) % count] : work[min(count - 1, index + 1)]
             guard let tangent = unit2(next - prev) else { return nil }
             return leftNormal(tangent)
-        }
-
-        /// Bisected left normal of the control-polygon legs meeting at a
-        /// control point (wrapped when closed). Nil when no leg has
-        /// length — the offset side is undefined there.
-        func controlNormalAt(_ index: Int) -> Vector3? {
-            let count = worldCPs.count
-            var nx = 0.0, ny = 0.0, legs = 0
-            func leg(_ a: Vector3, _ b: Vector3) {
-                guard let tangent = unit2(b - a) else { return }
-                let n = leftNormal(tangent)
-                nx += n.x; ny += n.y; legs += 1
-            }
-            if index > 0 { leg(worldCPs[index - 1], worldCPs[index]) }
-            else if closed { leg(worldCPs[count - 1], worldCPs[index]) }
-            if index + 1 < count { leg(worldCPs[index], worldCPs[index + 1]) }
-            else if closed { leg(worldCPs[index], worldCPs[0]) }
-            guard legs > 0 else { return nil }
-            let length = (nx * nx + ny * ny).squareRoot()
-            guard length > 1e-12 else { return nil }
-            return Vector3(x: nx / length, y: ny / length, z: 0)
         }
 
         let reference: Vector3
@@ -574,14 +545,40 @@ public enum OffsetGeometryEngine {
             guard abs(signedDistance) > eps else { return nil }
         }
 
-        var offsetCPs: [Vector3] = []
-        offsetCPs.reserveCapacity(worldCPs.count)
-        for index in worldCPs.indices {
-            guard let n = controlNormalAt(index) else { return nil }
-            offsetCPs.append(worldCPs[index] + n * signedDistance)
+        var offsetPoints: [Vector3] = []
+        offsetPoints.reserveCapacity(work.count)
+        for index in work.indices {
+            guard let n = leftNormalAt(index) else { continue }
+            offsetPoints.append(work[index] + n * signedDistance)
         }
-        return .spline(controlPoints: offsetCPs, knots: knots,
-                       degree: degree, weights: weights, color: color)
+        offsetPoints = cappedSamples(offsetPoints, closed: closed, cap: 256)
+        guard offsetPoints.count >= 4 else { return nil }
+
+        if closed {
+            return makeClosedSpline(points: offsetPoints, color: color)
+        }
+        let outDegree = min(3, offsetPoints.count - 1)
+        return .spline(
+            controlPoints: offsetPoints,
+            knots: generateUniformKnots(controlPointCount: offsetPoints.count, degree: outDegree),
+            degree: outDegree, weights: nil, color: color)
+    }
+
+    /// Evenly stride-sample down to `cap` points (endpoints kept when open).
+    private static func cappedSamples(
+        _ points: [Vector3], closed: Bool, cap: Int
+    ) -> [Vector3] {
+        guard points.count > cap, cap >= 4 else { return points }
+        var result: [Vector3] = []
+        result.reserveCapacity(cap)
+        if closed {
+            let step = Double(points.count) / Double(cap)
+            for i in 0..<cap { result.append(points[Int(Double(i) * step)]) }
+        } else {
+            let step = Double(points.count - 1) / Double(cap - 1)
+            for i in 0..<cap { result.append(points[Int((Double(i) * step).rounded())]) }
+        }
+        return result
     }
 
     /// Periodic cubic B-spline whose control polygon wraps the given loop.
