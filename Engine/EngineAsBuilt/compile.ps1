@@ -125,7 +125,10 @@ if ((Test-Path $swiftPlatformsRoot) -and (@(Get-ChildItem $swiftPlatformsRoot -D
     $swiftBuildSystemFlag = @("--build-system", "native")
 }
 
-$buildCommand = (@("swift build", "--configuration", $config) + $swiftBuildSystemFlag + @("-Xcc", "-I`"$($env:SDL3_INCLUDE)`"")) -join " "
+# Release builds keep CodeView debug info so Instruments/perf tooling can symbolize optimized binaries.
+$codeviewFlag = @()
+if ($isRelease) { $codeviewFlag = @("-debug-info-format=codeview") }
+$buildCommand = (@("swift build", "--configuration", $config) + $swiftBuildSystemFlag + $codeviewFlag + @("-Xcc", "-I`"$($env:SDL3_INCLUDE)`"")) -join " "
 $cmdScriptPath = "$env:TEMP\swift-compile-local.cmd"
 Set-Content -Path $cmdScriptPath -Encoding ASCII -Value @(
     "@echo off",
