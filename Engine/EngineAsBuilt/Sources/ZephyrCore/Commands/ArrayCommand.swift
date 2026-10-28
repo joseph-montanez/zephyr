@@ -8,6 +8,7 @@ public final class ArrayCommand: FeatureCommand {
         case chooseType
         case pickPolarCenter
         case pickPath
+        case pickPathBase
         case done
     }
 
@@ -16,6 +17,8 @@ public final class ArrayCommand: FeatureCommand {
     private var kind: CADArrayKind?
     private var step: Step = .selectObjects
     private var sourceHandles: Set<UUID> = []
+    /// Path picked for a path array while the base point is pending.
+    private var pendingPathHandle: UUID?
 
     public init(
         initialKind: CADArrayKind? = nil,
@@ -29,6 +32,7 @@ public final class ArrayCommand: FeatureCommand {
 
     public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
         sourceHandles = engine.cadSelection.selectedHandles
+        pendingPathHandle = nil
         if sourceHandles.isEmpty {
             step = .selectObjects
             processor.commandPrompt = "Select objects for array, then press Enter"
@@ -39,6 +43,7 @@ public final class ArrayCommand: FeatureCommand {
 
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
         step = .done
+        pendingPathHandle = nil
         processor.commandPrompt = nil
     }
 
@@ -91,10 +96,19 @@ public final class ArrayCommand: FeatureCommand {
                 processor.commandPrompt = "Select a line, polyline, arc, circle, ellipse, or spline path"
                 return .handled
             }
-            let base = engine.document.collectiveCenter(for: sourceHandles)
-                ?? Vector3(x: worldX, y: worldY, z: 0)
+            pendingPathHandle = pathHandle
+            step = .pickPathBase
+            processor.commandPrompt = Self.pathBasePrompt
+            return .handled
+
+        case .pickPathBase:
+            guard let pathHandle = pendingPathHandle else {
+                step = .pickPath
+                processor.commandPrompt = "Select path curve"
+                return .handled
+            }
             return createArray(
-                basePoint: base,
+                basePoint: Vector3(x: worldX, y: worldY, z: 0),
                 centerPoint: nil,
                 pathHandle: pathHandle,
                 engine: engine,
@@ -131,6 +145,20 @@ public final class ArrayCommand: FeatureCommand {
                 kind = preferred
                 return advanceAfterType(engine: engine, processor: processor)
             }
+            if step == .pickPathBase {
+                guard let pathHandle = pendingPathHandle else {
+                    step = .pickPath
+                    processor.commandPrompt = "Select path curve"
+                    return .handled
+                }
+                let base = engine.document.collectiveCenter(for: sourceHandles) ?? .zero
+                return createArray(
+                    basePoint: base,
+                    centerPoint: nil,
+                    pathHandle: pathHandle,
+                    engine: engine,
+                    processor: processor)
+            }
             return .continue
         case SDL_SCANCODE_R where step == .chooseType && allowedKinds.contains(.rectangular):
             kind = .rectangular
@@ -146,11 +174,43 @@ public final class ArrayCommand: FeatureCommand {
         }
     }
 
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        guard step == .pickPathBase else { return [] }
+        return [
+            .init(value: "B", title: "Base point", aliases: ["BASE", "BASEPOINT"],
+                  description: "Pick the base point the array follows the path from"),
+        ]
+    }
+
     public func handleCommandText(
         _ text: String,
         engine: PhrostEngine,
         processor: CADCommandProcessor
     ) -> CommandResult {
+        if step == .pickPathBase {
+            let value = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            switch value {
+            case "b", "base", "basepoint":
+                processor.commandPrompt = "Specify base point (snaps enabled):"
+                return .handled
+            case "":
+                guard let pathHandle = pendingPathHandle else {
+                    step = .pickPath
+                    processor.commandPrompt = "Select path curve"
+                    return .handled
+                }
+                let base = engine.document.collectiveCenter(for: sourceHandles) ?? .zero
+                return createArray(
+                    basePoint: base,
+                    centerPoint: nil,
+                    pathHandle: pathHandle,
+                    engine: engine,
+                    processor: processor)
+            default:
+                processor.commandPrompt = Self.pathBasePrompt
+                return .handled
+            }
+        }
         guard step == .chooseType else { return .continue }
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let requested: CADArrayKind
@@ -313,8 +373,14 @@ public final class ArrayCommand: FeatureCommand {
         }
         processor.commandPrompt = nil
         step = .done
+        pendingPathHandle = nil
         return .finished
     }
+
+    /// Prompt after the path pick: click to set the base (snaps on),
+    /// Enter for the object center, B to restate the option explicitly.
+    private static let pathBasePrompt =
+        "Specify base point [Base point] (Enter for object center):"
 
     private func arrayTypePrompt(defaultKind: CADArrayKind) -> String {
         let orderedKinds: [CADArrayKind] = [.rectangular, .path, .polar]
