@@ -949,35 +949,63 @@ extension DXFReader {
         e.isAttribute = isAttribute
         e.isAttributeDefinition = isAttributeDefinition
         applyCommon(pairs, to: e)
+        // Some writers (ODA File Converter) repeat AcDbText placement
+        // groups (71/72/11, with 72 = 0) inside the
+        // AcDbAttribute/AcDbAttributeDefinition subclass of an
+        // ATTDEF/ATTRIB. Those duplicates belong to a different
+        // subclass record and must not clobber the justification and
+        // alignment point already read from AcDbText, or centered
+        // attributes collapse to left-aligned at the insertion point.
+        // Writers that skip the AcDbText marker entirely (including
+        // Zephyr's own) put the only placement groups after the
+        // attribute marker, so suppression applies only once an
+        // AcDbText subclass was actually seen.
+        var sawTextSubclass = false
+        var inAttributeSubclass = false
         for (c, v) in pairs {
+            if c == 100 {
+                let marker = v.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                if marker == "ACDBTEXT" {
+                    sawTextSubclass = true
+                } else if marker == "ACDBATTRIBUTE" || marker == "ACDBATTRIBUTEDEFINITION" {
+                    inAttributeSubclass = true
+                }
+                continue
+            }
+            let suppressTextCodes = sawTextSubclass && inAttributeSubclass
             switch c {
-            case 1:   e.text = decode(v)
+            case 1 where !suppressTextCodes:
+                e.text = decode(v)
             case 2 where isAttribute || isAttributeDefinition:
                 e.attributeTag = decode(v)
             case 3 where isAttributeDefinition:
                 e.attributePrompt = decode(v)
-            case 7:   e.style = decode(v)
-            case 10:  e.basePoint.x = d(v)
-            case 20:  e.basePoint.y = d(v)
-            case 30:  e.basePoint.z = d(v)
-            case 11:  e.secPoint.x = d(v)
-            case 21:  e.secPoint.y = d(v)
-            case 31:  e.secPoint.z = d(v)
-            case 40:
+            case 7 where !suppressTextCodes:
+                e.style = decode(v)
+            case 10 where !suppressTextCodes: e.basePoint.x = d(v)
+            case 20 where !suppressTextCodes: e.basePoint.y = d(v)
+            case 30 where !suppressTextCodes: e.basePoint.z = d(v)
+            case 11 where !suppressTextCodes: e.secPoint.x = d(v)
+            case 21 where !suppressTextCodes: e.secPoint.y = d(v)
+            case 31 where !suppressTextCodes: e.secPoint.z = d(v)
+            case 40 where !suppressTextCodes:
                 e.height = d(v)
                 e.hasExplicitHeight = true
-            case 41:
+            case 41 where !suppressTextCodes:
                 e.widthScale = d(v)
                 e.hasExplicitWidthScale = true
-            case 50:  e.angle_p = d(v)  // degrees
-            case 51:
+            case 50 where !suppressTextCodes:
+                e.angle_p = d(v)  // degrees
+            case 51 where !suppressTextCodes:
                 e.oblique = d(v)  // degrees
                 e.hasExplicitOblique = true
             case 70 where isAttribute || isAttributeDefinition:
                 e.attributeFlags = i(v)
-            case 71:  e.textGen = i(v)
-            case 72:  e.alignH = i(v)
-            case 73 where !isAttribute && !isAttributeDefinition:
+            case 71 where !suppressTextCodes:
+                e.textGen = i(v)
+            case 72 where !suppressTextCodes:
+                e.alignH = i(v)
+            case 73 where !isAttribute && !isAttributeDefinition && !suppressTextCodes:
                 e.alignV = i(v)
             case 74 where isAttribute || isAttributeDefinition:
                 e.alignV = i(v)
