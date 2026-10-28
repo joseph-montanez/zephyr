@@ -56,6 +56,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Themes** — Catppuccin palettes, dropdown/slider contrast, and full theming for the Hatch and PenStroke UI
 - **PDF export** — DXF paper space layouts (paper size, units, and rotation from `AcDbPlotSettings`), export of the active drawing view, point sizing scaled inversely to prevent giant blocks, contrast adjustment for white strokes on light backgrounds, and `PDFEXPORT` filename normalization
 - **PGP user aliases** — `zephyr.pgp` (`ALIAS, *COMMAND`) loads at startup with user entries overriding colliding built-ins (with warnings), editable live via `ALIASEDIT`
+
 ### DXF & File Formats
 - **MLINE support** — plus DXF entity handles preserved in xdata
 - **MLINESTYLE objects** — multiline styles round-trip through DXF (`MLINESTYLE` table + rebuilt `MLINE` entities) and a new EAB section carries named multiline styles
@@ -80,6 +81,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Per-window state** — ImGui contexts, window-local main tab and selection gestures, long EAB strings, and a quieter initial load
 - **Frame tearing** — reused ImGui transfer buffers are now mapped with `cycle=true`; mapping with `cycle=false` let a new frame overwrite upload data the GPU was still reading, which tore the interface every couple of frames
 - **EAB constraint codec** — sub-entity/index fields now read in writer order, so coincident endpoint indexes survive a save/load round trip
+
 ### Maintenance
 - **Swift 6.4 migration** — toolchain bump and `zlib-ng` fix
 - **Dependencies** — SDL3 3.4.18 and SDL3_image 3.4.8
