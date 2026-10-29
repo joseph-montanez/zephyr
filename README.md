@@ -1,3 +1,5 @@
+> AutoCAD and DWG are registered trademarks of Autodesk, Inc. Zephyr is an independent application and is not affiliated with, sponsored by, or endorsed by Autodesk.
+
 # Zephyr
 
 **A native, GPU-accelerated 2D CAD application — free, open source, and built from scratch in Swift.**
@@ -45,7 +47,7 @@ On top of that, finding great cross-platform tools that treat macOS and Linux as
 
 | Layer | Technology |
 |---|---|
-| **Language** | Swift (~105k lines, excl. blanks/comments) |
+| **Language** | Swift (~170k lines, excl. blanks/comments) |
 | **GPU (macOS)** | Metal via SDL3 |
 | **GPU (Windows)** | Direct3D 12 via SDL3 |
 | **GPU (Linux)** | Vulkan via SDL3 |
@@ -77,7 +79,7 @@ On top of that, finding great cross-platform tools that treat macOS and Linux as
 
 ### Swift DXF Module (SwiftDXFrw)
 
-Zephyr's DXF pipeline runs entirely in Swift — a native port of [libdxfrw](https://github.com/LibreCAD/libdxfrw) that eliminates the C++ bridge and its ABI pitfalls. ~7.7k lines of Swift (excluding blanks/comments) across `DXFReader`, `DXFWriter`, `DXFEntity`, `DXFColorTable`, and `DXFTextCodec`. The port preserves every enhancement from the original C++ fork while adding Swift-native safety and cross-platform builds with zero C++ toolchain dependency.
+Zephyr's DXF pipeline runs entirely in Swift — a native port of [libdxfrw](https://github.com/LibreCAD/libdxfrw) that eliminates the C++ bridge and its ABI pitfalls. ~8.6k lines of Swift (excluding blanks/comments) across `DXFReader`, `DXFWriter`, `DXFEntity`, `DXFColorTable`, and `DXFTextCodec`. The port preserves every enhancement from the original C++ fork while adding Swift-native safety and cross-platform builds with zero C++ toolchain dependency.
 
 | Feature | Description |
 |---|---|
