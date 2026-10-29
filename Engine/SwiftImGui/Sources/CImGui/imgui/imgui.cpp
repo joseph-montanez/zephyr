@@ -7616,8 +7616,29 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
         {
             float unhide_sz_draw = ImTrunc(g.FontSize * 0.70f);
             float unhide_sz_hit = ImTrunc(g.FontSize * 0.55f);
-            ImVec2 p = node->Pos;
-            ImRect r(p, p + ImVec2(unhide_sz_hit, unhide_sz_hit));
+            // ZEPHYR PATCH (unhide triangle placement): the stock
+            // triangle hugs the node's top-left corner. When the node
+            // touches a window edge, that corner is inside the OS
+            // resize hit zone of a frameless window (Zephyr's SDL hit
+            // test claims the outer 8px), so clicks resize the window
+            // instead of unhiding the tab bar. Center the triangle on
+            // the node's top edge, pointing down, clear of the
+            // left/right resize borders. When the node also hugs the
+            // viewport top, shift only the hit rect down a
+            // resize-border-sized margin; the drawn triangle stays
+            // anchored to the top edge and grows by the shift (see
+            // AddTriangleFilled below), so only the inset portion is
+            // clickable. Reapply on ImGui vendor updates; pinned by
+            // RibbonDockNodeSizingTests.testUnhideTriangleSitsAtTopCenter.
+            const float unhide_edge_inset = 12.0f;
+            float unhide_offset_y = 0.0f;
+            if (window->Viewport != NULL && node->Pos.y < window->Viewport->Pos.y + unhide_edge_inset && node->Size.y > unhide_edge_inset + unhide_sz_draw)
+                unhide_offset_y = (window->Viewport->Pos.y + unhide_edge_inset) - node->Pos.y;
+            unhide_sz_hit = unhide_sz_draw;
+            const float unhide_half_w = ImMin(unhide_sz_draw, node->Size.x * 0.5f);
+            const float unhide_cx = node->Pos.x + node->Size.x * 0.5f;
+            ImVec2 p(unhide_cx - unhide_half_w, node->Pos.y + unhide_offset_y);
+            ImRect r(p, p + ImVec2(unhide_half_w * 2.0f, unhide_sz_hit)); // ZEPHYR PATCH: top-center hit rect
             ImGuiID unhide_id = window->GetID("#UNHIDE");
             KeepAliveID(unhide_id);
             bool hovered, held;
@@ -7628,7 +7649,7 @@ void ImGui::RenderWindowDecorations(ImGuiWindow* window, const ImRect& title_bar
 
             // FIXME-DOCK: Ideally we'd use ImGuiCol_TitleBgActive/ImGuiCol_TitleBg here, but neither is guaranteed to be visible enough at this sort of size..
             ImU32 col = GetColorU32(((held && hovered) || (node->IsFocused && !hovered)) ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
-            window->DrawList->AddTriangleFilled(p, p + ImVec2(unhide_sz_draw, 0.0f), p + ImVec2(0.0f, unhide_sz_draw), col);
+            window->DrawList->AddTriangleFilled(ImVec2(unhide_cx - unhide_half_w, node->Pos.y), ImVec2(unhide_cx + unhide_half_w, node->Pos.y), ImVec2(unhide_cx, node->Pos.y + unhide_offset_y + unhide_sz_draw), col); // ZEPHYR PATCH: top-center draw, see above
         }
 
         // Scrollbars

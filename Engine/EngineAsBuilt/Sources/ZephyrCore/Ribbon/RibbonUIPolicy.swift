@@ -151,7 +151,22 @@ public struct RibbonMetrics: Sendable, Equatable {
     /// Window height to request when the ribbon is not docked (a docked
     /// window's size is owned by its dock node).
     public func windowHeight(windowPaddingY: Float) -> Float {
-        contentHeight + 2 * windowPaddingY
+        fittedHeight(topInset: windowPaddingY, bottomPaddingY: windowPaddingY)
+    }
+
+    /// Total outer height — window rect when floating, dock-node rect
+    /// when docked — needed to show `contentHeight` without clipping.
+    ///
+    /// `topInset` is measured at runtime as the distance from the
+    /// window's top edge to the first content position. A visible dock
+    /// tab bar and a floating window's title bar both live inside the
+    /// outer rect *above* the content (the top window padding is
+    /// included in the inset), so sizing to `content + 2 * padding`
+    /// was short by exactly that bar and clipped the bottom row —
+    /// the panel titles, or half the single row in `.menu`. With no
+    /// bar showing, the inset equals the top padding.
+    public func fittedHeight(topInset: Float, bottomPaddingY: Float) -> Float {
+        (contentHeight + max(topInset, 0) + max(bottomPaddingY, 0)).rounded()
     }
 }
 
@@ -291,6 +306,14 @@ public enum RibbonUIPolicy {
         for mode: RibbonDisplayMode, frameHeight: Float
     ) -> RibbonMetrics {
         RibbonMetrics(mode: mode, frameHeight: frameHeight)
+    }
+
+    /// Distance from a window's top edge to its first content
+    /// position, clamped at zero. Feeds `RibbonMetrics.fittedHeight`;
+    /// any excess over the top window padding is a dock tab bar or a
+    /// floating title bar living inside the outer rect.
+    public static func topInset(contentTop: Float, windowTop: Float) -> Float {
+        max(contentTop - windowTop, 0)
     }
 
     // MARK: Panel layout

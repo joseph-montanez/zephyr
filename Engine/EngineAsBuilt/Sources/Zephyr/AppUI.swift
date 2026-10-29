@@ -128,7 +128,16 @@ struct AppUI {
 
         var open = true
         if igBegin("MainWorkspace", &open, hostFlags) {
-            igDockSpace(igGetID_Str("MainDockSpace"), ImVec2(x: 0, y: 0), Int32(ImGuiDockNodeFlags_PassthruCentralNode.rawValue), nil)
+            // AutoHideTabBar: a node holding a single window shows no
+            // tab bar (no solo "Ribbon"/"Layers" tab strip eating a
+            // row and clipping the window below it); ImGui brings the
+            // tab bar back as soon as a second window joins the node.
+            let dockFlags = Int32(
+                ImGuiDockNodeFlags_PassthruCentralNode.rawValue)
+                | Int32(ImGuiDockNodeFlags_AutoHideTabBar.rawValue)
+            igDockSpace(
+                igGetID_Str("MainDockSpace"), ImVec2(x: 0, y: 0),
+                dockFlags, nil)
         }
         igEnd()
 

@@ -110,6 +110,56 @@ final class RibbonUIPolicyTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(metrics.panelBodyHeight, metrics.largeButtonHeight)
     }
 
+    // MARK: - Fitted outer height (dock tab bar / title bar)
+
+    func testFittedHeightAddsTopInsetAndBottomPadding() {
+        // The regression: a visible dock tab bar (or floating title
+        // bar) lives inside the outer rect above the content, so the
+        // outer height must grow by that bar or the bottom row clips.
+        let metrics = RibbonMetrics(mode: .menu, frameHeight: 22)
+        let padding: Float = 3
+        let tabBar: Float = 24
+        XCTAssertEqual(
+            metrics.fittedHeight(
+                topInset: padding + tabBar, bottomPaddingY: padding),
+            metrics.contentHeight + tabBar + padding * 2,
+            accuracy: 0.001)
+        // No bar showing: the inset is just the top padding and the
+        // fitted height collapses to the classic content + 2×padding.
+        XCTAssertEqual(
+            metrics.fittedHeight(
+                topInset: padding, bottomPaddingY: padding),
+            metrics.windowHeight(windowPaddingY: padding),
+            accuracy: 0.001)
+    }
+
+    func testFittedHeightForMenuModeKeepsTheWholeRow() {
+        // Menu mode is a single row: with a tab bar on top, the old
+        // content+padding sizing left roughly half the row visible.
+        let metrics = RibbonMetrics(mode: .menu, frameHeight: 22)
+        let fitted = metrics.fittedHeight(
+            topInset: 27, bottomPaddingY: 3)
+        XCTAssertGreaterThanOrEqual(
+            fitted - 27 - 3, metrics.menuRowHeight,
+            "the space between inset and bottom padding must fit the row")
+    }
+
+    func testFittedHeightClampsNegativeInsets() {
+        let metrics = RibbonMetrics(mode: .full, frameHeight: 22)
+        XCTAssertEqual(
+            metrics.fittedHeight(topInset: -10, bottomPaddingY: -4),
+            metrics.contentHeight, accuracy: 0.001)
+    }
+
+    func testTopInsetClampsAtZero() {
+        XCTAssertEqual(
+            RibbonUIPolicy.topInset(contentTop: 130, windowTop: 100),
+            30, accuracy: 0.001)
+        XCTAssertEqual(
+            RibbonUIPolicy.topInset(contentTop: 90, windowTop: 100),
+            0, accuracy: 0.001)
+    }
+
     // MARK: - Panel layout
 
     private func command(

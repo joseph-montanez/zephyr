@@ -32,10 +32,29 @@ struct RibbonUI {
     /// (identical to the panel pattern in DrawPaletteUI).
     static var _isDocked = false
 
-    /// Display mode the docked node was last sized for, so the node is
-    /// resized exactly once per mode change (a user-dragged splitter is never
-    /// fought with while the mode stays put).
-    private static var _sizedDockedMode: RibbonDisplayMode?
+    /// Window padding pushed for the ribbon window in `render`. Kept as
+    /// constants so the sizing math uses the padding actually in
+    /// effect, not the global style's.
+    private static let windowPaddingX: Float = 4
+    private static let windowPaddingY: Float = 3
+
+    /// What the docked node was last sized for, so the node is resized
+    /// exactly once per change (a user-dragged splitter is never fought
+    /// with while nothing changed). The top inset is part of the key:
+    /// the dock tab bar appearing (a second window joins the node) or
+    /// auto-hiding (back to solo) changes the height the node needs by
+    /// exactly the tab bar's height.
+    private struct DockedSizingKey: Equatable {
+        var mode: RibbonDisplayMode
+        var topInset: Float
+    }
+    private static var _sizedDockedKey: DockedSizingKey?
+
+    /// Top inset (title bar + top padding) measured last frame while
+    /// floating. The floating size constraint must be set *before*
+    /// `igBegin`, so it uses last frame's measurement (the title bar
+    /// height does not change with the display mode).
+    private static var _floatingTopInset: Float?
 
     // MARK: - Actions
 
@@ -45,6 +64,9 @@ struct RibbonUI {
         case setMode(RibbonDisplayMode)
         case reload
         case hide
+        /// Undock into a floating window. Handled in `render`, which
+        /// holds the ImGui window pointer `igSetWindowDock` needs.
+        case popOut
     }
 
     // MARK: - Per-frame pump
@@ -68,8 +90,17 @@ struct RibbonUI {
         let theme = engine.ui.theme
         let metrics = RibbonUIPolicy.metrics(
             for: mode, frameHeight: ImGuiGetFrameHeight())
-        let windowPaddingY = ImGuiGetStyle()?.pointee.WindowPadding.y ?? 8
         let isDocked = _isDocked
+        // Outer height that fits the content. The top inset accounts
+        // for whatever bar lives above the content inside the outer
+        // rect: nothing but padding when docked solo (the tab bar
+        // auto-hides), the title bar when floating. Sizing without it
+        // clipped the bottom row — panel titles, or half the menu row.
+        let estimatedTopInset: Float = isDocked
+            ? windowPaddingY
+            : (_floatingTopInset ?? (ImGuiGetFrameHeight() + windowPaddingY))
+        let fittedHeight = metrics.fittedHeight(
+            topInset: estimatedTopInset, bottomPaddingY: windowPaddingY)
 
         // Position/size/dock state is saved in imgui.ini like every other
         // panel, so the ribbon comes back where the user put it.
@@ -84,22 +115,23 @@ struct RibbonUI {
             Int32(ImGuiCond_FirstUseEver.rawValue),
             ImVec2(x: 0, y: 0))
         ImGuiSetNextWindowSize(
-            ImVec2(x: min(dw * 0.85, 1100), y: metrics.contentHeight
-                + windowPaddingY * 2),
+            ImVec2(x: min(dw * 0.85, 1100), y: fittedHeight),
             Int32(ImGuiCond_FirstUseEver.rawValue))
         // A floating ribbon is fitted to the mode's content height; the
         // width stays free so it can be widened. A *docked* ribbon is sized
         // by its dock node instead (see updateDockedNodeSize), so constraining
         // it here would leave the window shorter than the node.
         if !isDocked {
-            let height = metrics.contentHeight + windowPaddingY * 2
             ImGuiSetNextWindowSizeConstraints(
-                ImVec2(x: 260, y: height), ImVec2(x: 100_000, y: height),
+                ImVec2(x: 260, y: fittedHeight),
+                ImVec2(x: 100_000, y: fittedHeight),
                 { _ in }, nil)
         }
 
-        ImGuiPushStyleVarX(Int32(ImGuiStyleVar_WindowPadding.rawValue), 4)
-        ImGuiPushStyleVarY(Int32(ImGuiStyleVar_WindowPadding.rawValue), 3)
+        ImGuiPushStyleVarX(
+            Int32(ImGuiStyleVar_WindowPadding.rawValue), windowPaddingX)
+        ImGuiPushStyleVarY(
+            Int32(ImGuiStyleVar_WindowPadding.rawValue), windowPaddingY)
         ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowBorderSize.rawValue), 0)
         ImGuiPushStyleColor(
             Int32(ImGuiCol_WindowBg.rawValue), theme.panelBgDim)
@@ -112,6 +144,8 @@ struct RibbonUI {
         var actions: [Action] = []
         var opened = true
         var dockedNodeID: ImGuiID = 0
+        var measuredTopInset: Float = 0
+        var windowPointer: UnsafeMutablePointer<ImGuiWindow>?
 
         if igBegin("Ribbon", &opened, flags) {
             _isDocked = ImGuiIsWindowDocked()
@@ -121,17 +155,30 @@ struct RibbonUI {
             // A docked window's size belongs to its dock node; remember the
             // node so the mode change can resize it after the window closes.
             dockedNodeID = _isDocked ? ImGuiGetWindowDockID() : 0
+            windowPointer = ImGuiGetCurrentWindow()
+            // Measure the bar above the content (dock tab bar when
+            // visible, title bar when floating) from the first content
+            // position — before anything is submitted, the cursor sits
+            // exactly there. The measured inset drives the sizing
+            // below; for a floating window it also feeds next frame's
+            // constraint, which must be set before Begin.
+            measuredTopInset = RibbonUIPolicy.topInset(
+                contentTop: ImGuiGetCursorScreenPos().y,
+                windowTop: ImGuiGetWindowPos().y)
+            if !_isDocked {
+                _floatingTopInset = measuredTopInset
+            }
 
             switch mode {
             case .menu:
                 renderMenuBar(
                     engine: engine, spec: loader.spec, metrics: metrics,
-                    context: context, theme: theme,
+                    context: context, theme: theme, isDocked: _isDocked,
                     drawList: drawList, actions: &actions)
             case .labels, .full:
                 renderRibbon(
                     engine: engine, spec: loader.spec, metrics: metrics,
-                    context: context, theme: theme,
+                    context: context, theme: theme, isDocked: _isDocked,
                     drawList: drawList, actions: &actions)
             }
             renderStatusHint(
@@ -145,7 +192,7 @@ struct RibbonUI {
 
         updateDockedNodeSize(
             mode: mode, metrics: metrics, nodeID: dockedNodeID,
-            windowPaddingY: windowPaddingY)
+            topInset: measuredTopInset)
 
         if let smallFont = engine.ui.smallFont {
             _ = smallFont
@@ -158,7 +205,19 @@ struct RibbonUI {
             engine.ui.ribbonVisible = false
         }
         for action in actions {
-            apply(action, engine: engine)
+            if case .popOut = action {
+                // Undock in place; the floating path fits the height
+                // next frame and the title bar returns for dragging.
+                if let windowPointer {
+                    igSetWindowDock(
+                        windowPointer, 0,
+                        Int32(ImGuiCond_Always.rawValue))
+                }
+                _isDocked = false
+                _sizedDockedKey = nil
+            } else {
+                apply(action, engine: engine)
+            }
         }
     }
 
@@ -168,26 +227,33 @@ struct RibbonUI {
     ///
     /// A docked ImGui window's size is owned by its dock node, so collapsing
     /// to labels or the menu bar would otherwise leave a tall empty strip.
-    /// The node is resized only when the mode changes (and on the first
-    /// docked frame), so a splitter the user dragged is left alone while the
-    /// mode stays put. `ImGuiDockBuilderSetNodeSize` also propagates the new
-    /// size to the parent split, which is what makes the canvas reclaim the
-    /// space in the same frame.
+    /// The node is resized only when the mode or the measured top inset
+    /// changes (and on the first docked frame), so a splitter the user
+    /// dragged is left alone while both stay put. The target is the
+    /// *fitted* height: content between the top inset (dock tab bar +
+    /// top padding when the tab bar shows, padding alone when it is
+    /// auto-hidden for a solo window) and the bottom padding — sizing
+    /// to the content alone clipped the bottom row by the tab bar.
+    /// `ImGuiDockBuilderSetNodeSize` also propagates the new size to
+    /// the parent split, which makes the canvas reclaim the space in
+    /// the same frame.
     private static func updateDockedNodeSize(
         mode: RibbonDisplayMode,
         metrics: RibbonMetrics,
         nodeID: ImGuiID,
-        windowPaddingY: Float
+        topInset: Float
     ) {
         guard nodeID != 0 else {
             // Floating (or hidden): nothing owns our size, and the floating
             // path already fits the window to the content.
-            _sizedDockedMode = nil
+            _sizedDockedKey = nil
             return
         }
-        guard _sizedDockedMode != mode else { return }
+        let key = DockedSizingKey(mode: mode, topInset: topInset.rounded())
+        guard _sizedDockedKey != key else { return }
 
-        let target = (metrics.contentHeight + 2 * windowPaddingY).rounded()
+        let target = metrics.fittedHeight(
+            topInset: topInset, bottomPaddingY: windowPaddingY)
         guard let node = ImGuiDockBuilderGetNode(nodeID) else {
             // The dockspace has not materialised yet; retry next frame.
             return
@@ -206,7 +272,7 @@ struct RibbonUI {
         if width > 1, abs(height - target) > 1 {
             ImGuiDockBuilderSetNodeSize(nodeID, ImVec2(x: width, y: target))
         }
-        _sizedDockedMode = mode
+        _sizedDockedKey = key
     }
 
     // MARK: - Action dispatch
@@ -222,6 +288,8 @@ struct RibbonUI {
             engine.ribbonLoader?.reload()
         case .hide:
             engine.ui.ribbonVisible = false
+        case .popOut:
+            break  // Handled in `render` (needs the window pointer).
         }
     }
 
@@ -256,6 +324,7 @@ struct RibbonUI {
         metrics: RibbonMetrics,
         context: RibbonStateContext,
         theme: AppTheme,
+        isDocked: Bool,
         drawList: UnsafeMutablePointer<ImDrawList>?,
         actions: inout [Action]
     ) {
@@ -288,6 +357,7 @@ struct RibbonUI {
         var controlsX = innerRight
         controlsX = renderChromeControls(
             engine: engine, metrics: metrics, theme: theme,
+            isDocked: isDocked,
             drawList: drawList, rightY: origin.y,
             rightEdge: controlsX, actions: &actions)
 
@@ -486,6 +556,7 @@ struct RibbonUI {
         metrics: RibbonMetrics,
         context: RibbonStateContext,
         theme: AppTheme,
+        isDocked: Bool,
         drawList: UnsafeMutablePointer<ImDrawList>?,
         actions: inout [Action]
     ) {
@@ -519,6 +590,7 @@ struct RibbonUI {
 
         _ = renderChromeControls(
             engine: engine, metrics: metrics, theme: theme,
+            isDocked: isDocked,
             drawList: drawList, rightY: origin.y,
             rightEdge: windowPos.x + windowSize.x - 4,
             actions: &actions)
@@ -566,15 +638,19 @@ struct RibbonUI {
         }
     }
 
-    // MARK: - Chrome controls (reload + display-mode cycle)
+    // MARK: - Chrome controls (pop-out + reload + display-mode cycle)
 
-    /// Draws the right-aligned reload and mode-cycle buttons and returns the
-    /// x coordinate of their left edge.
+    /// Draws the right-aligned pop-out (docked only), reload and
+    /// mode-cycle buttons and returns the x coordinate of their left
+    /// edge. Pop-out replaces the solo dock tab as the way to undock:
+    /// with the tab bar auto-hidden there is no tab to drag, and
+    /// ImGui's corner unhide triangle is too small to rely on.
     @discardableResult
     private static func renderChromeControls(
         engine: PhrostEngine,
         metrics: RibbonMetrics,
         theme: AppTheme,
+        isDocked: Bool,
         drawList: UnsafeMutablePointer<ImDrawList>?,
         rightY: Float,
         rightEdge: Float,
@@ -622,6 +698,27 @@ struct RibbonUI {
             actions.append(.reload)
         }
         right -= reloadWidth
+
+        if isDocked {
+            let popOutLabel = "Pop-out"
+            let popOutWidth = width(popOutLabel)
+            var popOutSpec = RibbonWidgets.ButtonSpec(
+                id: "ribbon-pop-out",
+                label: popOutLabel,
+                rect: RibbonRect(
+                    x: right - popOutWidth, y: rightY, width: popOutWidth,
+                    height: metrics.tabStripHeight),
+                isLarge: true,
+                showIcon: false)
+            popOutSpec.tooltip =
+                "Undock the ribbon into a floating window "
+                + "(drag it back onto an edge to re-dock)"
+            if RibbonWidgets.button(
+                spec: popOutSpec, theme: theme, drawList: drawList) {
+                actions.append(.popOut)
+            }
+            right -= popOutWidth
+        }
         return right
     }
 

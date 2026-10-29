@@ -57,6 +57,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **PDF export** — DXF paper space layouts (paper size, units, and rotation from `AcDbPlotSettings`), export of the active drawing view, point sizing scaled inversely to prevent giant blocks, contrast adjustment for white strokes on light backgrounds, and `PDFEXPORT` filename normalization
 - **PGP user aliases** — `zephyr.pgp` (`ALIAS, *COMMAND`) loads at startup with user entries overriding colliding built-ins (with warnings), editable live via `ALIASEDIT`
 - **ARRAYPATH base point** — path arrays stop after the path pick for a base-point step: snap a point on the source object, type `B`, or press Enter to keep the object center; after creation, `ARRAYBASEPOINT` (Path Array ribbon `Base Point...` button) re-picks the base so the snapped source point rides the path without moving item stations, the selection marker now draws the true path-riding anchor (re-picking the marker is a no-op instead of a jump), and an `Align` dropdown next to Align Items picks Relative to Start, Tangent, or Normal (perpendicular-rung) rotation
+- **Docked panels** — a dock node holding a single window no longer shows a tab bar (the tab bar returns when a second window joins the node); the ribbon gains a Pop-out button beside Reload to undock in one click, and the click-to-show-tabs triangle moves to the top-center of the panel, clear of the window resize borders that used to swallow its clicks
 
 ### DXF & File Formats
 - **MLINE support** — plus DXF entity handles preserved in xdata
@@ -85,6 +86,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **MLeader callout justification** — ODA-converted drawings repeat AcDbText placement groups inside ATTDEFs, which clobbered centered justification so block-content callouts (e.g. detail bubbles) rendered left-aligned at the insertion point; duplicate placement codes inside the attribute subclass are now ignored once a real AcDbText subclass was seen
 - **MTEXT alignment code** — AutoCAD's `\A0/1/2;` marker is stacked-text alignment, not paragraph justification, so it no longer centers whole paragraphs and width-less notes stay anchored at their insertion point; MTEXT attachment points decompose into justification, and `\A` round-trips on export
 - **Legacy leader arrows** — DIMSCALE folds into arrow size, text offset, and text height (including per-entity DSTYLE overrides), and custom arrowhead blocks orient tip-at-origin per the AutoCAD convention
+- **Ribbon clipping** — the docked and floating ribbon are sized to their content plus the dock tab bar / title bar above it, so bottom panel titles and the single Menu-mode row are no longer cut off
 
 ### Maintenance
 - **Swift 6.4 migration** — toolchain bump and `zlib-ng` fix

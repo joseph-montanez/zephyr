@@ -232,4 +232,430 @@ final class RibbonDockNodeSizingTests: XCTestCase {
             "ImGui still considers it open, which is why it looked like "
                 + "nothing happened")
     }
+
+    // MARK: - Tab bar height theft (the clipped panel titles)
+
+    /// A *visible* dock tab bar lives inside the node rect, above the
+    /// window, so the window is shorter than its node by the tab bar's
+    /// height. Sizing the node to the content height alone (the old
+    /// ribbon behaviour) therefore clips the bottom row of content.
+    func testVisibleDockTabBarStealsHeightFromDockedWindow() {
+        let io = makeContext()
+        defer { ImGuiDestroyContext(nil) }
+
+        var dockID: ImGuiID = 0
+        var ribbonNode: ImGuiID = 0
+        var nodeHeight: Float = 0
+        var windowY: Float = 0
+        var cursorY: Float = 0
+        var availY: Float = 0
+        var paddingY: Float = 0
+
+        func frame(_ body: () -> Void) {
+            io.pointee.DisplaySize = ImVec2(x: 1280, y: 800)
+            ImGuiNewFrame()
+            body()
+            ImGuiRender()
+        }
+        func host() {
+            ImGuiSetNextWindowPos(
+                ImVec2(x: 0, y: 0), Int32(ImGuiCond_Always.rawValue),
+                ImVec2(x: 0, y: 0))
+            ImGuiSetNextWindowSize(
+                ImVec2(x: 1280, y: 800), Int32(ImGuiCond_Always.rawValue))
+            var open = true
+            if igBegin("MainWorkspace", &open, hostFlags) {
+                dockID = igDockSpace(
+                    igGetID_Str("MainDockSpace"), ImVec2(x: 0, y: 0), 0, nil)
+            }
+            igEnd()
+        }
+        func ribbonWindow() {
+            var open = true
+            if igBegin(
+                "Ribbon", &open,
+                Int32(ImGuiWindowFlags_NoTitleBar.rawValue)) {
+                // The docked window rect equals the node rect; the tab
+                // bar steals its height from the *content* origin, so
+                // measure where the first item would draw.
+                windowY = ImGuiGetWindowPos().y
+                cursorY = ImGuiGetCursorScreenPos().y
+                availY = ImGuiGetContentRegionAvail().y
+                paddingY = ImGuiGetStyle()?.pointee.WindowPadding.y ?? 8
+                if let node = ImGuiDockBuilderGetNode(ImGuiGetWindowDockID()) {
+                    let rect = ImGuiDockNodeRect(node)
+                    nodeHeight = rect.Max.y - rect.Min.y
+                }
+            }
+            igEnd()
+        }
+
+        frame {
+            host()
+            if dockID != 0 {
+                ImGuiDockBuilderRemoveNode(dockID)
+                ImGuiDockBuilderAddNode(dockID, 1 << 10)
+                ImGuiDockBuilderSetNodeSize(
+                    dockID, ImVec2(x: 1280, y: 800))
+                var main: ImGuiID = dockID
+                ribbonNode = ImGuiDockBuilderSplitNode(
+                    main, ImGuiDir_Up, 0.25, nil, &main)
+                ImGuiDockBuilderDockWindow("Ribbon", ribbonNode)
+                ImGuiDockBuilderFinish(dockID)
+            }
+        }
+        for _ in 0..<3 {
+            frame {
+                host()
+                ribbonWindow()
+            }
+        }
+
+        XCTAssertNotEqual(ribbonNode, 0)
+        XCTAssertGreaterThan(nodeHeight, 100)
+        XCTAssertGreaterThan(
+            cursorY - windowY, paddingY + 5,
+            "content must start below the tab bar + top padding: "
+                + "offset \(cursorY - windowY), padding \(paddingY) — the "
+                + "excess is the tab bar height node sizing must add back")
+        XCTAssertLessThan(
+            availY, nodeHeight - paddingY * 2 - 5,
+            "content space must lose the tab bar height on top of "
+                + "padding: avail \(availY), node \(nodeHeight)")
+    }
+
+    /// `ImGuiDockNodeFlags_AutoHideTabBar` on the dockspace is the fix's
+    /// foundation: a solo window hides its tab bar (window fills the
+    /// node), and a second window in the node brings the tab bar back.
+    func testAutoHideTabBarHidesForSoloWindowAndShowsForTwo() {
+        let io = makeContext()
+        defer { ImGuiDestroyContext(nil) }
+
+        var dockID: ImGuiID = 0
+        var ribbonNode: ImGuiID = 0
+        var hidden = false
+        var soloTopOffset: Float = -1
+        var paddingY: Float = 0
+        let autoHide = Int32(ImGuiDockNodeFlags_AutoHideTabBar.rawValue)
+
+        func frame(_ body: () -> Void) {
+            io.pointee.DisplaySize = ImVec2(x: 1280, y: 800)
+            ImGuiNewFrame()
+            body()
+            ImGuiRender()
+        }
+        func host() {
+            ImGuiSetNextWindowPos(
+                ImVec2(x: 0, y: 0), Int32(ImGuiCond_Always.rawValue),
+                ImVec2(x: 0, y: 0))
+            ImGuiSetNextWindowSize(
+                ImVec2(x: 1280, y: 800), Int32(ImGuiCond_Always.rawValue))
+            var open = true
+            if igBegin("MainWorkspace", &open, hostFlags) {
+                dockID = igDockSpace(
+                    igGetID_Str("MainDockSpace"), ImVec2(x: 0, y: 0),
+                    autoHide, nil)
+            }
+            igEnd()
+        }
+        func window(_ name: String, record: Bool) {
+            var open = true
+            if igBegin(
+                name, &open,
+                Int32(ImGuiWindowFlags_NoTitleBar.rawValue)), record {
+                // Only the visible tab's Begin body runs, so record the
+                // content offset here but the node flags separately.
+                soloTopOffset = ImGuiGetCursorScreenPos().y
+                    - ImGuiGetWindowPos().y
+                paddingY = ImGuiGetStyle()?.pointee.WindowPadding.y ?? 8
+            }
+            igEnd()
+        }
+        func recordNode() {
+            if ribbonNode != 0,
+               let node = ImGuiDockBuilderGetNode(ribbonNode) {
+                hidden = ImGuiDockNodeIsHiddenTabBar(node)
+            }
+        }
+
+        frame {
+            host()
+            if dockID != 0 {
+                ImGuiDockBuilderRemoveNode(dockID)
+                ImGuiDockBuilderAddNode(dockID, 1 << 10)
+                ImGuiDockBuilderSetNodeSize(
+                    dockID, ImVec2(x: 1280, y: 800))
+                var main: ImGuiID = dockID
+                ribbonNode = ImGuiDockBuilderSplitNode(
+                    main, ImGuiDir_Up, 0.25, nil, &main)
+                ImGuiDockBuilderDockWindow("Ribbon", ribbonNode)
+                ImGuiDockBuilderFinish(dockID)
+            }
+        }
+        for _ in 0..<4 {
+            frame {
+                host()
+                window("Ribbon", record: true)
+                recordNode()
+            }
+        }
+        XCTAssertTrue(
+            hidden, "a solo docked window must auto-hide its tab bar")
+        XCTAssertEqual(
+            soloTopOffset, paddingY, accuracy: 2,
+            "with the tab bar hidden content starts right below the "
+                + "top padding: offset \(soloTopOffset), padding \(paddingY)")
+
+        ImGuiDockBuilderDockWindow("Other", ribbonNode)
+        for _ in 0..<4 {
+            frame {
+                host()
+                window("Ribbon", record: true)
+                window("Other", record: false)
+                recordNode()
+            }
+        }
+        XCTAssertFalse(
+            hidden,
+            "a second window in the node must bring the tab bar back")
+    }
+
+    /// Pop-out: undocking with `igSetWindowDock(window, 0)` using a
+    /// pointer captured inside `Begin` but called after `End` — the
+    /// exact shape `RibbonUI` uses for its Pop-out button, since
+    /// actions are dispatched after `igEnd()`.
+    func testSetWindowDockZeroUndocksAfterEnd() throws {
+        let io = makeContext()
+        defer { ImGuiDestroyContext(nil) }
+
+        var dockID: ImGuiID = 0
+        var ribbonNode: ImGuiID = 0
+        var isDocked = false
+        var windowDockID: ImGuiID = 1
+        var windowPointer: UnsafeMutablePointer<ImGuiWindow>?
+
+        func frame(_ body: () -> Void) {
+            io.pointee.DisplaySize = ImVec2(x: 1280, y: 800)
+            ImGuiNewFrame()
+            body()
+            ImGuiRender()
+        }
+        func host() {
+            ImGuiSetNextWindowPos(
+                ImVec2(x: 0, y: 0), Int32(ImGuiCond_Always.rawValue),
+                ImVec2(x: 0, y: 0))
+            ImGuiSetNextWindowSize(
+                ImVec2(x: 1280, y: 800), Int32(ImGuiCond_Always.rawValue))
+            var open = true
+            if igBegin("MainWorkspace", &open, hostFlags) {
+                dockID = igDockSpace(
+                    igGetID_Str("MainDockSpace"), ImVec2(x: 0, y: 0),
+                    Int32(ImGuiDockNodeFlags_AutoHideTabBar.rawValue), nil)
+            }
+            igEnd()
+        }
+        func ribbonWindow() {
+            var open = true
+            if igBegin(
+                "Ribbon", &open,
+                Int32(ImGuiWindowFlags_NoTitleBar.rawValue)) {
+                isDocked = ImGuiIsWindowDocked()
+                windowDockID = ImGuiGetWindowDockID()
+                windowPointer = ImGuiGetCurrentWindow()
+            }
+            igEnd()
+        }
+
+        frame {
+            host()
+            if dockID != 0 {
+                ImGuiDockBuilderRemoveNode(dockID)
+                _ = ImGuiDockBuilderAddNode(dockID, 1 << 10)
+                ImGuiDockBuilderSetNodeSize(
+                    dockID, ImVec2(x: 1280, y: 800))
+                var main: ImGuiID = dockID
+                ribbonNode = ImGuiDockBuilderSplitNode(
+                    main, ImGuiDir_Up, 0.25, nil, &main)
+                ImGuiDockBuilderDockWindow("Ribbon", ribbonNode)
+                ImGuiDockBuilderFinish(dockID)
+            }
+        }
+        for _ in 0..<3 {
+            frame {
+                host()
+                ribbonWindow()
+            }
+        }
+        XCTAssertTrue(isDocked, "precondition: the ribbon starts docked")
+        XCTAssertEqual(windowDockID, ribbonNode)
+        let pointer = try XCTUnwrap(windowPointer)
+
+        // The pop-out click: after End, still inside the frame.
+        frame {
+            host()
+            ribbonWindow()
+            igSetWindowDock(
+                pointer, 0, Int32(ImGuiCond_Always.rawValue))
+        }
+        for _ in 0..<3 {
+            frame {
+                host()
+                ribbonWindow()
+            }
+        }
+        XCTAssertFalse(isDocked, "pop-out must leave the window floating")
+        XCTAssertEqual(windowDockID, 0)
+    }
+
+    /// The unhide triangle sits at the top-center of its node, not
+    /// the stock top-left corner: with the node at (0,0) the corner
+    /// sits inside a frameless window's OS resize border, so clicks
+    /// resize instead of unhiding. The Zephyr ImGui patch centers it
+    /// on the top edge, and keeps its hit rect 12px below the
+    /// viewport top for the same reason. Losing the patch in a
+    /// vendor update fails this test.
+    func testUnhideTriangleSitsAtTopCenter() {
+        let io = makeContext()
+        defer { ImGuiDestroyContext(nil) }
+
+        var dockID: ImGuiID = 0
+        var ribbonNode: ImGuiID = 0
+        var hidden = false
+        var nodeX: Float = -1
+        var nodeY: Float = -1
+        var nodeW: Float = 0
+
+        func frame(mouse: ImVec2, down: Bool, _ body: () -> Void) {
+            io.pointee.DisplaySize = ImVec2(x: 1280, y: 800)
+            ImGuiIO_AddMousePosEvent(io, mouse.x, mouse.y)
+            ImGuiIO_AddMouseButtonEvent(io, 0, down)
+            ImGuiNewFrame()
+            body()
+            ImGuiRender()
+        }
+        func host() {
+            // Zero padding like AppUI, so the node starts at (0,0) —
+            // squarely in the resize border this test is about.
+            ImGuiPushStyleVar(
+                Int32(ImGuiStyleVar_WindowPadding.rawValue),
+                ImVec2(x: 0, y: 0))
+            ImGuiSetNextWindowPos(
+                ImVec2(x: 0, y: 0), Int32(ImGuiCond_Always.rawValue),
+                ImVec2(x: 0, y: 0))
+            ImGuiSetNextWindowSize(
+                ImVec2(x: 1280, y: 800), Int32(ImGuiCond_Always.rawValue))
+            var open = true
+            if igBegin("MainWorkspace", &open, hostFlags) {
+                dockID = igDockSpace(
+                    igGetID_Str("MainDockSpace"), ImVec2(x: 0, y: 0),
+                    Int32(ImGuiDockNodeFlags_AutoHideTabBar.rawValue), nil)
+            }
+            igEnd()
+            ImGuiPopStyleVar(1)
+        }
+        func ribbonWindow() {
+            var open = true
+            if igBegin(
+                "Ribbon", &open,
+                Int32(ImGuiWindowFlags_NoTitleBar.rawValue)) {
+                if let node = ImGuiDockBuilderGetNode(ImGuiGetWindowDockID()) {
+                    let rect = ImGuiDockNodeRect(node)
+                    nodeX = rect.Min.x
+                    nodeY = rect.Min.y
+                    nodeW = rect.Max.x - rect.Min.x
+                }
+            }
+            igEnd()
+            if ribbonNode != 0,
+               let node = ImGuiDockBuilderGetNode(ribbonNode) {
+                hidden = ImGuiDockNodeIsHiddenTabBar(node)
+            }
+        }
+        func scene(mouse: ImVec2, down: Bool) {
+            frame(mouse: mouse, down: down) {
+                host()
+                ribbonWindow()
+            }
+        }
+        func click(at point: ImVec2) {
+            scene(mouse: point, down: false)
+            scene(mouse: point, down: true)
+            scene(mouse: point, down: false)
+            scene(mouse: point, down: false)
+        }
+
+        frame(mouse: ImVec2(x: 640, y: 400), down: false) {
+            host()
+            if dockID != 0 {
+                ImGuiDockBuilderRemoveNode(dockID)
+                _ = ImGuiDockBuilderAddNode(dockID, 1 << 10)
+                ImGuiDockBuilderSetNodeSize(
+                    dockID, ImVec2(x: 1280, y: 800))
+                var main: ImGuiID = dockID
+                ribbonNode = ImGuiDockBuilderSplitNode(
+                    main, ImGuiDir_Up, 0.25, nil, &main)
+                ImGuiDockBuilderDockWindow("Ribbon", ribbonNode)
+                ImGuiDockBuilderFinish(dockID)
+            }
+        }
+        for _ in 0..<4 {
+            scene(mouse: ImVec2(x: 640, y: 400), down: false)
+        }
+        XCTAssertTrue(hidden, "precondition: solo tab bar auto-hidden")
+        XCTAssertEqual(nodeX, 0, accuracy: 1)
+        XCTAssertEqual(nodeY, 0, accuracy: 1)
+
+        let centerX = nodeX + nodeW * 0.5
+
+        // The stock corner spot is inside the resize border and must
+        // no longer be the button.
+        click(at: ImVec2(x: 3, y: 3))
+        XCTAssertTrue(
+            hidden,
+            "clicking the corner must not unhide (triangle moved to "
+                + "top-center)")
+
+        // Top-center within the top resize strip: the drawn triangle
+        // reaches the edge, but the hit rect starts 12px down.
+        click(at: ImVec2(x: centerX, y: 3))
+        XCTAssertTrue(
+            hidden,
+            "clicking the triangle tip inside the resize strip must "
+                + "not unhide")
+
+        // Top-center below the resize strip unhides.
+        click(at: ImVec2(x: centerX, y: 16))
+        XCTAssertFalse(
+            hidden,
+            "clicking the top-center triangle must show the tab bar")
+    }
+
+    /// A floating ribbon keeps its title bar, which also lives inside
+    /// the window rect: a fixed window height of content+padding is
+    /// short by the title bar (the Menu-mode half-text when floating).
+    func testFloatingTitleBarStealsHeightFromContent() {
+        let io = makeContext()
+        defer { ImGuiDestroyContext(nil) }
+
+        var availY: Float = 0
+        var windowY: Float = 0
+        for _ in 0..<3 {
+            io.pointee.DisplaySize = ImVec2(x: 1280, y: 800)
+            ImGuiNewFrame()
+            ImGuiSetNextWindowSize(
+                ImVec2(x: 400, y: 100), Int32(ImGuiCond_Always.rawValue))
+            var open = true
+            if igBegin("Floaty", &open, 0) {
+                availY = ImGuiGetContentRegionAvail().y
+                windowY = ImGuiGetWindowSize().y
+            }
+            igEnd()
+            ImGuiRender()
+        }
+        XCTAssertEqual(windowY, 100, accuracy: 1)
+        XCTAssertLessThan(
+            availY, windowY - 20,
+            "title bar + padding must consume a visible slice: avail "
+                + "\(availY) of window \(windowY)")
+    }
 }
