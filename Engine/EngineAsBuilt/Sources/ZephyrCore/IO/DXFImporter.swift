@@ -155,6 +155,7 @@ public enum DXFImporter {
     private struct LegacyLeaderDStyleOverrides {
         var arrowSize: Double?
         var textOffset: Double?
+        var dimScale: Double?
     }
 
     private static func legacyLeaderDStyleOverrides(
@@ -217,6 +218,8 @@ public enum DXFImporter {
                 }
                 if let value {
                     switch variable {
+                    case 40:
+                        result.dimScale = value
                     case 41:
                         result.arrowSize = value
                     case 147:
@@ -909,11 +912,17 @@ public enum DXFImporter {
                         }?.value
                         ?? .default
                     let dstyleOverrides = Self.legacyLeaderDStyleOverrides(leader)
+                    // DIMSTYLE stores raw DIMASZ/DIMGAP with DIMSCALE kept
+                    // separate: fold it in here, honoring a per-leader
+                    // DSTYLE DIMSCALE (40) override. Mirrors
+                    // CADDimensionStyle.scaled() used by dimensions.
+                    let leaderDimScale = dstyleOverrides.dimScale ?? dimensionStyle.overallScale
+                    let leaderScale = leaderDimScale == 0 ? 1.0 : abs(leaderDimScale)
                     let effectiveArrowSize = max(
-                        dstyleOverrides.arrowSize ?? dimensionStyle.arrowSize,
+                        (dstyleOverrides.arrowSize ?? dimensionStyle.arrowSize) * leaderScale,
                         0)
                     let effectiveTextOffset = max(
-                        dstyleOverrides.textOffset ?? dimensionStyle.textOffset,
+                        (dstyleOverrides.textOffset ?? dimensionStyle.textOffset) * leaderScale,
                         0)
                     let arrowBlockName = sourceDimensionStyle.flatMap { source -> String? in
                         if source.dimldrblkHandle != 0,
@@ -992,7 +1001,7 @@ public enum DXFImporter {
                         doglegLength: legacyHookLength,
                         contentGap: effectiveTextOffset,
                         textHeight: textEntity.flatMap { $0.height > 1e-9 ? $0.height : nil }
-                            ?? max(dimensionStyle.textHeight, 0.0001),
+                            ?? max(dimensionStyle.textHeight * leaderScale, 0.0001),
                         textStyleName: textEntity?.style
                             ?? dimensionStyle.textStyle
                             ?? "Standard",
@@ -1909,8 +1918,27 @@ public enum DXFImporter {
             xdata["dxf.textHeight"] = .double(text.height)
             xdata["dxf.textHeightOverride"] = .int(text.hasExplicitHeight ? 1 : 0)
             xdata["dxf.textStyle"] = .string(text.style)
-            xdata["dxf.alignH"] = .int(text.alignH)
-            xdata["dxf.alignV"] = .int(text.alignV)
+            var alignHValue = text.alignH
+            var alignVValue = text.alignV
+            if text.eType == .mTEXT {
+                // Group 71 on MTEXT is the 1-9 attachment point, not
+                // TEXT-style justification: decompose it exactly like the
+                // geometry converter so the bridge renders the same anchor.
+                switch text.textGen {
+                case 1, 4, 7: alignHValue = 0
+                case 2, 5, 8: alignHValue = 1
+                case 3, 6, 9: alignHValue = 2
+                default: alignHValue = 0
+                }
+                switch text.textGen {
+                case 1...3: alignVValue = 3
+                case 4...6: alignVValue = 2
+                case 7...9: alignVValue = 1
+                default: alignVValue = 3
+                }
+            }
+            xdata["dxf.alignH"] = .int(alignHValue)
+            xdata["dxf.alignV"] = .int(alignVValue)
             xdata["dxf.textWidthScale"] = .double(text.widthScale)
             xdata["dxf.textOblique"] = .double(text.oblique)
             if text.eType != .mTEXT {

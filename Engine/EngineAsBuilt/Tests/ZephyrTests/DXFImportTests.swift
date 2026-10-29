@@ -2192,6 +2192,417 @@ final class DXFImportTests: XCTestCase {
         }
     }
 
+    // MARK: - MTEXT alignment code and LEADER arrow scale/orientation
+
+    func testMTextAlignmentCodeDoesNotCenterParagraph() throws {
+        // AutoCAD writes \A1; (stacked-text vertical alignment, default
+        // center) at the start of nearly every MTEXT string. It must not be
+        // treated as paragraph justification.
+        // Note: \PW/ contains a genuine \P paragraph break, so this parses
+        // as two paragraphs (matching the two rendered lines).
+        let formatted = MTEXTFormatter.parse("\\A1;PROVIDE 20 MIN. DOOR\\PW/ SELF CLOSING HINGES")
+        XCTAssertEqual(formatted.paragraphs.count, 2)
+        for paragraph in formatted.paragraphs {
+            XCTAssertEqual(paragraph.alignment, 0, "\\A1; must leave paragraph alignment at inherit (0)")
+        }
+        XCTAssertNil(formatted.paragraphs[0].stackAlignment, "default \\A1; carries no explicit stack alignment")
+        let serialized = MTEXTFormatter.serialize(formatted)
+        XCTAssertFalse(serialized.contains("qc"), "round-trip must not emit paragraph-center justification, got: \(serialized)")
+    }
+
+    func testMTextExplicitStackAlignmentRoundTrips() throws {
+        let formatted = MTEXTFormatter.parse("\\A0;\\S1#2; done")
+        XCTAssertEqual(formatted.paragraphs[0].stackAlignment, 0)
+        XCTAssertEqual(formatted.paragraphs[0].alignment, 0)
+        XCTAssertTrue(MTEXTFormatter.serialize(formatted).contains("\\A0;"))
+
+        let plain = MTEXTFormatter.parse("just text")
+        XCTAssertNil(plain.paragraphs[0].stackAlignment)
+        XCTAssertFalse(MTEXTFormatter.serialize(plain).contains("\\A"))
+    }
+
+    func testImportDXFWithMTextAlignmentCodeStaysLeftAnchored() throws {
+        // Mirrors floorplan.dxf handle 1450: width-0 MTEXT, attachment 1
+        // (top-left), raw text starting with \A1;.
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        MTEXT
+          8
+        0
+         10
+        100.0
+         20
+        50.0
+         30
+        0.0
+         40
+        6.0
+         41
+        0.0
+         71
+        1
+          1
+        \\A1;PROVIDE 20 MIN. DOOR\\PW/ SELF CLOSING HINGES
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        let entities = doc.allEntities
+        XCTAssertEqual(entities.count, 1)
+        let entity = try XCTUnwrap(entities.first)
+        XCTAssertEqual(entity.xdata["dxf.alignH"], .int(0))
+        XCTAssertEqual(entity.xdata["dxf.alignV"], .int(3))
+        guard case .string(let json) = entity.xdata["dxf.formattedText"] else {
+            return XCTFail("expected dxf.formattedText xdata")
+        }
+        let formatted = try JSONDecoder().decode(
+            FormattedText.self, from: Data(json.utf8))
+        XCTAssertEqual(formatted.paragraphs[0].alignment, 0,
+                       "\\A1; must not center the paragraph")
+    }
+
+    func testImportDXFWithMTextCenterAttachmentDecomposesJustification() throws {
+        // MTEXT group 71 = 5 is middle-center; the bridge renders from
+        // dxf.alignH/dxf.alignV, which must reflect the attachment point.
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        MTEXT
+          8
+        0
+         10
+        100.0
+         20
+        50.0
+         30
+        0.0
+         40
+        6.0
+         41
+        0.0
+         71
+        5
+          1
+        CENTERED NOTE
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        let entity = try XCTUnwrap(doc.allEntities.first)
+        XCTAssertEqual(entity.xdata["dxf.alignH"], .int(1))
+        XCTAssertEqual(entity.xdata["dxf.alignV"], .int(2))
+    }
+
+    func testImportDXFWithLegacyLeaderAppliesDimscale() throws {
+        // DIMSTYLE BIGDIM: DIMSCALE 32, DIMASZ 0.15625 -> effective arrow 5.0.
+        let dxf = """
+        0
+        SECTION
+          2
+        TABLES
+          0
+        TABLE
+          2
+        DIMSTYLE
+         70
+        1
+          0
+        DIMSTYLE
+          2
+        BIGDIM
+         40
+        32.0
+         41
+        0.15625
+        140
+        2.5
+          0
+        ENDTAB
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        ENTITIES
+          0
+        LEADER
+          8
+        0
+          3
+        BIGDIM
+         71
+        1
+         72
+        0
+         76
+        3
+         10
+        10.0
+         20
+        10.0
+         30
+        0.0
+         10
+        20.0
+         20
+        10.0
+         30
+        0.0
+         10
+        30.0
+         20
+        10.0
+         30
+        0.0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        let entity = try XCTUnwrap(doc.allEntities.first)
+        let geom = try XCTUnwrap(doc.resolvedGeometry(for: entity))
+        let tip = Vector3(x: 10.0, y: -10.0, z: 0.0)
+        var arrowPoints: [Vector3] = []
+        for prim in geom {
+            if case .fillPolygon(let points, _) = prim {
+                arrowPoints = points
+            }
+        }
+        XCTAssertEqual(arrowPoints.count, 3, "expected closed-filled arrowhead triangle")
+        XCTAssertTrue(arrowPoints.contains(where: { $0.distance(to: tip) < 1e-9 }),
+                      "arrowhead tip must sit on the leader's first vertex")
+        // Axial extent: the triangle corners flare sideways, so project onto
+        // the leader direction instead of measuring corner distance.
+        let axis5 = Vector3(x: 1.0, y: 0.0, z: 0.0)
+        let projections5 = arrowPoints.map { ($0 - tip).dot(axis5) }
+        XCTAssertEqual(projections5.max() ?? 0, 5.0, accuracy: 0.01,
+                       "arrowhead extent must be DIMASZ x DIMSCALE (0.15625 x 32)")
+        XCTAssertEqual(projections5.min() ?? 0, 0.0, accuracy: 1e-9,
+                       "arrowhead base must start at the leader tip")
+    }
+
+    func testImportDXFWithLegacyLeaderCustomArrowOrientation() throws {
+        // Block authored per AutoCAD convention: tip at origin, body in -X,
+        // unit size. Rendered arrow must extend from the tip toward the tail.
+        let dxf = """
+        0
+        SECTION
+          2
+        TABLES
+          0
+        TABLE
+          2
+        DIMSTYLE
+         70
+        1
+          0
+        DIMSTYLE
+          2
+        CUSTDIM
+          5
+        MYARROW
+         40
+        1.0
+         41
+        2.0
+          0
+        ENDTAB
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        BLOCKS
+          0
+        BLOCK
+          8
+        0
+          2
+        MYARROW
+         70
+        0
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+          0
+        LINE
+          8
+        0
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+         11
+        -1.0
+         21
+        0.2
+         31
+        0.0
+          0
+        LINE
+          8
+        0
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+         11
+        -1.0
+         21
+        -0.2
+         31
+        0.0
+          0
+        ENDBLK
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        ENTITIES
+          0
+        LEADER
+          8
+        0
+          3
+        CUSTDIM
+         71
+        1
+         72
+        0
+         76
+        2
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+         10
+        10.0
+         20
+        0.0
+         30
+        0.0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        let entity = try XCTUnwrap(doc.allEntities.first)
+        let geom = try XCTUnwrap(doc.resolvedGeometry(for: entity))
+        let tip = Vector3(x: 0.0, y: 0.0, z: 0.0)
+        var arrowEnds: [Vector3] = []
+        for prim in geom {
+            if case .line(let start, let end, _) = prim {
+                // Leader segment is 10 long; arrow strokes are ~2 long.
+                if start.distance(to: end) < 5.0 {
+                    arrowEnds.append(start.distance(to: tip) < 1e-9 ? end : start)
+                }
+            }
+        }
+        XCTAssertEqual(arrowEnds.count, 2, "expected two custom arrow strokes, got \(geom)")
+        for end in arrowEnds {
+            XCTAssertGreaterThanOrEqual(end.x, -1e-9,
+                "arrow body must extend toward the tail (+X), not past the tip")
+        }
+        let extent = arrowEnds.map { $0.distance(to: tip) }.max() ?? 0
+        XCTAssertEqual(extent, 2.0, accuracy: 0.05,
+                       "unit block scaled by DIMASZ (2.0) x DIMSCALE (1.0)")
+    }
+
+    func testImportDXFWithLegacyLeaderDimstyleOverrideScale() throws {
+        // Per-entity DSTYLE XData overrides DIMASZ (41) and DIMSCALE (40):
+        // effective arrow = 0.5 x 8.0 = 4.0.
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        LEADER
+          8
+        0
+          3
+        DSTY
+         71
+        1
+         72
+        0
+         76
+        2
+        1001
+        ACAD
+        1000
+        DSTYLE
+        1002
+        {
+        1070
+        41
+        1040
+        0.5
+        1070
+        40
+        1040
+        8.0
+        1002
+        }
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+         10
+        10.0
+         20
+        0.0
+         30
+        0.0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        let entity = try XCTUnwrap(doc.allEntities.first)
+        let geom = try XCTUnwrap(doc.resolvedGeometry(for: entity))
+        let tip = Vector3(x: 0.0, y: 0.0, z: 0.0)
+        var arrowPoints: [Vector3] = []
+        for prim in geom {
+            if case .fillPolygon(let points, _) = prim {
+                arrowPoints = points
+            }
+        }
+        XCTAssertEqual(arrowPoints.count, 3)
+        let axis4 = Vector3(x: 1.0, y: 0.0, z: 0.0)
+        let projections4 = arrowPoints.map { ($0 - tip).dot(axis4) }
+        XCTAssertEqual(projections4.max() ?? 0, 4.0, accuracy: 0.01,
+                       "DSTYLE DIMASZ override (0.5) x DIMSCALE override (8.0)")
+        XCTAssertEqual(projections4.min() ?? 0, 0.0, accuracy: 1e-9,
+                       "arrowhead base must start at the leader tip")
+    }
+
     func testDumpLosAngelesLayers() throws {
         let filePath = findTestFile("los-angeles.dxf")
         guard FileManager.default.fileExists(atPath: filePath) else {

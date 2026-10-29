@@ -104,6 +104,10 @@ public struct FormattedParagraph: Codable, Sendable, Hashable {
     /// 0 = inherit entity alignment, 1 = center, 2 = right,
     /// 3 = justified, 4 = distributed, 5 = explicit left
     public var alignment: Int
+    /// Explicit `\A` stacked-text vertical alignment (0 = bottom, 1 = center,
+    /// 2 = top), or nil when the paragraph carries no `\A` marker.
+    /// `nil` renders and serializes as the AutoCAD default (center).
+    public var stackAlignment: Int? = nil
     public var firstLineIndent: Double?
     public var leftIndent: Double?
     public var rightIndent: Double?
@@ -116,9 +120,11 @@ public struct FormattedParagraph: Codable, Sendable, Hashable {
         leftIndent: Double? = nil,
         rightIndent: Double? = nil,
         tabStops: [Double]? = nil,
-        runs: [FormattedTextRun] = []
+        runs: [FormattedTextRun] = [],
+        stackAlignment: Int? = nil
     ) {
         self.alignment = alignment
+        self.stackAlignment = stackAlignment
         self.firstLineIndent = firstLineIndent
         self.leftIndent = leftIndent
         self.rightIndent = rightIndent
@@ -214,7 +220,7 @@ public struct FormattedText: Codable, Sendable, Hashable {
 /// | `\W2.0;` | Width factor |
 /// | `\T1.5;` | Tracking |
 /// | `\Q30;` | Oblique angle |
-/// | `\A0;` / `\A1;` / `\A2;` | Legacy alignment override |
+/// | `\A0;` / `\A1;` / `\A2;` | Stacked-text vertical alignment (bottom/center/top); never paragraph justification |
 /// | `\pxql;` / `\pxqc;` / `\pxqr;` | Paragraph left/center/right justification |
 /// | `\pxqj;` / `\pxqd;` | Paragraph justified/distributed justification |
 /// | `\P` | Paragraph break |
@@ -290,6 +296,9 @@ public enum MTEXTFormatter {
             }
             if !paragraphProperties.isEmpty {
                 out += "\\px" + paragraphProperties.joined(separator: ",") + ";"
+            }
+            if let stackAlignment = paragraph.stackAlignment {
+                out += "\\A\(stackAlignment);"
             }
             for run in paragraph.runs {
                 if let stack = run.stack {
@@ -395,6 +404,9 @@ extension MTEXTFormatter {
         /// Result accumulator.
         var paragraphs: [FormattedParagraph] = [FormattedParagraph()]
         var currentAlignment: Int = 0
+        // Sticky `\A` stacked-text vertical alignment (AutoCAD default 1).
+        // Deliberately separate from paragraph justification.
+        var currentStackAlignment: Int = 1
         var currentFirstLineIndent: Double? = nil
         var currentLeftIndent: Double? = nil
         var currentRightIndent: Double? = nil
@@ -514,7 +526,8 @@ extension MTEXTFormatter {
                 leftIndent: currentLeftIndent,
                 rightIndent: currentRightIndent,
                 tabStops: currentTabStops,
-                runs: currentRuns
+                runs: currentRuns,
+                stackAlignment: currentStackAlignment != 1 ? currentStackAlignment : nil
             )
             currentRuns = []
         }
@@ -526,7 +539,8 @@ extension MTEXTFormatter {
                 firstLineIndent: currentFirstLineIndent,
                 leftIndent: currentLeftIndent,
                 rightIndent: currentRightIndent,
-                tabStops: currentTabStops))
+                tabStops: currentTabStops,
+                stackAlignment: currentStackAlignment != 1 ? currentStackAlignment : nil))
         }
 
         // MARK: - Control Code Parsing
@@ -805,7 +819,7 @@ extension MTEXTFormatter {
             ))
         }
 
-        // MARK: - Alignment Spec: \A0; \A1; \A2;
+        // MARK: - Stacked-text Alignment Spec: \A0; \A1; \A2;
 
         private mutating func parseAlignmentSpec() {
             var valStr = ""
@@ -819,7 +833,9 @@ extension MTEXTFormatter {
                 pos += 1
             }
             if let val = Int(valStr), val >= 0 && val <= 2 {
-                currentAlignment = val
+                // \A governs stacked-text vertical alignment, not paragraph
+                // justification: keep it off currentAlignment.
+                currentStackAlignment = val
             }
         }
 

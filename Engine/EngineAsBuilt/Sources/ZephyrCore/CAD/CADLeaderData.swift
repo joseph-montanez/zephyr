@@ -764,7 +764,10 @@ public enum CADLeaderGeometry {
                     abs(bounds.max.y - bounds.min.y)),
                 1e-9)
             let scale = size / extent
-            let angle = atan2(direction.y, direction.x)
+            // AutoCAD arrowhead blocks are drawn tip-at-origin pointing +X
+            // (body trails in -X): face +X away from the leader tail, i.e.
+            // rotate by the tail->tip direction, not tip->tail.
+            let angle = atan2(-direction.y, -direction.x)
             let transform = Transform3D.translated(by: tip)
                 .multiplying(by: .rotated(by: angle))
                 .multiplying(by: .scaled(by: Vector3(x: scale, y: scale, z: scale)))
