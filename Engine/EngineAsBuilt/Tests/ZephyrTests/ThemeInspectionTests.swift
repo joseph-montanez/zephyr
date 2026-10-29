@@ -184,4 +184,33 @@ final class ThemeInspectionTests: XCTestCase {
         ui.cycleTheme()
         XCTAssertEqual(ui.theme.id, "dark")
     }
+
+    func testIdleHairlinesUseDimBorderTone() {
+        let ctx = ImGuiCreateContext(nil)!
+        defer { ImGuiDestroyContext(ctx) }
+        let ui = EngineUIManager()
+        let io = ImGuiGetIO()!
+        io.pointee.DisplaySize = ImVec2(x: 1920, y: 1080)
+        io.pointee.DeltaTime = 1.0 / 60.0
+        _ = ImFontAtlas_AddFontDefault(io.pointee.Fonts, nil)
+        igImFontAtlasBuildMain(io.pointee.Fonts)
+
+        // Idle panel hairlines (separators, window/child borders) must use
+        // each theme's dim border tone so they sit back; the opaque tone is
+        // reserved for hover and brand gold for the active/resizing state.
+        for preset in AppTheme.allPresets {
+            ui.setTheme(preset.theme)
+            ImGuiNewFrame()
+            let separator = ImGuiGetStyleColorVec4(Int32(ImGuiCol_Separator.rawValue))!.pointee
+            let hovered = ImGuiGetStyleColorVec4(Int32(ImGuiCol_SeparatorHovered.rawValue))!.pointee
+            let active = ImGuiGetStyleColorVec4(Int32(ImGuiCol_SeparatorActive.rawValue))!.pointee
+            let border = ImGuiGetStyleColorVec4(Int32(ImGuiCol_Border.rawValue))!.pointee
+            XCTAssertEqual(separator.x, preset.theme.borderDim.x, accuracy: 0.001, "\(preset.id): Separator")
+            XCTAssertEqual(separator.w, preset.theme.borderDim.w, accuracy: 0.001, "\(preset.id): Separator alpha")
+            XCTAssertEqual(border.x, preset.theme.borderDim.x, accuracy: 0.001, "\(preset.id): Border")
+            XCTAssertEqual(hovered.x, preset.theme.border.x, accuracy: 0.001, "\(preset.id): SeparatorHovered")
+            XCTAssertEqual(active.x, preset.theme.brandGold.x, accuracy: 0.001, "\(preset.id): SeparatorActive")
+            ImGuiRender()
+        }
+    }
 }

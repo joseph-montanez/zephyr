@@ -175,7 +175,7 @@ struct RadialNavUI {
             // Colors (using explicit engine theme)
             let bgVec = engine.ui.theme.panelBg
             let bgCol = igGetColorU32_Vec4(ImVec4(x: bgVec.x, y: bgVec.y, z: bgVec.z, w: 0.95))
-            let lineCol = igGetColorU32_Vec4(engine.ui.theme.border)
+            let lineCol = igGetColorU32_Vec4(engine.ui.theme.borderDim)
             var hoverVec = engine.ui.theme.hoverBg
             hoverVec.w = 0.5 // Ensure some opacity
             let hoverCol = igGetColorU32_Vec4(hoverVec)

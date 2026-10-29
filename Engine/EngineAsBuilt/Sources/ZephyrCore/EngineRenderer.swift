@@ -1645,7 +1645,9 @@ public final class EngineRenderer {
             ImDrawListAddRectFilled(dl, gMin, gMax, igGetColorU32_Vec4(fill), 0.0, 0)
             if !active && !hovered {
                 // Hairline edges keep the gutter readable on any background.
-                let edge = igGetColorU32_Vec4(theme.border)
+                // The dim tone keeps idle dividers subtle; hover/active
+                // states above already use the full-contrast tones.
+                let edge = igGetColorU32_Vec4(theme.borderDim)
                 if isSideBySide {
                     ImDrawListAddLine(dl, ImVec2(x: gMin.x, y: gMin.y), ImVec2(x: gMin.x, y: gMax.y), edge, 1.0)
                     ImDrawListAddLine(dl, ImVec2(x: gMax.x, y: gMin.y), ImVec2(x: gMax.x, y: gMax.y), edge, 1.0)

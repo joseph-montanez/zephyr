@@ -673,7 +673,12 @@ public final class EngineUIManager {
                 colors[Int(ImGuiCol_TitleBgActive.rawValue)] = theme.topChromeBg
                 colors[Int(ImGuiCol_PopupBg.rawValue)]       = theme.panelBg
                 
-                colors[Int(ImGuiCol_Separator.rawValue)]     = theme.border
+                // Idle hairlines stay subtle in every theme; the opaque
+                // border tone is reserved for hover, and brand gold for
+                // the active/resizing state.
+                colors[Int(ImGuiCol_Separator.rawValue)]     = theme.borderDim
+                colors[Int(ImGuiCol_SeparatorHovered.rawValue)] = theme.border
+                colors[Int(ImGuiCol_SeparatorActive.rawValue)]  = theme.brandGold
                 colors[Int(ImGuiCol_Border.rawValue)]        = theme.borderDim
                 
                 colors[Int(ImGuiCol_WindowBg.rawValue)]      = theme.panelBg

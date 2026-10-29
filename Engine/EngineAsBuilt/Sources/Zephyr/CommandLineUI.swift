@@ -79,7 +79,7 @@ struct CommandLineUI {
         ImGuiPushStyleColor(Int32(ImGuiCol_WindowBg.rawValue), engine.ui.theme.panelBg)
         
         ImGuiPushStyleColor(Int32(ImGuiCol_FrameBg.rawValue), ImVec4(x: 0, y: 0, z: 0, w: 0))
-        ImGuiPushStyleColor(Int32(ImGuiCol_Border.rawValue), engine.ui.theme.border)
+        ImGuiPushStyleColor(Int32(ImGuiCol_Border.rawValue), engine.ui.theme.borderDim)
         ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowBorderSize.rawValue), 1.0)
 
         let wflags: Int32 = 1 | 2 | 4 | 8 | 64 | 256 // Added ImGuiWindowFlags_AlwaysAutoResize (64)
