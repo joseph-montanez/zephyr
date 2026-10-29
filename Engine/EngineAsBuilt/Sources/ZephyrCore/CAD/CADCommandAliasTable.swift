@@ -347,6 +347,20 @@ public enum CADCommandAliasTable {
         CADCommandAliasEntry(
             canonicalName: "CHANGE", category: .modify,
             description: "Change properties of selected entities (legacy form)"),
+        CADCommandAliasEntry(
+            canonicalName: "GEOMCONSTRAINT", aliases: ["GCON"],
+            category: .modify,
+            description: "Apply geometric constraints to lines (horizontal, vertical, coincident, parallel, perpendicular, equal, fix)"),
+        CADCommandAliasEntry(
+            canonicalName: "AUTOCONSTRAIN", category: .modify,
+            description: "Infer and apply constraints to loose lines, then solve"),
+        CADCommandAliasEntry(
+            canonicalName: "DELCONSTRAINT", category: .modify,
+            description: "Remove constraints from picked objects (ALL clears every constraint)"),
+        CADCommandAliasEntry(
+            canonicalName: "CONSTRAINTBAR", aliases: ["CBAR"],
+            category: .modify,
+            description: "Show or hide the constraint badges"),
     ]
 
     /// Entry for a canonical name (case-insensitive), if tabled.

@@ -21,6 +21,9 @@ public final class AutoconstrainCommand: FeatureCommand {
         finished = false
         let world = engine.document.solvableLines()
         guard !world.isEmpty else {
+            // Done synchronously: release residency first so the message
+            // persists as a passive prompt and the next click draws.
+            processor.finishFeatureCommand(engine: engine)
             processor.commandPrompt = "Nothing to constrain (needs loose lines)."
             finished = true
             return
@@ -29,6 +32,7 @@ public final class AutoconstrainCommand: FeatureCommand {
             handle: $0.key, a: $0.value.a, b: $0.value.b) }
         let detected = AutoConstrain.detect(lines: inputs)
         guard !detected.isEmpty else {
+            processor.finishFeatureCommand(engine: engine)
             processor.commandPrompt =
                 "No constraints inferred from \(world.count) line(s)."
             finished = true
@@ -51,6 +55,7 @@ public final class AutoconstrainCommand: FeatureCommand {
         if bad > 0 {
             message += " \(bad) conflicting — solve left them unsatisfied."
         }
+        processor.finishFeatureCommand(engine: engine)
         processor.commandPrompt = message
         finished = true
     }

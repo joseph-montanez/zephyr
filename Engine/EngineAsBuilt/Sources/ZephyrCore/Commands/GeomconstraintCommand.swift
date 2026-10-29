@@ -61,15 +61,22 @@ public final class GeomconstraintCommand: FeatureCommand {
         kind = nil
         first = nil
         promptKind(processor: processor)
+        // The first step needs typed input (H/V/C/P/PE/E/F) and the
+        // clickable option palette only renders while the command line
+        // is open — typing alone cannot open it mid-command.
+        processor.commandLineActive = true
+        processor.commandBuffer = ""
     }
 
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
         kind = nil
         first = nil
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
     }
 
     public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
-        [
+        ([
             .init(value: "H", title: "Horizontal", aliases: ["HORIZONTAL"],
                   description: "Constrain a line horizontal"),
             .init(value: "V", title: "Vertical", aliases: ["VERTICAL"],
@@ -84,7 +91,7 @@ public final class GeomconstraintCommand: FeatureCommand {
                   description: "Make two lines equal length"),
             .init(value: "F", title: "Fix", aliases: ["FIX"],
                   description: "Pin a line so solving never moves it"),
-        ]
+        ] as [FeatureCommandTextOption]).filter { $0.matches(input) }
     }
 
     public func handleCommandText(
@@ -105,11 +112,16 @@ public final class GeomconstraintCommand: FeatureCommand {
         guard let next else {
             processor.commandPrompt =
                 "Unknown option '\(text)'. Choose [Horizontal/Vertical/Coincident/Parallel/Perpendicular(pE)/Equal/Fix]."
+            processor.commandLineActive = true
+            processor.commandBuffer = ""
             return .handled
         }
         kind = next
         first = nil
         promptPick(processor: processor)
+        // Type chosen: move to graphical picking (OffsetCommand pattern).
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
         return .handled
     }
 
@@ -124,6 +136,11 @@ public final class GeomconstraintCommand: FeatureCommand {
     ) -> CommandResult {
         guard let kind else {
             promptKind(processor: processor)
+            // No type chosen yet and the option palette is closed
+            // (e.g. command line dismissed): reopen it so picking
+            // cannot strand the command with no way to answer.
+            processor.commandLineActive = true
+            processor.commandBuffer = ""
             return .continue
         }
         guard let hit = CADHitTesting.nestedHitTest(

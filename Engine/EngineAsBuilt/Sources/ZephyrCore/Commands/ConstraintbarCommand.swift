@@ -21,11 +21,16 @@ public final class ConstraintbarCommand: FeatureCommand {
         finished = false
         engine.document.showConstraintBadges.toggle()
         report(engine: engine, processor: processor)
-        finished = true
+        // Explicit SHOW/HIDE buttons only render while the command line
+        // is open (AutoContrastCommand pattern).
+        processor.commandLineActive = true
+        processor.commandBuffer = ""
     }
 
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
         finished = true
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
     }
 
     public func handleCommandText(
@@ -40,6 +45,9 @@ public final class ConstraintbarCommand: FeatureCommand {
         default:
             engine.document.showConstraintBadges.toggle()
         }
+        // Finishing clears the prompt, so also print: this is the only
+        // record of an explicit SHOW/HIDE choice.
+        print("[CAD] \(reportMessage(engine: engine))")
         report(engine: engine, processor: processor)
         finished = true
         return .finished
@@ -51,7 +59,7 @@ public final class ConstraintbarCommand: FeatureCommand {
                   description: "Show constraint badges"),
             .init(value: "HIDE", title: "Hide", aliases: ["OFF"],
                   description: "Hide constraint badges"),
-        ]
+        ].filter { $0.matches(input) }
     }
 
     public func handleKeyDown(
@@ -63,7 +71,11 @@ public final class ConstraintbarCommand: FeatureCommand {
     public func handleMouseClick(
         worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
-        .finished
+        // Click dismisses the toggle report; close the option palette
+        // with it so no empty command line lingers.
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
+        return .finished
     }
 
     public func handleMouseMotion(
@@ -72,12 +84,16 @@ public final class ConstraintbarCommand: FeatureCommand {
 
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 
-    private func report(engine: PhrostEngine, processor: CADCommandProcessor) {
+    private func reportMessage(engine: PhrostEngine) -> String {
         let entities = Set(
             engine.document.allConstraints.flatMap { [$0.entityA, $0.entityB] }
                 .compactMap { $0 }).count
-        processor.commandPrompt = engine.document.showConstraintBadges
+        return engine.document.showConstraintBadges
             ? "Constraint bars shown (\(engine.document.constraintCount) constraint(s) on \(entities) object(s))."
             : "Constraint bars hidden."
+    }
+
+    private func report(engine: PhrostEngine, processor: CADCommandProcessor) {
+        processor.commandPrompt = reportMessage(engine: engine)
     }
 }

@@ -20,10 +20,23 @@ public final class DelconstraintCommand: FeatureCommand {
         finished = false
         processor.commandPrompt =
             "Select objects to remove constraints from, or [All] (\(engine.document.constraintCount) constraint(s)). Esc to finish."
+        // The [All] option needs typed input and its button only renders
+        // while the command line is open (AutoContrastCommand pattern).
+        processor.commandLineActive = true
+        processor.commandBuffer = ""
     }
 
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
         finished = true
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
+    }
+
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        [
+            .init(value: "ALL", title: "All", aliases: [],
+                  description: "Remove every constraint in the drawing"),
+        ].filter { $0.matches(input) }
     }
 
     public func handleCommandText(
@@ -39,6 +52,9 @@ public final class DelconstraintCommand: FeatureCommand {
             engine.document.removeConstraint(handle: constraint.handle)
         }
         engine.tabManager.markActiveDirty()
+        // Finishing clears the prompt, so also print: this is the only
+        // record of an ALL clear.
+        print("[CAD] Removed \(count) constraint(s).")
         processor.commandPrompt = "Removed \(count) constraint(s)."
         finished = true
         return .finished
@@ -54,6 +70,10 @@ public final class DelconstraintCommand: FeatureCommand {
         worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
         if finished { return .finished }
+        // Graphical picking from here: dismiss the option palette
+        // (OffsetCommand pattern); [All] stays one Ctrl+9 away.
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
         guard let hit = CADHitTesting.nestedHitTest(
             worldX: worldX, worldY: worldY, document: engine.document) else {
             processor.commandPrompt = "No object there. Pick an object, or type All. Esc to finish."
