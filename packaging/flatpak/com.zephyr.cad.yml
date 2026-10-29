@@ -42,6 +42,11 @@ modules:
       - cp -R lisp /app/bin/lisp
       - cp -R "Plot Styles" /app/bin/
       - cp -R Patterns /app/bin/
+      # SwiftPM resource bundle for ZephyrCore (hatch Patterns), if staged
+      - |
+        for d in Zephyr_ZephyrCore.bundle Zephyr_ZephyrCore.resources; do
+          if [ -d "$d" ]; then cp -R "$d" /app/bin/; fi
+        done
       # Desktop integration
       - install -Dm644 com.zephyr.cad.desktop /app/share/applications/com.zephyr.cad.desktop
       - install -Dm644 com.zephyr.cad.metainfo.xml /app/share/metainfo/com.zephyr.cad.metainfo.xml

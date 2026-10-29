@@ -804,6 +804,21 @@ jobs:
             Copy-Item -Path "$buildDir\lisp" -Destination "$stageDir\lisp" -Recurse -Force
           }
 
+          # SwiftPM resource bundle for ZephyrCore (hatch Patterns). The app
+          # also finds the plain Patterns\ folder staged above, but ship the
+          # bundle too so Bundle-based resolution works as in dev builds.
+          foreach ($bundle in @("Zephyr_ZephyrCore.bundle", "Zephyr_ZephyrCore.resources")) {
+            if (Test-Path "$buildDir\$bundle") {
+              Copy-Item -Path "$buildDir\$bundle" -Destination "$stageDir\$bundle" -Recurse -Force
+              Write-Host "Bundled: $bundle"
+            }
+          }
+          if (-not (Test-Path "$stageDir\Patterns") -and
+              -not (Test-Path "$stageDir\Zephyr_ZephyrCore.bundle") -and
+              -not (Test-Path "$stageDir\Zephyr_ZephyrCore.resources")) {
+            throw "No hatch pattern payload staged (neither Patterns\ nor Zephyr_ZephyrCore bundle) - hatch editing would have no patterns"
+          }
+
           Write-Host "--- Staged files ---"
           Get-ChildItem $stageDir -Recurse | ForEach-Object { Write-Host "  $($_.FullName.Substring($stageDir.Length + 1))" }
 

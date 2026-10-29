@@ -227,11 +227,8 @@ public enum HatchPatternLibrary {
                 .appendingPathComponent("Patterns", isDirectory: true))
         }
 
-        #if SWIFT_PACKAGE
-        if let packageResources = Bundle.module.resourceURL {
-            candidates.append(packageResources.appendingPathComponent("Patterns", isDirectory: true))
-        }
-        #endif
+        candidates.append(contentsOf: packagePatternsDirectories(
+            searchBases: [Bundle.main.resourceURL, Bundle.main.bundleURL].compactMap { $0 }))
 
         if let resources = Bundle.main.resourceURL {
             candidates.append(resources.appendingPathComponent("Patterns", isDirectory: true))
@@ -242,6 +239,43 @@ public enum HatchPatternLibrary {
             let key = $0.standardizedFileURL.path.lowercased()
             return seen.insert(key).inserted
         }
+    }
+
+    /// `Patterns` directories inside the SwiftPM resource bundle
+    /// (`Zephyr_ZephyrCore.bundle` / `.resources`), located under any of
+    /// `searchBases`. Returns `[]` when the bundle is absent.
+    ///
+    /// Deliberately avoids the generated `Bundle.module` accessor: it
+    /// `fatalError`s when the bundle is missing, and packaged installs ship
+    /// `Patterns/` as a plain folder next to the executable (found via the
+    /// candidates above) without the resource bundle. Looking the bundle up
+    /// manually keeps hatch editing working in both layouts.
+    static func packagePatternsDirectories(searchBases: [URL]) -> [URL] {
+        let fm = FileManager.default
+        var result: [URL] = []
+        for base in searchBases {
+            for suffix in ["bundle", "resources"] {
+                let bundleURL = base.appendingPathComponent(
+                    "Zephyr_ZephyrCore.\(suffix)", isDirectory: true)
+                var isDir: ObjCBool = false
+                guard fm.fileExists(atPath: bundleURL.path, isDirectory: &isDir),
+                      isDir.boolValue else { continue }
+                // Bundle resource root differs by platform (bundle dir itself
+                // vs Contents/Resources on Darwin); offer every plausible
+                // root — the loader skips directories that do not exist.
+                var roots = [bundleURL]
+                if let resourceURL = Bundle(url: bundleURL)?.resourceURL {
+                    roots.append(resourceURL)
+                }
+                roots.append(bundleURL
+                    .appendingPathComponent("Contents", isDirectory: true)
+                    .appendingPathComponent("Resources", isDirectory: true))
+                for root in roots {
+                    result.append(root.appendingPathComponent("Patterns", isDirectory: true))
+                }
+            }
+        }
+        return result
     }
 
     private static func loadSnapshot() -> Snapshot {

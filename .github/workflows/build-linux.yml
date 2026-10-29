@@ -276,6 +276,14 @@ jobs:
             fi
           done
 
+          # SwiftPM resource bundle for ZephyrCore (hatch Patterns), next to
+          # the executable. The app also finds the plain Patterns/ folder.
+          for bundle in "Zephyr_ZephyrCore.bundle" "Zephyr_ZephyrCore.resources"; do
+            if [ -d "$BIN_DIR/$bundle" ]; then
+              cp -R "$BIN_DIR/$bundle" "$STAGE_DIR/"
+            fi
+          done
+
           echo "--- Staged files ---"
           find "$STAGE_DIR" -maxdepth 1 | sort
 
@@ -310,6 +318,14 @@ jobs:
           for asset in "Fonts" "Plot Styles" "Patterns" "lisp"; do
             if [ -d "$BIN_DIR/$asset" ]; then
               cp -R "$BIN_DIR/$asset" "$APPDIR/usr/bin/"
+            fi
+          done
+
+          # SwiftPM resource bundle for ZephyrCore (hatch Patterns), next to
+          # the executable. The app also finds the plain Patterns/ folder.
+          for bundle in "Zephyr_ZephyrCore.bundle" "Zephyr_ZephyrCore.resources"; do
+            if [ -d "$BIN_DIR/$bundle" ]; then
+              cp -R "$BIN_DIR/$bundle" "$APPDIR/usr/bin/"
             fi
           done
 
@@ -378,6 +394,14 @@ jobs:
           for asset in "Fonts" "Plot Styles" "Patterns" "lisp"; do
             if [ -d "$BIN_DIR/$asset" ]; then
               cp -R "$BIN_DIR/$asset" "$STAGE_PAYLOAD/"
+            fi
+          done
+
+          # SwiftPM resource bundle for ZephyrCore (hatch Patterns), next to
+          # the executable. The app also finds the plain Patterns/ folder.
+          for bundle in "Zephyr_ZephyrCore.bundle" "Zephyr_ZephyrCore.resources"; do
+            if [ -d "$BIN_DIR/$bundle" ]; then
+              cp -R "$BIN_DIR/$bundle" "$STAGE_PAYLOAD/"
             fi
           done
 

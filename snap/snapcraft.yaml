@@ -253,6 +253,13 @@ parts:
           cp -R "$bin_dir/$asset" "$dest/"
         fi
       done
+      # SwiftPM resource bundle for ZephyrCore (hatch Patterns), next to
+      # the executable. The app also finds the plain Patterns/ folder.
+      for bundle in "Zephyr_ZephyrCore.bundle" "Zephyr_ZephyrCore.resources"; do
+        if [ -d "$bin_dir/$bundle" ]; then
+          cp -R "$bin_dir/$bundle" "$dest/"
+        fi
+      done
       cp -L swift-tc/usr/lib/swift/linux/libswift*.so \
         swift-tc/usr/lib/swift/linux/libFoundation*.so \
         swift-tc/usr/lib/swift/linux/libdispatch.so \

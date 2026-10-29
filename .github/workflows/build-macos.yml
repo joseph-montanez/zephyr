@@ -339,6 +339,18 @@ jobs:
           cp -R lisp "$APP_RESOURCES/" || true
           cp Shaders/*.msl "$APP_RESOURCES/"
 
+          # SwiftPM resource bundle for ZephyrCore (hatch Patterns). It lives
+          # in the per-arch build dir, not next to the lipo'd universal
+          # binary. The app also finds the plain Patterns/ folder above, but
+          # ship the bundle too so Bundle resolution matches dev builds.
+          BUNDLE_SRC=$(find .build/arm64 -name "Zephyr_ZephyrCore.bundle" -type d -print -quit)
+          if [ -n "$BUNDLE_SRC" ]; then
+            cp -R "$BUNDLE_SRC" "$APP_RESOURCES/"
+            echo "Bundled: $BUNDLE_SRC"
+          else
+            echo "::warning::Zephyr_ZephyrCore.bundle not found under .build/arm64 - relying on plain Patterns/ folder"
+          fi
+
           # Copy Frameworks
           echo "Copying frameworks..."
           cp -R "$FRAMEWORKS_DIR/SDL3.framework" "$APP_FRAMEWORKS/"

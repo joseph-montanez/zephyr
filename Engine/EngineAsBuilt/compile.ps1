@@ -235,6 +235,16 @@ foreach ($dest in $destDirs) {
     }
 }
 
+# Mirror the SwiftPM resource bundle (ZephyrCore hatch Patterns) next to
+# every exe copy; the primary output dir already has it from the build.
+foreach ($dest in ($destDirs | Where-Object { $_ -ne $dllDest })) {
+    foreach ($bundle in @("Zephyr_ZephyrCore.bundle", "Zephyr_ZephyrCore.resources")) {
+        if (Test-Path "$dllDest\$bundle") {
+            Copy-Item -Path "$dllDest\$bundle" -Destination "$dest\$bundle" -Force -Recurse -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # If legacy directory exists and differs from SwiftPM product output, mirror executables so legacy launch paths work
 if ($destDirs.Count -gt 1) {
     foreach ($dest in ($destDirs | Where-Object { $_ -ne $dllDest })) {
