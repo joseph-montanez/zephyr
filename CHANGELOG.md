@@ -83,7 +83,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Frame tearing** — reused ImGui transfer buffers are now mapped with `cycle=true`; mapping with `cycle=false` let a new frame overwrite upload data the GPU was still reading, which tore the interface every couple of frames
 - **EAB constraint codec** — sub-entity/index fields now read in writer order, so coincident endpoint indexes survive a save/load round trip
 - **MLeader callout justification** — ODA-converted drawings repeat AcDbText placement groups inside ATTDEFs, which clobbered centered justification so block-content callouts (e.g. detail bubbles) rendered left-aligned at the insertion point; duplicate placement codes inside the attribute subclass are now ignored once a real AcDbText subclass was seen
-- **MTEXT alignment code and legacy leader arrows** — AutoCAD's `\A1;` marker is stacked-text alignment, not paragraph justification, so notes like "PROVIDE 20 MIN. DOOR" no longer center-shift off their insertion point; legacy LEADER arrows fold in DIMSCALE (0.15625 x 32 = 5.0) including per-entity DSTYLE overrides, MTEXT attachment points decompose into justification, and custom arrowhead blocks face the right way
+- **MTEXT alignment code** — AutoCAD's `\A0/1/2;` marker is stacked-text alignment, not paragraph justification, so it no longer centers whole paragraphs and width-less notes stay anchored at their insertion point; MTEXT attachment points decompose into justification, and `\A` round-trips on export
+- **Legacy leader arrows** — DIMSCALE folds into arrow size, text offset, and text height (including per-entity DSTYLE overrides), and custom arrowhead blocks orient tip-at-origin per the AutoCAD convention
 
 ### Maintenance
 - **Swift 6.4 migration** — toolchain bump and `zlib-ng` fix
