@@ -11,7 +11,7 @@ import XCTest
 final class DXFImportTests: XCTestCase {
 
     @MainActor
-    func testImportVisibleTableThroughAnonymousBlockAndExport() throws {
+    func testImportTableAsNativeTableAndExport() throws {
         let tableDXF = """
         0
         SECTION
@@ -217,29 +217,46 @@ final class DXFImportTests: XCTestCase {
         try tableDXF.write(to: dxfURL, atomically: true, encoding: .utf8)
 
         let imported = try DXFImporter.importDXF(filePath: dxfURL.path)
+        // The anonymous *T1 block (the table's drawn geometry in the DXF)
+        // still imports as a block definition...
         let tableBlock = try XCTUnwrap(imported.blocks.first { $0.name == "*T1" })
-        let tableEntity = try XCTUnwrap(imported.entities.first {
-            $0.blockID == tableBlock.handle
-        })
-
         XCTAssertGreaterThanOrEqual(tableBlock.geometry.count, 7)
-        XCTAssertEqual(tableEntity.transform.position.x, 100, accuracy: 1e-9)
-        XCTAssertEqual(tableEntity.transform.position.y, -200, accuracy: 1e-9)
+        // ...but ACAD_TABLE itself now imports as a native .table entity
+        // (91/92 give a 2x2 grid), not as an instance of that block.
+        XCTAssertEqual(imported.entities.count, 1)
+        let tableEntity = try XCTUnwrap(imported.entities.first)
+        XCTAssertNil(tableEntity.blockID)
+        let tablePrims = try XCTUnwrap(tableEntity.localGeometry)
+        XCTAssertEqual(tablePrims.count, 1)
+        guard case .table(let data, let origin, _) = try XCTUnwrap(tablePrims.first) else {
+            return XCTFail("ACAD_TABLE should import as a native table, got \(tablePrims)")
+        }
+        XCTAssertEqual(data.rows.count, 2)
+        XCTAssertEqual(data.columns.count, 2)
+        XCTAssertEqual(origin.x, 100, accuracy: 1e-9)
+        XCTAssertEqual(origin.y, -200, accuracy: 1e-9)
 
         let doc = CADDocument()
         doc.importLayersBlocksEntities(
             layers: imported.layers,
             blocks: imported.blocks,
             entities: imported.entities)
-        XCTAssertEqual(tableEntity.resolvedGeometry(in: doc)?.count, tableBlock.geometry.count)
+        XCTAssertEqual(doc.resolvedGeometry(for: tableEntity)?.count, 1)
 
         try EABWriter.write(document: doc, to: eabURL)
-        let saved = try EABReader.readDocument(from: eabURL)
-        let savedBlocks = saved.blocks
-        let savedEntities = saved.entities
+        // write(document:) stores a V7 view archive, so read it back as
+        // views (readDocument only parses legacy V6 single documents).
+        let savedViews = try EABReader.readViews(from: eabURL)
+        let savedDoc = try XCTUnwrap(savedViews.first).document
+        let savedBlocks = savedDoc.allBlocks
+        let savedEntities = savedDoc.allEntities
         let savedTable = try XCTUnwrap(savedBlocks.first { $0.name == "*T1" })
         XCTAssertEqual(savedTable.geometry.count, tableBlock.geometry.count)
-        XCTAssertTrue(savedEntities.contains { $0.blockID == savedTable.handle })
+        XCTAssertTrue(savedEntities.contains { entity in
+            (entity.localGeometry ?? []).contains {
+                if case .table = $0 { return true }; return false
+            }
+        }, "EAB roundtrip should preserve the native table entity")
 
         try PDFExporter.export(document: doc, to: pdfURL)
         let pdfData = try Data(contentsOf: pdfURL)
@@ -250,12 +267,80 @@ final class DXFImportTests: XCTestCase {
     }
 
     func testImportMinimalDXF() throws {
-        // Locate the test DXF file
-        let testFile = findTestFile("test_minimal.dxf")
-        let url = URL(fileURLWithPath: testFile)
-
-        let doc = CADDocument()
-        try doc.importDXF(url: url)
+        // No test_minimal.dxf fixture was ever committed; keep the minimal
+        // file (LINE, CIRCLE, ARC, closed LWPOLYLINE) inline like the rest
+        // of this suite.
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        LINE
+          8
+        0
+         10
+        0.0
+         20
+        0.0
+         11
+        10.0
+         21
+        10.0
+          0
+        CIRCLE
+          8
+        0
+         10
+        5.0
+         20
+        5.0
+         40
+        2.5
+          0
+        ARC
+          8
+        0
+         10
+        5.0
+         20
+        5.0
+         40
+        3.0
+         50
+        0.0
+         51
+        90.0
+          0
+        LWPOLYLINE
+          8
+        0
+         90
+        4
+         70
+        1
+         10
+        0.0
+         20
+        0.0
+         10
+        10.0
+         20
+        0.0
+         10
+        10.0
+         20
+        10.0
+         10
+        0.0
+         20
+        10.0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
 
         // Should have at least the "0" layer
         XCTAssertGreaterThanOrEqual(doc.allLayers.count, 1)
@@ -278,7 +363,7 @@ final class DXFImportTests: XCTestCase {
                 case .line:    lineCount += 1
                 case .circle:  circleCount += 1
                 case .arc:     arcCount += 1
-                case .polygon: polyCount += 1
+                case .polyline(let path, _): if path.isClosed { polyCount += 1 }
                 default: break
                 }
             }
@@ -836,13 +921,22 @@ final class DXFImportTests: XCTestCase {
         let entities = doc.allEntities
         XCTAssertEqual(entities.count, 1, "Expected 1 ELLIPSE")
 
-        if let entity = entities.first, let geom = doc.resolvedGeometry(for: entity) {
-            // Full ellipse should become a polygon
-            let hasPolygon = geom.contains(where: {
-                if case .polygon = $0 { return true }; return false
-            })
-            XCTAssertTrue(hasPolygon, "Full ellipse should produce polygon geometry")
+        let entity = try XCTUnwrap(entities.first)
+        let geom = try XCTUnwrap(doc.resolvedGeometry(for: entity))
+        // Native representation: a full ellipse imports as one .ellipse
+        // primitive, not a tessellated polygon. Group 11/21 is the
+        // major-axis vector relative to the center, and Y is negated on
+        // import, so center (50, 50) -> (50, -50) and axis (80, 50) ->
+        // (80, -50).
+        XCTAssertEqual(geom.count, 1)
+        guard case .ellipse(let center, let majorAxis, let minorRatio, _) = try XCTUnwrap(geom.first) else {
+            return XCTFail("Full ellipse should produce ellipse geometry, got \(geom)")
         }
+        XCTAssertEqual(center.x, 50.0, accuracy: 0.001)
+        XCTAssertEqual(center.y, -50.0, accuracy: 0.001)
+        XCTAssertEqual(majorAxis.x, 80.0, accuracy: 0.001)
+        XCTAssertEqual(majorAxis.y, -50.0, accuracy: 0.001)
+        XCTAssertEqual(minorRatio, 0.5, accuracy: 0.001)
     }
 
     /// Regression (186-749 KOMPAN Draco.dxf): 3D->2D projection exports
@@ -1632,6 +1726,12 @@ final class DXFImportTests: XCTestCase {
     }
 
     func testImportDXFWithHatchFills() throws {
+        // The HATCH boundaries below are polyline loops, so group 92 must
+        // carry the Polyline bit: 3 = External (1) | Polyline (2), followed
+        // by 72 (has bulges) / 73 (closed) / 93 (vertex count). A bare
+        // 92 = 1 declares an edge-defined loop instead, and the 10/20 pairs
+        // are then read as edge data, not polyline vertices.
+        //
         // DXF with HATCH (solid fill)
         let hatchSolidDXF = """
         0
@@ -1651,6 +1751,10 @@ final class DXFImportTests: XCTestCase {
          91
         1
          92
+        3
+         72
+        0
+         73
         1
          93
         4
@@ -1679,19 +1783,25 @@ final class DXFImportTests: XCTestCase {
         """
         let docSolid = try importDXFString(hatchSolidDXF)
         XCTAssertEqual(docSolid.allEntities.count, 1)
-        if let entity = docSolid.allEntities.first, let geom = docSolid.resolvedGeometry(for: entity) {
-            XCTAssertEqual(geom.count, 1)
-            if case .fillPolygon(let pts, _) = geom[0] {
-                XCTAssertEqual(pts.count, 4)
-                // Vertex Y should be negated during import: (0,0), (10,0), (10,-10), (0,-10)
-                XCTAssertEqual(pts[0].x, 0.0, accuracy: 0.001)
-                XCTAssertEqual(pts[0].y, 0.0, accuracy: 0.001)
-                XCTAssertEqual(pts[2].x, 10.0, accuracy: 0.001)
-                XCTAssertEqual(pts[2].y, -10.0, accuracy: 0.001)
-            } else {
-                XCTFail("Expected fillPolygon primitive for solid hatch")
-            }
+        let solidEntity = try XCTUnwrap(docSolid.allEntities.first)
+        let solidGeom = try XCTUnwrap(docSolid.resolvedGeometry(for: solidEntity))
+        // Native representation: a solid hatch imports as a complex-polygon
+        // fill plus a boundary carrier polyline, not a lone fillPolygon.
+        let fills: [[Vector3]] = solidGeom.compactMap { prim in
+            if case .fillComplexPolygon(let outer, _, _) = prim { return outer }
+            return nil
         }
+        XCTAssertEqual(fills.count, 1, "Expected one fillComplexPolygon for solid hatch")
+        let corners = try XCTUnwrap(fills.first)
+        // Vertex Y is negated during import: (0,0), (10,0), (10,-10), (0,-10).
+        // Compared as a set: winding order is the tessellator's choice.
+        func hasCorner(_ pts: [Vector3], _ x: Double, _ y: Double) -> Bool {
+            pts.contains { abs($0.x - x) < 0.001 && abs($0.y - y) < 0.001 }
+        }
+        XCTAssertTrue(hasCorner(corners, 0, 0))
+        XCTAssertTrue(hasCorner(corners, 10, 0))
+        XCTAssertTrue(hasCorner(corners, 10, -10))
+        XCTAssertTrue(hasCorner(corners, 0, -10))
 
         // DXF with HATCH (pattern fill - ANSI31/lines)
         let hatchPatternDXF = """
@@ -1712,6 +1822,10 @@ final class DXFImportTests: XCTestCase {
          91
         1
          92
+        3
+         72
+        0
+         73
         1
          93
         4
@@ -1744,17 +1858,27 @@ final class DXFImportTests: XCTestCase {
         """
         let docPattern = try importDXFString(hatchPatternDXF)
         XCTAssertEqual(docPattern.allEntities.count, 1)
-        if let entity = docPattern.allEntities.first, let geom = docPattern.resolvedGeometry(for: entity) {
-            // Pattern fill generates multiple line primitives inside the boundary
-            XCTAssertGreaterThan(geom.count, 0)
-            for prim in geom {
-                if case .line = prim {
-                    // correct
-                } else {
-                    XCTFail("Expected line primitives for pattern hatch")
+        let patternEntity = try XCTUnwrap(docPattern.allEntities.first)
+        let patternGeom = try XCTUnwrap(docPattern.resolvedGeometry(for: patternEntity))
+        // Native representation: a pattern hatch imports as a single
+        // hatchPath primitive; the pattern lines are generated from it at
+        // render time, not stored in the document geometry.
+        let hatchPaths: [(boundary: CADPolyline, pattern: String, scale: Double)] =
+            patternGeom.compactMap { prim in
+                if case .hatchPath(let boundary, _, let pattern, let scale, _, _, _) = prim {
+                    return (boundary, pattern, scale)
                 }
+                return nil
             }
-        }
+        XCTAssertEqual(hatchPaths.count, 1, "Expected one hatchPath for pattern hatch")
+        let hatch = try XCTUnwrap(hatchPaths.first)
+        XCTAssertEqual(hatch.pattern, "ANSI31")
+        XCTAssertEqual(hatch.scale, 1.0, accuracy: 0.001)
+        let boundaryPts = hatch.boundary.tessellatedPoints()
+        XCTAssertTrue(hasCorner(boundaryPts, 0, 0))
+        XCTAssertTrue(hasCorner(boundaryPts, 10, 0))
+        XCTAssertTrue(hasCorner(boundaryPts, 10, -10))
+        XCTAssertTrue(hasCorner(boundaryPts, 0, -10))
     }
 
     func testEntityStylesAndDashing() throws {
@@ -2100,7 +2224,10 @@ final class DXFImportTests: XCTestCase {
             }
             
             XCTAssertEqual(fillPolyCount, 1, "Expected 1 filled arrowhead")
-            XCTAssertEqual(lineCount, 3, "Expected 3 line segments (2 leader segments + 1 underline segment)")
+            // The leader vertices already carry the landing
+            // ((20,-20) -> (30,-20) after Y negation); no separate underline
+            // segment is synthesized from the 41 text-width group.
+            XCTAssertEqual(lineCount, 2, "Expected 2 leader line segments")
         }
     }
 
@@ -2179,14 +2306,15 @@ final class DXFImportTests: XCTestCase {
             }
             
             XCTAssertEqual(fillPolyCount, 1, "Expected 1 filled arrowhead")
-            XCTAssertEqual(lineCount, 3, "Expected 3 line segments")
+            XCTAssertEqual(lineCount, 2, "Expected 2 line segments")
             
-            // Last line segment is the text underline (landing extension)
-            // Points list ends at (30.0, -20.0) in screen coordinates (since Y is negated)
-            // Offset X is 2.0. So start X of underline should be 30.0 + 2.0 = 32.0.
-            // Width is 10.0. So end X of underline should be 32.0 + 10.0 = 42.0.
-            XCTAssertEqual(lastLineStart.x, 32.0, accuracy: 0.001)
-            XCTAssertEqual(lastLineEnd.x, 42.0, accuracy: 0.001)
+            // Groups 41 (text width) and 213 (annotation offset) are
+            // annotation metrics; they do not synthesize stored geometry.
+            // The last segment is the vertex-defined landing itself,
+            // (20, -20) -> (30, -20) after Y negation, unaffected by the
+            // 213 offset.
+            XCTAssertEqual(lastLineStart.x, 20.0, accuracy: 0.001)
+            XCTAssertEqual(lastLineEnd.x, 30.0, accuracy: 0.001)
             XCTAssertEqual(lastLineStart.y, -20.0, accuracy: 0.001)
             XCTAssertEqual(lastLineEnd.y, -20.0, accuracy: 0.001)
         }
