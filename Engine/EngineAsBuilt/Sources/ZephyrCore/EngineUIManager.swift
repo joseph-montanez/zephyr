@@ -247,6 +247,44 @@ public enum StatusBarUIPolicy {
     }
 }
 
+/// Capture policy for the radial nav's mouse handling.
+///
+/// Only pan/zoom/rotate (zones 2, 3, 4, 6) consume relative deltas and need
+/// SDL relative capture. Moving the nav itself (zone 1) and one-shot clicks
+/// (zones 0/5) are absolute gestures: capturing for those hides the OS
+/// cursor and parks it mid-window and, with no warp-back owed, strands it
+/// there on release, which surfaces as a cursor stuck in the middle after
+/// moving the nav when the app window sits on a secondary monitor.
+@MainActor
+public enum RadialNavCapture {
+    /// Zones that consume relative deltas and need SDL relative capture:
+    /// right (zoom in), bottom (pan), left (zoom out), outer ring (rotate).
+    public static func wantsRelativeCapture(zone: Int?) -> Bool {
+        switch zone {
+        case 2, 3, 4, 6:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Whether release owes a warp-back to the press point. Dragging the nav
+    /// itself (zone 1) intentionally keeps the cursor at the drop point.
+    public static func wantsWarpBack(activeZone: Int?, wasDragged: Bool) -> Bool {
+        activeZone != 1 || !wasDragged
+    }
+
+    /// Backstop for a lost mouse-up: ImGui still reports the item held while
+    /// the hardware button is already up (seen when the app window sits on a
+    /// secondary monitor). Treat as released so relative capture can never
+    /// strand the cursor mid-window.
+    public static func shouldForceRelease(
+        wasActive: Bool, isActive: Bool, physicalLeftDown: Bool
+    ) -> Bool {
+        wasActive && isActive && !physicalLeftDown
+    }
+}
+
 /// The radial nav captures the mouse (relative mode) and warps it back on
 /// release. Both SDL calls must target the OS window the nav is rendered
 /// in: targeting the main window from a float frame teleports the cursor

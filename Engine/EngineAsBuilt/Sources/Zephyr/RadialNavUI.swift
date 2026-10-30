@@ -267,13 +267,37 @@ struct RadialNavUI {
             ImDrawListAddTriangleFilled(drawList, tip, base1, base2, markerCol)
 
             // Interaction logic
-            engine.interaction.radialPanActive = isActive && currentZone == 3
-            if isActive {
+            // A lost mouse-up (seen when the app window sits on a secondary
+            // monitor) leaves ImGui reporting the nav button held forever,
+            // stranding relative capture on with the cursor parked mid-window.
+            // The physical button is the backstop: hardware already up while
+            // the item still reads active means the up event never arrived.
+            var itemActive = isActive
+            if wasActive && isActive {
+                var physicalX: Float = 0
+                var physicalY: Float = 0
+                let buttons = SDL_GetMouseState(&physicalX, &physicalY)
+                // Bit 0 is the left-button mask (SDL_BUTTON_MASK(LEFT)).
+                if RadialNavCapture.shouldForceRelease(
+                    wasActive: wasActive, isActive: isActive,
+                    physicalLeftDown: (buttons & 0x01) != 0
+                ) {
+                    itemActive = false
+                }
+            }
+            engine.interaction.radialPanActive = itemActive && currentZone == 3
+            if itemActive {
                 if !wasActive {
                     wasDragged = false
                     dragStartMousePos = mousePos
-                    activeWindowHandle = navWindow
-                    _ = SDL_SetWindowRelativeMouseMode(navWindow, true)
+                    // Only pan/zoom/rotate need relative deltas. Moving the
+                    // nav itself (zone 1) is an absolute drag: capturing for
+                    // it parks the cursor mid-window and, with no warp-back
+                    // owed, strands it there on release.
+                    if RadialNavCapture.wantsRelativeCapture(zone: currentZone) {
+                        activeWindowHandle = navWindow
+                        _ = SDL_SetWindowRelativeMouseMode(navWindow, true)
+                    }
                 }
                 
                 var relX: Float = 0
@@ -285,8 +309,13 @@ struct RadialNavUI {
                 if dx != 0 || dy != 0 { wasDragged = true }
                 wasActive = true
                 
-                engine.interaction.forceHideOSCursor = true
-                igSetMouseCursor(Int32(ImGuiMouseCursor_None.rawValue))
+                // Absolute drags (nav move, clicks) never captured, so the
+                // OS cursor stays visible for them.
+                let capturing = activeWindowHandle != nil
+                engine.interaction.forceHideOSCursor = capturing
+                if capturing {
+                    igSetMouseCursor(Int32(ImGuiMouseCursor_None.rawValue))
+                }
 
                 let isHugeDelta = abs(dx) > 100 || abs(dy) > 100
 
@@ -329,18 +358,20 @@ struct RadialNavUI {
             } else {
                 if wasActive {
                     engine.interaction.forceHideOSCursor = false
-                    let releaseWindow = activeWindowHandle ?? navWindow
-                    _ = SDL_SetWindowRelativeMouseMode(releaseWindow, false)
-                    dragOffset = nil
-
-                    if let startPos = dragStartMousePos {
-                        // When dragging the nav itself (zone 1), keep the mouse at the new position.
-                        // For all other zones (pan/zoom/rotate), warp back so the user can continue.
-                        if activeZone != 1 || !wasDragged {
-                            SDL_WarpMouseInWindow(releaseWindow, startPos.x, startPos.y)
+                    // Only a relative-capture drag parked the cursor: plain
+                    // absolute drags (nav move, clicks) never captured, so
+                    // there is nothing to release or warp back.
+                    if let captureWindow = activeWindowHandle {
+                        _ = SDL_SetWindowRelativeMouseMode(captureWindow, false)
+                        if let startPos = dragStartMousePos,
+                           RadialNavCapture.wantsWarpBack(
+                               activeZone: activeZone, wasDragged: wasDragged
+                           ) {
+                            SDL_WarpMouseInWindow(captureWindow, startPos.x, startPos.y)
                         }
-                        dragStartMousePos = nil
                     }
+                    dragOffset = nil
+                    dragStartMousePos = nil
                     activeWindowHandle = nil
                     if !wasDragged {
                         if currentZone == 1 {

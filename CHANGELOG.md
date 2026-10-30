@@ -78,6 +78,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **MLeader callout justification** — ODA-converted drawings repeat AcDbText placement groups inside ATTDEFs, which clobbered centered justification so block-content callouts (e.g. detail bubbles) rendered left-aligned at the insertion point; duplicate placement codes inside the attribute subclass are now ignored once a real AcDbText subclass was seen
 - **MTEXT alignment code** — AutoCAD's `\A0/1/2;` marker is stacked-text alignment, not paragraph justification, so it no longer centers whole paragraphs and width-less notes stay anchored at their insertion point; MTEXT attachment points decompose into justification, and `\A` round-trips on export
 - **Legacy leader arrows** — DIMSCALE folds into arrow size, text offset, and text height (including per-entity DSTYLE overrides), and custom arrowhead blocks orient tip-at-origin per the AutoCAD convention
+- **Radial nav cursor on secondary monitors** — moving the nav itself no longer enables SDL relative-mouse capture (an absolute drag needs none), so the cursor is no longer parked mid-window with no warp-back owed; a mouse-up lost while the app window sits on a secondary monitor now force-releases the drag from the physical button state instead of stranding relative capture on
 
 ### Maintenance
 - **Swift 6.4 migration** — toolchain bump and `zlib-ng` fix
