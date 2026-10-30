@@ -68,25 +68,16 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 ### Bug Fixes
 - **DXF ellipse arcs** — elliptical arcs with near-zero parameter spans are no longer promoted to full ellipses; only an exact `0...2pi` span is treated as a full ellipse, so tiny projection-export ticks no longer render as large stray circles
 - **Sheet ghost-double** — a layout whose only viewport is the overall paper-space viewport (ID 1) no longer projects model space on top of its paper geometry; the synthetic model-fit fallback now applies only to effectively-empty sheets (no visible vector paper content), so legacy layouts with just an invisible insert or missing raster still show the drawing instead of rendering blank
-- **Missing rasters** — unresolved IMAGE/UNDERLAY references render nothing (no more X placeholder frame) and are excluded from zoom extents; repair the path via the External References palette
-- **`HSPLIT` / `VPORTS 2H`** — after `VSPLIT`, fixed variable shadowing in `PaneLayout.split` recursion where child splits inherited their parent's axis instead of the requested one
 - **Snapping in modify commands** — base point selection during `MOVE` and friends now honors active entity snap targets (circle quadrants/center, line endpoints, midpoints) instead of falling back to raw mouse coordinates
 - **SHX shape fonts** — fractional arcs, clockwise octant arcs, multi-stroke outline behavior, and hole nudging
 - **Explode** — rectangles and compound entities split into separate elements
-- **Gradient hatches** — angled gradient projection
 - **`CADDocument` concurrency** — crash prevention on concurrent access
-- **Hatch editing** — undo/redo history registration
-- **Floating windows** — input dead zones, pane divider drag, click-to-raise, and white flash on view swap
 - **LINE / Polyline** — Enter-to-finish; command bar and autocomplete always render on top
 - **ODA setup** — download 404 and teardown hardening; first-run setup popup
 - **Windows builds** — missing DLLs, crash when engine init fails, and `igInputText` String-pointer warnings
-- **Per-window state** — ImGui contexts, window-local main tab and selection gestures, long EAB strings, and a quieter initial load
-- **Frame tearing** — reused ImGui transfer buffers are now mapped with `cycle=true`; mapping with `cycle=false` let a new frame overwrite upload data the GPU was still reading, which tore the interface every couple of frames
-- **EAB constraint codec** — sub-entity/index fields now read in writer order, so coincident endpoint indexes survive a save/load round trip
 - **MLeader callout justification** — ODA-converted drawings repeat AcDbText placement groups inside ATTDEFs, which clobbered centered justification so block-content callouts (e.g. detail bubbles) rendered left-aligned at the insertion point; duplicate placement codes inside the attribute subclass are now ignored once a real AcDbText subclass was seen
 - **MTEXT alignment code** — AutoCAD's `\A0/1/2;` marker is stacked-text alignment, not paragraph justification, so it no longer centers whole paragraphs and width-less notes stay anchored at their insertion point; MTEXT attachment points decompose into justification, and `\A` round-trips on export
 - **Legacy leader arrows** — DIMSCALE folds into arrow size, text offset, and text height (including per-entity DSTYLE overrides), and custom arrowhead blocks orient tip-at-origin per the AutoCAD convention
-- **Ribbon clipping** — the docked and floating ribbon are sized to their content plus the dock tab bar / title bar above it, so bottom panel titles and the single Menu-mode row are no longer cut off
 
 ### Maintenance
 - **Swift 6.4 migration** — toolchain bump and `zlib-ng` fix
