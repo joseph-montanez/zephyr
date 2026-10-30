@@ -14,6 +14,7 @@ import ZephyrKernel
 //   - Center (circle/arc/ellipse center)
 //   - Quadrant (circle/arc at 0°, 90°, 180°, 270°)
 //   - Insertion point (block/text insertion base)
+//   - Intersection (crossing point of two curves)
 //   - Nearest (closest point on any curve)
 //
 // The snap engine operates on resolved CADPrimitives for maximum accuracy.
@@ -66,6 +67,14 @@ public final class SnapEngine {
     /// Enables Tier 3 nearest-on-curve snapping (AutoCAD "Nearest" osnap for
     /// curved geometry). Toggleable so a future osnap settings UI can expose it.
     public var nearestOnCurveEnabled: Bool = true
+
+    /// Enables intersection snapping (AutoCAD "Intersection" osnap): the
+    /// crossing point of two nearby curves is a discrete snap target, so
+    /// geometry derived from offsets/construction lines can be picked
+    /// exactly. Intersections compete with the other discrete anchors by
+    /// distance and, like them, beat nearest-on-curve. Toggleable so a
+    /// future osnap settings UI can expose it.
+    public var intersectionSnapEnabled: Bool = true
 
     /// Tessellation density used when snapping to splines. The snap target is
     /// the same polyline approximation the renderer draws, so what you snap to
@@ -286,6 +295,138 @@ public final class SnapEngine {
         return best
     }
 
+    /// One world-space curve that passes within the snap threshold of the
+    /// cursor, kept for pairwise intersection testing.
+    private struct NearWorldCurve {
+        let entity: CADEntity
+        let transform: Transform3D
+        let curve: Curve2d
+        let distance: Double
+    }
+
+    /// World-space analytical curves for intersection testing. Line-like
+    /// primitives are exact under any affine transform; the rest reuse the
+    /// trim engine's exact world curves (similarity-gated where the curve
+    /// kind requires it, splines always). A polyline under a non-similarity
+    /// transform falls back to its straight (zero-bulge) edges, which stay
+    /// exact — bulged edges would become elliptical and are skipped.
+    private static func intersectionWorldCurves(
+        for prim: CADPrimitive, transform: Transform3D
+    ) -> [Curve2d] {
+        func worldPt(_ p: Vector3) -> Point2d { transform.transformPoint(p).point2d }
+        func worldDir(from origin: Vector3, direction: Vector3) -> Vec2d? {
+            let o = transform.transformPoint(origin)
+            let tip = transform.transformPoint(origin + direction)
+            let d = Vec2d(x: tip.x - o.x, y: tip.y - o.y)
+            return d.length > KernelTolerance.linear ? d : nil
+        }
+        switch prim {
+        case .line(let start, let end, _):
+            return [.line(LineSeg2d(start: worldPt(start), end: worldPt(end)))]
+        case .ray(let start, let direction, _):
+            guard let d = worldDir(from: start, direction: direction) else { return [] }
+            return [.ray(Ray2d(origin: worldPt(start), direction: d))]
+        case .xline(let point, let direction, _):
+            guard let d = worldDir(from: point, direction: direction) else { return [] }
+            return [.xline(XLine2d(origin: worldPt(point), direction: d))]
+        case .polygon(let points, _), .fillPolygon(let points, _):
+            guard points.count >= 2 else { return [] }
+            var curves: [Curve2d] = []
+            for i in points.indices {
+                curves.append(.line(LineSeg2d(
+                    start: worldPt(points[i]),
+                    end: worldPt(points[(i + 1) % points.count]))))
+            }
+            return curves
+        case .polyline(let path, _):
+            let exact = TrimGeometryEngine.exactWorldCurves(for: prim, transform: transform)
+            if !exact.isEmpty { return exact }
+            guard path.vertices.count >= 2 else { return [] }
+            let edgeCount = path.isClosed ? path.vertices.count : path.vertices.count - 1
+            var curves: [Curve2d] = []
+            for i in 0..<edgeCount {
+                let v0 = path.vertices[i]
+                guard abs(v0.bulge) <= KernelTolerance.bulgeZero else { continue }
+                let v1 = path.vertices[(i + 1) % path.vertices.count]
+                curves.append(.line(LineSeg2d(
+                    start: worldPt(v0.position), end: worldPt(v1.position))))
+            }
+            return curves
+        default:
+            return TrimGeometryEngine.exactWorldCurves(for: prim, transform: transform)
+        }
+    }
+
+    /// Tier 2 companion: exact crossing points of curve pairs among the
+    /// broad-phase candidates. An intersection within `threshold` of the
+    /// cursor lies on both curves, so each curve's closest distance to the
+    /// cursor is also within `threshold` — that projection test prunes the
+    /// pair space to the handful of curves actually near the cursor before
+    /// any pairwise solving. Hits compete with the discrete anchors already
+    /// in `best`/`bestDist` purely by distance, so a shared endpoint (same
+    /// point, same distance) keeps its vertex snap.
+    private func nearestIntersectionSnap(
+        cursor: Vector3,
+        candidates: [CADEntity],
+        resolveGeometry: ((CADEntity) -> [CADPrimitive]?)?,
+        primitiveVisibility: ((CADEntity) -> [Bool]?)?,
+        spatialGrid: ((CADEntity) -> CADBlockSpatialGrid?)?,
+        threshold: Double,
+        best: inout SnapResult?,
+        bestDist: inout Double
+    ) {
+        var near: [NearWorldCurve] = []
+        for entity in candidates {
+            let geometry = resolveGeometry?(entity) ?? entity.localGeometry
+            guard let geometry, !geometry.isEmpty else { continue }
+            let visibility = primitiveVisibility?(entity)
+            for instanceTransform in Self.instanceTransforms(for: entity) {
+                let localCursor = instanceTransform.inverse().transformPoint(cursor)
+                let primIndices: [Int] = spatialGrid?(entity).map {
+                    $0.candidateIndices(
+                        near: localCursor,
+                        radius: Self.localRadius(worldRadius: threshold, transform: instanceTransform))
+                } ?? Array(geometry.indices)
+                for primIndex in primIndices {
+                    if let visibility, primIndex < visibility.count, !visibility[primIndex] { continue }
+                    for curve in Self.intersectionWorldCurves(
+                        for: geometry[primIndex], transform: instanceTransform) {
+                        let proj = Projector2D.closestPointOnCurve(curve, to: cursor.point2d)
+                        if proj.distance <= threshold {
+                            near.append(NearWorldCurve(
+                                entity: entity, transform: instanceTransform,
+                                curve: curve, distance: proj.distance))
+                        }
+                    }
+                }
+            }
+        }
+        guard near.count >= 2 else { return }
+        // Bound the pairwise solve in pathological piles of overlapping
+        // geometry: the curves nearest the cursor are the plausible ones.
+        if near.count > 64 {
+            near.sort { $0.distance < $1.distance }
+            near = Array(near.prefix(64))
+        }
+        for i in 0..<near.count {
+            for j in (i + 1)..<near.count {
+                for hit in Intersector2D.intersect(near[i].curve, near[j].curve) {
+                    let dx = hit.point.x - cursor.x
+                    let dy = hit.point.y - cursor.y
+                    let dist = sqrt(dx * dx + dy * dy)
+                    guard dist < bestDist else { continue }
+                    bestDist = dist
+                    let worldPos = Vector3(hit.point, z: 0)
+                    best = SnapResult(
+                        entityHandle: near[i].entity.handle,
+                        anchor: .intersection(
+                            localPosition: near[i].transform.inverse().transformPoint(worldPos)),
+                        worldPos: worldPos)
+                }
+            }
+        }
+    }
+
     /// Find the nearest snap point within threshold.
     /// Returns nil if no anchor point or on-curve point is within range.
     ///
@@ -440,6 +581,19 @@ public final class SnapEngine {
         // Anchor snaps win whenever one is in range — a drafter hovering near
         // an endpoint wants the endpoint, not the on-curve point that is
         // necessarily at least as close to the cursor.
+        // Intersections are discrete anchors too, just owned by a pair of
+        // curves instead of one entity. Test them in the same distance
+        // competition before the early return, or an endpoint further from
+        // the cursor would shadow the crossing the drafter is aiming for.
+        if intersectionSnapEnabled {
+            nearestIntersectionSnap(
+                cursor: cursor, candidates: candidates,
+                resolveGeometry: resolveGeometry,
+                primitiveVisibility: primitiveVisibility,
+                spatialGrid: spatialGrid,
+                threshold: thresh, best: &best, bestDist: &bestDist)
+        }
+
         if best != nil { return best }
 
         // Tier 2.6: Extension snaps — snap to points along the infinite

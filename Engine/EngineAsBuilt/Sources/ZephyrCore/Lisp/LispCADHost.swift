@@ -569,6 +569,8 @@ final class LispCADHost: LispHost, @unchecked Sendable {
             return modes.contains("INS")
         case .nearest:
             return modes.contains("NEA")
+        case .intersection:
+            return modes.contains("INT")
         }
     }
 

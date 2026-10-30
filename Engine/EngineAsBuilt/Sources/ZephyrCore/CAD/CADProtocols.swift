@@ -30,6 +30,12 @@ public enum AnchorPoint: Hashable, Sendable {
     /// computed per-frame by the snap engine, since the position depends on
     /// where the cursor is.
     case nearest(localPosition: Vector3)
+    /// Crossing point of two curves (AutoCAD "Intersection" osnap). Like
+    /// `.nearest` this is never cached on an entity — no single entity owns
+    /// the point — so the snap engine computes it per frame from pairs of
+    /// nearby curves. `localPosition` is in the space of the entity the
+    /// snap result is attributed to (the first of the two curves).
+    case intersection(localPosition: Vector3)
 
     /// World-space position for this anchor given an entity's transform.
     public func worldPosition(transform: Transform3D) -> Vector3 {
@@ -41,6 +47,7 @@ public enum AnchorPoint: Hashable, Sendable {
         case .insertionPoint(let p): local = p
         case .quadrant(let p, _):   local = p
         case .nearest(let p):       local = p
+        case .intersection(let p):  local = p
         }
         return transform.transformPoint(local)
     }

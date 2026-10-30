@@ -289,7 +289,8 @@ public enum TrimGeometryEngine {
     /// ellipses, and bulged polylines require a similarity transform to
     /// survive as their own kind; splines are affine-invariant and always
     /// exact. Anything else returns [] (exploded chords cover it).
-    static func exactWorldCurves(for prim: CADPrimitive, transform: Transform3D) -> [Curve2d] {
+    /// Pure value math, hence nonisolated: SnapEngine reuses it off the main actor.
+    nonisolated static func exactWorldCurves(for prim: CADPrimitive, transform: Transform3D) -> [Curve2d] {
         switch prim {
         case .arc(let center, let radius, let startAngle, let endAngle, _):
             guard transform.isSimilarity2D else { return [] }
