@@ -235,7 +235,12 @@ struct AppUI {
         }
 
         // 8. Command line overlay at the bottom (opened by typing any letter key).
-        CommandLineUI.render(engine: engine, dw: dw, dh: dh)
+        // Gated to the window showing the active tab: the buffer is shared,
+        // so rendering in every window duplicates the prompt and splits
+        // keyboard focus across per-window ImGui contexts.
+        if CommandLineUIPolicy.shouldRender(showsActiveTab: showsActiveTab) {
+            CommandLineUI.render(engine: engine, dw: dw, dh: dh)
+        }
 
         // 9. Layer-move modal dialog (when moving entities between layers).
         if showsActiveTab && engine.ui.layerMoveActive {

@@ -33,6 +33,18 @@ public enum DocumentPanelUIPolicy {
     }
 }
 
+/// The command line owns one shared buffer (`commandProcessor`) but is
+/// rendered once per OS window frame. Render it only in the window
+/// showing the active tab; otherwise every window shows — and can
+/// mutate through — the same input, and per-window ImGui contexts fight
+/// over keyboard focus (first letter duplicates, later letters land in
+/// the wrong window).
+public enum CommandLineUIPolicy {
+    public static func shouldRender(showsActiveTab: Bool) -> Bool {
+        showsActiveTab
+    }
+}
+
 /// Selection-context editors (hatch/array/table ribbons and the properties
 /// inspector) all read the one shared active selection/document. Render
 /// them only in the window showing the active tab; otherwise every open
