@@ -309,6 +309,17 @@ public final class SnapEngine {
         return worldRadius / max(min(abs(scale.x), abs(scale.y)), 1e-9)
     }
 
+    /// World transforms of every rendered copy of an entity: the entity
+    /// transform alone, or one per associative-array instance. Path arrays
+    /// use the stored `cachedPath`, which storage refresh keeps in sync
+    /// with the live path entity (see CADDocument.refreshPathArrays).
+    private static func instanceTransforms(for entity: CADEntity) -> [Transform3D] {
+        guard let array = entity.arrayData else { return [entity.transform] }
+        let instances = array.evaluatedInstances(pathPoints: array.cachedPath)
+        guard !instances.isEmpty else { return [entity.transform] }
+        return instances.map { entity.transform.multiplying(by: $0.transform) }
+    }
+
     public func nearestSnap(
         worldX: Double,
         worldY: Double,
@@ -347,6 +358,51 @@ public final class SnapEngine {
             // suppress an entity whose primitives are ALL hidden here;
             // gridded blocks generate per-primitive anchors instead.
             if let visibility = primitiveVisibility?(entity), !visibility.contains(true) {
+                continue
+            }
+            // Array items render per-instance; cached anchors describe the
+            // whole-array bbox in container space and cannot snap to a
+            // point on an item. Rebuild geometry anchors (block space)
+            // and test them under every instance transform instead, or
+            // picks meant for the object land on the path curve.
+            if entity.arrayData != nil,
+               let arrayGeometry = resolveGeometry?(entity) ?? entity.localGeometry,
+               !arrayGeometry.isEmpty,
+               spatialGrid?(entity) != nil || arrayGeometry.count <= 100 {
+                let grid = spatialGrid?(entity)
+                let visibility = primitiveVisibility?(entity)
+                let fullAnchors = grid == nil
+                    ? CADEntity.computeAnchorPoints(from: arrayGeometry) : []
+                for transform in Self.instanceTransforms(for: entity) {
+                    let anchors: [AnchorPoint]
+                    if let grid {
+                        let localCursor = transform.inverse().transformPoint(cursor)
+                        let nearby = grid.candidateIndices(
+                            near: localCursor,
+                            radius: Self.localRadius(worldRadius: thresh, transform: transform))
+                            .filter { idx in
+                                guard let visibility, idx < visibility.count else { return true }
+                                return visibility[idx]
+                            }
+                        anchors = CADEntity.computeAnchorPoints(
+                            from: nearby.map { arrayGeometry[$0] })
+                    } else {
+                        anchors = fullAnchors
+                    }
+                    for ap in anchors {
+                        let worldPos = ap.worldPosition(transform: transform)
+                        let dx = worldPos.x - cursor.x
+                        let dy = worldPos.y - cursor.y
+                        let dist = sqrt(dx * dx + dy * dy)
+                        if dist < bestDist {
+                            bestDist = dist
+                            best = SnapResult(
+                                entityHandle: entity.handle,
+                                anchor: ap,
+                                worldPos: worldPos)
+                        }
+                    }
+                }
                 continue
             }
             let anchors: [AnchorPoint]
@@ -433,13 +489,16 @@ public final class SnapEngine {
             guard let geometry, !geometry.isEmpty else { continue }
             let visibility = primitiveVisibility?(entity)
 
-            let invTransform = entity.transform.inverse()
+            // Per-instance: array copies each carry their own transform
+            // (see Tier 2 note); non-arrays get the single entity transform.
+            for instanceTransform in Self.instanceTransforms(for: entity) {
+            let invTransform = instanceTransform.inverse()
             let localCursor = invTransform.transformPoint(cursor)
 
             let primIndices: [Int] = spatialGrid?(entity).map {
                 $0.candidateIndices(
                     near: localCursor,
-                    radius: Self.localRadius(worldRadius: thresh, transform: entity.transform))
+                    radius: Self.localRadius(worldRadius: thresh, transform: instanceTransform))
             } ?? Array(geometry.indices)
             for primIndex in primIndices {
                 let prim = geometry[primIndex]
@@ -626,7 +685,7 @@ public final class SnapEngine {
                 }
 
                 guard let lp = localNearest else { continue }
-                let worldPos = entity.transform.transformPoint(lp)
+                let worldPos = instanceTransform.transformPoint(lp)
                 let dx = worldPos.x - cursor.x
                 let dy = worldPos.y - cursor.y
                 let dist = sqrt(dx * dx + dy * dy)
@@ -638,6 +697,7 @@ public final class SnapEngine {
                         worldPos: worldPos
                     )
                 }
+            }
             }
         }
 
