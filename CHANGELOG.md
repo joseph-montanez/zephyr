@@ -79,6 +79,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **MTEXT alignment code** — AutoCAD's `\A0/1/2;` marker is stacked-text alignment, not paragraph justification, so it no longer centers whole paragraphs and width-less notes stay anchored at their insertion point; MTEXT attachment points decompose into justification, and `\A` round-trips on export
 - **Legacy leader arrows** — DIMSCALE folds into arrow size, text offset, and text height (including per-entity DSTYLE overrides), and custom arrowhead blocks orient tip-at-origin per the AutoCAD convention
 - **Radial nav cursor on secondary monitors** — moving the nav itself no longer enables SDL relative-mouse capture (an absolute drag needs none), so the cursor is no longer parked mid-window with no warp-back owed; a mouse-up lost while the app window sits on a secondary monitor now force-releases the drag from the physical button state instead of stranding relative capture on
+- **Radial nav follows window resizes** — the nav now owns its position every frame and clamps the remembered (or dragged) spot into the current window, so shrinking the window can no longer strand it off-screen
 
 ### Maintenance
 - **Swift 6.4 migration** — toolchain bump and `zlib-ng` fix

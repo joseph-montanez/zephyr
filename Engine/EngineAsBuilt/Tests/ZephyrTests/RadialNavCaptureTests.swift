@@ -50,4 +50,30 @@ final class RadialNavCaptureTests: XCTestCase {
         XCTAssertFalse(RadialNavCapture.shouldForceRelease(
             wasActive: false, isActive: false, physicalLeftDown: false))
     }
+
+    func testClampedPositionKeepsVisibleSpot() {
+        let p = RadialNavCapture.clampedPosition(x: 100, y: 120, dw: 1920, dh: 1080, size: 320)
+        XCTAssertEqual(p.x, 100)
+        XCTAssertEqual(p.y, 120)
+    }
+
+    func testClampedPositionPullsIntoShrunkenWindow() {
+        // Remembered spot from a larger window lands off-screen bottom-right.
+        let p = RadialNavCapture.clampedPosition(x: 1580, y: 740, dw: 1280, dh: 720, size: 320)
+        XCTAssertEqual(p.x, 960)
+        XCTAssertEqual(p.y, 400)
+    }
+
+    func testClampedPositionFloorsAtOrigin() {
+        let p = RadialNavCapture.clampedPosition(x: -40, y: -8, dw: 1920, dh: 1080, size: 320)
+        XCTAssertEqual(p.x, 0)
+        XCTAssertEqual(p.y, 0)
+    }
+
+    func testClampedPositionTinyWindowPinsToOrigin() {
+        // Window smaller than the nav: the origin is the only visible spot.
+        let p = RadialNavCapture.clampedPosition(x: 50, y: 50, dw: 200, dh: 200, size: 320)
+        XCTAssertEqual(p.x, 0)
+        XCTAssertEqual(p.y, 0)
+    }
 }

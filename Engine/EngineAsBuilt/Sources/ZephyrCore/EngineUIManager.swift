@@ -283,6 +283,17 @@ public enum RadialNavCapture {
     ) -> Bool {
         wasActive && isActive && !physicalLeftDown
     }
+
+    /// Clamp a nav origin into the current window so the whole nav stays
+    /// visible. A remembered spot from a larger window (or a drag) would
+    /// otherwise end up off-screen after a resize.
+    public static func clampedPosition(
+        x: Float, y: Float, dw: Float, dh: Float, size: Float
+    ) -> ImVec2 {
+        ImVec2(
+            x: min(max(x, 0), max(0, dw - size)),
+            y: min(max(y, 0), max(0, dh - size)))
+    }
 }
 
 /// The radial nav captures the mouse (relative mode) and warps it back on

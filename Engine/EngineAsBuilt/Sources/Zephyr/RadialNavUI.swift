@@ -30,6 +30,9 @@ struct RadialNavUI {
     static var dragOffset: ImVec2? = nil
     static var dragStartMousePos: ImVec2? = nil
     static var wasVisible: Bool = false
+    /// Last rendered nav origin, fed back in so a resize clamps the
+    /// remembered (or dragged) spot into the current window.
+    static var pinnedPos: ImVec2? = nil
     /// SDL window that owns the in-progress relative-mouse capture. The
     /// release-side relative-mode-off + warp must go to this same window,
     /// never implicitly to the main window.
@@ -85,25 +88,27 @@ struct RadialNavUI {
         let size: Float = 320
         let padding: Float = 20
 
-        // Use FirstUseEver so ImGui's ini file remembers position & size across runs.
-        // When the user is actively dragging the nav, we override with Always.
-        // On each fresh show (NAV), force the pane-aware default so it always
-        // appears somewhere viewable instead of a stale remembered spot.
+        // Own the position every frame so the nav can never end up off
+        // screen: a remembered spot from a larger window (or a drag) is
+        // clamped into the current window, keeping the nav visible across
+        // resizes. `pinnedPos` feeds the last rendered position back in; a
+        // fresh show with no pinned spot uses the pane-aware default.
+        let frameIO = ImGuiGetIO()!
+        let rawPos: ImVec2
         if let offset = dragOffset {
-            let io = ImGuiGetIO()!
-            ImGuiSetNextWindowPos(
-                ImVec2(x: io.pointee.MousePos.x - offset.x, y: io.pointee.MousePos.y - offset.y),
-                Int32(ImGuiCond_Always.rawValue),
-                ImVec2(x: 0, y: 0))
+            rawPos = ImVec2(
+                x: frameIO.pointee.MousePos.x - offset.x,
+                y: frameIO.pointee.MousePos.y - offset.y)
+        } else if !justShown, let pinned = pinnedPos {
+            rawPos = pinned
         } else {
-            let cond: Int32 = justShown
-                ? Int32(ImGuiCond_Always.rawValue)
-                : Int32(ImGuiCond_FirstUseEver.rawValue)
-            ImGuiSetNextWindowPos(
-                defaultPosition(engine: engine, dw: dw, dh: dh, size: size, padding: padding),
-                cond,
-                ImVec2(x: 0, y: 0))
+            rawPos = defaultPosition(engine: engine, dw: dw, dh: dh, size: size, padding: padding)
         }
+        ImGuiSetNextWindowPos(
+            RadialNavCapture.clampedPosition(
+                x: rawPos.x, y: rawPos.y, dw: dw, dh: dh, size: size),
+            Int32(ImGuiCond_Always.rawValue),
+            ImVec2(x: 0, y: 0))
         ImGuiSetNextWindowSize(ImVec2(x: size, y: size), Int32(ImGuiCond_FirstUseEver.rawValue))
         
         ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowPadding.rawValue), ImVec2(x: 0, y: 0))
@@ -121,6 +126,7 @@ struct RadialNavUI {
         if igBegin("RadialNavUI", &open, flags) {
             let drawList = ImGuiGetWindowDrawList()!
             let winPos = ImGuiGetWindowPos()
+            pinnedPos = winPos
             let center = ImVec2(x: winPos.x + size / 2, y: winPos.y + size / 2)
             
             let io = ImGuiGetIO()!
