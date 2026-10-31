@@ -108,7 +108,7 @@ final class RibbonShippedDefinitionTests: XCTestCase {
 
         XCTAssertEqual(
             spec.tabs.map(\.title),
-            ["Home", "Insert", "Annotate", "View", "Manage", "Output", "Custom"])
+            ["Home", "Insert", "Annotate", "Parametric", "View", "Manage", "Output", "Custom"])
         XCTAssertEqual(
             spec.menus.map(\.title),
             ["File", "Edit", "View", "Insert", "Format", "Draw", "Modify", "Tools"])

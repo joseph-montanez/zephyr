@@ -173,7 +173,7 @@ public struct LispOpenFile: Sendable {
 public struct LispInitget: Sendable {
     /// Bit flags (1=no-null, 2=no-zero, 4=no-negative, ...).
     public var bits: Int = 0
-    /// Allowed keywords, uppercased.
+    /// Allowed keywords, in defined spelling (matching is case-insensitive).
     public var keywords: [String] = []
 
     public init(bits: Int = 0, keywords: [String] = []) {

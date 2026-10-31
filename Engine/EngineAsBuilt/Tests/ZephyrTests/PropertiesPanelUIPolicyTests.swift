@@ -81,7 +81,11 @@ final class PropertiesPanelUIPolicyTests: XCTestCase {
     /// otherwise a large selection pays entity copies + label building +
     /// an allocating sort on the render path.
     func testPickerCacheFreshWhenNothingChanged() {
-        let doc = ObjectIdentifier(NSString(string: "doc"))
+        // Hold strong references: ObjectIdentifier is the bare pointer,
+        // and temporaries deallocated before comparison can have their
+        // addresses reused, flipping equality under heap pressure.
+        let docObject = NSString(string: "doc")
+        let doc = ObjectIdentifier(docObject)
         XCTAssertFalse(PropertiesPanelUIPolicy.pickerCacheStale(
             cachedDocument: doc, document: doc,
             cachedSelectionGeneration: 3, selectionGeneration: 3,
@@ -90,8 +94,12 @@ final class PropertiesPanelUIPolicyTests: XCTestCase {
     }
 
     func testPickerCacheStaleOnAnyKeyChange() {
-        let doc = ObjectIdentifier(NSString(string: "doc"))
-        let other = ObjectIdentifier(NSString(string: "other"))
+        // Hold strong references (see above): bare-pointer identity is
+        // only meaningful while the objects are alive.
+        let docObject = NSString(string: "doc")
+        let otherObject = NSString(string: "other")
+        let doc = ObjectIdentifier(docObject)
+        let other = ObjectIdentifier(otherObject)
         // Tab/document switch.
         XCTAssertTrue(PropertiesPanelUIPolicy.pickerCacheStale(
             cachedDocument: doc, document: other,

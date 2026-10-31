@@ -110,6 +110,7 @@ final class LispBuiltinLogicTests: XCTestCase {
         await assertEvalThrows("(getvar \"NOSUCHVAR\")", .hostError("unknown system variable: NOSUCHVAR"))
         _ = try await evalString("(initget 7 \"Yes No\")", env: &env, host: host)
         XCTAssertEqual(env.pendingInitget.bits, 7)
-        XCTAssertEqual(env.pendingInitget.keywords, ["YES", "NO"])
+        // Keywords keep their defined spelling; matching is case-insensitive.
+        XCTAssertEqual(env.pendingInitget.keywords, ["Yes", "No"])
     }
 }

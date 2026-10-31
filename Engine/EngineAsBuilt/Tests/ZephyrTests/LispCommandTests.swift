@@ -108,7 +108,7 @@ final class LispCommandTests: XCTestCase {
         // RIBBONMODE is the same deal as UNDO/REDO: bare Enter reports the
         // current mode instead of waiting for a keyword.
         let optionalArgumentCommands: Set<String> = [
-            "LOAD", "SCRIPT", "UNDO", "REDO", "RIBBONMODE",
+            "LOAD", "SCRIPT", "UNDO", "REDO", "RIBBONMODE", "VPRESIZE",
         ]
         let others = CommandDescriptor.allCommands.filter {
             !$0.syntax.isEmpty

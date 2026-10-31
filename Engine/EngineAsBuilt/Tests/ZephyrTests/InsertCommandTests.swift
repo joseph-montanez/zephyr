@@ -238,8 +238,11 @@ final class InsertCommandTests: XCTestCase {
         // File insert by path (classic library semantics).
         let path = try writeTempDXF()
         defer { try? FileManager.default.removeItem(atPath: path) }
+        // Lisp strings treat backslash as an escape (AutoCAD parity),
+        // so a native Windows path must be escaped before interpolating.
+        let lispPath = path.replacingOccurrences(of: "\\", with: "\\\\")
         _ = try await eval(
-            "(command \"INSERT\" \"\(path)\" '(0 0 0) \"1\" \"1\" \"0\")",
+            "(command \"INSERT\" \"\(lispPath)\" '(0 0 0) \"1\" \"1\" \"0\")",
             host: host, env: &env)
         XCTAssertTrue(doc.allBlocks.contains { $0.name == "xrefplan-Unit1Insert" })
         XCTAssertEqual(
