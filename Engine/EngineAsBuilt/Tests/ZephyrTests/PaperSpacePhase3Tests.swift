@@ -185,6 +185,23 @@ final class PaperSpacePhase3Tests: XCTestCase {
     }
 
     @MainActor
+    func testViewportDetailDescription() {
+        let viewport = DXFImporter.SheetViewport(
+            paperCenterX: 6, paperCenterY: 4.5,
+            paperWidth: 12, paperHeight: 9,
+            status: 2, id: 2,
+            viewCenterX: 0, viewCenterY: 0,
+            viewTargetX: 50, viewTargetY: 0,
+            viewHeight: 100, twistAngle: 0,
+            layerName: "MODEL")
+        let detail = viewport.detailDescription
+        XCTAssertTrue(detail.contains("id=2"), detail)
+        XCTAssertTrue(detail.contains("scale=1:0.09"), detail)
+        XCTAssertTrue(detail.contains("twist=0deg"), detail)
+        XCTAssertTrue(detail.contains("rect="), detail)
+    }
+
+    @MainActor
     func testZoomXPParsesPaperScale() {
         let zoom = ZoomCommand()
         if case .paperSpace(let n) = zoom.parseScaleInput("2XP") {

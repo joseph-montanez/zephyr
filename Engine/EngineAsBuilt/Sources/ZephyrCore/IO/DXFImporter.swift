@@ -375,6 +375,15 @@ public enum DXFImporter {
                 && y >= rect.minY && y <= rect.maxY
         }
 
+        /// One-line inspector for command-line feedback (MVIEW list/
+        /// select, click-to-pick). Shared so every surface reports the
+        /// same rect/center/scale/twist text.
+        public var detailDescription: String {
+            let rect = paperRect
+            func fmt(_ v: Double) -> String { String(format: "%.4g", v) }
+            return "id=\(id) rect=(\(fmt(rect.minX)), \(fmt(rect.minY)))-(\(fmt(rect.maxX)), \(fmt(rect.maxY))) scale=1:\(fmt(scale)) twist=\(fmt(twistAngle * 180.0 / .pi))deg"
+        }
+
         func withStatus(_ newStatus: Int) -> SheetViewport {
             SheetViewport(
                 paperCenterX: paperCenterX, paperCenterY: paperCenterY,

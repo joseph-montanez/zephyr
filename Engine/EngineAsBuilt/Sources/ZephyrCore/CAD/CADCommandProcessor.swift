@@ -2292,8 +2292,7 @@ public final class CADCommandProcessor {
     }
 
     private func printViewportDetail(_ viewport: DXFImporter.SheetViewport) {
-        let rect = viewport.paperRect
-        print("[CAD] id=\(viewport.id) rect=(\(String(format: "%.4g", rect.minX)), \(String(format: "%.4g", rect.minY)))-(\(String(format: "%.4g", rect.maxX)), \(String(format: "%.4g", rect.maxY))) scale=1:\(String(format: "%.4g", viewport.scale)) twist=\(String(format: "%.4g", viewport.twistAngle * 180.0 / .pi))deg")
+        print("[CAD] \(viewport.detailDescription)")
     }
 
     private func handleLayoutLifecycle(_ argument: String, engine: PhrostEngine) -> Bool {

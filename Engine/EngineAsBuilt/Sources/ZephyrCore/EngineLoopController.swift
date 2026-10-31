@@ -472,6 +472,18 @@ public final class EngineLoopController {
         interaction.lastClickTime = 0
         interaction.lastClickedHandle = nil
 
+        // Paper space: a click that hits no entity may still land inside a
+        // floating viewport frame. Record the pick (default viewport for
+        // ZOOM XP / CHSPACE) and report it once per change; rect-select
+        // still arms below exactly as before.
+        if engine.tabManager.isPaperSpace {
+            let previous = engine.tabManager.activeViewport()?.id
+            if let picked = engine.tabManager.selectViewport(atPaperPoint: wx, wy),
+               picked.id != previous {
+                print("[CAD] Selected viewport \(picked.detailDescription)")
+            }
+        }
+
         interaction.rectSelectActive = true
         interaction.rectSelectScreenStartX = x
         interaction.rectSelectStartX = wx
