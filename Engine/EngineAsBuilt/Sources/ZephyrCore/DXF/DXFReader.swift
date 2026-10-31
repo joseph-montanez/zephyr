@@ -3106,6 +3106,10 @@ extension DXFReader {
             $0.0 == 100 && $0.1.caseInsensitiveCompare("AcDbLayout") == .orderedSame
         }) else { return }
 
+        // Strict two-state split: codes 1, 70, and 76 repeat with different
+        // meanings on each side of the AcDbLayout marker. Plot settings
+        // come from the pre-marker half; tab identity from the post-marker.
+        let plotProperties = properties[..<subclassIndex]
         let layoutProperties = properties[properties.index(after: subclassIndex)...]
         guard let name = layoutProperties.first(where: { $0.0 == 1 })?.1,
               !name.isEmpty else { return }
@@ -3136,18 +3140,71 @@ extension DXFReader {
         var marginTM: Double? = nil
         var plotPaperUnits: Int = 0
         var plotRotation: Int = 0
+        var pageSetupName = ""
+        var plotConfigName = ""
+        var canonicalMediaName = ""
+        var plotViewName = ""
+        var styleSheet = ""
+        var plotOriginXMM = 0.0
+        var plotOriginYMM = 0.0
+        var plotWindowMinX = 0.0
+        var plotWindowMinY = 0.0
+        var plotWindowMaxX = 0.0
+        var plotWindowMaxY = 0.0
+        var customScaleNumerator = 1.0
+        var customScaleDenominator = 1.0
+        var plotFlags = 0
+        var plotType = 5
+        var standardScaleType = 0
+        var shadePlotMode = 0
+        var shadePlotResolution = 2
+        var shadePlotCustomDPI = 300
+        var standardScaleFactor = 1.0
+        var paperImageOriginX = 0.0
+        var paperImageOriginY = 0.0
 
-        for (code, value) in properties {
+        for (code, value) in plotProperties {
             switch code {
-            case 4: if !value.isEmpty { paperName = value }
+            case 1: pageSetupName = value
+            case 2: plotConfigName = value
+            case 4:
+                canonicalMediaName = value
+                if !value.isEmpty { paperName = value }
+            case 6: plotViewName = value
+            case 7: styleSheet = value
             case 40: marginLM = d(value)
             case 41: marginBM = d(value)
             case 42: marginRM = d(value)
             case 43: marginTM = d(value)
             case 44: paperWidthMM = d(value)
             case 45: paperHeightMM = d(value)
+            case 46: plotOriginXMM = d(value)
+            case 47: plotOriginYMM = d(value)
+            case 48: plotWindowMinX = d(value)
+            case 49: plotWindowMinY = d(value)
+            case 70: plotFlags = i(value) & ~1024
             case 72: plotPaperUnits = i(value)
             case 73: plotRotation = i(value)
+            case 74: plotType = i(value)
+            case 75: standardScaleType = i(value)
+            case 76: shadePlotMode = i(value)
+            case 77: shadePlotResolution = i(value)
+            case 78: shadePlotCustomDPI = i(value)
+            case 140: plotWindowMaxX = d(value)
+            case 141: plotWindowMaxY = d(value)
+            case 142: customScaleNumerator = d(value)
+            case 143: customScaleDenominator = d(value)
+            case 147: standardScaleFactor = d(value)
+            case 148: paperImageOriginX = d(value)
+            case 149: paperImageOriginY = d(value)
+            default: break
+            }
+        }
+
+        var layoutFlags = 0
+        for (code, value) in layoutProperties {
+            switch code {
+            case 70: layoutFlags = i(value)
             default: break
             }
         }
@@ -3166,7 +3223,30 @@ extension DXFReader {
             marginRM: marginRM,
             marginTM: marginTM,
             plotPaperUnits: plotPaperUnits,
-            plotRotation: plotRotation))
+            plotRotation: plotRotation,
+            pageSetupName: pageSetupName,
+            plotConfigName: plotConfigName,
+            canonicalMediaName: canonicalMediaName,
+            plotViewName: plotViewName,
+            styleSheet: styleSheet,
+            plotOriginXMM: plotOriginXMM,
+            plotOriginYMM: plotOriginYMM,
+            plotWindowMinX: plotWindowMinX,
+            plotWindowMinY: plotWindowMinY,
+            plotWindowMaxX: plotWindowMaxX,
+            plotWindowMaxY: plotWindowMaxY,
+            customScaleNumerator: customScaleNumerator,
+            customScaleDenominator: customScaleDenominator,
+            plotFlags: plotFlags,
+            plotType: plotType,
+            standardScaleType: standardScaleType,
+            shadePlotMode: shadePlotMode,
+            shadePlotResolution: shadePlotResolution,
+            shadePlotCustomDPI: shadePlotCustomDPI,
+            standardScaleFactor: standardScaleFactor,
+            paperImageOriginX: paperImageOriginX,
+            paperImageOriginY: paperImageOriginY,
+            layoutFlags: layoutFlags))
     }
 
     private func resolveImageReferences() {

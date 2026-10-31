@@ -245,6 +245,31 @@ public struct DXFLayoutEntry: Sendable {
     public var marginTM: Double?
     public var plotPaperUnits: Int
     public var plotRotation: Int
+    // MARK: - AcDbPlotSettings (pre-marker half; codes 1/70/76 disambiguated)
+    public var pageSetupName: String
+    public var plotConfigName: String
+    public var canonicalMediaName: String
+    public var plotViewName: String
+    public var styleSheet: String
+    public var plotOriginXMM: Double
+    public var plotOriginYMM: Double
+    public var plotWindowMinX: Double
+    public var plotWindowMinY: Double
+    public var plotWindowMaxX: Double
+    public var plotWindowMaxY: Double
+    public var customScaleNumerator: Double
+    public var customScaleDenominator: Double
+    public var plotFlags: Int
+    public var plotType: Int
+    public var standardScaleType: Int
+    public var shadePlotMode: Int
+    public var shadePlotResolution: Int
+    public var shadePlotCustomDPI: Int
+    public var standardScaleFactor: Double
+    public var paperImageOriginX: Double
+    public var paperImageOriginY: Double
+    /// Post-marker layout flags (bit 0 = PSLTSCALE, bit 1 = LIMCHECK).
+    public var layoutFlags: Int
 
     public init(
         name: String = "",
@@ -260,7 +285,30 @@ public struct DXFLayoutEntry: Sendable {
         marginRM: Double? = nil,
         marginTM: Double? = nil,
         plotPaperUnits: Int = 0,
-        plotRotation: Int = 0
+        plotRotation: Int = 0,
+        pageSetupName: String = "",
+        plotConfigName: String = "",
+        canonicalMediaName: String = "",
+        plotViewName: String = "",
+        styleSheet: String = "",
+        plotOriginXMM: Double = 0,
+        plotOriginYMM: Double = 0,
+        plotWindowMinX: Double = 0,
+        plotWindowMinY: Double = 0,
+        plotWindowMaxX: Double = 0,
+        plotWindowMaxY: Double = 0,
+        customScaleNumerator: Double = 1,
+        customScaleDenominator: Double = 1,
+        plotFlags: Int = 0,
+        plotType: Int = 5,
+        standardScaleType: Int = 0,
+        shadePlotMode: Int = 0,
+        shadePlotResolution: Int = 2,
+        shadePlotCustomDPI: Int = 300,
+        standardScaleFactor: Double = 1,
+        paperImageOriginX: Double = 0,
+        paperImageOriginY: Double = 0,
+        layoutFlags: Int = 0
     ) {
         self.name = name
         self.tabOrder = tabOrder
@@ -276,6 +324,29 @@ public struct DXFLayoutEntry: Sendable {
         self.marginTM = marginTM
         self.plotPaperUnits = plotPaperUnits
         self.plotRotation = plotRotation
+        self.pageSetupName = pageSetupName
+        self.plotConfigName = plotConfigName
+        self.canonicalMediaName = canonicalMediaName
+        self.plotViewName = plotViewName
+        self.styleSheet = styleSheet
+        self.plotOriginXMM = plotOriginXMM
+        self.plotOriginYMM = plotOriginYMM
+        self.plotWindowMinX = plotWindowMinX
+        self.plotWindowMinY = plotWindowMinY
+        self.plotWindowMaxX = plotWindowMaxX
+        self.plotWindowMaxY = plotWindowMaxY
+        self.customScaleNumerator = customScaleNumerator
+        self.customScaleDenominator = customScaleDenominator
+        self.plotFlags = plotFlags & ~1024
+        self.plotType = plotType
+        self.standardScaleType = standardScaleType
+        self.shadePlotMode = shadePlotMode
+        self.shadePlotResolution = shadePlotResolution
+        self.shadePlotCustomDPI = shadePlotCustomDPI
+        self.standardScaleFactor = standardScaleFactor
+        self.paperImageOriginX = paperImageOriginX
+        self.paperImageOriginY = paperImageOriginY
+        self.layoutFlags = layoutFlags
     }
 }
 

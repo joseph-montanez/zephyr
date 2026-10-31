@@ -528,6 +528,7 @@ public final class TabManager {
                 let viewGroups = view.kind == .sheet ? view.groups : imported.groups
                 doc.groups = Dictionary(
                     uniqueKeysWithValues: viewGroups.map { ($0.name, $0) })
+                doc.plotSettings = view.plotSettings
                 doc.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
                 doc.insertionBase = imported.insBase
                 doc.dxfRoundTripPayload = imported.roundTripPayload
@@ -587,6 +588,7 @@ public final class TabManager {
             let paperGroups = view.kind == .sheet ? view.groups : imported.groups
             doc.groups = Dictionary(
                 uniqueKeysWithValues: paperGroups.map { ($0.name, $0) })
+            doc.plotSettings = view.plotSettings
             doc.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
             doc.insertionBase = imported.insBase
             doc.dxfRoundTripPayload = imported.roundTripPayload
@@ -965,6 +967,16 @@ public final class TabManager {
         let settings = Self.defaultNewLayoutSettings
         doc.layoutSettings = settings
         doc.unit = .millimeter
+        doc.plotSettings = CADPlotSettings(
+            paperName: settings.paperName,
+            paperWidthMM: settings.paperWidthMM,
+            paperHeightMM: settings.paperHeightMM,
+            marginLM: settings.marginLM,
+            marginBM: settings.marginBM,
+            marginRM: settings.marginRM,
+            marginTM: settings.marginTM,
+            plotPaperUnits: settings.plotPaperUnits,
+            plotRotation: settings.plotRotation)
         tabs[activeIndex].drawingViews.append(DrawingView(
             name: finalName, kind: .sheet, document: doc))
         doc.savedRevision = doc.editRevision

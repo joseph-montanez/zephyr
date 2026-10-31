@@ -6,19 +6,23 @@ public struct DXFLayoutDefinition: Sendable {
     public var tabOrder: Int
     public var minimumLimits: Vector3
     public var maximumLimits: Vector3
+    /// Full plot settings; nil reproduces the legacy synthetic defaults.
+    public var plotSettings: CADPlotSettings?
 
     public init(
         name: String,
         blockName: String,
         tabOrder: Int,
         minimumLimits: Vector3 = .zero,
-        maximumLimits: Vector3 = Vector3(x: 12, y: 9, z: 0)
+        maximumLimits: Vector3 = Vector3(x: 12, y: 9, z: 0),
+        plotSettings: CADPlotSettings? = nil
     ) {
         self.name = name
         self.blockName = blockName
         self.tabOrder = tabOrder
         self.minimumLimits = minimumLimits
         self.maximumLimits = maximumLimits
+        self.plotSettings = plotSettings
     }
 }
 
@@ -3574,31 +3578,41 @@ public class DXFWriter {
         let isModel = normalizedName(layout.blockName) == "*MODEL_SPACE"
         out += "  0\r\nLAYOUT\r\n  5\r\n\(handle)\r\n"
         out += "330\r\n\(ownerHandle)\r\n100\r\nAcDbPlotSettings\r\n"
-        writeStrAllowEmpty(1, "", &out)
-        writeStrAllowEmpty(2, "", &out)
-        writeStrAllowEmpty(4, "", &out)
-        writeStrAllowEmpty(6, "", &out)
-        for code in 40...49 { writeDbl(code, 0, &out) }
-        writeDbl(140, 0, &out)
-        writeDbl(141, 0, &out)
-        writeDbl(142, 1, &out)
-        writeDbl(143, 1, &out)
-        writeInt(70, isModel ? 1024 : 0, &out)
-        writeInt(72, 0, &out)
-        writeInt(73, 0, &out)
-        writeInt(74, 5, &out)
-        writeStrAllowEmpty(7, "", &out)
-        writeInt(75, 0, &out)
-        writeDbl(147, 1, &out)
-        writeInt(76, 0, &out)
-        writeInt(77, 2, &out)
-        writeInt(78, 300, &out)
-        writeDbl(148, 0, &out)
-        writeDbl(149, 0, &out)
+        let ps = layout.plotSettings
+        writeStrAllowEmpty(1, ps?.pageSetupName ?? "", &out)
+        writeStrAllowEmpty(2, ps?.plotConfigName ?? "", &out)
+        writeStrAllowEmpty(4, ps?.canonicalMediaName ?? "", &out)
+        writeStrAllowEmpty(6, ps?.plotViewName ?? "", &out)
+        writeDbl(40, ps?.marginLM ?? 0, &out)
+        writeDbl(41, ps?.marginBM ?? 0, &out)
+        writeDbl(42, ps?.marginRM ?? 0, &out)
+        writeDbl(43, ps?.marginTM ?? 0, &out)
+        writeDbl(44, ps?.paperWidthMM ?? 0, &out)
+        writeDbl(45, ps?.paperHeightMM ?? 0, &out)
+        writeDbl(46, ps?.plotOriginXMM ?? 0, &out)
+        writeDbl(47, ps?.plotOriginYMM ?? 0, &out)
+        writeDbl(48, ps?.plotWindowMinX ?? 0, &out)
+        writeDbl(49, ps?.plotWindowMinY ?? 0, &out)
+        writeDbl(140, ps?.plotWindowMaxX ?? 0, &out)
+        writeDbl(141, ps?.plotWindowMaxY ?? 0, &out)
+        writeDbl(142, ps?.customScaleNumerator ?? 1, &out)
+        writeDbl(143, ps?.customScaleDenominator ?? 1, &out)
+        writeInt(70, (ps?.plotFlags ?? 0) | (isModel ? 1024 : 0), &out)
+        writeInt(72, ps?.plotPaperUnits ?? 0, &out)
+        writeInt(73, ps?.plotRotation ?? 0, &out)
+        writeInt(74, ps?.plotType ?? 5, &out)
+        writeStrAllowEmpty(7, ps?.styleSheet ?? "", &out)
+        writeInt(75, ps?.standardScaleType ?? 0, &out)
+        writeDbl(147, ps?.standardScaleFactor ?? 1, &out)
+        writeInt(76, ps?.shadePlotMode ?? 0, &out)
+        writeInt(77, ps?.shadePlotResolution ?? 2, &out)
+        writeInt(78, ps?.shadePlotCustomDPI ?? 300, &out)
+        writeDbl(148, ps?.paperImageOriginX ?? 0, &out)
+        writeDbl(149, ps?.paperImageOriginY ?? 0, &out)
 
         out += "100\r\nAcDbLayout\r\n"
         writeStr(1, layout.name, &out)
-        writeInt(70, isModel ? 1 : 0, &out)
+        writeInt(70, ps?.layoutFlags ?? (isModel ? 1 : 0), &out)
         writeInt(71, layout.tabOrder, &out)
         writePoint(10, layout.minimumLimits, &out)
         writePoint(11, layout.maximumLimits, &out)

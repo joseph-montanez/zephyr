@@ -64,6 +64,7 @@ public struct CADDocumentSnapshot: Sendable {
     /// this set render as placeholder frames.
     public let availableImageAssetNames: Set<String>
     public let layoutSettings: CADLayoutSettings?
+    public let plotSettings: CADPlotSettings?
     /// Per-entity isolation (ISOLATEOBJECTS/HIDEOBJECTS) at snapshot time.
     /// Render-only session state: restore paths ignore it, so undo/redo
     /// never changes isolation, and it is never persisted to DXF/EAB.
@@ -100,12 +101,14 @@ public struct CADDocumentSnapshot: Sendable {
         pdfDefinitions: [String: CADPdfDefinition] = [:],
         availableImageAssetNames: Set<String> = [],
         layoutSettings: CADLayoutSettings? = nil,
+        plotSettings: CADPlotSettings? = nil,
         isolatedHiddenHandles: Set<UUID> = [],
         groups: [String: CADGroup] = [:]
     ) {
         self.groups = groups
         self.isolatedHiddenHandles = isolatedHiddenHandles
         self.layoutSettings = layoutSettings
+        self.plotSettings = plotSettings
         self.xrefFadePercent = xrefFadePercent
         self.imageDefinitions = imageDefinitions
         self.pdfDefinitions = pdfDefinitions
@@ -157,7 +160,8 @@ public struct CADDocumentSnapshot: Sendable {
         fillMode: Bool = true,
         dxfRoundTripPayload: DXFRoundTripPayload? = nil,
         imageAssetNames: Set<String> = [],
-        layoutSettings: CADLayoutSettings? = nil
+        layoutSettings: CADLayoutSettings? = nil,
+        plotSettings: CADPlotSettings? = nil
     ) {
         let styles = Dictionary(uniqueKeysWithValues: textStyleFonts.map { name, font in
             (name, CADTextStyle(name: name, fontFile: font).normalized)
@@ -184,7 +188,8 @@ public struct CADDocumentSnapshot: Sendable {
             fillMode: fillMode,
             dxfRoundTripPayload: dxfRoundTripPayload,
             imageAssetNames: imageAssetNames,
-            layoutSettings: layoutSettings)
+            layoutSettings: layoutSettings,
+            plotSettings: plotSettings)
     }
 }
 
@@ -510,6 +515,11 @@ public final class CADDocument {
     /// Raw DXF classes/objects retained for lossless round-trip of native entities.
     public var dxfRoundTripPayload: DXFRoundTripPayload?
     public var layoutSettings: CADLayoutSettings? = nil
+
+    /// Full plot settings for this view (paper + device/scale/flags).
+    /// The importer keeps it in sync with `layoutSettings` from the same
+    /// DXF layout entry; both persist in EAB. Nil means writer defaults.
+    public var plotSettings: CADPlotSettings? = nil
 
     /// Folder of the file this document was loaded from, as recorded in
     /// the EAB xrefs section — a resolution fallback for relative xref
@@ -4680,6 +4690,7 @@ public final class CADDocument {
             pdfDefinitions: pdfDefinitions,
             availableImageAssetNames: Set(imageStore.keys),
             layoutSettings: layoutSettings,
+            plotSettings: plotSettings,
             isolatedHiddenHandles: isolatedHiddenHandles,
             groups: groups
         )
@@ -4737,6 +4748,7 @@ public final class CADDocument {
             pdfDefinitions: base.pdfDefinitions,
             availableImageAssetNames: available,
             layoutSettings: base.layoutSettings,
+            plotSettings: base.plotSettings,
             isolatedHiddenHandles: base.isolatedHiddenHandles,
             groups: base.groups)
         }
@@ -4795,6 +4807,7 @@ public final class CADDocument {
         imageDefinitions = snapshot.imageDefinitions
         pdfDefinitions = snapshot.pdfDefinitions
         layoutSettings = snapshot.layoutSettings
+        plotSettings = snapshot.plotSettings
         groups = snapshot.groups
         // Prune image assets no longer referenced by any entity after restore
         pruneUnreferencedImageAssets()

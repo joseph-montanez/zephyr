@@ -16,6 +16,8 @@ public struct DXFDrawingView: Sendable {
     /// Paper-space selection groups owned by this view (model views carry
     /// model-space groups). Projected model copies never join groups.
     public let groups: [CADGroup]
+    /// Full plot settings for this view (paper + device/scale/flags).
+    public let plotSettings: CADPlotSettings?
 
     public init(
         name: String,
@@ -23,7 +25,8 @@ public struct DXFDrawingView: Sendable {
         entities: [CADEntity],
         backgroundColor: ColorRGBA? = nil,
         layoutSettings: CADLayoutSettings? = nil,
-        groups: [CADGroup] = []
+        groups: [CADGroup] = [],
+        plotSettings: CADPlotSettings? = nil
     ) {
         self.name = name
         self.kind = kind
@@ -31,6 +34,7 @@ public struct DXFDrawingView: Sendable {
         self.backgroundColor = backgroundColor
         self.layoutSettings = layoutSettings
         self.groups = groups
+        self.plotSettings = plotSettings
     }
 }
 
@@ -1953,13 +1957,48 @@ public enum DXFImporter {
                     )
                 }
 
+                let plotSettings = CADPlotSettings(
+                    paperName: layout.paperName,
+                    paperWidthMM: layout.paperWidthMM ?? 0,
+                    paperHeightMM: layout.paperHeightMM ?? 0,
+                    marginLM: layout.marginLM ?? 0,
+                    marginBM: layout.marginBM ?? 0,
+                    marginRM: layout.marginRM ?? 0,
+                    marginTM: layout.marginTM ?? 0,
+                    plotPaperUnits: layout.plotPaperUnits,
+                    plotRotation: layout.plotRotation,
+                    pageSetupName: layout.pageSetupName,
+                    plotConfigName: layout.plotConfigName,
+                    canonicalMediaName: layout.canonicalMediaName,
+                    plotViewName: layout.plotViewName,
+                    styleSheet: layout.styleSheet,
+                    plotOriginXMM: layout.plotOriginXMM,
+                    plotOriginYMM: layout.plotOriginYMM,
+                    plotWindowMinX: layout.plotWindowMinX,
+                    plotWindowMinY: layout.plotWindowMinY,
+                    plotWindowMaxX: layout.plotWindowMaxX,
+                    plotWindowMaxY: layout.plotWindowMaxY,
+                    customScaleNumerator: layout.customScaleNumerator,
+                    customScaleDenominator: layout.customScaleDenominator,
+                    standardScaleFactor: layout.standardScaleFactor,
+                    paperImageOriginX: layout.paperImageOriginX,
+                    paperImageOriginY: layout.paperImageOriginY,
+                    plotFlags: layout.plotFlags,
+                    plotType: layout.plotType,
+                    standardScaleType: layout.standardScaleType,
+                    shadePlotMode: layout.shadePlotMode,
+                    shadePlotResolution: layout.shadePlotResolution,
+                    shadePlotCustomDPI: layout.shadePlotCustomDPI,
+                    layoutFlags: layout.layoutFlags)
+
                 importedViews.append(DXFDrawingView(
                     name: layout.name,
                     kind: .sheet,
                     entities: projectedEntities + paperEntities,
                     backgroundColor: .white,
                     layoutSettings: layoutSettings,
-                    groups: viewGroupStaging.map { CADGroup(name: $0.key, members: $0.value) }))
+                    groups: viewGroupStaging.map { CADGroup(name: $0.key, members: $0.value) },
+                    plotSettings: plotSettings))
             }
             views = importedViews
         }

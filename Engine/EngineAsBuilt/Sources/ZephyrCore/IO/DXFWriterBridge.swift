@@ -128,6 +128,7 @@ public enum DXFWriterBridge {
         var imageAssets: [String: CADImageAsset] = [:]
         var groups: [String: CADGroup] = [:]
         var insertionBase: Vector3 = .zero
+        var plotSettings: CADPlotSettings? = nil
     }
 
 
@@ -174,7 +175,8 @@ public enum DXFWriterBridge {
             pdfDefinitions: document.pdfDefinitions,
             imageAssets: document.imageStore,
             groups: document.groups,
-            insertionBase: document.insertionBase)
+            insertionBase: document.insertionBase,
+            plotSettings: document.plotSettings)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion,
                         psltscale: document.paperSpaceLinetypeScale)
     }
@@ -204,7 +206,8 @@ public enum DXFWriterBridge {
                 pdfDefinitions: $0.document.pdfDefinitions,
                 imageAssets: $0.document.imageStore,
                 groups: $0.document.groups,
-                insertionBase: $0.document.insertionBase)
+                insertionBase: $0.document.insertionBase,
+                plotSettings: $0.document.plotSettings)
         }
         try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion, tileMode: tileMode,
                         psltscale: psltscale)
@@ -593,7 +596,8 @@ public enum DXFWriterBridge {
         writer.addLayout(DXFLayoutDefinition(
             name: "Model",
             blockName: "*Model_Space",
-            tabOrder: 0))
+            tabOrder: 0,
+            plotSettings: orderedViews.first?.plotSettings))
 
         var ownerBlockNames: [String] = ["*Model_Space"]
         for sheetIndex in 0..<max(0, orderedViews.count - 1) {
@@ -608,7 +612,8 @@ public enum DXFWriterBridge {
                 blockName: blockName,
                 tabOrder: sheetIndex + 1,
                 minimumLimits: limits.0,
-                maximumLimits: limits.1))
+                maximumLimits: limits.1,
+                plotSettings: view.plotSettings))
             ownerBlockNames.append(blockName)
         }
 

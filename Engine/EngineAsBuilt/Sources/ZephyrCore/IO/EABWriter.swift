@@ -440,9 +440,23 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
-        // Paper size/margins/plot units (Phase 4). Additive section: older
-        // readers skip it via the default case, so no version bump.
-        if let settings = document.layoutSettings {
+        // Paper + plot settings (Phase 4 paper size, Phase 0 plot fields).
+        // Additive section: older readers skip it via the default case.
+        // Synthesize plot settings from the paper-only view so paper size
+        // survives even for documents predating CADPlotSettings.
+        let plotForSave: CADPlotSettings? = document.plotSettings ?? document.layoutSettings.map {
+            CADPlotSettings(
+                paperName: $0.paperName,
+                paperWidthMM: $0.paperWidthMM,
+                paperHeightMM: $0.paperHeightMM,
+                marginLM: $0.marginLM,
+                marginBM: $0.marginBM,
+                marginRM: $0.marginRM,
+                marginTM: $0.marginTM,
+                plotPaperUnits: $0.plotPaperUnits,
+                plotRotation: $0.plotRotation)
+        }
+        if let settings = plotForSave {
             let settingsData = serializeLayoutSettings(settings)
             entries.append(EABSectionEntry(type: .layoutSettings, offset: UInt64(w.count),
                                             size: UInt64(settingsData.count), compression: .none))
@@ -1294,7 +1308,9 @@ public enum EABWriter {
 
     /// Paper size/margins/plot units for one drawing view. Nil paper names
     /// write as empty strings; the reader restores nil for empty.
-    private static func serializeLayoutSettings(_ settings: CADLayoutSettings) -> Data {
+    /// Plot device/scale/flag fields append the Phase-0 plot settings;
+    /// the reader length-guards them so short payloads still load.
+    private static func serializeLayoutSettings(_ settings: CADPlotSettings) -> Data {
         let w = BinaryWriter()
         w.writeString(settings.paperName ?? "")
         w.writeFloat64(settings.paperWidthMM)
@@ -1305,6 +1321,29 @@ public enum EABWriter {
         w.writeFloat64(settings.marginTM)
         w.writeInt32(Int32(settings.plotPaperUnits))
         w.writeInt32(Int32(settings.plotRotation))
+        w.writeString(settings.pageSetupName)
+        w.writeString(settings.plotConfigName)
+        w.writeString(settings.canonicalMediaName)
+        w.writeString(settings.plotViewName)
+        w.writeString(settings.styleSheet)
+        w.writeFloat64(settings.plotOriginXMM)
+        w.writeFloat64(settings.plotOriginYMM)
+        w.writeFloat64(settings.plotWindowMinX)
+        w.writeFloat64(settings.plotWindowMinY)
+        w.writeFloat64(settings.plotWindowMaxX)
+        w.writeFloat64(settings.plotWindowMaxY)
+        w.writeFloat64(settings.customScaleNumerator)
+        w.writeFloat64(settings.customScaleDenominator)
+        w.writeFloat64(settings.standardScaleFactor)
+        w.writeFloat64(settings.paperImageOriginX)
+        w.writeFloat64(settings.paperImageOriginY)
+        w.writeInt32(Int32(settings.plotFlags))
+        w.writeInt32(Int32(settings.plotType))
+        w.writeInt32(Int32(settings.standardScaleType))
+        w.writeInt32(Int32(settings.shadePlotMode))
+        w.writeInt32(Int32(settings.shadePlotResolution))
+        w.writeInt32(Int32(settings.shadePlotCustomDPI))
+        w.writeInt32(Int32(settings.layoutFlags))
         return w.build()
     }
 

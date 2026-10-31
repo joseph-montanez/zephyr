@@ -118,6 +118,7 @@ public enum EABReader {
             )
             doc.paperSpaceLinetypeScale = components.paperSpaceLinetypeScale
             doc.layoutSettings = components.layoutSettings
+            doc.plotSettings = components.plotSettings
             return [DrawingView(name: "Model", kind: .model, document: doc)]
         }
     }
@@ -149,7 +150,8 @@ public enum EABReader {
         autoContrastTrueColor: Bool,
         insertionBase: Vector3,
         paperSpaceLinetypeScale: Int,
-        layoutSettings: CADLayoutSettings?
+        layoutSettings: CADLayoutSettings?,
+        plotSettings: CADPlotSettings?
     ) {
         let data = try Data(contentsOf: url)
         return try readDocument(from: data)
@@ -252,6 +254,7 @@ public enum EABReader {
             )
             doc.paperSpaceLinetypeScale = components.paperSpaceLinetypeScale
             doc.layoutSettings = components.layoutSettings
+            doc.plotSettings = components.plotSettings
 
             views.append(DrawingView(name: entry.name, kind: entry.kind,
                                      document: doc, cameraState: entry.cameraState))
@@ -298,6 +301,7 @@ public enum EABReader {
                 )
                 doc.paperSpaceLinetypeScale = components.paperSpaceLinetypeScale
                 doc.layoutSettings = components.layoutSettings
+                doc.plotSettings = components.plotSettings
                 views.append(DrawingView(name: "Recovered", kind: .model, document: doc,
                                          cameraState: CameraState(offsetX: 0, offsetY: 0, zoom: 1, rotation: 0)))
             } catch {
@@ -335,7 +339,8 @@ public enum EABReader {
         autoContrastTrueColor: Bool,
         insertionBase: Vector3,
         paperSpaceLinetypeScale: Int,
-        layoutSettings: CADLayoutSettings?
+        layoutSettings: CADLayoutSettings?,
+        plotSettings: CADPlotSettings?
     ) {
         let header = try parseHeader(from: data)
         let rawTableOffset = header.sectionTableOffset; guard rawTableOffset <= UInt64(Int.max) else { throw EABError.readError("Section table offset exceeds Int.max") }; let entries = try parseSectionTable(from: data, at: Int(rawTableOffset))
@@ -358,6 +363,7 @@ public enum EABReader {
         var paperSpaceLinetypeScale = 1
         var insertionBase: Vector3 = .zero
         var layoutSettings: CADLayoutSettings? = nil
+        var plotSettings: CADPlotSettings? = nil
         var loadedImageStore: [String: CADImageAsset] = [:]
         var xrefHostFolder: String? = nil
         var unloadedXrefs: Set<UUID> = []
@@ -416,7 +422,9 @@ public enum EABReader {
             case .groups:
                 groups = parseGroups(reader)
             case .layoutSettings:
-                layoutSettings = parseLayoutSettings(reader)
+                let parsedLayout = parseLayoutSettings(reader)
+                layoutSettings = parsedLayout.layout
+                plotSettings = parsedLayout.plot
             default:
                 break  // skip unknown sections
             }
@@ -434,7 +442,7 @@ public enum EABReader {
                 linetypePatterns, activeLayerID, loadedImageStore,
                 xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
                 globalLineTypeScale, autoContrastTrueColor, insertionBase,
-                paperSpaceLinetypeScale, layoutSettings)
+                paperSpaceLinetypeScale, layoutSettings, plotSettings)
     }
 
     private static func parseXrefs(
@@ -497,20 +505,96 @@ public enum EABReader {
 
     private static func parseLayoutSettings(
         _ r: BinaryReader
-    ) -> CADLayoutSettings? {
-        guard r.remaining >= 2 else { return nil }
+    ) -> (layout: CADLayoutSettings?, plot: CADPlotSettings?) {
+        guard r.remaining >= 2 else { return (nil, nil) }
         let paperName = r.readString()
-        guard r.remaining >= 6 * 8 + 4 + 4 else { return nil }
-        return CADLayoutSettings(
+        guard r.remaining >= 6 * 8 + 4 + 4 else { return (nil, nil) }
+        let width = r.readFloat64()
+        let height = r.readFloat64()
+        let marginLM = r.readFloat64()
+        let marginBM = r.readFloat64()
+        let marginRM = r.readFloat64()
+        let marginTM = r.readFloat64()
+        let units = Int(r.readInt32())
+        let rotation = Int(r.readInt32())
+        func paperOnly() -> (layout: CADLayoutSettings?, plot: CADPlotSettings?) {
+            let layout = CADLayoutSettings(
+                paperName: paperName.isEmpty ? nil : paperName,
+                paperWidthMM: width, paperHeightMM: height,
+                marginLM: marginLM, marginBM: marginBM,
+                marginRM: marginRM, marginTM: marginTM,
+                plotPaperUnits: units, plotRotation: rotation)
+            return (layout, CADPlotSettings(
+                paperName: layout.paperName,
+                paperWidthMM: layout.paperWidthMM,
+                paperHeightMM: layout.paperHeightMM,
+                marginLM: layout.marginLM, marginBM: layout.marginBM,
+                marginRM: layout.marginRM, marginTM: layout.marginTM,
+                plotPaperUnits: layout.plotPaperUnits,
+                plotRotation: layout.plotRotation))
+        }
+        func readStr() -> String? {
+            guard r.remaining >= 2 else { return nil }
+            return r.readString()
+        }
+        func readDbl() -> Double? {
+            guard r.remaining >= 8 else { return nil }
+            return r.readFloat64()
+        }
+        func readI32() -> Int? {
+            guard r.remaining >= 4 else { return nil }
+            return Int(r.readInt32())
+        }
+        guard let pageSetup = readStr(),
+              let config = readStr(),
+              let media = readStr(),
+              let view = readStr(),
+              let style = readStr(),
+              let oX = readDbl(), let oY = readDbl(),
+              let wMinX = readDbl(), let wMinY = readDbl(),
+              let wMaxX = readDbl(), let wMaxY = readDbl(),
+              let num = readDbl(), let den = readDbl(),
+              let factor = readDbl(),
+              let imgX = readDbl(), let imgY = readDbl(),
+              let flags = readI32(),
+              let type = readI32(),
+              let stdType = readI32(),
+              let shade = readI32(),
+              let shadeRes = readI32(),
+              let shadeDPI = readI32(),
+              let layoutFlags = readI32() else {
+            return paperOnly()
+        }
+        let layout = CADLayoutSettings(
             paperName: paperName.isEmpty ? nil : paperName,
-            paperWidthMM: r.readFloat64(),
-            paperHeightMM: r.readFloat64(),
-            marginLM: r.readFloat64(),
-            marginBM: r.readFloat64(),
-            marginRM: r.readFloat64(),
-            marginTM: r.readFloat64(),
-            plotPaperUnits: Int(r.readInt32()),
-            plotRotation: Int(r.readInt32()))
+            paperWidthMM: width, paperHeightMM: height,
+            marginLM: marginLM, marginBM: marginBM,
+            marginRM: marginRM, marginTM: marginTM,
+            plotPaperUnits: units, plotRotation: rotation)
+        return (layout, CADPlotSettings(
+            paperName: layout.paperName,
+            paperWidthMM: width, paperHeightMM: height,
+            marginLM: marginLM, marginBM: marginBM,
+            marginRM: marginRM, marginTM: marginTM,
+            plotPaperUnits: units, plotRotation: rotation,
+            pageSetupName: pageSetup,
+            plotConfigName: config,
+            canonicalMediaName: media,
+            plotViewName: view,
+            styleSheet: style,
+            plotOriginXMM: oX, plotOriginYMM: oY,
+            plotWindowMinX: wMinX, plotWindowMinY: wMinY,
+            plotWindowMaxX: wMaxX, plotWindowMaxY: wMaxY,
+            customScaleNumerator: num, customScaleDenominator: den,
+            standardScaleFactor: factor,
+            paperImageOriginX: imgX, paperImageOriginY: imgY,
+            plotFlags: flags,
+            plotType: type,
+            standardScaleType: stdType,
+            shadePlotMode: shade,
+            shadePlotResolution: shadeRes,
+            shadePlotCustomDPI: shadeDPI,
+            layoutFlags: layoutFlags))
     }
 
     private static func parseMediaDefinitions(
@@ -613,7 +697,8 @@ public enum EABReader {
         autoContrastTrueColor: Bool,
         insertionBase: Vector3,
         paperSpaceLinetypeScale: Int,
-        layoutSettings: CADLayoutSettings?
+        layoutSettings: CADLayoutSettings?,
+        plotSettings: CADPlotSettings?
     ) {
         let data = try Data(contentsOf: url)
         let header = try parseHeader(from: data)
@@ -647,6 +732,7 @@ public enum EABReader {
         var paperSpaceLinetypeScale = 1
         var insertionBase: Vector3 = .zero
         var layoutSettings: CADLayoutSettings? = nil
+        var plotSettings: CADPlotSettings? = nil
         var loadedImageStore: [String: CADImageAsset] = [:]
         var xrefHostFolder: String? = nil
         var unloadedXrefs: Set<UUID> = []
@@ -709,7 +795,9 @@ public enum EABReader {
             case .groups:
                 groups = parseGroups(reader)
             case .layoutSettings:
-                layoutSettings = parseLayoutSettings(reader)
+                let parsedLayout = parseLayoutSettings(reader)
+                layoutSettings = parsedLayout.layout
+                plotSettings = parsedLayout.plot
             default:
                 break
             }
@@ -727,7 +815,7 @@ public enum EABReader {
                 linetypePatterns, activeLayerID, loadedImageStore,
                 xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
                 globalLineTypeScale, autoContrastTrueColor, insertionBase,
-                paperSpaceLinetypeScale, layoutSettings)
+                paperSpaceLinetypeScale, layoutSettings, plotSettings)
     }
 
     // MARK: - Header Parsing
