@@ -104,7 +104,8 @@ public final class LispCommand: FeatureCommand {
             broker: broker)
         newHost.captureMainThreadState(
             selectedHandles: engine.cadSelection.selectedHandles,
-            activeCommand: processor.activeCommand)
+            activeCommand: processor.activeCommand,
+            space: engine.tabManager.spaceState)
         host = newHost
         if let preset = presetSource {
             presetSource = nil

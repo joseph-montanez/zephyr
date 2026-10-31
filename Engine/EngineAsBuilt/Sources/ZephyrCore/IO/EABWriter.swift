@@ -440,6 +440,16 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
+        // Paper size/margins/plot units (Phase 4). Additive section: older
+        // readers skip it via the default case, so no version bump.
+        if let settings = document.layoutSettings {
+            let settingsData = serializeLayoutSettings(settings)
+            entries.append(EABSectionEntry(type: .layoutSettings, offset: UInt64(w.count),
+                                            size: UInt64(settingsData.count), compression: .none))
+            w.writeBytes(settingsData)
+            w.pad(to: 4)
+        }
+
         // Linetype patterns (added in EAB v4)
         if !document.linetypePatterns.isEmpty {
             let lineTypesData = serializeLinetypePatterns(document: document)
@@ -583,14 +593,15 @@ public enum EABWriter {
         // activeLayerID (added in EAB v4)
         w.writeUUID(document.activeLayerID ?? UUID(uuid: (0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)))
         // custom bytes: 1 byte autoContrastTrueColor + 8 bytes globalLineTypeScale
-        // + 24 bytes insertionBase (3×f64). Old readers skip the tail via
-        // the count, so no version bump.
-        w.writeUInt32(33)                                      // custom byte count
+        // + 24 bytes insertionBase (3×f64) + 1 byte paperSpaceLinetypeScale.
+        // Old readers skip the tail via the count, so no version bump.
+        w.writeUInt32(34)                                      // custom byte count
         w.writeUInt8(document.autoContrastTrueColor ? 1 : 0)
         w.writeFloat64(document.globalLineTypeScale)
         w.writeFloat64(document.insertionBase.x)
         w.writeFloat64(document.insertionBase.y)
         w.writeFloat64(document.insertionBase.z)
+        w.writeUInt8(document.paperSpaceLinetypeScale == 0 ? 0 : 1)
         return w.build()
     }
 
@@ -1276,6 +1287,24 @@ public enum EABWriter {
             }
             w.writeUInt8(group.isSelectable ? 1 : 0)
         }
+        return w.build()
+    }
+
+    // MARK: - Layout Settings
+
+    /// Paper size/margins/plot units for one drawing view. Nil paper names
+    /// write as empty strings; the reader restores nil for empty.
+    private static func serializeLayoutSettings(_ settings: CADLayoutSettings) -> Data {
+        let w = BinaryWriter()
+        w.writeString(settings.paperName ?? "")
+        w.writeFloat64(settings.paperWidthMM)
+        w.writeFloat64(settings.paperHeightMM)
+        w.writeFloat64(settings.marginLM)
+        w.writeFloat64(settings.marginBM)
+        w.writeFloat64(settings.marginRM)
+        w.writeFloat64(settings.marginTM)
+        w.writeInt32(Int32(settings.plotPaperUnits))
+        w.writeInt32(Int32(settings.plotRotation))
         return w.build()
     }
 

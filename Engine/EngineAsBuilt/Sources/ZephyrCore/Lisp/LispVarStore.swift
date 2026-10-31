@@ -101,6 +101,7 @@ final class LispVarStore: @unchecked Sendable {
         "PICKFIRST": .int(1),
         "PICKSTYLE": .int(1),
         "PLATFORM": .string("Zephyr"),
+        "PSLTSCALE": .int(1),
         "QTEXTMODE": .int(0),
         "REGENMODE": .int(1),
         "SELECTSIMILARMODE": .int(130),
@@ -117,9 +118,10 @@ final class LispVarStore: @unchecked Sendable {
     ]
 
     private static let readOnly: Set<String> = [
-        "ACADVER", "AREA", "CMDNAMES", "DATE", "DWGNAME", "DWGPREFIX", "DWGTITLED",
-        "ERRNO", "EXTMAX", "EXTMIN", "LASTANGLE", "LOGINNAME", "MILLISECS",
-        "PERIMETER", "PLATFORM", "UNDOCTL", "VERSION",
+        "ACADVER", "AREA", "CMDNAMES", "CSPACE", "CTAB", "CVPORT", "DATE", "DWGNAME",
+        "DWGPREFIX", "DWGTITLED", "ERRNO", "EXTMAX", "EXTMIN", "LASTANGLE",
+        "LOGINNAME", "MILLISECS", "PERIMETER", "PLATFORM", "TILEMODE",
+        "UNDOCTL", "VERSION",
     ]
 
     // MARK: - Access
@@ -128,13 +130,26 @@ final class LispVarStore: @unchecked Sendable {
     /// CMDNAMES arrives pre-snapshotted (the processor is MainActor-bound).
     /// Everything else comes from memory. Returns nil for unknown names.
     func get(
-        _ name: String, document: CADDocument, activeCommand: String?
+        _ name: String, document: CADDocument, activeCommand: String?,
+        space: DrawingSpaceState? = nil
     ) -> LispValue? {
         switch name {
+        case "TILEMODE":
+            // Live from the space snapshot (frozen per Lisp run, live for
+            // ribbon reads). Read-only in Phase 1: switch with PSPACE/MSPACE.
+            return .int((space ?? .modelOnly).tileMode)
+        case "CVPORT":
+            return .int((space ?? .modelOnly).currentViewportID)
+        case "CTAB", "CSPACE":
+            // CTAB is the AutoCAD current-tab name; CSPACE is kept as an
+            // alias for the same value (plan wording).
+            return .string((space ?? .modelOnly).currentLayoutName)
         case "AUTOCONTRAST":
             return .int(document.autoContrastTrueColor ? 1 : 0)
         case "LTSCALE":
             return .real(document.globalLineTypeScale)
+        case "PSLTSCALE":
+            return .int(document.paperSpaceLinetypeScale)
         case "DIMSCALE", "DIMASZ", "DIMTXT", "DIMGAP", "DIMEXO", "DIMEXE":
             // Raw stored values of the current dimension style (Phase 2.1):
             // DIMSCALE is the overall factor, the rest are unscaled metrics.
@@ -247,6 +262,20 @@ final class LispVarStore: @unchecked Sendable {
                 return "LTSCALE requires a positive non-zero real number"
             }
             document.globalLineTypeScale = realVal
+            document.markNeedsRegeneration()
+            store(name, value)
+            return nil
+        case "PSLTSCALE":
+            let intVal: Int?
+            switch value {
+            case .int(let i): intVal = i
+            case .real(let r): intVal = Int(r)
+            default: intVal = nil
+            }
+            guard let intVal, (0...1).contains(intVal) else {
+                return "PSLTSCALE requires 0 or 1"
+            }
+            document.paperSpaceLinetypeScale = intVal
             document.markNeedsRegeneration()
             store(name, value)
             return nil

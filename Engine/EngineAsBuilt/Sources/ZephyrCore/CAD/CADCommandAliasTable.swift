@@ -112,8 +112,16 @@ public enum CADCommandAliasTable {
             description: "Draw with tablet pen capturing pressure and tilt per vertex"),
         CADCommandAliasEntry(
             canonicalName: "PSPACE", aliases: ["PS"], category: .view,
-            description: "Switch to paper space",
-            isReservedStub: true),
+            description: "Switch to paper space"),
+        CADCommandAliasEntry(
+            canonicalName: "MSPACE", aliases: ["MS"], category: .view,
+            description: "Switch to model space"),
+        CADCommandAliasEntry(
+            canonicalName: "MVIEW", aliases: ["MV"], category: .view,
+            description: "Create or control paper-space floating viewports"),
+        CADCommandAliasEntry(
+            canonicalName: "CHSPACE", aliases: [], category: .modify,
+            description: "Move entities between paper and model space"),
         CADCommandAliasEntry(
             canonicalName: "CLIP", category: .modify,
             description: "Clip blocks, raster images, and PDF underlays"),

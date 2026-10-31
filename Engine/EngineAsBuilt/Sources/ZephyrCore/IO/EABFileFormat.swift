@@ -110,6 +110,9 @@ public enum EABSectionType: UInt32, Sendable {
     case xrefs       = 16
     case mediaDefinitions = 17
     case groups      = 18
+    /// Per-view paper size/margins/plot units (Phase 4). Written only when
+    /// the document has layout settings; older readers skip it.
+    case layoutSettings = 20
 }
 
 /// Compression mode for a data section.

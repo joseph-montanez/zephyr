@@ -547,6 +547,8 @@ public enum CADHitTesting {
         {
             for handle in handles {
                 guard let entity = document.entity(for: handle) else { continue }
+                // Derived paper-space projections are render-only.
+                guard !entity.isViewportProjected else { continue }
                 guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
                 guard !document.isIsolatedHidden(entity.handle) else { continue }
                 guard let wbb = entity.worldBoundingBox else { continue }
@@ -561,6 +563,8 @@ public enum CADHitTesting {
                 document.rebuildEntityGrid()
             }
             for entity in document.entitiesView {
+                // Derived paper-space projections are render-only.
+                guard !entity.isViewportProjected else { continue }
                 guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
                 guard !document.isIsolatedHidden(entity.handle) else { continue }
                 guard let wbb = entity.worldBoundingBox else { continue }

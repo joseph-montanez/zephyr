@@ -744,8 +744,10 @@ public final class CADRendererBridge {
             let lineTypeScale: Double
             if let ltsv = entity.xdata["dxf.lineTypeScale"], case .double(let d) = ltsv {
                 lineTypeScale = d * snapshot.globalLineTypeScale
+                    * CADDocument.paperLinetypeMultiplier(for: entity, psltscale: snapshot.paperSpaceLinetypeScale)
             } else {
                 lineTypeScale = 1.0 * snapshot.globalLineTypeScale
+                    * CADDocument.paperLinetypeMultiplier(for: entity, psltscale: snapshot.paperSpaceLinetypeScale)
             }
 
             let geomWidth: Double
@@ -2300,8 +2302,10 @@ public final class CADRendererBridge {
         let lineTypeScale: Double
         if let ltsv = entity.xdata["dxf.lineTypeScale"], case .double(let d) = ltsv {
             lineTypeScale = d * document.globalLineTypeScale
+                * CADDocument.paperLinetypeMultiplier(for: entity, psltscale: document.paperSpaceLinetypeScale)
         } else {
             lineTypeScale = 1.0 * document.globalLineTypeScale
+                * CADDocument.paperLinetypeMultiplier(for: entity, psltscale: document.paperSpaceLinetypeScale)
         }
 
         let geomWidth: Double

@@ -93,11 +93,62 @@ final class LispTableTests: XCTestCase {
         XCTAssertEqual(result, .nilValue)
     }
 
+    /// (layoutlist) lists paper layouts only (AutoCAD shape). The old
+    /// ["Model"] expectation encoded the single-space stub; a headless
+    /// single-document host has no paper layouts, so the result is nil.
     func testLayoutlist() async throws {
         let host = makeHost()
         var env = LispEnvironment()
         let layouts = try await eval("(layoutlist)", host: host, env: &env)
-        XCTAssertEqual(layouts.properList, [.string("Model")])
+        XCTAssertEqual(layouts, .nilValue)
+        XCTAssertEqual(layouts.properList, [])
+    }
+
+    func testLayoutlistReturnsCapturedPaperLayouts() async throws {
+        let host = makeHost()
+        host.captureMainThreadState(
+            selectedHandles: [], activeCommand: nil,
+            space: DrawingSpaceState(
+                tileMode: 0, currentViewportID: 1,
+                currentLayoutName: "Layout1",
+                paperLayoutNames: ["Layout1", "Layout2"]))
+        var env = LispEnvironment()
+        let layouts = try await eval("(layoutlist)", host: host, env: &env)
+        XCTAssertEqual(layouts.properList, [.string("Layout1"), .string("Layout2")])
+    }
+
+    func testSpaceSysvarsDefaultToModel() async throws {
+        let host = makeHost()
+        var env = LispEnvironment()
+        let tile = try await eval(#"(getvar "TILEMODE")"#, host: host, env: &env)
+        XCTAssertEqual(tile, .int(1))
+        let cvport = try await eval(#"(getvar "CVPORT")"#, host: host, env: &env)
+        XCTAssertEqual(cvport, .int(2))
+        let ctab = try await eval(#"(getvar "CTAB")"#, host: host, env: &env)
+        XCTAssertEqual(ctab, .string("Model"))
+        let cspace = try await eval(#"(getvar "CSPACE")"#, host: host, env: &env)
+        XCTAssertEqual(cspace, .string("Model"))
+    }
+
+    func testSpaceSysvarsReflectPaperSpaceAndTileModeIsReadOnly() async throws {
+        let host = makeHost()
+        host.captureMainThreadState(
+            selectedHandles: [], activeCommand: nil,
+            space: DrawingSpaceState(
+                tileMode: 0, currentViewportID: 1,
+                currentLayoutName: "Layout1",
+                paperLayoutNames: ["Layout1"]))
+        var env = LispEnvironment()
+        let tile = try await eval(#"(getvar "TILEMODE")"#, host: host, env: &env)
+        XCTAssertEqual(tile, .int(0))
+        let cvport = try await eval(#"(getvar "CVPORT")"#, host: host, env: &env)
+        XCTAssertEqual(cvport, .int(1))
+        let ctab = try await eval(#"(getvar "CTAB")"#, host: host, env: &env)
+        XCTAssertEqual(ctab, .string("Layout1"))
+        XCTAssertNotNil(host.vars.set("TILEMODE", .int(1), document: host.document))
+        _ = try await eval(#"(setvar "TILEMODE" 1)"#, host: host, env: &env)
+        let after = try await eval(#"(getvar "TILEMODE")"#, host: host, env: &env)
+        XCTAssertEqual(after, .int(0))
     }
 
     func testUnknownTableThrows() async throws {

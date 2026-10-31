@@ -75,6 +75,10 @@ final class LispCADHost: LispHost, @unchecked Sendable {
     /// Pickfirst selection frozen at command start (_I, ssgetfirst reads).
     private var _impliedSelection: Set<UUID> = []
     /// Legacy active command name for CMDNAMES (empty under feature commands).
+    /// Drawing space frozen at command start (TILEMODE/CVPORT/CTAB and
+    /// `(layoutlist)`). View switches cannot happen mid-run (commands are
+    /// gated), so the snapshot stays true for the whole evaluation.
+    private var _spaceState: DrawingSpaceState = .modelOnly
     var activeCommandSnapshot: String?
     /// Pending pickfirst write for the driver's frame drain (sssetfirst).
     private var _pendingSelectionApply: Set<UUID>?
@@ -82,9 +86,13 @@ final class LispCADHost: LispHost, @unchecked Sendable {
 
     /// Freeze main-thread state for the run. Called on main before launch;
     /// the eval task then touches only the snapshots, never live actors.
-    func captureMainThreadState(selectedHandles: Set<UUID>, activeCommand: String?) {
+    func captureMainThreadState(
+        selectedHandles: Set<UUID>, activeCommand: String?,
+        space: DrawingSpaceState = .modelOnly
+    ) {
         stateLock.withLock {
             _impliedSelection = selectedHandles
+            _spaceState = space
             _pendingSelectionApply = nil
             _hasPendingSelectionApply = false
         }
@@ -92,6 +100,11 @@ final class LispCADHost: LispHost, @unchecked Sendable {
     }
 
     /// Current pickfirst view for this run (snapshot + in-run updates).
+    /// Frozen drawing space for this run (TILEMODE/CVPORT/CTAB, layoutlist).
+    func spaceStateSnapshot() -> DrawingSpaceState {
+        stateLock.withLock { _spaceState }
+    }
+
     func impliedHandles() -> Set<UUID> {
         stateLock.withLock { _impliedSelection }
     }
@@ -224,14 +237,14 @@ final class LispCADHost: LispHost, @unchecked Sendable {
     // MARK: - System variables
 
     func getSystemVar(_ name: String) async -> LispValue? {
-        vars.get(name, document: document, activeCommand: activeCommandSnapshot)
+        vars.get(name, document: document, activeCommand: activeCommandSnapshot, space: spaceStateSnapshot())
     }
 
     func setSystemVar(_ name: String, _ value: LispValue) async {
         // setvar validates existence first; a rejection message here would
         // have nowhere to go, so rejections are programmer errors. The
         // driver-facing validation lives in LispVarStore.set.
-        if name == "LASTPOINT" || vars.get(name, document: document, activeCommand: activeCommandSnapshot) != nil {
+        if name == "LASTPOINT" || vars.get(name, document: document, activeCommand: activeCommandSnapshot, space: spaceStateSnapshot()) != nil {
             _ = vars.set(name, value, document: document)
         }
     }
@@ -239,7 +252,7 @@ final class LispCADHost: LispHost, @unchecked Sendable {
     /// Throwing setvar used by tests and the driver (protocol method above
     /// cannot throw, so validation surfaces here).
     func setSystemVarChecked(_ name: String, _ value: LispValue) throws {
-        if vars.get(name, document: document, activeCommand: activeCommandSnapshot) == nil, name != "LASTPOINT" {
+        if vars.get(name, document: document, activeCommand: activeCommandSnapshot, space: spaceStateSnapshot()) == nil, name != "LASTPOINT" {
             throw LispError.hostError("unknown system variable: \(name)")
         }
         if let message = vars.set(name, value, document: document) {
@@ -490,7 +503,7 @@ final class LispCADHost: LispHost, @unchecked Sendable {
     }
 
     func layoutNames() async -> [String] {
-        ["Model"] // Single-space model: no paper-space layouts exist.
+        spaceStateSnapshot().paperLayoutNames
     }
 
     func ssNameX(_ set: Int, index: Int) async throws -> LispValue {

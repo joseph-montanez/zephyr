@@ -96,9 +96,12 @@ final class LispMiscCTests: XCTestCase {
     func testStartappTrueReturnsPid() async throws {
         var env = LispEnvironment()
         let host = ScriptedLispHost()
+        // NB: the launched program must terminate on its own. A bare
+        // interactive shell (e.g. plain "cmd.exe") never exits and hangs
+        // the runner, so launch with an immediate-exit command instead.
         #if os(Windows)
             let launched = try await evalString(
-                "(startapp \"cmd.exe\")", env: &env, host: host)
+                "(startapp \"cmd.exe\" \"/c exit\")", env: &env, host: host)
         #else
             let launched = try await evalString(
                 "(startapp \"/bin/true\")", env: &env, host: host)

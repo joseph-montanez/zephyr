@@ -175,13 +175,16 @@ public enum DXFWriterBridge {
             imageAssets: document.imageStore,
             groups: document.groups,
             insertionBase: document.insertionBase)
-        try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion)
+        try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion,
+                        psltscale: document.paperSpaceLinetypeScale)
     }
 
     public static func export(
         views: [DrawingView],
         to url: URL,
-        dxfVersion: DXFVersion = .defaultExport
+        dxfVersion: DXFVersion = .defaultExport,
+        tileMode: Int = 1,
+        psltscale: Int = 1
     ) throws {
         let exportViews = views.map {
             ExportViewData(
@@ -203,7 +206,8 @@ public enum DXFWriterBridge {
                 groups: $0.document.groups,
                 insertionBase: $0.document.insertionBase)
         }
-        try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion)
+        try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion, tileMode: tileMode,
+                        psltscale: psltscale)
     }
 
     public static func exportToDXF(
@@ -236,7 +240,9 @@ public enum DXFWriterBridge {
     private static func exportToDXF(
         views sourceViews: [ExportViewData],
         filePath: String,
-        dxfVersion: DXFVersion = .defaultExport
+        dxfVersion: DXFVersion = .defaultExport,
+        tileMode: Int = 1,
+        psltscale: Int = 1
     ) throws {
         guard !sourceViews.isEmpty else {
             throw DXFWriter.WriterError.invalidEntity("Cannot export a DXF without a drawing view")
@@ -374,6 +380,10 @@ public enum DXFWriterBridge {
         }
         writer.codePage = "ANSI_1252"
         writer.headerVars["$INSUNITS"] = modelView.unit.dxfINSUNITS
+        // $TILEMODE reflects the space active at save (1 Model, 0 layout).
+        writer.headerVars["$TILEMODE"] = tileMode
+        // $PSLTSCALE from the active view's document (paper linetypes).
+        writer.headerVars["$PSLTSCALE"] = psltscale
         // $INSBASE in DXF file coordinates (Y negated, like $EXTMIN below).
         let base = modelView.insertionBase
         writer.headerVars["$INSBASE"] = Vector3(x: base.x, y: -base.y, z: base.z)
@@ -1109,7 +1119,7 @@ public enum DXFWriterBridge {
         modelEntities: [CADEntity]
     ) -> SheetExportPlan {
         let markedIndices = Set(view.entities.indices.filter {
-            xdataInt(view.entities[$0].xdata, "dxf.viewport.projected") == 1
+            view.entities[$0].isViewportProjected
         })
 
         var projectedIndices = markedIndices

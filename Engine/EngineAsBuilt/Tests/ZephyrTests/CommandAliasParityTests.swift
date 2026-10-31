@@ -20,7 +20,8 @@ final class CommandAliasParityTests: XCTestCase {
         ("DT", "TEXT"), ("TB", "TABLE"), ("DATATABLE", "TABLE"),
         ("R", "REDRAW"),
         ("RO", "ROTATE"), ("SC", "SCALE"), ("S", "STRETCH"),
-        ("D", "DIMSTYLE"), ("PS", "PSPACE"), ("CL", "CENTERLINE"),
+        ("D", "DIMSTYLE"), ("PS", "PSPACE"), ("PSPACE", "PSPACE"),
+        ("MS", "MSPACE"), ("MSPACE", "MSPACE"), ("CL", "CENTERLINE"),
         ("PLINE", "PLINE"), ("POLYLINE", "PLINE"), ("PL", "PLINE"),
         ("RECTANG", "RECTANG"), ("RECTANGLE", "RECTANG"),
         ("REC", "RECTANG"), ("RECT", "RECTANG"),
@@ -93,6 +94,8 @@ final class CommandAliasParityTests: XCTestCase {
         ("LAYISO", "LAYISO"), ("LAYUNISO", "LAYUNISO"),
         ("LAYMCUR", "LAYMCUR"), ("AI_MOLC", "LAYMCUR"),
         ("LAYMCH", "LAYMCH"),
+        ("MV", "MVIEW"), ("MVIEW", "MVIEW"),
+        ("CHSPACE", "CHSPACE"),
     ]
 
     func testGoldenLTAliasesResolveToCanonical() {
@@ -156,13 +159,15 @@ final class CommandAliasParityTests: XCTestCase {
 
     /// Reserved stubs report honestly and real commands never stub-report.
     func testStubMessages() {
-        for stub in ["S", "STRETCH", "PS", "PSPACE",
+        for stub in ["S", "STRETCH",
                      "G", "GROUP", "W", "WBLOCK", "SP", "SPELL"] {
             XCTAssertNotNil(
                 CADCommandAliasTable.stubMessage(for: stub),
                 "'\(stub)' should report not-implemented-yet")
         }
-        for real in ["LINE", "L", "COPY", "TRIM", "AA", "R", "TABLE"] {
+        for real in ["LINE", "L", "COPY", "TRIM", "AA", "R", "TABLE",
+                     "PS", "PSPACE", "MS", "MSPACE",
+                     "MV", "MVIEW", "CHSPACE"] {
             XCTAssertNil(
                 CADCommandAliasTable.stubMessage(for: real),
                 "'\(real)' must not stub-report")

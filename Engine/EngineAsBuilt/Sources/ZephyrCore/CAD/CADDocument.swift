@@ -41,6 +41,11 @@ public struct CADDocumentSnapshot: Sendable {
     public let currentMlineStyleName: String
     public let linetypePatterns: [String: [Double]]
     public let globalLineTypeScale: Double
+    /// Paper-space linetype scale (AutoCAD PSLTSCALE sysvar). When 1
+    /// (default), linetypes on viewport-projected copies scale with the
+    /// viewport so dashes read the same size on paper. When 0, projected
+    /// copies use the model linetype scale unchanged.
+    public let paperSpaceLinetypeScale: Int
     public let autoContrastTrueColor: Bool
     public let pointDisplayMode: Int
     public let pointDisplaySize: Double
@@ -83,6 +88,7 @@ public struct CADDocumentSnapshot: Sendable {
         currentMlineStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
+        paperSpaceLinetypeScale: Int = 1,
         autoContrastTrueColor: Bool = true,
         pointDisplayMode: Int = 0,
         pointDisplaySize: Double = 0,
@@ -120,6 +126,7 @@ public struct CADDocumentSnapshot: Sendable {
         self.currentMlineStyleName = currentMlineStyleName
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
+        self.paperSpaceLinetypeScale = paperSpaceLinetypeScale
         self.autoContrastTrueColor = autoContrastTrueColor
         self.pointDisplayMode = pointDisplayMode
         self.pointDisplaySize = pointDisplaySize
@@ -143,6 +150,7 @@ public struct CADDocumentSnapshot: Sendable {
         currentDimensionStyleName: String = "Standard",
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
+        paperSpaceLinetypeScale: Int = 1,
         autoContrastTrueColor: Bool = true,
         pointDisplayMode: Int = 0,
         pointDisplaySize: Double = 0,
@@ -169,6 +177,7 @@ public struct CADDocumentSnapshot: Sendable {
             currentDimensionStyleName: currentDimensionStyleName,
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
+            paperSpaceLinetypeScale: paperSpaceLinetypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
             pointDisplayMode: pointDisplayMode,
             pointDisplaySize: pointDisplaySize,
@@ -460,6 +469,34 @@ public final class CADDocument {
     /// Global linetype scale factor (AutoCAD LTSCALE sysvar). Multiplies all entity linetype scales.
     public var globalLineTypeScale: Double = 1.0 {
         didSet { markNeedsRegeneration() }
+    }
+
+    /// Paper-space linetype scale (AutoCAD PSLTSCALE sysvar, 0 or 1).
+    /// Applies to viewport-projected copies in sheet views; see
+    /// `paperLinetypeMultiplier`. Persisted in DXF ($PSLTSCALE) and EAB.
+    public var paperSpaceLinetypeScale: Int = 1 {
+        didSet { markNeedsRegeneration() }
+    }
+
+    /// PSLTSCALE multiplier for one entity's linetype scale. Projected
+    /// model copies in a sheet view scale with their viewport
+    /// (paperHeight / viewHeight) when `psltscale == 1`, so dashes read
+    /// the same size on paper at any viewport zoom. Native paper geometry
+    /// and model-space entities are unaffected (multiplier 1).
+    public static func paperLinetypeMultiplier(for entity: CADEntity, psltscale: Int) -> Double {
+        guard psltscale == 1, entity.isViewportProjected else { return 1 }
+        func num(_ key: String) -> Double? {
+            switch entity.xdata[key] {
+            case .double(let v): return v
+            case .int(let v): return Double(v)
+            default: return nil
+            }
+        }
+        guard let paperH = num("dxf.viewport.paperHeight"),
+              let viewH = num("dxf.viewport.viewHeight"),
+              viewH > 1e-9, paperH.isFinite else { return 1 }
+        let scale = paperH / viewH
+        return scale.isFinite && scale > 1e-9 ? scale : 1
     }
 
     /// When true (default), true colors (gradients, explicit 24-bit RGB values) are adjusted
@@ -2183,6 +2220,9 @@ public final class CADDocument {
 
     public func removeEntity(handle: UUID) {
         documentLock.withLock {
+            // Viewport-projected copies are derived render geometry;
+            // erasing them is a no-op (edit the model original instead).
+            if entityRegistry[handle]?.isViewportProjected == true { return }
             pushUndo()
             if let erased = entityRegistry[handle] {
                 oopsBuffer = [erased]
@@ -2222,6 +2262,7 @@ public final class CADDocument {
     /// and deliberately keeps the old grid as a conservative broad-phase until
     /// the gesture ends.
     public func removeEntityLive(handle: UUID) {
+        guard entityRegistry[handle]?.isViewportProjected != true else { return }
         guard entityRegistry.removeValue(forKey: handle) != nil else { return }
         refreshPathArrays(dependingOn: handle)
         markEdited(regenerate: true)
@@ -2238,6 +2279,7 @@ public final class CADDocument {
         var changedHandles = Set<UUID>()
 
         for handle in handles {
+            guard entityRegistry[handle]?.isViewportProjected != true else { continue }
             if entityRegistry.removeValue(forKey: handle) != nil {
                 changedHandles.insert(handle)
             }
@@ -2245,6 +2287,7 @@ public final class CADDocument {
 
         for entity in entities {
             guard entityRegistry[entity.handle] != nil else { continue }
+            guard entityRegistry[entity.handle]?.isViewportProjected != true else { continue }
             let updated = preparedEntityForStorage(entity)
             entityRegistry[updated.handle] = updated
             changedHandles.insert(updated.handle)
@@ -2281,6 +2324,7 @@ public final class CADDocument {
         // First pass: collect all referenced block IDs so we can remap them.
         var referencedBlockIDs = Set<UUID>()
         for handle in handles {
+            guard entityRegistry[handle]?.isViewportProjected != true else { continue }
             guard let entity = entityRegistry[handle] else { continue }
             if let bid = entity.blockID {
                 referencedBlockIDs.insert(bid)
@@ -2306,6 +2350,7 @@ public final class CADDocument {
 
         // Second pass: duplicate each entity.
         for handle in handles {
+            guard entityRegistry[handle]?.isViewportProjected != true else { continue }
             guard var entity = entityRegistry[handle] else { continue }
 
             // New handle
@@ -3275,8 +3320,10 @@ public final class CADDocument {
     // MARK: - Bulk Transforms
 
     public func moveEntities(handles: Set<UUID>, by delta: Vector3) {
+        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+        guard !targets.isEmpty else { return }
         pushUndo()
-        for handle in handles {
+        for handle in targets {
             guard var entity = entityRegistry[handle] else { continue }
             var t = entity.transform
             t.position = Vector3(
@@ -3287,13 +3334,15 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
-        refreshPathArrays(dependingOn: handles)
+        refreshPathArrays(dependingOn: targets)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
 
     public func moveEntitiesLive(handles: Set<UUID>, by delta: Vector3) {
-        for handle in handles {
+        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+        guard !targets.isEmpty else { return }
+        for handle in targets {
             guard var entity = entityRegistry[handle] else { continue }
             var t = entity.transform
             t.position = Vector3(
@@ -3304,17 +3353,19 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = liveTransformedEntity(entity)
         }
-        refreshPathArrays(dependingOn: handles)
+        refreshPathArrays(dependingOn: targets)
         // Do not push undo or set isDirty. Handled on mouse-up.
     }
 
     public func rotateEntities(
         handles: Set<UUID>, around center: Vector3, angleDeltaRadians: Double
     ) {
+        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+        guard !targets.isEmpty else { return }
         pushUndo()
         let cosR = cos(angleDeltaRadians)
         let sinR = sin(angleDeltaRadians)
-        for handle in handles {
+        for handle in targets {
             guard var entity = entityRegistry[handle] else { continue }
             let pos = entity.transform.position
             let dx = pos.x - center.x
@@ -3329,7 +3380,7 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
-        refreshPathArrays(dependingOn: handles)
+        refreshPathArrays(dependingOn: targets)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -3337,9 +3388,11 @@ public final class CADDocument {
     public func rotateEntitiesLive(
         handles: Set<UUID>, around center: Vector3, angleDeltaRadians: Double
     ) {
+        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+        guard !targets.isEmpty else { return }
         let cosR = cos(angleDeltaRadians)
         let sinR = sin(angleDeltaRadians)
-        for handle in handles {
+        for handle in targets {
             guard var entity = entityRegistry[handle] else { continue }
             let pos = entity.transform.position
             let dx = pos.x - center.x
@@ -3354,13 +3407,15 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = liveTransformedEntity(entity)
         }
-        refreshPathArrays(dependingOn: handles)
+        refreshPathArrays(dependingOn: targets)
     }
 
     public func scaleEntities(handles: Set<UUID>, around center: Vector3, factor: Double) {
         guard factor > 0 else { return }
+        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+        guard !targets.isEmpty else { return }
         pushUndo()
-        for handle in handles {
+        for handle in targets {
             guard var entity = entityRegistry[handle] else { continue }
             let pos = entity.transform.position
             let dx = pos.x - center.x
@@ -3379,14 +3434,16 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
-        refreshPathArrays(dependingOn: handles)
+        refreshPathArrays(dependingOn: targets)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
 
     public func scaleEntitiesLive(handles: Set<UUID>, around center: Vector3, factor: Double) {
         guard factor > 0 else { return }
-        for handle in handles {
+        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+        guard !targets.isEmpty else { return }
+        for handle in targets {
             guard var entity = entityRegistry[handle] else { continue }
             let pos = entity.transform.position
             let dx = pos.x - center.x
@@ -3405,7 +3462,7 @@ public final class CADDocument {
             entity.transform = t
             entityRegistry[handle] = liveTransformedEntity(entity)
         }
-        refreshPathArrays(dependingOn: handles)
+        refreshPathArrays(dependingOn: targets)
     }
 
     // MARK: - ALIGN Command Support
@@ -3432,6 +3489,8 @@ public final class CADDocument {
         destPoint2 d2: Vector3,
         scaleObjects: Bool
     ) {
+        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+        guard !targets.isEmpty else { return }
         pushUndo()
 
         let sv = Vector3(x: s2.x - s1.x, y: s2.y - s1.y, z: 0)
@@ -3444,12 +3503,12 @@ public final class CADDocument {
             // Source points coincident — cannot compute rotation or scale.
             // Fall back to pure translation from S1→D1.
             let translation = Transform3D.translated(by: Vector3(x: d1.x - s1.x, y: d1.y - s1.y, z: 0))
-            for handle in handles {
+            for handle in targets {
                 guard var entity = entityRegistry[handle] else { continue }
                 entity.transform = translation.multiplying(by: entity.transform)
                 entityRegistry[handle] = preparedEntityForStorage(entity)
             }
-            refreshPathArrays(dependingOn: handles)
+            refreshPathArrays(dependingOn: targets)
             markEdited(regenerate: true)
             invalidateEntityGrid()
             return
@@ -3458,12 +3517,12 @@ public final class CADDocument {
         if ld < 1e-9 {
             // Destination points coincident — pure move only.
             let translation = Transform3D.translated(by: Vector3(x: d1.x - s1.x, y: d1.y - s1.y, z: 0))
-            for handle in handles {
+            for handle in targets {
                 guard var entity = entityRegistry[handle] else { continue }
                 entity.transform = translation.multiplying(by: entity.transform)
                 entityRegistry[handle] = preparedEntityForStorage(entity)
             }
-            refreshPathArrays(dependingOn: handles)
+            refreshPathArrays(dependingOn: targets)
             markEdited(regenerate: true)
             invalidateEntityGrid()
             return
@@ -3481,12 +3540,12 @@ public final class CADDocument {
         let originToD1 = Transform3D.translated(by: Vector3(x: d1.x, y: d1.y, z: 0))
         let finalTransform = originToD1.multiplying(by: scaleMatrix.multiplying(by: rotation.multiplying(by: s1ToOrigin)))
 
-        for handle in handles {
+        for handle in targets {
             guard var entity = entityRegistry[handle] else { continue }
             entity.transform = finalTransform.multiplying(by: entity.transform)
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
-        refreshPathArrays(dependingOn: handles)
+        refreshPathArrays(dependingOn: targets)
         markEdited(regenerate: true)
         invalidateEntityGrid()
     }
@@ -3878,16 +3937,54 @@ public final class CADDocument {
     }
 
     public func removeEntities(handles: Set<UUID>) {
+        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+        guard !targets.isEmpty else { return }
         pushUndo()
-        let erased = handles.compactMap { entityRegistry[$0] }
+        let erased = targets.compactMap { entityRegistry[$0] }
         if !erased.isEmpty {
             oopsBuffer = erased
         }
-        for handle in handles {
+        for handle in targets {
             entityRegistry.removeValue(forKey: handle)
         }
         markEdited(regenerate: true)
         invalidateEntityGrid()
+    }
+
+    /// Replace all viewport-projected (derived) entities with fresh
+    /// projections. Paper-space refresh only: pushes no undo and does not
+    /// bump `editRevision`, so refreshing a sheet never dirties the file
+    /// or becomes undoable. Missing layers/blocks referenced by the new
+    /// projections are adopted by handle. Returns removed handles so the
+    /// caller can prune selection state.
+    @discardableResult
+    public func replaceViewportProjectedEntities(
+        with newProjected: [CADEntity],
+        additionalLayers: [Layer] = [],
+        additionalBlocks: [CADBlock] = []
+    ) -> Set<UUID> {
+        documentLock.withLock {
+            for layer in additionalLayers where layerTable[layer.handle] == nil {
+                layerTable[layer.handle] = layer
+            }
+            for block in additionalBlocks where blockTable[block.handle] == nil {
+                blockTable[block.handle] = block
+            }
+            var removed: Set<UUID> = []
+            for (handle, entity) in entityRegistry where entity.isViewportProjected {
+                removed.insert(handle)
+            }
+            for handle in removed {
+                entityRegistry.removeValue(forKey: handle)
+            }
+            for entity in newProjected {
+                let prepared = preparedEntityForStorage(entity)
+                entityRegistry[prepared.handle] = prepared
+            }
+            invalidateEntityGrid()
+            markNeedsRegeneration()
+            return removed
+        }
     }
 
     // MARK: - Block Creation from Selected Entities
@@ -3897,23 +3994,24 @@ public final class CADDocument {
     /// - Returns: The newly created block, or nil if creation failed.
     @discardableResult
     public func createBlockFromEntities(handles: Set<UUID>, name: String) -> CADBlock? {
-        guard !handles.isEmpty else { return nil }
+        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+        guard !targets.isEmpty else { return nil }
         // Block geometry cannot contain a nested INSERT, so an xref in
         // the selection would be baked into the host file. Refuse.
-        if handles.contains(where: { handle in
+        if targets.contains(where: { handle in
             guard let bid = entityRegistry[handle]?.blockID else { return false }
             return blockTable[bid]?.isXref == true
         }) {
             print("[Xref] Selection contains an external reference — Bind it before creating a block.")
             return nil
         }
-        guard let center = collectiveCenter(for: handles) else { return nil }
+        guard let center = collectiveCenter(for: targets) else { return nil }
 
         pushUndo()
 
         // Bake the selection into block-local space (relative to the
         // collective center), preserving per-primitive styles/xdata.
-        let selected = handles.compactMap { entityRegistry[$0] }
+        let selected = targets.compactMap { entityRegistry[$0] }
         let baked = CADModelSpaceBaker.bake(
             entities: selected,
             layers: allLayers,
@@ -4362,6 +4460,9 @@ public final class CADDocument {
             let prepared = preparedEntityForStorage(entity)
             entityRegistry[prepared.handle] = prepared
         }
+        self.groups = Dictionary(
+            uniqueKeysWithValues: imported.groups.map { ($0.name, $0) })
+        self.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
         markEdited(regenerate: true)
         rebuildEntityGrid()
         finalizeOpen(
@@ -4567,6 +4668,7 @@ public final class CADDocument {
             currentMlineStyleName: currentMlineStyleName,
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
+            paperSpaceLinetypeScale: paperSpaceLinetypeScale,
             autoContrastTrueColor: autoContrastTrueColor,
             pointDisplayMode: pointDisplayMode,
             pointDisplaySize: pointDisplaySize,
@@ -4623,6 +4725,7 @@ public final class CADDocument {
             currentMlineStyleName: base.currentMlineStyleName,
             linetypePatterns: base.linetypePatterns,
             globalLineTypeScale: base.globalLineTypeScale,
+            paperSpaceLinetypeScale: base.paperSpaceLinetypeScale,
             autoContrastTrueColor: base.autoContrastTrueColor,
             pointDisplayMode: base.pointDisplayMode,
             pointDisplaySize: base.pointDisplaySize,
@@ -4686,6 +4789,7 @@ public final class CADDocument {
         currentMlineStyleName = snapshot.currentMlineStyleName
         linetypePatterns = snapshot.linetypePatterns
         globalLineTypeScale = snapshot.globalLineTypeScale
+        paperSpaceLinetypeScale = snapshot.paperSpaceLinetypeScale
         autoContrastTrueColor = snapshot.autoContrastTrueColor
         dxfRoundTripPayload = snapshot.dxfRoundTripPayload
         imageDefinitions = snapshot.imageDefinitions

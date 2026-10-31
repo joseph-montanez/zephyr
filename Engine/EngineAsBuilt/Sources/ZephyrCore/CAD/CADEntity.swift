@@ -1066,6 +1066,20 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
         }
     }
 
+    /// True for derived model-space copies projected into a sheet view
+    /// through a floating viewport (or the synthetic fit fallback). These
+    /// are render-only: selection and erase must skip them, and sheet
+    /// refresh replaces them wholesale from current model geometry.
+    /// Accepts both the in-memory `.bool(true)` tag and the `.int(1)` form
+    /// a DXF round-trip can produce.
+    public var isViewportProjected: Bool {
+        switch xdata["dxf.viewport.projected"] {
+        case .bool(let value): return value
+        case .int(let value): return value == 1
+        default: return false
+        }
+    }
+
     public mutating func updateArrayCache(sourceBoundingBox: BoundingBox3D?, pathPoints: [Vector3]? = nil) {
         if let arrayData {
             localBoundingBox = arrayData.localBoundingBox(

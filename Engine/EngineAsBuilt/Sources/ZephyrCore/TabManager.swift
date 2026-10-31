@@ -69,6 +69,39 @@ public struct SelectionState: Equatable, Sendable {
     public static let empty = SelectionState()
 }
 
+/// Snapshot of the active drawing space (AutoCAD TILEMODE / CVPORT / CTAB).
+/// Phase 1 maps the split-document model onto AutoCAD spaces: the Model
+/// view is TILEMODE 1 with the single model viewport (CVPORT 2); a sheet
+/// view is TILEMODE 0 in paper space (CVPORT 1). Floating model space
+/// inside a sheet viewport (CVPORT 2+ while TILEMODE 0) lands in a later
+/// phase. Sendable so the Lisp eval task can read it without a MainActor hop.
+public struct DrawingSpaceState: Sendable, Equatable {
+    public var tileMode: Int
+    public var currentViewportID: Int
+    public var currentLayoutName: String
+    /// Paper layout names only (AutoCAD `(layoutlist)` shape; Model excluded).
+    public var paperLayoutNames: [String]
+
+    public init(
+        tileMode: Int,
+        currentViewportID: Int,
+        currentLayoutName: String,
+        paperLayoutNames: [String]
+    ) {
+        self.tileMode = tileMode
+        self.currentViewportID = currentViewportID
+        self.currentLayoutName = currentLayoutName
+        self.paperLayoutNames = paperLayoutNames
+    }
+
+    /// Headless single-document default: Model space, no paper layouts.
+    public static let modelOnly = DrawingSpaceState(
+        tileMode: 1,
+        currentViewportID: 2,
+        currentLayoutName: "Model",
+        paperLayoutNames: [])
+}
+
 /// A single drawing tab — owns a `CADDocument` and associated file metadata.
 public struct DrawingView {
     public var name: String
@@ -367,6 +400,44 @@ public final class TabManager {
         return tab.drawingViews.map { ($0.name, $0.kind) }
     }
 
+    // MARK: - Drawing space (TILEMODE / CVPORT / CTAB)
+
+    /// Kind of the active drawing view, or nil when no tab is open.
+    public var activeViewKind: DXFDrawingViewKind? {
+        guard let tab = activeTab else { return nil }
+        return tab.drawingViews[tab.activeViewIndex].kind
+    }
+
+    /// True while a sheet (paper-space) view is active.
+    public var isPaperSpace: Bool {
+        activeViewKind == .sheet
+    }
+
+    /// AutoCAD TILEMODE: 1 on the Model view, 0 on a sheet view.
+    public var tileMode: Int {
+        isPaperSpace ? 0 : 1
+    }
+
+    /// AutoCAD CVPORT. Phase 1: 2 (the single model viewport) on the Model
+    /// view, 1 (overall paper-space viewport) on a sheet view.
+    public var currentViewportID: Int {
+        isPaperSpace ? 1 : 2
+    }
+
+    /// Paper layout names in tab order (Model excluded, `(layoutlist)` shape).
+    public var paperLayoutNames: [String] {
+        availableViews.filter { $0.kind == .sheet }.map { $0.name }
+    }
+
+    /// Immutable space snapshot for off-main consumers (Lisp sysvars).
+    public var spaceState: DrawingSpaceState {
+        DrawingSpaceState(
+            tileMode: tileMode,
+            currentViewportID: currentViewportID,
+            currentLayoutName: activeViewName ?? "Model",
+            paperLayoutNames: paperLayoutNames)
+    }
+
     /// Whether the active tab has unsaved changes.
     public var activeIsDirty: Bool {
         activeTab?.hasUnsavedChanges ?? false
@@ -452,8 +523,12 @@ public final class TabManager {
                 doc.linetypePatterns = imported.linetypePatterns
                 doc.dimensionStyles = imported.dimensionStyles
                 doc.leaderStyles = imported.leaderStyles
+                // Model views own model-space groups; sheets own their
+                // paper-space groups (projected copies never join groups).
+                let viewGroups = view.kind == .sheet ? view.groups : imported.groups
                 doc.groups = Dictionary(
-                    uniqueKeysWithValues: imported.groups.map { ($0.name, $0) })
+                    uniqueKeysWithValues: viewGroups.map { ($0.name, $0) })
+                doc.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
                 doc.insertionBase = imported.insBase
                 doc.dxfRoundTripPayload = imported.roundTripPayload
                 doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
@@ -507,8 +582,12 @@ public final class TabManager {
             doc.linetypePatterns = imported.linetypePatterns
             doc.dimensionStyles = imported.dimensionStyles
             doc.leaderStyles = imported.leaderStyles
+            // Model views own model-space groups; sheets own their
+            // paper-space groups (projected copies never join groups).
+            let paperGroups = view.kind == .sheet ? view.groups : imported.groups
             doc.groups = Dictionary(
-                uniqueKeysWithValues: imported.groups.map { ($0.name, $0) })
+                uniqueKeysWithValues: paperGroups.map { ($0.name, $0) })
+            doc.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
             doc.insertionBase = imported.insBase
             doc.dxfRoundTripPayload = imported.roundTripPayload
             doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
@@ -733,7 +812,15 @@ public final class TabManager {
     public func switchToView(at index: Int) -> Bool {
         guard activeIndex >= 0, activeIndex < tabs.count,
               index >= 0, index < tabs[activeIndex].drawingViews.count else { return false }
-        if index == tabs[activeIndex].activeViewIndex { return true }
+        if index == tabs[activeIndex].activeViewIndex {
+            // Same-view activation still refreshes derived geometry so a
+            // scripted PSPACE after a model edit converges without a tab hop.
+            refreshActiveSheetProjections()
+            // Re-apply the pruned snapshot so a live selection manager
+            // drops handles replaced by the refresh.
+            applySelectionState?(tabs[activeIndex].selectionState)
+            return true
+        }
         if let capture = captureCameraState {
             tabs[activeIndex].cameraState = capture()
         }
@@ -741,10 +828,431 @@ public final class TabManager {
             tabs[activeIndex].selectionState = capture()
         }
         tabs[activeIndex].activeViewIndex = index
+        refreshActiveSheetProjections()
         applyCameraState?(tabs[activeIndex].cameraState)
         applySelectionState?(tabs[activeIndex].selectionState)
         onActiveTabChanged?()
         return true
+    }
+
+    /// Rebuild the active sheet's derived viewport projections from the
+    /// tab's current model geometry. No-op unless a sheet view is active.
+    /// Undo-free and revision-free: refreshing never dirties the file.
+    /// Stale derived handles are pruned from the saved selection snapshot
+    /// so a restored selection cannot reference replaced copies.
+    public func refreshActiveSheetProjections() {
+        guard let tab = activeTab else { return }
+        let activeView = tab.drawingViews[tab.activeViewIndex]
+        guard activeView.kind == .sheet else { return }
+        guard let modelView = tab.drawingViews.first(where: { $0.kind == .model }) else { return }
+        let sheetDoc = activeView.document
+        let modelDoc = modelView.document
+        let cache = effectiveProjectionCache(for: sheetDoc)
+        guard !cache.isEmpty else { return }
+        let modelEntities = Array(modelDoc.entitiesView)
+        let xrefBlockIDs = Set(modelDoc.allBlocks.filter(\.isXref).map(\.handle))
+        let projected = DXFImporter.projectedEntities(
+            modelEntities: modelEntities,
+            cache: cache,
+            xrefBlockIDs: xrefBlockIDs)
+        let missingLayers = modelDoc.allLayers.filter { sheetDoc.layer(for: $0.handle) == nil }
+        let missingBlocks = modelDoc.allBlocks.filter { sheetDoc.block(for: $0.handle) == nil }
+        let removed = sheetDoc.replaceViewportProjectedEntities(
+            with: projected,
+            additionalLayers: missingLayers,
+            additionalBlocks: missingBlocks)
+        guard !removed.isEmpty else { return }
+        var snapshot = tab.drawingViews[tab.activeViewIndex].selectionState
+        snapshot.selectedHandles.subtract(removed)
+        if let last = snapshot.lastSelectedHandle, removed.contains(last) {
+            snapshot.lastSelectedHandle = nil
+        }
+        if let leader = snapshot.selectedLeaderContentHandle, removed.contains(leader) {
+            snapshot.selectedLeaderContentHandle = nil
+        }
+        tabs[activeIndex].drawingViews[tab.activeViewIndex].selectionState = snapshot
+    }
+
+    // MARK: - Floating viewports (Phase 3)
+
+    /// Explicit per-sheet viewport definitions. Keyed by the sheet
+    /// document's identity. Once a sheet is edited (scale/center/twist/
+    /// on-off) or gains an MVIEW viewport, the stored list becomes the
+    /// source of truth so an OFF viewport (zero projections, no xdata
+    /// trace) survives refresh. Nil means "derive from projected xdata".
+    private var sheetViewportStore: [ObjectIdentifier: [DXFImporter.SheetViewport]] = [:]
+    /// Viewport picked via `selectViewport(at:)` per sheet document.
+    private var selectedViewportBySheet: [ObjectIdentifier: Int] = [:]
+
+    private func sheetKey(for sheetDoc: CADDocument) -> ObjectIdentifier {
+        ObjectIdentifier(sheetDoc)
+    }
+
+    /// Viewport definitions for a sheet: stored overrides when edited,
+    /// otherwise derived from projected xdata. Empty when the sheet has
+    /// no viewport information.
+    public func sheetViewports(for sheetDoc: CADDocument) -> [DXFImporter.SheetViewport] {
+        if let stored = sheetViewportStore[sheetKey(for: sheetDoc)] { return stored }
+        let cache = DXFImporter.sheetProjectionCache(from: Array(sheetDoc.entitiesView))
+        return cache.exactViewports
+    }
+
+    /// Viewport definitions for the active sheet, or [] when no sheet view
+    /// is active.
+    public func activeSheetViewports() -> [DXFImporter.SheetViewport] {
+        guard let tab = activeTab else { return [] }
+        let view = tab.drawingViews[tab.activeViewIndex]
+        guard view.kind == .sheet else { return [] }
+        return sheetViewports(for: view.document)
+    }
+
+    /// Usable (on + valid, non-system) floating viewports on the active sheet.
+    public func activeUsableViewports() -> [DXFImporter.SheetViewport] {
+        activeSheetViewports().filter { $0.isUsable && !$0.isSystemViewport }
+    }
+
+    // MARK: - Layout lifecycle (Phase 4)
+
+    /// Default paper for `createLayout`: Letter landscape, stored in mm.
+    public static let defaultNewLayoutSettings = CADLayoutSettings(
+        paperName: "Letter",
+        paperWidthMM: 279.4, paperHeightMM: 215.9,
+        plotPaperUnits: 1)
+
+    private func layoutNameTaken(_ name: String) -> Bool {
+        guard let tab = activeTab else { return false }
+        let needle = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return tab.drawingViews.contains {
+            $0.name.caseInsensitiveCompare(needle) == .orderedSame
+        }
+    }
+
+    private func layoutIndex(named name: String) -> Int? {
+        guard let tab = activeTab else { return nil }
+        let needle = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return tab.drawingViews.firstIndex {
+            $0.name.caseInsensitiveCompare(needle) == .orderedSame
+        }
+    }
+
+    private func nextLayoutName() -> String {
+        var n = 1
+        while layoutNameTaken("Layout\(n)") { n += 1 }
+        return "Layout\(n)"
+    }
+
+    /// Create a new sheet layout with default Letter paper and one viewport
+    /// fitting current model extents (when the model is non-empty). The new
+    /// sheet becomes active. Returns false when the name is blank/taken.
+    @discardableResult
+    public func createLayout(named name: String? = nil) -> Bool {
+        guard activeTab != nil else { return false }
+        let resolved = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let finalName = resolved.isEmpty ? nextLayoutName() : resolved
+        guard !finalName.isEmpty, !layoutNameTaken(finalName) else { return false }
+        guard let tab = activeTab else { return false }
+        let modelView = tab.drawingViews.first(where: { $0.kind == .model })
+        let doc = CADDocument()
+        if let modelDoc = modelView?.document {
+            doc.importLayersBlocksEntities(
+                layers: modelDoc.allLayers, blocks: modelDoc.allBlocks, entities: [])
+            doc.textStyles = modelDoc.textStyles
+            doc.linetypePatterns = modelDoc.linetypePatterns
+            doc.dimensionStyles = modelDoc.dimensionStyles
+            doc.leaderStyles = modelDoc.leaderStyles
+            doc.paperSpaceLinetypeScale = modelDoc.paperSpaceLinetypeScale
+        }
+        let settings = Self.defaultNewLayoutSettings
+        doc.layoutSettings = settings
+        doc.unit = .millimeter
+        tabs[activeIndex].drawingViews.append(DrawingView(
+            name: finalName, kind: .sheet, document: doc))
+        doc.savedRevision = doc.editRevision
+        let newIndex = tabs[activeIndex].drawingViews.count - 1
+        guard switchToView(at: newIndex) else { return false }
+        // Full-sheet frame in paper units (mm); fits model extents.
+        createSheetViewport(
+            paperX1: 0, paperY1: 0,
+            paperX2: settings.paperWidthMM, paperY2: settings.paperHeightMM)
+        return true
+    }
+
+    /// Rename a sheet layout. The Model view cannot be renamed and names
+    /// must stay unique (case-insensitive). Returns false otherwise.
+    @discardableResult
+    public func renameLayout(from oldName: String, to newName: String) -> Bool {
+        guard let index = layoutIndex(named: oldName) else { return false }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !layoutNameTaken(trimmed) else { return false }
+        guard tabs[activeIndex].drawingViews[index].kind == .sheet else { return false }
+        tabs[activeIndex].drawingViews[index].name = trimmed
+        onActiveTabChanged?()
+        return true
+    }
+
+    /// Delete a sheet layout. The Model view and the last remaining view
+    /// cannot be deleted. The Model view becomes active when the active
+    /// sheet is deleted.
+    @discardableResult
+    public func deleteLayout(named name: String) -> Bool {
+        guard let index = layoutIndex(named: name) else { return false }
+        guard tabs[activeIndex].drawingViews.count > 1 else { return false }
+        let doomed = tabs[activeIndex].drawingViews[index]
+        guard doomed.kind == .sheet else { return false }
+        sheetViewportStore.removeValue(forKey: sheetKey(for: doomed.document))
+        selectedViewportBySheet.removeValue(forKey: sheetKey(for: doomed.document))
+        tabs[activeIndex].drawingViews.remove(at: index)
+        var active = tabs[activeIndex].activeViewIndex
+        if index < active {
+            active -= 1
+        } else if index == active {
+            active = min(active, tabs[activeIndex].drawingViews.count - 1)
+        }
+        tabs[activeIndex].activeViewIndex = max(0, active)
+        refreshActiveSheetProjections()
+        onActiveTabChanged?()
+        return true
+    }
+
+    /// Copy a sheet layout (paper geometry, viewport definitions, groups,
+    /// settings) under a new name. Derived projections rebuild live from
+    /// the model on activation. The copy becomes active.
+    @discardableResult
+    public func copyLayout(from sourceName: String, to newName: String) -> Bool {
+        guard let index = layoutIndex(named: sourceName) else { return false }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !layoutNameTaken(trimmed) else { return false }
+        guard tabs[activeIndex].drawingViews[index].kind == .sheet else { return false }
+        let sourceDoc = tabs[activeIndex].drawingViews[index].document
+        let copy = CADDocument()
+        copy.restore(from: sourceDoc.snapshot())
+        copy.savedRevision = copy.editRevision
+        if let stored = sheetViewportStore[sheetKey(for: sourceDoc)] {
+            sheetViewportStore[sheetKey(for: copy)] = stored
+        }
+        if let selected = selectedViewportBySheet[sheetKey(for: sourceDoc)] {
+            selectedViewportBySheet[sheetKey(for: copy)] = selected
+        }
+        tabs[activeIndex].drawingViews.append(DrawingView(
+            name: trimmed, kind: .sheet, document: copy))
+        let newIndex = tabs[activeIndex].drawingViews.count - 1
+        return switchToView(at: newIndex)
+    }
+
+    /// Viewport picked by the user on the active sheet (via
+    /// `selectViewport(at:)`), falling back to the first usable viewport.
+    /// Nil when the active sheet has no usable viewport.
+    public func activeViewport() -> DXFImporter.SheetViewport? {
+        let usable = activeUsableViewports()
+        guard !usable.isEmpty else { return nil }
+        guard let tab = activeTab else { return usable[0] }
+        let key = sheetKey(for: tab.drawingViews[tab.activeViewIndex].document)
+        if let selected = selectedViewportBySheet[key],
+           let match = usable.first(where: { $0.id == selected }) { return match }
+        return usable[0]
+    }
+
+    /// Pick the topmost floating viewport whose paper frame contains
+    /// `(x, y)` (sheet coordinates). Records the pick as the sheet's
+    /// selected viewport and returns it. Nil when none contains the point.
+    @discardableResult
+    public func selectViewport(atPaperPoint x: Double, _ y: Double) -> DXFImporter.SheetViewport? {
+        guard let tab = activeTab else { return nil }
+        let view = tab.drawingViews[tab.activeViewIndex]
+        guard view.kind == .sheet else { return nil }
+        let candidates = sheetViewports(for: view.document)
+            .filter { $0.isUsable && !$0.isSystemViewport && $0.containsPaperPoint(x: x, y: y) }
+            .sorted { $0.id > $1.id }
+        guard let pick = candidates.first else { return nil }
+        selectedViewportBySheet[sheetKey(for: view.document)] = pick.id
+        return pick
+    }
+
+    /// Rewrite one viewport definition on the active sheet and re-project.
+    /// Returns false when no sheet is active or the id is unknown.
+    @discardableResult
+    public func updateActiveSheetViewport(
+        id: Int,
+        status: Int? = nil,
+        scale: Double? = nil,
+        viewTarget: (x: Double, y: Double)? = nil,
+        twistDegrees: Double? = nil
+    ) -> Bool {
+        guard let tab = activeTab else { return false }
+        let index = tab.activeViewIndex
+        let view = tab.drawingViews[index]
+        guard view.kind == .sheet else { return false }
+        var viewports = sheetViewports(for: view.document)
+        guard let slot = viewports.firstIndex(where: { $0.id == id }) else { return false }
+        var edited = viewports[slot]
+        if let status { edited = edited.withStatus(status) }
+        if let scale { edited = edited.withScale(scale) }
+        if let target = viewTarget { edited = edited.withViewTarget(x: target.x, y: target.y) }
+        if let twist = twistDegrees { edited = edited.withTwistDegrees(twist) }
+        viewports[slot] = edited
+        sheetViewportStore[sheetKey(for: view.document)] = viewports
+        refreshActiveSheetProjections()
+        return true
+    }
+
+    /// Create a rectangular floating viewport on the active sheet from two
+    /// paper corners. Fits current model extents by default. Returns the
+    /// new viewport id, or nil when no sheet is active or the rect is
+    /// degenerate.
+    @discardableResult
+    public func createSheetViewport(
+        paperX1: Double, paperY1: Double, paperX2: Double, paperY2: Double
+    ) -> Int? {
+        guard let tab = activeTab else { return nil }
+        let index = tab.activeViewIndex
+        let view = tab.drawingViews[index]
+        guard view.kind == .sheet else { return nil }
+        let paperWidth = abs(paperX2 - paperX1)
+        let paperHeight = abs(paperY2 - paperY1)
+        guard paperWidth > 1e-9, paperHeight > 1e-9 else { return nil }
+        guard let modelView = tab.drawingViews.first(where: { $0.kind == .model }) else { return nil }
+        var viewports = sheetViewports(for: view.document)
+        let nextID = (viewports.map(\.id).max() ?? 1) + 1
+        // Fit current model extents into the new frame.
+        var modelBounds: BoundingBox3D? = nil
+        for entity in modelView.document.entitiesView {
+            guard !entity.isViewportProjected,
+                  let box = entity.worldBoundingBox else { continue }
+            modelBounds = modelBounds.map { $0.union(with: box) } ?? box
+        }
+        let modelCenterX: Double
+        let modelCenterY: Double
+        let viewHeight: Double
+        if let bounds = modelBounds,
+           bounds.max.x - bounds.min.x > 1e-9,
+           bounds.max.y - bounds.min.y > 1e-9 {
+            modelCenterX = bounds.center.x
+            modelCenterY = bounds.center.y
+            let modelW = bounds.max.x - bounds.min.x
+            let modelH = bounds.max.y - bounds.min.y
+            let fitScale = min(paperWidth / modelW, paperHeight / modelH) * 0.9
+            viewHeight = paperHeight / max(fitScale, 1e-9)
+        } else {
+            modelCenterX = 0
+            modelCenterY = 0
+            viewHeight = paperHeight
+        }
+        let paperCenterX = (paperX1 + paperX2) / 2.0
+        // Stored paperCenterY is positive-down (see modelToPaperTransform).
+        let paperCenterY = -((paperY1 + paperY2) / 2.0)
+        let viewport = DXFImporter.SheetViewport(
+            paperCenterX: paperCenterX, paperCenterY: paperCenterY,
+            paperWidth: paperWidth, paperHeight: paperHeight,
+            status: nextID, id: nextID,
+            viewCenterX: 0, viewCenterY: 0,
+            viewTargetX: modelCenterX, viewTargetY: modelCenterY,
+            viewHeight: viewHeight, twistAngle: 0,
+            layerName: "MODEL")
+        viewports.append(viewport)
+        viewports.sort { $0.id < $1.id }
+        sheetViewportStore[sheetKey(for: view.document)] = viewports
+        selectedViewportBySheet[sheetKey(for: view.document)] = nextID
+        refreshActiveSheetProjections()
+        return nextID
+    }
+
+    /// Effective viewport definitions for `refreshActiveSheetProjections`:
+    /// stored overrides when present, else derived from projected xdata.
+    private func effectiveProjectionCache(
+        for sheetDoc: CADDocument
+    ) -> DXFImporter.SheetProjectionCache {
+        if let stored = sheetViewportStore[sheetKey(for: sheetDoc)] {
+            var cache = DXFImporter.SheetProjectionCache()
+            cache.exactViewports = stored
+            return cache
+        }
+        return DXFImporter.sheetProjectionCache(from: Array(sheetDoc.entitiesView))
+    }
+
+    /// Move entities between spaces through a viewport transform (CHSPACE).
+    /// Paper -> Model when a sheet view is active: every non-derived paper
+    /// entity in `handles` is inverse-transformed into the tab's model
+    /// document. Model -> Sheet when a model view is active: moves to the
+    /// tab's first sheet through its first usable viewport. Missing
+    /// layers/blocks are adopted by the destination. Returns moved count.
+    @discardableResult
+    public func chspace(handles: Set<UUID>) -> Int {
+        guard let tab = activeTab else { return 0 }
+        let view = tab.drawingViews[tab.activeViewIndex]
+        if view.kind == .sheet {
+            guard let modelView = tab.drawingViews.first(where: { $0.kind == .model }),
+                  let viewport = activeViewport() ?? activeUsableViewports().first
+            else { return 0 }
+            let sheetDoc = view.document
+            let modelDoc = modelView.document
+            let inverse = viewport.modelToPaperTransform.inverse()
+            let movers = handles.compactMap { sheetDoc.entity(for: $0) }
+                .filter { !$0.isViewportProjected }
+            guard !movers.isEmpty else { return 0 }
+            var moved: [CADEntity] = []
+            moved.reserveCapacity(movers.count)
+            for entity in movers {
+                moved.append(CADEntity(
+                    layerID: entity.layerID,
+                    blockID: entity.blockID,
+                    localGeometry: entity.localGeometry,
+                    dimensionMetadata: entity.dimensionMetadata,
+                    leaderData: entity.leaderData,
+                    arrayData: entity.arrayData,
+                    transform: inverse.multiplying(by: entity.transform),
+                    xdata: entity.xdata,
+                    drawOrder: entity.drawOrder,
+                    localBoundingBox: entity.localBoundingBox,
+                    anchorPoints: entity.anchorPoints))
+            }
+            let missingLayers = sheetDoc.allLayers.filter { modelDoc.layer(for: $0.handle) == nil }
+            let missingBlocks = sheetDoc.allBlocks.filter { modelDoc.block(for: $0.handle) == nil }
+            if !missingLayers.isEmpty || !missingBlocks.isEmpty {
+                modelDoc.importLayersBlocksEntities(
+                    layers: missingLayers, blocks: missingBlocks, entities: [])
+            }
+            modelDoc.addEntities(moved)
+            sheetDoc.removeEntities(handles: Set(movers.map(\.handle)))
+            refreshActiveSheetProjections()
+            return movers.count
+        } else {
+            guard let sheetIndex = tab.drawingViews.firstIndex(where: { $0.kind == .sheet })
+            else { return 0 }
+            let modelDoc = view.document
+            let sheetDoc = tab.drawingViews[sheetIndex].document
+            let viewports = sheetViewports(for: sheetDoc)
+                .filter { $0.isUsable && !$0.isSystemViewport }
+            guard let viewport = viewports.first else { return 0 }
+            let movers = handles.compactMap { modelDoc.entity(for: $0) }
+                .filter { !$0.isViewportProjected }
+            guard !movers.isEmpty else { return 0 }
+            let forward = viewport.modelToPaperTransform
+            var moved: [CADEntity] = []
+            moved.reserveCapacity(movers.count)
+            for entity in movers {
+                moved.append(CADEntity(
+                    layerID: entity.layerID,
+                    blockID: entity.blockID,
+                    localGeometry: entity.localGeometry,
+                    dimensionMetadata: entity.dimensionMetadata,
+                    leaderData: entity.leaderData,
+                    arrayData: entity.arrayData,
+                    transform: forward.multiplying(by: entity.transform),
+                    xdata: entity.xdata,
+                    drawOrder: entity.drawOrder,
+                    localBoundingBox: entity.localBoundingBox,
+                    anchorPoints: entity.anchorPoints))
+            }
+            let missingLayers = modelDoc.allLayers.filter { sheetDoc.layer(for: $0.handle) == nil }
+            let missingBlocks = modelDoc.allBlocks.filter { sheetDoc.block(for: $0.handle) == nil }
+            if !missingLayers.isEmpty || !missingBlocks.isEmpty {
+                sheetDoc.importLayersBlocksEntities(
+                    layers: missingLayers, blocks: missingBlocks, entities: [])
+            }
+            sheetDoc.addEntities(moved)
+            modelDoc.removeEntities(handles: Set(movers.map(\.handle)))
+            return movers.count
+        }
     }
 
     @discardableResult
@@ -779,6 +1287,30 @@ public final class TabManager {
             nextPosition = direction >= 0 ? 0 : candidates.count - 1
         }
         return switchToView(at: candidates[nextPosition])
+    }
+
+    /// Switch to the Model view (MODEL / MSPACE in Phase 1; true floating
+    /// model space inside a sheet viewport lands in a later phase).
+    /// Returns true when a model view is active afterwards (including when
+    /// it already was); false only when the tab has no model view.
+    @discardableResult
+    public func switchToModelSpace() -> Bool {
+        guard let tab = activeTab,
+              let index = tab.drawingViews.firstIndex(where: { $0.kind == .model })
+        else { return false }
+        return switchToView(at: index)
+    }
+
+    /// Switch to paper space (PSPACE): stay put when a sheet is already
+    /// active, otherwise activate the first sheet view. Returns false when
+    /// the drawing has no sheet layouts (caller reports it honestly).
+    @discardableResult
+    public func switchToPaperSpace() -> Bool {
+        guard let tab = activeTab else { return false }
+        if tab.drawingViews[tab.activeViewIndex].kind == .sheet { return true }
+        guard let index = tab.drawingViews.firstIndex(where: { $0.kind == .sheet })
+        else { return false }
+        return switchToView(at: index)
     }
 
     // MARK: - Tab Reordering
@@ -1307,10 +1839,16 @@ public final class TabManager {
                 .appendingPathComponent("dwg-export-\(UUID().uuidString).dxf")
             defer { try? FileManager.default.removeItem(at: tempDXF) }
 
-            try DXFExporter.export(views: tab.drawingViews, to: tempDXF, dxfVersion: dxfVersion)
+            try DXFExporter.export(
+                views: tab.drawingViews, to: tempDXF, dxfVersion: dxfVersion,
+                tileMode: tab.drawingViews[tab.activeViewIndex].kind == .sheet ? 0 : 1,
+                psltscale: tab.drawingViews[tab.activeViewIndex].document.paperSpaceLinetypeScale)
             try ODADWGConverter.convertSync(input: tempDXF, output: url, toFormat: "DWG")
         } else {
-            try DXFExporter.export(views: tab.drawingViews, to: url, dxfVersion: dxfVersion)
+            try DXFExporter.export(
+                views: tab.drawingViews, to: url, dxfVersion: dxfVersion,
+                tileMode: tab.drawingViews[tab.activeViewIndex].kind == .sheet ? 0 : 1,
+                psltscale: tab.drawingViews[tab.activeViewIndex].document.paperSpaceLinetypeScale)
         }
         tab.fileURL = url
         tab.displayName = url.lastPathComponent
@@ -1522,6 +2060,19 @@ public final class TabManager {
                 )
             }
 
+            let snapshotTileMode: Int = {
+                let i = (snapshot.activeViewIndex >= 0
+                    && snapshot.activeViewIndex < snapshot.drawingViews.count)
+                    ? snapshot.activeViewIndex : 0
+                return snapshot.drawingViews[i].viewKind == .sheet ? 0 : 1
+            }()
+            let snapshotPsltscale: Int = {
+                let i = (snapshot.activeViewIndex >= 0
+                    && snapshot.activeViewIndex < snapshot.drawingViews.count)
+                    ? snapshot.activeViewIndex : 0
+                return snapshot.drawingViews[i].docSnapshot.paperSpaceLinetypeScale
+            }()
+
             if ext == "eab" {
                 try EABWriter.write(
                     snapshots: snapshot.drawingViews,
@@ -1551,6 +2102,8 @@ public final class TabManager {
                     snapshots: snapshot.drawingViews,
                     to: tempDXF,
                     dxfVersion: dxfVersion,
+                    tileMode: snapshotTileMode,
+                    psltscale: snapshotPsltscale,
                     progress: progressHandler
                 )
                 progressHandler?(0.9)
@@ -1561,6 +2114,8 @@ public final class TabManager {
                     snapshots: snapshot.drawingViews,
                     to: targetURL,
                     dxfVersion: dxfVersion,
+                    tileMode: snapshotTileMode,
+                    psltscale: snapshotPsltscale,
                     progress: progressHandler
                 )
             }

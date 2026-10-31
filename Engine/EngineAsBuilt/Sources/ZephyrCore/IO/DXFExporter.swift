@@ -23,9 +23,12 @@ public enum DXFExporter {
     public static func export(
         views: [DrawingView],
         to url: URL,
-        dxfVersion: DXFVersion = .defaultExport
+        dxfVersion: DXFVersion = .defaultExport,
+        tileMode: Int = 1,
+        psltscale: Int = 1
     ) throws {
-        try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion)
+        try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion, tileMode: tileMode,
+                                   psltscale: psltscale)
     }
 
     /// Background-save: export from a snapshot with progress and cancellation.
@@ -42,6 +45,8 @@ public enum DXFExporter {
 
     public static func export(snapshots: [SaveDocumentSnapshot], to url: URL,
                               dxfVersion: DXFVersion = .defaultExport,
+                              tileMode: Int = 1,
+                              psltscale: Int = 1,
                               progress: ((Float) -> Void)? = nil) throws {
         try Task.checkCancellation()
         guard !snapshots.isEmpty else {
@@ -61,7 +66,8 @@ public enum DXFExporter {
                 cameraState: snapshot.cameraState))
             progress?(0.1 + 0.4 * Float(index + 1) / Float(snapshots.count))
         }
-        try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion)
+        try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion, tileMode: tileMode,
+                                   psltscale: psltscale)
         progress?(1.0)
     }
 

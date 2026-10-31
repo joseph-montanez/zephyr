@@ -163,6 +163,7 @@ public final class CADSelectionManager {
         lastSelectedHandle = nil
         selectedLeaderContentHandle = nil
         for entity in document.entitiesView {
+            guard !entity.isViewportProjected else { continue }
             guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
             guard !document.isIsolatedHidden(entity.handle) else { continue }
             selectedHandles.insert(entity.handle)

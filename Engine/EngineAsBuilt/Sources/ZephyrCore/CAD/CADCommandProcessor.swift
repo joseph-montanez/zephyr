@@ -334,7 +334,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "ZOOM",        aliases: ["Z"],             category: .view,    syntax: "", description: "Zoom: All/Center/Dynamic/Extents/Left/Previous/Right/Scale/Object/Window"),
         CommandDescriptor(canonicalName: "ZOOMEXTENTS",aliases: ["ZOOME"],         category: .view,    syntax: "", description: "Zoom to fit all entities in the viewport"),
         CommandDescriptor(canonicalName: "VIEW",       aliases: ["V", "VIEWS"],     category: .view,    syntax: "[name|index]", description: "List, select, or cycle model and sheet views"),
-        CommandDescriptor(canonicalName: "LAYOUT",     aliases: ["SHEET", "LO"],   category: .view,    syntax: "[name|index]", description: "Select or cycle imported DXF sheet layouts"),
+        CommandDescriptor(canonicalName: "LAYOUT",     aliases: ["SHEET", "LO"],   category: .view,    syntax: "[name|index|NEW name|RENAME old new|DELETE name|COPY src dst|?]", description: "Manage sheet layouts"),
         CommandDescriptor(canonicalName: "MODEL",      aliases: ["2DVIEW"],        category: .view,    syntax: "", description: "Switch to the DXF 2D model-space view"),
         CommandDescriptor(canonicalName: "NEXTVIEW",   aliases: ["VIEWNEXT"],      category: .view,    syntax: "", description: "Switch to the next model or sheet view"),
         CommandDescriptor(canonicalName: "PREVIOUSVIEW", aliases: ["PREVVIEW", "VIEWPREV"], category: .view, syntax: "", description: "Switch to the previous model or sheet view"),
@@ -343,6 +343,9 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "REGEN",      aliases: [],                category: .view,    syntax: "", description: "Regenerate the drawing from its database"),
         CommandDescriptor(canonicalName: "TOOLBAR",    aliases: ["TO"],            category: .view,    syntax: "", description: "Show or hide the toolbar (ribbon)"),
         CommandDescriptor(canonicalName: "PSPACE",     aliases: ["PS"],            category: .view,    syntax: "", description: "Switch to paper space"),
+        CommandDescriptor(canonicalName: "MSPACE",     aliases: ["MS"],            category: .view,    syntax: "", description: "Switch to model space"),
+        CommandDescriptor(canonicalName: "MVIEW",      aliases: ["MV"],            category: .view,    syntax: "[?|x1,y1 x2,y2|ON id|OFF id|S scale id|T degrees id]", description: "List, create, or control paper-space floating viewports"),
+        CommandDescriptor(canonicalName: "CHSPACE",    aliases: [],                 category: .modify,  syntax: "", description: "Move selected entities between paper and model space"),
         CommandDescriptor(canonicalName: "PROPERTIES", aliases: ["PROPS", "PR", "CH", "MO"], category: .view, syntax: "", description: "Show/hide the properties panel"),
         CommandDescriptor(canonicalName: "GROUP",      aliases: ["G"],             category: .modify,  syntax: "", description: "Create a lightweight named or unnamed object group"),
         CommandDescriptor(canonicalName: "NAV",        aliases: ["RADIALNAV"],     category: .view,    syntax: "", description: "Show/hide the radial navigation tool"),
@@ -673,7 +676,8 @@ public final class CADCommandProcessor {
         return lispVars.get(
             name.uppercased(),
             document: engine.document,
-            activeCommand: activeCommand)
+            activeCommand: activeCommand,
+            space: engine.tabManager.spaceState)
     }
 
     /// Called by `PhrostEngine.init?` to provide the engine reference after self is available.
@@ -2093,10 +2097,20 @@ public final class CADCommandProcessor {
         let argument = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
 
         switch command {
-        case "MODEL", "2DVIEW":
-            if engine.tabManager.switchToView(named: "Model") {
+        case "MODEL", "2DVIEW", "MSPACE", "MS":
+            // Phase 1: MSPACE targets the Model tab. True floating model
+            // space inside a sheet viewport lands in a later phase.
+            if engine.tabManager.switchToModelSpace() {
                 engine.zoomExtents()
                 print("[CAD] View: \(engine.tabManager.activeViewName ?? "Model")")
+            }
+            return true
+        case "PSPACE", "PS":
+            if engine.tabManager.switchToPaperSpace() {
+                engine.zoomExtents()
+                print("[CAD] Sheet: \(engine.tabManager.activeViewName ?? "")")
+            } else {
+                print("[CAD] This drawing has no sheet layouts.")
             }
             return true
         case "NEXTVIEW", "VIEWNEXT":
@@ -2127,6 +2141,7 @@ public final class CADCommandProcessor {
             }
             return true
         case "LAYOUT", "SHEET", "LO":
+            if handleLayoutLifecycle(argument, engine: engine) { return true }
             let sheets = engine.tabManager.availableViews.enumerated().filter { $0.element.kind == .sheet }
             if argument.isEmpty {
                 if engine.tabManager.cycleView(direction: 1, sheetsOnly: true) {
@@ -2154,8 +2169,226 @@ public final class CADCommandProcessor {
                 }
             }
             return true
+        case "MVIEW", "MV":
+            handleMViewCommand(argument, engine: engine)
+            return true
+        case "CHSPACE":
+            handleChspaceCommand(engine: engine)
+            return true
         default:
             return false
+        }
+    }
+
+    private func handleMViewCommand(_ argument: String, engine: PhrostEngine) {
+        let manager = engine.tabManager
+        guard manager.isPaperSpace else {
+            print("[CAD] MVIEW needs an active sheet view. Use PSPACE first.")
+            return
+        }
+        let args = argument.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let first = args.first?.uppercased() else {
+            printMViewUsage()
+            printViewportList(manager)
+            return
+        }
+        switch first {
+        case "?", "LIST", "L":
+            printViewportList(manager)
+        case "ON":
+            guard args.count >= 2, let id = Int(args[1]) else {
+                print("[CAD] Usage: MVIEW ON <id>")
+                return
+            }
+            if manager.updateActiveSheetViewport(id: id, status: max(2, id)) {
+                engine.zoomExtents()
+                print("[CAD] Viewport \(id) on.")
+            } else {
+                print("[CAD] Unknown viewport id \(id).")
+            }
+        case "OFF":
+            guard args.count >= 2, let id = Int(args[1]) else {
+                print("[CAD] Usage: MVIEW OFF <id>")
+                return
+            }
+            if manager.updateActiveSheetViewport(id: id, status: 0) {
+                engine.zoomExtents()
+                print("[CAD] Viewport \(id) off.")
+            } else {
+                print("[CAD] Unknown viewport id \(id).")
+            }
+        case "S", "SCALE":
+            guard args.count >= 3, let scale = Double(args[1]), scale > 1e-9,
+                  let id = Int(args[2]) else {
+                print("[CAD] Usage: MVIEW S <scale> <id>  (e.g. MVIEW S 2 2)")
+                return
+            }
+            if manager.updateActiveSheetViewport(id: id, scale: scale) {
+                engine.zoomExtents()
+                print("[CAD] Viewport \(id) scale 1:\(scale).")
+            } else {
+                print("[CAD] Unknown viewport id \(id).")
+            }
+        case "T", "TWIST":
+            guard args.count >= 3, let degrees = Double(args[1]),
+                  let id = Int(args[2]) else {
+                print("[CAD] Usage: MVIEW T <degrees> <id>")
+                return
+            }
+            if manager.updateActiveSheetViewport(id: id, twistDegrees: degrees) {
+                engine.zoomExtents()
+                print("[CAD] Viewport \(id) twist \(degrees) deg.")
+            } else {
+                print("[CAD] Unknown viewport id \(id).")
+            }
+        case "SELECT", "SEL":
+            guard args.count >= 2 else {
+                print("[CAD] Usage: MVIEW SELECT <x,y>  (paper coordinates)")
+                return
+            }
+            guard let point = parsePaperPoint(args[1]) else {
+                print("[CAD] Usage: MVIEW SELECT <x,y>  (paper coordinates)")
+                return
+            }
+            if let picked = manager.selectViewport(atPaperPoint: point.x, point.y) {
+                printViewportDetail(picked)
+            } else {
+                print("[CAD] No floating viewport at (\(point.x), \(point.y)).")
+            }
+        default:
+            // Create: two paper corners "x1,y1 x2,y2".
+            guard args.count >= 2,
+                  let first = parsePaperPoint(args[0]),
+                  let second = parsePaperPoint(args[1]) else {
+                printMViewUsage()
+                return
+            }
+            if let id = manager.createSheetViewport(
+                paperX1: first.x, paperY1: first.y,
+                paperX2: second.x, paperY2: second.y) {
+                engine.zoomExtents()
+                print("[CAD] Viewport \(id) created.")
+                printViewportList(manager)
+            } else {
+                print("[CAD] MVIEW needs a non-degenerate paper rectangle on a sheet.")
+            }
+        }
+    }
+
+    private func printMViewUsage() {
+        print("[CAD] MVIEW [<x1,y1> <x2,y2> | ? | ON <id> | OFF <id> | S <scale> <id> | T <deg> <id> | SELECT <x,y>]")
+    }
+
+    private func printViewportList(_ manager: TabManager) {
+        let viewports = manager.activeSheetViewports()
+        guard !viewports.isEmpty else {
+            print("[CAD] No floating viewports on this sheet.")
+            return
+        }
+        for viewport in viewports {
+            let state = viewport.isUsable ? "on" : "off"
+            print("[CAD] id=\(viewport.id) \(state) scale=1:\(String(format: "%.4g", viewport.scale)) twist=\(String(format: "%.4g", viewport.twistAngle * 180.0 / .pi))deg")
+        }
+    }
+
+    private func printViewportDetail(_ viewport: DXFImporter.SheetViewport) {
+        let rect = viewport.paperRect
+        print("[CAD] id=\(viewport.id) rect=(\(String(format: "%.4g", rect.minX)), \(String(format: "%.4g", rect.minY)))-(\(String(format: "%.4g", rect.maxX)), \(String(format: "%.4g", rect.maxY))) scale=1:\(String(format: "%.4g", viewport.scale)) twist=\(String(format: "%.4g", viewport.twistAngle * 180.0 / .pi))deg")
+    }
+
+    private func handleLayoutLifecycle(_ argument: String, engine: PhrostEngine) -> Bool {
+        let tokens = argument.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let verb = tokens.first?.uppercased() else { return false }
+        let manager = engine.tabManager
+        switch verb {
+        case "?", "LIST", "L":
+            let views = manager.availableViews
+            guard !views.isEmpty else {
+                print("[CAD] No views in this drawing.")
+                return true
+            }
+            for (index, view) in views.enumerated() {
+                let marker = index == (manager.activeTab?.activeViewIndex ?? -1) ? "*" : " "
+                print("[CAD] \(marker)\(index + 1): \(view.name)\(view.kind == .model ? " (Model)" : "")")
+            }
+            return true
+        case "NEW":
+            let name = tokens.count > 1 ? tokens[1...].joined(separator: " ") : nil
+            if manager.createLayout(named: name) {
+                engine.zoomExtents()
+                print("[CAD] Layout '\(manager.activeViewName ?? "")' created.")
+            } else {
+                print("[CAD] LAYOUT NEW needs a unique, non-blank name.")
+            }
+            return true
+        case "RENAME", "REN":
+            guard tokens.count >= 3 else {
+                print("[CAD] Usage: LAYOUT RENAME <old> <new>.")
+                return true
+            }
+            let newName = tokens[2...].joined(separator: " ")
+            if manager.renameLayout(from: tokens[1], to: newName) {
+                print("[CAD] Renamed to '\(newName)'.")
+            } else {
+                print("[CAD] Cannot rename '\(tokens[1])' (Model is fixed; names must be unique).")
+            }
+            return true
+        case "DELETE", "DEL":
+            guard tokens.count >= 2 else {
+                print("[CAD] Usage: LAYOUT DELETE <name>.")
+                return true
+            }
+            let name = tokens[1...].joined(separator: " ")
+            if manager.deleteLayout(named: name) {
+                engine.zoomExtents()
+                print("[CAD] Layout '\(name)' deleted.")
+            } else {
+                print("[CAD] Cannot delete '\(name)' (Model and the last view are kept).")
+            }
+            return true
+        case "COPY":
+            guard tokens.count >= 3 else {
+                print("[CAD] Usage: LAYOUT COPY <source> <new>.")
+                return true
+            }
+            let dst = tokens[2...].joined(separator: " ")
+            if manager.copyLayout(from: tokens[1], to: dst) {
+                engine.zoomExtents()
+                print("[CAD] Layout '\(dst)' copied.")
+            } else {
+                print("[CAD] Cannot copy '\(tokens[1])' to '\(dst)' (source must be a sheet; names must be unique).")
+            }
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func parsePaperPoint(_ text: String) -> (x: Double, y: Double)? {
+        let cleaned = text.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: "(", with: "")
+            .replacingOccurrences(of: ")", with: "")
+        let parts = cleaned.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard parts.count == 2, let x = Double(parts[0]), let y = Double(parts[1]) else { return nil }
+        return (x, y)
+    }
+
+    private func handleChspaceCommand(engine: PhrostEngine) {
+        let manager = engine.tabManager
+        let selection = engine.cadSelection.selectedHandles
+        guard !selection.isEmpty else {
+            print("[CAD] CHSPACE needs a selection first.")
+            return
+        }
+        let moved = manager.chspace(handles: selection)
+        if moved > 0 {
+            engine.cadSelection.clearSelection()
+            engine.zoomExtents()
+            print("[CAD] Moved \(moved) entit\(moved == 1 ? "y" : "ies") across spaces.")
+        } else if manager.isPaperSpace {
+            print("[CAD] CHSPACE moved nothing: select paper geometry (projected model copies cannot move).")
+        } else {
+            print("[CAD] CHSPACE moved nothing: no usable viewport on the target sheet.")
         }
     }
 

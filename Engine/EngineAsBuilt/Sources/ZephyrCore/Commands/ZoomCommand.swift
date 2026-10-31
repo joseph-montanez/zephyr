@@ -90,7 +90,9 @@ public final class ZoomCommand: FeatureCommand {
             case .viewRelative(let n):
                 applyScaleFactor(n, relativeTo: .view, engine: engine, processor: processor)
             case .paperSpace(let n):
-                applyScaleFactor(n, relativeTo: .view, engine: engine, processor: processor)
+                if !applyPaperSpaceScale(n, engine: engine, processor: processor) {
+                    applyScaleFactor(n, relativeTo: .view, engine: engine, processor: processor)
+                }
             case .invalid:
                 processor.commandPrompt = "Invalid scale. Enter n, nX, or nXP (e.g. 2, 0.5x)."
                 return .continue
@@ -735,6 +737,30 @@ public final class ZoomCommand: FeatureCommand {
     private enum ScaleRelative {
         case drawing
         case view
+    }
+
+    /// ZOOM nXP on a sheet: set the active floating viewport's scale so
+    /// paperHeight / viewHeight == n. Falls back to view-relative zoom
+    /// (returns false) when no sheet viewport is available.
+    private func applyPaperSpaceScale(
+        _ n: Double, engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> Bool {
+        guard n > 1e-9 else {
+            processor.commandPrompt = "Invalid scale. Enter n, nX, or nXP (e.g. 2, 0.5x)."
+            return true
+        }
+        guard engine.tabManager.isPaperSpace else { return false }
+        guard let viewport = engine.tabManager.activeViewport() else {
+            processor.commandPrompt = "No floating viewport on this sheet."
+            return true
+        }
+        if engine.tabManager.updateActiveSheetViewport(id: viewport.id, scale: n) {
+            engine.zoomExtents()
+            processor.commandPrompt = "Viewport \(viewport.id) scale 1:\(n)."
+        } else {
+            processor.commandPrompt = "No floating viewport on this sheet."
+        }
+        return true
     }
 
     private func applyScaleFactor(

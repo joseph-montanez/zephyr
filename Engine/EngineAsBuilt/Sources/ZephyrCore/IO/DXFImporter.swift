@@ -13,19 +13,24 @@ public struct DXFDrawingView: Sendable {
     public let entities: [CADEntity]
     public let backgroundColor: ColorRGBA?
     public let layoutSettings: CADLayoutSettings?
+    /// Paper-space selection groups owned by this view (model views carry
+    /// model-space groups). Projected model copies never join groups.
+    public let groups: [CADGroup]
 
     public init(
         name: String,
         kind: DXFDrawingViewKind,
         entities: [CADEntity],
         backgroundColor: ColorRGBA? = nil,
-        layoutSettings: CADLayoutSettings? = nil
+        layoutSettings: CADLayoutSettings? = nil,
+        groups: [CADGroup] = []
     ) {
         self.name = name
         self.kind = kind
         self.entities = entities
         self.backgroundColor = backgroundColor
         self.layoutSettings = layoutSettings
+        self.groups = groups
     }
 }
 
@@ -68,9 +73,13 @@ public struct DXFImportResult: Sendable {
     /// Referenced-media definitions (IMAGEDEF / PDFDEFINITION).
     public let imageDefinitions: [CADImageDefinition]
     public let pdfDefinitions: [CADPdfDefinition]
-    /// Selection groups rebuilt from ZEPHYR_GROUP appID records
-    /// (model-space members; paper-space groups are a Phase 3 item).
+    /// Selection groups rebuilt from ZEPHYR_GROUP appID records.
+    /// Model-space groups; each sheet view carries its own paper-space
+    /// groups on `DXFDrawingView.groups`.
     public let groups: [CADGroup]
+    /// Source drawing's $PSLTSCALE (paper-space linetype scale, 0 or 1).
+    /// Defaults to 1 when the header omits it, matching AutoCAD.
+    public let paperSpaceLinetypeScale: Int
     /// Source unit when the $INSUNITS code maps to a Zephyr unit.
     public var sourceUnit: CADUnit? { CADUnit(dxfINSUNITS: insUnits) }
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
@@ -85,7 +94,8 @@ public struct DXFImportResult: Sendable {
                 pendingXrefs: [DXFPendingXref] = [],
                 imageDefinitions: [CADImageDefinition] = [],
                 pdfDefinitions: [CADPdfDefinition] = [],
-                groups: [CADGroup] = []) {
+                groups: [CADGroup] = [],
+                paperSpaceLinetypeScale: Int = 1) {
         self.layers = layers; self.blocks = blocks; self.entities = entities
         self.textStyles = textStyles; self.linetypePatterns = linetypePatterns
         self.dimensionStyles = dimensionStyles
@@ -99,6 +109,7 @@ public struct DXFImportResult: Sendable {
         self.imageDefinitions = imageDefinitions
         self.pdfDefinitions = pdfDefinitions
         self.groups = groups
+        self.paperSpaceLinetypeScale = paperSpaceLinetypeScale
     }
 
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
@@ -260,7 +271,10 @@ public enum DXFImporter {
         var xdata: [String: XDataValue]
     }
 
-    private struct SheetViewport {
+    /// One floating paper-space viewport. Internal (not private) so sheet
+    /// refresh in TabManager can re-project current model geometry through
+    /// the same definitions import used.
+    public struct SheetViewport {
         let paperCenterX: Double
         let paperCenterY: Double
         let paperWidth: Double
@@ -274,6 +288,30 @@ public enum DXFImporter {
         let viewHeight: Double
         let twistAngle: Double
         let layerName: String
+
+        init(
+            paperCenterX: Double, paperCenterY: Double,
+            paperWidth: Double, paperHeight: Double,
+            status: Int, id: Int,
+            viewCenterX: Double, viewCenterY: Double,
+            viewTargetX: Double, viewTargetY: Double,
+            viewHeight: Double, twistAngle: Double,
+            layerName: String
+        ) {
+            self.paperCenterX = paperCenterX
+            self.paperCenterY = paperCenterY
+            self.paperWidth = paperWidth
+            self.paperHeight = paperHeight
+            self.status = status
+            self.id = id
+            self.viewCenterX = viewCenterX
+            self.viewCenterY = viewCenterY
+            self.viewTargetX = viewTargetX
+            self.viewTargetY = viewTargetY
+            self.viewHeight = viewHeight
+            self.twistAngle = twistAngle
+            self.layerName = layerName
+        }
 
         init(_ source: DXFViewportEntity) {
             paperCenterX = source.basePoint.x
@@ -300,6 +338,86 @@ public enum DXFImporter {
 
         var isSystemViewport: Bool {
             id > 0 ? id == 1 : status == 1
+        }
+
+        /// Paper-space scale: paper units per model unit.
+        var scale: Double {
+            guard viewHeight > 1e-9 else { return 1 }
+            return paperHeight / viewHeight
+        }
+
+        /// Paper-space frame in sheet coordinates (note the Y flip used by
+        /// `modelToPaperTransform`: paperCenterY is stored positive-down).
+        var paperRect: (minX: Double, minY: Double, maxX: Double, maxY: Double) {
+            let minX = paperCenterX - paperWidth / 2.0
+            let maxX = paperCenterX + paperWidth / 2.0
+            let minY = -paperCenterY - paperHeight / 2.0
+            let maxY = -paperCenterY + paperHeight / 2.0
+            return (minX, minY, maxX, maxY)
+        }
+
+        /// Model-space window shown through this viewport.
+        var modelWindow: (minX: Double, minY: Double, maxX: Double, maxY: Double) {
+            let scaleValue = scale
+            let modelWidth = paperWidth / scaleValue
+            let centerX = viewTargetX + viewCenterX
+            let centerY = -(viewTargetY + viewCenterY)
+            return (
+                centerX - modelWidth / 2.0,
+                centerY - viewHeight / 2.0,
+                centerX + modelWidth / 2.0,
+                centerY + viewHeight / 2.0)
+        }
+
+        func containsPaperPoint(x: Double, y: Double) -> Bool {
+            let rect = paperRect
+            return x >= rect.minX && x <= rect.maxX
+                && y >= rect.minY && y <= rect.maxY
+        }
+
+        func withStatus(_ newStatus: Int) -> SheetViewport {
+            SheetViewport(
+                paperCenterX: paperCenterX, paperCenterY: paperCenterY,
+                paperWidth: paperWidth, paperHeight: paperHeight,
+                status: newStatus, id: id,
+                viewCenterX: viewCenterX, viewCenterY: viewCenterY,
+                viewTargetX: viewTargetX, viewTargetY: viewTargetY,
+                viewHeight: viewHeight, twistAngle: twistAngle,
+                layerName: layerName)
+        }
+
+        func withScale(_ newScale: Double) -> SheetViewport {
+            guard newScale > 1e-9 else { return self }
+            return SheetViewport(
+                paperCenterX: paperCenterX, paperCenterY: paperCenterY,
+                paperWidth: paperWidth, paperHeight: paperHeight,
+                status: status, id: id,
+                viewCenterX: viewCenterX, viewCenterY: viewCenterY,
+                viewTargetX: viewTargetX, viewTargetY: viewTargetY,
+                viewHeight: paperHeight / newScale, twistAngle: twistAngle,
+                layerName: layerName)
+        }
+
+        func withViewTarget(x: Double, y: Double) -> SheetViewport {
+            SheetViewport(
+                paperCenterX: paperCenterX, paperCenterY: paperCenterY,
+                paperWidth: paperWidth, paperHeight: paperHeight,
+                status: status, id: id,
+                viewCenterX: viewCenterX, viewCenterY: viewCenterY,
+                viewTargetX: x, viewTargetY: y,
+                viewHeight: viewHeight, twistAngle: twistAngle,
+                layerName: layerName)
+        }
+
+        func withTwistDegrees(_ degrees: Double) -> SheetViewport {
+            SheetViewport(
+                paperCenterX: paperCenterX, paperCenterY: paperCenterY,
+                paperWidth: paperWidth, paperHeight: paperHeight,
+                status: status, id: id,
+                viewCenterX: viewCenterX, viewCenterY: viewCenterY,
+                viewTargetX: viewTargetX, viewTargetY: viewTargetY,
+                viewHeight: viewHeight, twistAngle: degrees * .pi / 180.0,
+                layerName: layerName)
         }
 
         var modelToPaperTransform: Transform3D {
@@ -442,6 +560,149 @@ public enum DXFImporter {
         result["dxf.viewport.synthetic"] = .bool(true)
         result["dxf.viewport.projection"] = .string(projectionString)
         return result
+    }
+
+    /// Viewport definitions recovered for one sheet: exact floating
+    /// viewports (possibly empty) plus the synthetic fit transform when the
+    /// sheet used the no-viewport fallback. Cached per drawing view so
+    /// refresh does not rescan projected xdata on every activation.
+    public struct SheetProjectionCache {
+        var exactViewports: [SheetViewport] = []
+        var syntheticProjection: Transform3D?
+        var isEmpty: Bool { exactViewports.isEmpty && syntheticProjection == nil }
+    }
+
+    private static func sheetViewport(fromXData xdata: [String: XDataValue]) -> SheetViewport? {
+        func dbl(_ key: String) -> Double? {
+            switch xdata[key] {
+            case .double(let v): return v
+            case .int(let v): return Double(v)
+            default: return nil
+            }
+        }
+        func integer(_ key: String) -> Int? {
+            switch xdata[key] {
+            case .int(let v): return v
+            case .double(let v): return Int(v)
+            case .bool(let v): return v ? 1 : 0
+            default: return nil
+            }
+        }
+        guard integer("dxf.viewport.synthetic") != 1,
+              let paperCenterX = dbl("dxf.viewport.paperCenterX"),
+              let paperCenterY = dbl("dxf.viewport.paperCenterY"),
+              let paperWidth = dbl("dxf.viewport.paperWidth"),
+              let paperHeight = dbl("dxf.viewport.paperHeight"),
+              let viewCenterX = dbl("dxf.viewport.viewCenterX"),
+              let viewCenterY = dbl("dxf.viewport.viewCenterY"),
+              let viewTargetX = dbl("dxf.viewport.viewTargetX"),
+              let viewTargetY = dbl("dxf.viewport.viewTargetY"),
+              let viewHeight = dbl("dxf.viewport.viewHeight") else { return nil }
+        let id = integer("dxf.viewport.id") ?? 2
+        let status = integer("dxf.viewport.status") ?? max(2, id)
+        let twistDegrees = dbl("dxf.viewport.twistDegrees") ?? 0
+        var layerName = "MODEL"
+        if case .string(let value)? = xdata["dxf.viewport.layer"] { layerName = value }
+        return SheetViewport(
+            paperCenterX: paperCenterX, paperCenterY: paperCenterY,
+            paperWidth: paperWidth, paperHeight: paperHeight,
+            status: status, id: id,
+            viewCenterX: viewCenterX, viewCenterY: viewCenterY,
+            viewTargetX: viewTargetX, viewTargetY: viewTargetY,
+            viewHeight: viewHeight,
+            twistAngle: twistDegrees * .pi / 180.0,
+            layerName: layerName)
+    }
+
+    /// Recover a sheet's viewport definitions from its projected entities.
+    /// Viewport parameters ride on every projected copy, so definitions
+    /// survive EAB/DXF round-trips without a separate persisted field.
+    /// A viewport that projected zero entities leaves no trace and is
+    /// lost, exactly as at import today.
+    public static func sheetProjectionCache(from entities: [CADEntity]) -> SheetProjectionCache {
+        var cache = SheetProjectionCache()
+        var signatures = Set<String>()
+        for entity in entities where entity.isViewportProjected {
+            if cache.syntheticProjection == nil,
+               case .string(let raw)? = entity.xdata["dxf.viewport.projection"] {
+                let values = raw.split(separator: ",").compactMap {
+                    Double($0.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                if values.count == 16 {
+                    cache.syntheticProjection = Transform3D(raw: values)
+                }
+            }
+            guard let viewport = sheetViewport(fromXData: entity.xdata) else { continue }
+            let signature = [
+                String(viewport.id), String(viewport.status),
+                String(format: "%.12g", viewport.paperCenterX),
+                String(format: "%.12g", viewport.paperCenterY),
+                String(format: "%.12g", viewport.paperWidth),
+                String(format: "%.12g", viewport.paperHeight),
+                String(format: "%.12g", viewport.viewCenterX),
+                String(format: "%.12g", viewport.viewCenterY),
+                String(format: "%.12g", viewport.viewTargetX),
+                String(format: "%.12g", viewport.viewTargetY),
+                String(format: "%.12g", viewport.viewHeight),
+                String(format: "%.12g", viewport.twistAngle),
+            ].joined(separator: "|")
+            if signatures.insert(signature).inserted {
+                cache.exactViewports.append(viewport)
+            }
+        }
+        cache.exactViewports.sort { lhs, rhs in
+            if lhs.id != rhs.id { return lhs.id < rhs.id }
+            return lhs.status < rhs.status
+        }
+        return cache
+    }
+
+    /// Build fresh projected copies of `modelEntities` through a sheet's
+    /// cached viewports, mirroring the import-time projection (bounds
+    /// culling per viewport, draw order +1, viewport xdata tags). Xref
+    /// inserts always project: their bounds can be empty until loaded.
+    public static func projectedEntities(
+        modelEntities: [CADEntity],
+        cache: SheetProjectionCache,
+        xrefBlockIDs: Set<UUID> = []
+    ) -> [CADEntity] {
+        var projected: [CADEntity] = []
+        func appendProjected(_ modelEntity: CADEntity, projection: Transform3D, xdata: [String: XDataValue]) {
+            let projectedDrawOrder = modelEntity.drawOrder == Int.max
+                ? Int.max
+                : modelEntity.drawOrder + 1
+            projected.append(CADEntity(
+                layerID: modelEntity.layerID,
+                blockID: modelEntity.blockID,
+                localGeometry: modelEntity.localGeometry,
+                dimensionMetadata: modelEntity.dimensionMetadata,
+                leaderData: modelEntity.leaderData,
+                arrayData: modelEntity.arrayData,
+                transform: projection.multiplying(by: modelEntity.transform),
+                xdata: xdata,
+                drawOrder: projectedDrawOrder,
+                localBoundingBox: modelEntity.localBoundingBox,
+                anchorPoints: modelEntity.anchorPoints))
+        }
+        for viewport in cache.exactViewports where viewport.isUsable && !viewport.isSystemViewport {
+            let projection = viewport.modelToPaperTransform
+            for modelEntity in modelEntities
+            where viewport.intersects(modelEntity)
+                || (modelEntity.blockID.map { xrefBlockIDs.contains($0) } ?? false) {
+                appendProjected(
+                    modelEntity, projection: projection,
+                    xdata: viewport.projectedXData(modelEntity.xdata))
+            }
+        }
+        if cache.exactViewports.isEmpty, let projection = cache.syntheticProjection {
+            let projectionString = viewportProjectionString(projection)
+            for modelEntity in modelEntities {
+                appendProjected(
+                    modelEntity, projection: projection,
+                    xdata: syntheticViewportXData(modelEntity.xdata, projectionString: projectionString))
+            }
+        }
+        return projected
     }
 
     public static func importDXF(filePath: String) throws -> (layers: [Layer], blocks: [CADBlock], entities: [CADEntity], textStyleFonts: [String: String], linetypePatterns: [String: [Double]], dimensionStyles: [String: CADDimensionStyle]) {
@@ -1574,13 +1835,14 @@ public enum DXFImporter {
             for layout in orderedLayouts where
                 layout.name.caseInsensitiveCompare("Model") != .orderedSame {
                 let paperSource = sourceEntities(for: layout)
-                // Paper-space membership is stripped and dropped: v1 groups
-                // round-trip model-space members only (Phase 3 paper scope).
-                var discardedStaging: [String: [UUID]] = [:]
+                // Paper-space membership is kept per view: staging lands on
+                // the sheet's DXFDrawingView.groups. Projected model copies
+                // are built separately below and never join groups.
+                var viewGroupStaging: [String: [UUID]] = [:]
                 var paperEntities = strippingGroupStaging(convertEntities(
                     paperSource,
                     ownerHandle: layout.blockRecordHandle),
-                    stagingInto: &discardedStaging)
+                    stagingInto: &viewGroupStaging)
                 let paperDrawOrderOffset = modelEntities.count + 1
                 for index in paperEntities.indices where paperEntities[index].drawOrder != Int.max {
                     paperEntities[index].drawOrder += paperDrawOrderOffset
@@ -1687,13 +1949,19 @@ public enum DXFImporter {
                     kind: .sheet,
                     entities: projectedEntities + paperEntities,
                     backgroundColor: .white,
-                    layoutSettings: layoutSettings))
+                    layoutSettings: layoutSettings,
+                    groups: viewGroupStaging.map { CADGroup(name: $0.key, members: $0.value) }))
             }
             views = importedViews
         }
 
         DXFProfile.mark("tail: views + viewport projection")
         DXFProfile.mark("convertDXFToCAD done")
+        let paperSpaceLinetypeScale: Int = {
+            if let value = reader.header.headerVars["$PSLTSCALE"] as? Int { return value == 0 ? 0 : 1 }
+            if let value = reader.header.headerVars["$PSLTSCALE"] as? Int32 { return value == 0 ? 0 : 1 }
+            return 1
+        }()
         return DXFImportResult(
             layers: layers,
             blocks: blocks,
@@ -1721,7 +1989,8 @@ public enum DXFImporter {
             pendingXrefs: pendingXrefs,
             imageDefinitions: imageDefinitions,
             pdfDefinitions: pdfDefinitions,
-            groups: groupStaging.map { CADGroup(name: $0.key, members: $0.value) })
+            groups: groupStaging.map { CADGroup(name: $0.key, members: $0.value) },
+            paperSpaceLinetypeScale: paperSpaceLinetypeScale)
     }
 
     /// Moves `CADGroup.stagingPrefix` keys staged during conversion out of
