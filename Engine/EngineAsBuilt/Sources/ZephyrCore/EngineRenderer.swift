@@ -3273,6 +3273,21 @@ public final class EngineRenderer {
 
         let drawList = igGetBackgroundDrawList(nil)
         let sp = EngineCameraManager.worldToScreen(worldX: snap.worldPos.x, worldY: snap.worldPos.y, cam: cam)
+        // Intersection snaps draw the conventional X marker instead of the
+        // square, so a crossing pick reads differently from an endpoint.
+        if case .intersection = snap.anchor {
+            let xCol = makeImCol32(r: 0, g: 255, b: 128, a: 220)
+            let arm: Float = 5.5
+            ImDrawListAddLine(drawList,
+                ImVec2(x: sp.x - arm, y: sp.y - arm),
+                ImVec2(x: sp.x + arm, y: sp.y + arm), xCol, 1.8)
+            ImDrawListAddLine(drawList,
+                ImVec2(x: sp.x - arm, y: sp.y + arm),
+                ImVec2(x: sp.x + arm, y: sp.y - arm), xCol, 1.8)
+            _foregroundVertexEstimate += 4
+            return
+        }
+
         let size: Float = 6
         let half: Float = size / 2
 

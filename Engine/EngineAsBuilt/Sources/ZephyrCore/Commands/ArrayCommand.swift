@@ -19,6 +19,9 @@ public final class ArrayCommand: FeatureCommand {
     private var sourceHandles: Set<UUID> = []
     /// Path picked for a path array while the base point is pending.
     private var pendingPathHandle: UUID?
+    /// Where the path curve was clicked: the array starts at the path
+    /// endpoint closest to this pick (AutoCAD's default base point).
+    private var pendingPathPickPoint: Vector3?
 
     public init(
         initialKind: CADArrayKind? = nil,
@@ -33,6 +36,7 @@ public final class ArrayCommand: FeatureCommand {
     public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
         sourceHandles = engine.cadSelection.selectedHandles
         pendingPathHandle = nil
+        pendingPathPickPoint = nil
         if sourceHandles.isEmpty {
             step = .selectObjects
             processor.commandPrompt = "Select objects for array, then press Enter"
@@ -44,6 +48,7 @@ public final class ArrayCommand: FeatureCommand {
     public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
         step = .done
         pendingPathHandle = nil
+        pendingPathPickPoint = nil
         processor.commandPrompt = nil
     }
 
@@ -97,6 +102,7 @@ public final class ArrayCommand: FeatureCommand {
                 return .handled
             }
             pendingPathHandle = pathHandle
+            pendingPathPickPoint = Vector3(x: worldX, y: worldY, z: 0)
             step = .pickPathBase
             processor.commandPrompt = Self.pathBasePrompt
             return .handled
@@ -111,6 +117,8 @@ public final class ArrayCommand: FeatureCommand {
                 basePoint: Vector3(x: worldX, y: worldY, z: 0),
                 centerPoint: nil,
                 pathHandle: pathHandle,
+                reversePath: pathDefault(
+                    pathHandle: pathHandle, engine: engine)?.reversed ?? false,
                 engine: engine,
                 processor: processor)
 
@@ -151,10 +159,7 @@ public final class ArrayCommand: FeatureCommand {
                     processor.commandPrompt = "Select path curve"
                     return .handled
                 }
-                let base = engine.document.collectiveCenter(for: sourceHandles) ?? .zero
-                return createArray(
-                    basePoint: base,
-                    centerPoint: nil,
+                return createPathArrayWithDefaultBase(
                     pathHandle: pathHandle,
                     engine: engine,
                     processor: processor)
@@ -199,10 +204,7 @@ public final class ArrayCommand: FeatureCommand {
                     processor.commandPrompt = "Select path curve"
                     return .handled
                 }
-                let base = engine.document.collectiveCenter(for: sourceHandles) ?? .zero
-                return createArray(
-                    basePoint: base,
-                    centerPoint: nil,
+                return createPathArrayWithDefaultBase(
                     pathHandle: pathHandle,
                     engine: engine,
                     processor: processor)
@@ -294,6 +296,7 @@ public final class ArrayCommand: FeatureCommand {
         basePoint: Vector3,
         centerPoint: Vector3?,
         pathHandle: UUID?,
+        reversePath: Bool = false,
         engine: PhrostEngine,
         processor: CADCommandProcessor
     ) -> CommandResult {
@@ -345,6 +348,7 @@ public final class ArrayCommand: FeatureCommand {
                 alignItems: true,
                 pathEntityHandle: pathHandle,
                 cachedPath: cached)
+            array.reversePath = reversePath
         }
 
         var entity = CADEntity(
@@ -374,13 +378,51 @@ public final class ArrayCommand: FeatureCommand {
         processor.commandPrompt = nil
         step = .done
         pendingPathHandle = nil
+        pendingPathPickPoint = nil
         return .finished
     }
 
     /// Prompt after the path pick: click to set the base (snaps on),
-    /// Enter for the object center, B to restate the option explicitly.
+    /// Enter for the end of the path curve nearest the path pick (the
+    /// AutoCAD default, which keeps the first item in place), B to
+    /// restate the option explicitly.
     private static let pathBasePrompt =
-        "Specify base point [Base point] (Enter for object center):"
+        "Specify base point [Base point] <end of path curve>:"
+
+    /// Default base point and start direction for the pending path,
+    /// derived from where the path curve was picked.
+    private func pathDefault(
+        pathHandle: UUID,
+        engine: PhrostEngine
+    ) -> (base: Vector3, reversed: Bool)? {
+        guard let pick = pendingPathPickPoint,
+              let pathEntity = engine.document.entity(for: pathHandle),
+              let pathGeometry = engine.document.resolvedGeometry(for: pathEntity),
+              let worldPoints = CADArrayPathResolver.localPoints(
+                geometry: pathGeometry,
+                pathTransform: pathEntity.transform,
+                containerTransform: .translated(by: .zero))
+        else { return nil }
+        return CADArrayPathResolver.defaultBase(
+            pick: pick, worldPoints: worldPoints)
+    }
+
+    private func createPathArrayWithDefaultBase(
+        pathHandle: UUID,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        let pathDefault = pathDefault(pathHandle: pathHandle, engine: engine)
+        let base = pathDefault?.base
+            ?? engine.document.collectiveCenter(for: sourceHandles) ?? .zero
+        return createArray(
+            basePoint: base,
+            centerPoint: nil,
+            pathHandle: pathHandle,
+            reversePath: pathDefault?.reversed ?? false,
+            engine: engine,
+            processor: processor)
+    }
 
     private func arrayTypePrompt(defaultKind: CADArrayKind) -> String {
         let orderedKinds: [CADArrayKind] = [.rectangular, .path, .polar]

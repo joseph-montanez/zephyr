@@ -127,7 +127,7 @@ public final class SnapTrackingEngine {
         // We ONLY allow tracking from discrete geometry points. 
         // We do NOT allow tracking from a "nearest on curve" point, as that would be chaotic.
         switch snap.anchor {
-        case .vertex, .midpoint, .center, .insertionPoint, .quadrant: 
+        case .vertex, .midpoint, .center, .insertionPoint, .quadrant, .intersection:
             break // Valid targets
         case .nearest:
             pendingSnap = nil

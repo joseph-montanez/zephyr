@@ -593,6 +593,21 @@ public enum CADArrayPathResolver {
         return local.map { inverse.transformPoint(pathTransform.transformPoint($0)) }
     }
 
+    /// AutoCAD's creation default for a path array: the base point is the
+    /// endpoint of the path curve closest to where the curve was picked,
+    /// and the array starts at that endpoint (`reversed` when it is the
+    /// sampled end). With this base, the first item keeps its original
+    /// offset from the path instead of jumping onto the path start.
+    public static func defaultBase(
+        pick: Vector3,
+        worldPoints: [Vector3]
+    ) -> (base: Vector3, reversed: Bool)? {
+        guard let first = worldPoints.first, let last = worldPoints.last
+        else { return nil }
+        let reversed = pick.distance(to: last) < pick.distance(to: first)
+        return (reversed ? last : first, reversed)
+    }
+
     public static func sampledPoints(from primitive: CADPrimitive) -> [Vector3] {
         switch primitive {
         case .line(let start, let end, _):
