@@ -2,11 +2,6 @@
 
 Monthly digest condensed from the git history. Instead of per-release notes, all changes are grouped by calendar month and summarized under **New Features** (brand-new capabilities), **New Commands** (new drawing/modify commands on existing features), **Improvements** (refinements to existing features), **DXF & File Formats**, **Bug Fixes**, **Maintenance** (toolchain, packaging, CI, housekeeping), and **Performance**. Fixes and refinements made to a feature during the same month it ships are folded into that feature's entry rather than listed again.
 
-## November 2026
-
-### Improvements
-- **LAYOUT goes modal like AutoCAD** — bare `LAYOUT` no longer cycles sheets; it prompts `Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:` and stays active across the option/name steps, so `LAYOUT` → `N` → `<name>` creates and activates a sheet just like AutoCAD. `NEW`/`DELETE`/`RENAME`/`COPY`/`SET` with a missing name now prompt for it instead of printing usage, and a bare layout name or sheet index at the prompt switches to that sheet (`Esc` cancels)
-
 ## October 2026
 
 ### New Features
@@ -68,6 +63,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **PGP user aliases** — `zephyr.pgp` (`ALIAS, *COMMAND`) loads at startup with user entries overriding colliding built-ins (with warnings), editable live via `ALIASEDIT`
 - **ARRAYPATH base point** — path arrays stop after the path pick for a base-point step: snap a point on the source object, type `B`, or press Enter to use the end of the path curve nearest the path pick (AutoCAD's default, keeping the first item in place, array running from that end); after creation, `ARRAYBASEPOINT` (Path Array ribbon `Base Point...` button) re-picks the base so the snapped source point rides the path without moving item stations (object snaps now resolve per array instance, so the pick lands on the item as drawn instead of being stolen by the path curve), the selection marker now draws the true path-riding anchor (re-picking the marker is a no-op instead of a jump), and an `Align` dropdown next to Align Items picks Relative to Start, Tangent, or Normal (perpendicular-rung) rotation
 - **Docked panels** — a dock node holding a single window no longer shows a tab bar (the tab bar returns when a second window joins the node); the ribbon gains a Pop-out button beside Reload to undock in one click, and the click-to-show-tabs triangle moves to the top-center of the panel, clear of the window resize borders that used to swallow its clicks
+- **LAYOUT goes modal like AutoCAD** — bare `LAYOUT` no longer cycles sheets; it prompts `Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:` and stays active across the option/name steps, so `LAYOUT` → `N` → `<name>` creates and activates a sheet just like AutoCAD. `NEW`/`DELETE`/`RENAME`/`COPY`/`SET` with a missing name now prompt for it instead of printing usage, and a bare layout name or sheet index at the prompt switches to that sheet (`Esc` cancels)
 
 ### DXF & File Formats
 - **MLINE support** — plus DXF entity handles preserved in xdata
