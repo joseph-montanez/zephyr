@@ -66,8 +66,9 @@ public enum EABWriter {
     // MARK: - Public API (sync, legacy)
 
     /// Write a complete .eab file from a document tab's drawing views.
-    public static func write(views: [DrawingView], to url: URL) throws {
-        let data = try serialize(views: views)
+    public static func write(views: [DrawingView], to url: URL,
+                              namedSetups: [CADNamedPageSetup] = [], scaleList: [Double] = []) throws {
+        let data = try serialize(views: views, namedSetups: namedSetups, scaleList: scaleList)
         try data.write(to: url, options: .atomic)
     }
 
@@ -82,11 +83,12 @@ public enum EABWriter {
     /// Write a complete .eab file from save snapshots with progress and cancellation.
     /// Writes to a unique temp file, then atomically replaces the target.
     public static func write(snapshots: [SaveDocumentSnapshot], to url: URL,
-                              progress: ((Float) -> Void)? = nil) throws {
+                              progress: ((Float) -> Void)? = nil,
+                              namedSetups: [CADNamedPageSetup] = [], scaleList: [Double] = []) throws {
         let estimatedSize = estimateSerializedSize(snapshots: snapshots)
         let tracker = SaveProgressTracker(estimatedTotal: estimatedSize)
         tracker.onProgress = progress
-        let data = try serialize(snapshots: snapshots, tracker: tracker)
+        let data = try serialize(snapshots: snapshots, tracker: tracker, namedSetups: namedSetups, scaleList: scaleList)
         try atomicWrite(data: data, to: url)
     }
 
@@ -158,7 +160,8 @@ public enum EABWriter {
     // MARK: - Serialization
 
     /// Serialize multiple views to in-memory Data (V7 Archive).
-    public static func serialize(views: [DrawingView]) throws -> Data {
+    public static func serialize(views: [DrawingView],
+                                  namedSetups: [CADNamedPageSetup] = [], scaleList: [Double] = []) throws -> Data {
         let w = BinaryWriter()
 
         // 1. Reserve V7 Archive Header (20 bytes: magic(4) + version(4) + viewCount(4) + directoryOffset(8))
@@ -179,10 +182,11 @@ public enum EABWriter {
 
         let directoryOffset = UInt64(20) // immediately follows 20-byte header
 
-        // 3. Serialize each view's V6 document
+        // 3. Serialize each view's V6 document (named setups ride every
+        // view's V6 payload; the reader unions them across views).
         for (i, view) in views.enumerated() {
             let dataOffset = UInt64(w.count)
-            let v6Data = try serialize(document: view.document)
+            let v6Data = try serialize(document: view.document, namedSetups: namedSetups, scaleList: scaleList)
             w.writeBytes(v6Data)
             let dataSize = UInt64(v6Data.count)
 
@@ -214,7 +218,8 @@ public enum EABWriter {
     /// existing V6 serialization logic. The tracker aggregates progress across
     /// all sections and all views.
     public static func serialize(snapshots: [SaveDocumentSnapshot],
-                                  tracker: SaveProgressTracker) throws -> Data {
+                                  tracker: SaveProgressTracker,
+                                  namedSetups: [CADNamedPageSetup] = [], scaleList: [Double] = []) throws -> Data {
         try Task.checkCancellation()
 
         let w = BinaryWriter()
@@ -252,7 +257,8 @@ public enum EABWriter {
             let v6Data = try serialize(
                 document: tempDoc, tracker: tracker,
                 hostFolder: snap.sourceFolderPath,
-                unloadedXrefs: snap.unloadedXrefHandles)
+                unloadedXrefs: snap.unloadedXrefHandles,
+                namedSetups: namedSetups, scaleList: scaleList)
             tracker.finishSection(bytes: v6Data.count)
             w.writeBytes(v6Data)
             let dataSize = UInt64(v6Data.count)
@@ -280,14 +286,16 @@ public enum EABWriter {
 
 
     /// Serialize a single CADDocument to in-memory Data (V6).
-    public static func serialize(document: CADDocument) throws -> Data {
-        return try serialize(document: document, tracker: nil)
+    public static func serialize(document: CADDocument,
+                                  namedSetups: [CADNamedPageSetup] = [], scaleList: [Double] = []) throws -> Data {
+        return try serialize(document: document, tracker: nil, namedSetups: namedSetups, scaleList: scaleList)
     }
 
     /// Serialize with optional progress tracker for background saves.
     private static func serialize(
         document: CADDocument, tracker: SaveProgressTracker?,
-        hostFolder: String? = nil, unloadedXrefs: Set<UUID>? = nil
+        hostFolder: String? = nil, unloadedXrefs: Set<UUID>? = nil,
+        namedSetups: [CADNamedPageSetup] = [], scaleList: [Double] = []
     ) throws -> Data {
         let w = BinaryWriter()
         tracker?.attach(to: w)
@@ -464,6 +472,25 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
+        // Named page setups (drawing-scoped; duplicated per view, unioned on
+        // read). Written only when non-empty so setup-free files are unchanged.
+        if !namedSetups.isEmpty {
+            let setupsData = serializePlotSetups(namedSetups)
+            entries.append(EABSectionEntry(type: .plotSetups, offset: UInt64(w.count),
+                                            size: UInt64(setupsData.count), compression: .none))
+            w.writeBytes(setupsData)
+            w.pad(to: 4)
+        }
+
+        // Custom scale factors (drawing-scoped, same duplication rule).
+        if !scaleList.isEmpty {
+            let scalesData = serializeScaleList(scaleList)
+            entries.append(EABSectionEntry(type: .scaleList, offset: UInt64(w.count),
+                                            size: UInt64(scalesData.count), compression: .none))
+            w.writeBytes(scalesData)
+            w.pad(to: 4)
+        }
+
         // Linetype patterns (added in EAB v4)
         if !document.linetypePatterns.isEmpty {
             let lineTypesData = serializeLinetypePatterns(document: document)
@@ -609,6 +636,8 @@ public enum EABWriter {
         // custom bytes: 1 byte autoContrastTrueColor + 8 bytes globalLineTypeScale
         // + 24 bytes insertionBase (3×f64) + 1 byte paperSpaceLinetypeScale.
         // Old readers skip the tail via the count, so no version bump.
+        // NOTE: pstyleMode is intentionally not stored here (v1 gap): it
+        // round-trips via DXF $PSTYLEMODE and rides snapshots/undo in memory.
         w.writeUInt32(34)                                      // custom byte count
         w.writeUInt8(document.autoContrastTrueColor ? 1 : 0)
         w.writeFloat64(document.globalLineTypeScale)
@@ -1344,6 +1373,41 @@ public enum EABWriter {
         w.writeInt32(Int32(settings.shadePlotResolution))
         w.writeInt32(Int32(settings.shadePlotCustomDPI))
         w.writeInt32(Int32(settings.layoutFlags))
+        // Phase 0b trailing extras (XDATA-only in DXF): guarded on read so
+        // pre-0b payloads (ending at layoutFlags) load with defaults.
+        w.writeUInt8(settings.plotTransparency ? 1 : 0)
+        w.writeInt32(Int32(settings.pdfOptions.vectorDPI))
+        w.writeInt32(Int32(settings.pdfOptions.rasterDPI))
+        w.writeInt32(Int32(settings.pdfOptions.mergeControl == .mergeLines ? 1 : 0))
+        w.writeUInt8(settings.pdfOptions.includeLayerInfo ? 1 : 0)
+        w.writeUInt8(settings.pdfOptions.includeHyperlinks ? 1 : 0)
+        w.writeUInt8(settings.pdfOptions.captureFonts ? 1 : 0)
+        w.writeUInt8(settings.pdfOptions.convertTextToGeometry ? 1 : 0)
+        return w.build()
+    }
+
+    /// Custom scale list section (EABFileFormat.scaleList): count + f64 factors.
+    private static func serializeScaleList(_ factors: [Double]) -> Data {
+        let w = BinaryWriter()
+        w.writeUInt32(UInt32(factors.count))
+        for f in factors { w.writeFloat64(f) }
+        return w.build()
+    }
+
+    /// Named page setups section (EABFileFormat.plotSetups). Each setup is
+    /// length-prefixed so future field additions stay forward-compatible.
+    private static func serializePlotSetups(_ setups: [CADNamedPageSetup]) -> Data {
+        let w = BinaryWriter()
+        w.writeUInt32(UInt32(setups.count))
+        for setup in setups {
+            w.writeString(setup.name)
+            w.writeUInt8(setup.isModelType ? 1 : 0)
+            var settings = setup.settings
+            settings.pageSetupName = setup.name
+            let payload = serializeLayoutSettings(settings)
+            w.writeUInt32(UInt32(payload.count))
+            w.writeBytes(payload)
+        }
         return w.build()
     }
 

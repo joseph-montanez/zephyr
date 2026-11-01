@@ -61,6 +61,8 @@ public class DXFReader {
     public var blockRecords: [DXFBlockRecordEntry] = []
     public var imagedefs: [DXFImageDefEntry] = []
     public var layouts: [DXFLayoutEntry] = []
+    /// Standalone PLOTSETTINGS (named page setups, owner = ACAD_PLOTSETTINGS).
+    public var plotSettingsEntries: [DXFPlotSettingsEntry] = []
     public var sortEntsTables: [DXFSortEntsTable] = []
     public var mleaderStyles: [DXFMLeaderStyleEntry] = []
     public var mlineStyles: [DXFMlineStyleEntry] = []
@@ -2655,6 +2657,8 @@ extension DXFReader {
                 tryParse { try parseImageDef(at: pos) }
             } else if c == 0 && v == "LAYOUT" {
                 tryParse { try parseLayout(at: pos) }
+            } else if c == 0 && v == "PLOTSETTINGS" {
+                tryParse { try parsePlotSettings(at: pos) }
             } else if c == 0 && v == "TABLESTYLE" {
                 tryParse { try parseTableStyle(at: pos) }
             } else if c == 0 && v == "SORTENTSTABLE" {
@@ -3209,6 +3213,31 @@ extension DXFReader {
             }
         }
 
+        // XDATA-only plot extras (appid ZEPHYR_PLOT): 8× code-1070 ints after
+        // the 1001 marker — transparency, vector/raster DPI, merge control,
+        // layer-info, hyperlinks, capture-fonts, convert-to-geometry.
+        var plotTransparency = false
+        var pdfOptions = PDFOptions()
+        let propArray = Array(properties)
+        if let xIdx = propArray.firstIndex(where: {
+            $0.0 == 1001 && $0.1.caseInsensitiveCompare("ZEPHYR_PLOT") == .orderedSame
+        }) {
+            var ints: [Int] = []
+            var j = propArray.index(after: xIdx)
+            while j < propArray.endIndex, propArray[j].0 == 1070, ints.count < 8 {
+                ints.append(i(propArray[j].1))
+                j = propArray.index(after: j)
+            }
+            if ints.count == 8 {
+                plotTransparency = ints[0] != 0
+                pdfOptions = PDFOptions(
+                    vectorDPI: ints[1], rasterDPI: ints[2],
+                    mergeControl: ints[3] == 1 ? .mergeLines : .overwriteLines,
+                    includeLayerInfo: ints[4] != 0, includeHyperlinks: ints[5] != 0,
+                    captureFonts: ints[6] != 0, convertTextToGeometry: ints[7] != 0)
+            }
+        }
+
         layouts.append(DXFLayoutEntry(
             name: name,
             tabOrder: tabOrder,
@@ -3246,7 +3275,132 @@ extension DXFReader {
             standardScaleFactor: standardScaleFactor,
             paperImageOriginX: paperImageOriginX,
             paperImageOriginY: paperImageOriginY,
-            layoutFlags: layoutFlags))
+            layoutFlags: layoutFlags,
+            plotTransparency: plotTransparency,
+            pdfOptions: pdfOptions))
+    }
+
+    /// Standalone PLOTSETTINGS object (named page setup). Codes 1/70/76 are
+    /// unambiguous here (no AcDbLayout half); bit 1024 of 70 is ModelType scope.
+    private func parsePlotSettings(at startIdx: Int) throws {
+        var properties: [(Int, String)] = []
+        var idx = startIdx + 1
+        while idx < pairs.count {
+            let (code, value) = pairs[idx]
+            if code == 0 { break }
+            properties.append((code, value))
+            idx += 1
+        }
+        pos = idx
+
+        var handle: UInt32 = 0
+        var ownerHandle: UInt32 = 0
+        var name = ""
+        var plotConfigName = ""
+        var canonicalMediaName = ""
+        var paperName: String? = nil
+        var plotViewName = ""
+        var styleSheet = ""
+        var marginLM = 0.0, marginBM = 0.0, marginRM = 0.0, marginTM = 0.0
+        var paperWidthMM = 0.0, paperHeightMM = 0.0
+        var plotOriginXMM = 0.0, plotOriginYMM = 0.0
+        var plotWindowMinX = 0.0, plotWindowMinY = 0.0
+        var plotWindowMaxX = 0.0, plotWindowMaxY = 0.0
+        var customScaleNumerator = 1.0, customScaleDenominator = 1.0
+        var plotFlagsRaw = 0
+        var plotPaperUnits = 0, plotRotation = 0
+        var plotType = 5, standardScaleType = 0
+        var shadePlotMode = 0, shadePlotResolution = 2, shadePlotCustomDPI = 300
+        var standardScaleFactor = 1.0
+        var paperImageOriginX = 0.0, paperImageOriginY = 0.0
+        var plotTransparency = false
+        var pdfOptions = PDFOptions()
+        var xdataInts: [Int] = []
+        var inPlotXData = false
+        for (code, value) in properties {
+            switch code {
+            case 5, 105: if handle == 0 { handle = parseHandle(value) }
+            case 330: if ownerHandle == 0 { ownerHandle = parseHandle(value) }
+            case 1: name = value
+            case 2: plotConfigName = value
+            case 4:
+                canonicalMediaName = value
+                if !value.isEmpty { paperName = value }
+            case 6: plotViewName = value
+            case 7: styleSheet = value
+            case 40: marginLM = d(value)
+            case 41: marginBM = d(value)
+            case 42: marginRM = d(value)
+            case 43: marginTM = d(value)
+            case 44: paperWidthMM = d(value)
+            case 45: paperHeightMM = d(value)
+            case 46: plotOriginXMM = d(value)
+            case 47: plotOriginYMM = d(value)
+            case 48: plotWindowMinX = d(value)
+            case 49: plotWindowMinY = d(value)
+            case 70: plotFlagsRaw = i(value)
+            case 72: plotPaperUnits = i(value)
+            case 73: plotRotation = i(value)
+            case 74: plotType = i(value)
+            case 75: standardScaleType = i(value)
+            case 76: shadePlotMode = i(value)
+            case 77: shadePlotResolution = i(value)
+            case 78: shadePlotCustomDPI = i(value)
+            case 140: plotWindowMaxX = d(value)
+            case 141: plotWindowMaxY = d(value)
+            case 142: customScaleNumerator = d(value)
+            case 143: customScaleDenominator = d(value)
+            case 147: standardScaleFactor = d(value)
+            case 148: paperImageOriginX = d(value)
+            case 149: paperImageOriginY = d(value)
+            case 1001:
+                inPlotXData = value.caseInsensitiveCompare("ZEPHYR_PLOT") == .orderedSame
+                if !inPlotXData { xdataInts = [] }
+            case 1070:
+                if inPlotXData, xdataInts.count < 8 { xdataInts.append(i(value)) }
+            default: break
+            }
+        }
+        guard !name.isEmpty else { return }
+        if xdataInts.count == 8 {
+            plotTransparency = xdataInts[0] != 0
+            pdfOptions = PDFOptions(
+                vectorDPI: xdataInts[1], rasterDPI: xdataInts[2],
+                mergeControl: xdataInts[3] == 1 ? .mergeLines : .overwriteLines,
+                includeLayerInfo: xdataInts[4] != 0, includeHyperlinks: xdataInts[5] != 0,
+                captureFonts: xdataInts[6] != 0, convertTextToGeometry: xdataInts[7] != 0)
+        }
+        let isModelType = plotFlagsRaw & 1024 != 0
+        let settings = CADPlotSettings(
+            paperName: paperName,
+            paperWidthMM: paperWidthMM, paperHeightMM: paperHeightMM,
+            marginLM: marginLM, marginBM: marginBM,
+            marginRM: marginRM, marginTM: marginTM,
+            plotPaperUnits: plotPaperUnits, plotRotation: plotRotation,
+            pageSetupName: name,
+            plotConfigName: plotConfigName,
+            canonicalMediaName: canonicalMediaName,
+            plotViewName: plotViewName,
+            styleSheet: styleSheet,
+            plotOriginXMM: plotOriginXMM, plotOriginYMM: plotOriginYMM,
+            plotWindowMinX: plotWindowMinX, plotWindowMinY: plotWindowMinY,
+            plotWindowMaxX: plotWindowMaxX, plotWindowMaxY: plotWindowMaxY,
+            customScaleNumerator: customScaleNumerator,
+            customScaleDenominator: customScaleDenominator,
+            standardScaleFactor: standardScaleFactor,
+            paperImageOriginX: paperImageOriginX, paperImageOriginY: paperImageOriginY,
+            plotFlags: plotFlagsRaw,
+            plotType: plotType,
+            standardScaleType: standardScaleType,
+            shadePlotMode: shadePlotMode,
+            shadePlotResolution: shadePlotResolution,
+            shadePlotCustomDPI: shadePlotCustomDPI,
+            layoutFlags: 0,
+            plotTransparency: plotTransparency,
+            pdfOptions: pdfOptions)
+        plotSettingsEntries.append(DXFPlotSettingsEntry(
+            handle: handle, ownerHandle: ownerHandle, name: name,
+            settings: settings, isModelType: isModelType))
     }
 
     private func resolveImageReferences() {

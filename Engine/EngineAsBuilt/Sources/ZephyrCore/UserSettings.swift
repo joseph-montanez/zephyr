@@ -54,6 +54,15 @@ public struct UserSettings: Codable, Sendable {
     /// BINDTYPE: 0 = Bind ($0$ names), 1 = Insert (merge).
     public var xrefBindType: Int
 
+    // MARK: - Plot registry (PLOTOFFSET / PAPERUPDATE / PLOTROTMODE /
+    // PLOTTRANSPARENCYOVERRIDE). Registry-type sysvars that survive restarts.
+    public var plotOffset: Int
+    public var paperUpdate: Int
+    public var plotRotMode: Int
+    public var plotTransparencyOverride: Int
+    /// Page Setup Manager "Display when creating a new layout" checkbox.
+    public var displayPageSetupForNewLayouts: Bool
+
     // MARK: - Initialization
 
     /// Memberwise initializer (explicit: the custom Decodable init
@@ -79,7 +88,12 @@ public struct UserSettings: Codable, Sendable {
         xrefMaxDepth: Int = 16,
         xrefMaxPrimitives: Int = 5_000_000,
         xrefFadePercent: Int = 50,
-        xrefBindType: Int = 0
+        xrefBindType: Int = 0,
+        plotOffset: Int = 0,
+        paperUpdate: Int = 0,
+        plotRotMode: Int = 1,
+        plotTransparencyOverride: Int = 1,
+        displayPageSetupForNewLayouts: Bool = false
     ) {
         self.isDarkTheme = isDarkTheme
         self.themeName = themeName ?? (isDarkTheme ? "dark" : "light")
@@ -102,6 +116,11 @@ public struct UserSettings: Codable, Sendable {
         self.xrefMaxPrimitives = xrefMaxPrimitives
         self.xrefFadePercent = xrefFadePercent
         self.xrefBindType = xrefBindType
+        self.plotOffset = plotOffset
+        self.paperUpdate = paperUpdate
+        self.plotRotMode = plotRotMode
+        self.plotTransparencyOverride = plotTransparencyOverride
+        self.displayPageSetupForNewLayouts = displayPageSetupForNewLayouts
     }
 
     // MARK: - Default instance
@@ -165,12 +184,27 @@ public struct UserSettings: Codable, Sendable {
             ?? fallback.xrefFadePercent
         xrefBindType = try box.decodeIfPresent(Int.self, forKey: .xrefBindType)
             ?? fallback.xrefBindType
+        plotOffset = try box.decodeIfPresent(Int.self, forKey: .plotOffset)
+            ?? fallback.plotOffset
+        paperUpdate = try box.decodeIfPresent(Int.self, forKey: .paperUpdate)
+            ?? fallback.paperUpdate
+        plotRotMode = try box.decodeIfPresent(Int.self, forKey: .plotRotMode)
+            ?? fallback.plotRotMode
+        plotTransparencyOverride = try box.decodeIfPresent(Int.self, forKey: .plotTransparencyOverride)
+            ?? fallback.plotTransparencyOverride
+        displayPageSetupForNewLayouts = try box.decodeIfPresent(Bool.self, forKey: .displayPageSetupForNewLayouts)
+            ?? fallback.displayPageSetupForNewLayouts
     }
 
     /// Snapshots the live UI state into persistable settings. Single
     /// source of truth for shutdown saves and setup completion.
+    /// Pass the live plot registry values so they persist across restarts.
     @MainActor
-    public static func capture(ui: EngineUIManager) -> UserSettings {
+    public static func capture(ui: EngineUIManager,
+                               plotOffset: Int = 0,
+                               paperUpdate: Int = 0,
+                               plotRotMode: Int = 1,
+                               plotTransparencyOverride: Int = 1) -> UserSettings {
         UserSettings(
             isDarkTheme: ui.isDarkTheme,
             themeName: ui.theme.id,
@@ -192,7 +226,11 @@ public struct UserSettings: Codable, Sendable {
             xrefMaxDepth: ui.xrefMaxDepth,
             xrefMaxPrimitives: ui.xrefMaxPrimitives,
             xrefFadePercent: ui.xrefFadePercent,
-            xrefBindType: ui.xrefBindType
+            xrefBindType: ui.xrefBindType,
+            plotOffset: plotOffset,
+            paperUpdate: paperUpdate,
+            plotRotMode: plotRotMode,
+            plotTransparencyOverride: plotTransparencyOverride
         )
     }
 

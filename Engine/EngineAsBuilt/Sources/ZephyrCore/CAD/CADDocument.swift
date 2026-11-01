@@ -46,6 +46,8 @@ public struct CADDocumentSnapshot: Sendable {
     /// viewport so dashes read the same size on paper. When 0, projected
     /// copies use the model linetype scale unchanged.
     public let paperSpaceLinetypeScale: Int
+    /// Plot-style mode at snapshot time (PSTYLEMODE, 0 = .stb, 1 = .ctb).
+    public let pstyleMode: Int
     public let autoContrastTrueColor: Bool
     public let pointDisplayMode: Int
     public let pointDisplaySize: Double
@@ -90,6 +92,7 @@ public struct CADDocumentSnapshot: Sendable {
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         paperSpaceLinetypeScale: Int = 1,
+        pstyleMode: Int = 1,
         autoContrastTrueColor: Bool = true,
         pointDisplayMode: Int = 0,
         pointDisplaySize: Double = 0,
@@ -130,6 +133,7 @@ public struct CADDocumentSnapshot: Sendable {
         self.linetypePatterns = linetypePatterns
         self.globalLineTypeScale = globalLineTypeScale
         self.paperSpaceLinetypeScale = paperSpaceLinetypeScale
+        self.pstyleMode = (pstyleMode == 0) ? 0 : 1
         self.autoContrastTrueColor = autoContrastTrueColor
         self.pointDisplayMode = pointDisplayMode
         self.pointDisplaySize = pointDisplaySize
@@ -154,6 +158,7 @@ public struct CADDocumentSnapshot: Sendable {
         linetypePatterns: [String: [Double]] = [:],
         globalLineTypeScale: Double = 1.0,
         paperSpaceLinetypeScale: Int = 1,
+        pstyleMode: Int = 1,
         autoContrastTrueColor: Bool = true,
         pointDisplayMode: Int = 0,
         pointDisplaySize: Double = 0,
@@ -182,6 +187,7 @@ public struct CADDocumentSnapshot: Sendable {
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             paperSpaceLinetypeScale: paperSpaceLinetypeScale,
+            pstyleMode: pstyleMode,
             autoContrastTrueColor: autoContrastTrueColor,
             pointDisplayMode: pointDisplayMode,
             pointDisplaySize: pointDisplaySize,
@@ -271,6 +277,10 @@ public struct SaveTabSnapshot: Sendable {
     public let drawingViews: [SaveDocumentSnapshot]
     public let fileURL: URL?
     public let displayName: String
+    /// Drawing-scoped named page setups (ACAD_PLOTSETTINGS) at snapshot time.
+    public let namedPageSetups: [CADNamedPageSetup]
+    /// Drawing custom scale factors at snapshot time.
+    public let customScaleFactors: [Double]
     /// The active view's editRevision at the moment the snapshot was taken.
     /// Kept for compatibility with single-view callers.
     public let editRevision: UInt64
@@ -287,7 +297,9 @@ public struct SaveTabSnapshot: Sendable {
                 displayName: String, editRevision: UInt64,
                 viewEditRevisions: [UInt64] = [],
                 formatVersion: UInt32, appVersion: String,
-                activeViewIndex: Int = 0) {
+                activeViewIndex: Int = 0,
+                namedPageSetups: [CADNamedPageSetup] = [],
+                customScaleFactors: [Double] = []) {
         self.tabID = tabID
         self.drawingViews = drawingViews
         self.fileURL = fileURL
@@ -297,6 +309,8 @@ public struct SaveTabSnapshot: Sendable {
         self.formatVersion = formatVersion
         self.appVersion = appVersion
         self.activeViewIndex = activeViewIndex
+        self.namedPageSetups = namedPageSetups
+        self.customScaleFactors = customScaleFactors
     }
 }
 
@@ -480,6 +494,13 @@ public final class CADDocument {
     /// Applies to viewport-projected copies in sheet views; see
     /// `paperLinetypeMultiplier`. Persisted in DXF ($PSLTSCALE) and EAB.
     public var paperSpaceLinetypeScale: Int = 1 {
+        didSet { markNeedsRegeneration() }
+    }
+
+    /// Plot-style mode (AutoCAD PSTYLEMODE sysvar, read-only). 0 = named
+    /// plot styles (.stb), 1 = color-dependent (.ctb). Persisted in DXF
+    /// ($PSTYLEMODE) and EAB. Render-only invalidation like PSLTSCALE.
+    public var pstyleMode: Int = 1 {
         didSet { markNeedsRegeneration() }
     }
 
@@ -4679,6 +4700,7 @@ public final class CADDocument {
             linetypePatterns: linetypePatterns,
             globalLineTypeScale: globalLineTypeScale,
             paperSpaceLinetypeScale: paperSpaceLinetypeScale,
+            pstyleMode: pstyleMode,
             autoContrastTrueColor: autoContrastTrueColor,
             pointDisplayMode: pointDisplayMode,
             pointDisplaySize: pointDisplaySize,
@@ -4737,6 +4759,7 @@ public final class CADDocument {
             linetypePatterns: base.linetypePatterns,
             globalLineTypeScale: base.globalLineTypeScale,
             paperSpaceLinetypeScale: base.paperSpaceLinetypeScale,
+            pstyleMode: base.pstyleMode,
             autoContrastTrueColor: base.autoContrastTrueColor,
             pointDisplayMode: base.pointDisplayMode,
             pointDisplaySize: base.pointDisplaySize,
@@ -4802,6 +4825,7 @@ public final class CADDocument {
         linetypePatterns = snapshot.linetypePatterns
         globalLineTypeScale = snapshot.globalLineTypeScale
         paperSpaceLinetypeScale = snapshot.paperSpaceLinetypeScale
+        pstyleMode = snapshot.pstyleMode
         autoContrastTrueColor = snapshot.autoContrastTrueColor
         dxfRoundTripPayload = snapshot.dxfRoundTripPayload
         imageDefinitions = snapshot.imageDefinitions

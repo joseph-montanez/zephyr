@@ -129,6 +129,7 @@ public enum DXFWriterBridge {
         var groups: [String: CADGroup] = [:]
         var insertionBase: Vector3 = .zero
         var plotSettings: CADPlotSettings? = nil
+        var pstyleMode: Int = 1
     }
 
 
@@ -176,7 +177,8 @@ public enum DXFWriterBridge {
             imageAssets: document.imageStore,
             groups: document.groups,
             insertionBase: document.insertionBase,
-            plotSettings: document.plotSettings)
+            plotSettings: document.plotSettings,
+            pstyleMode: document.pstyleMode)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion,
                         psltscale: document.paperSpaceLinetypeScale)
     }
@@ -186,7 +188,8 @@ public enum DXFWriterBridge {
         to url: URL,
         dxfVersion: DXFVersion = .defaultExport,
         tileMode: Int = 1,
-        psltscale: Int = 1
+        psltscale: Int = 1,
+        namedSetups: [CADNamedPageSetup] = []
     ) throws {
         let exportViews = views.map {
             ExportViewData(
@@ -207,10 +210,11 @@ public enum DXFWriterBridge {
                 imageAssets: $0.document.imageStore,
                 groups: $0.document.groups,
                 insertionBase: $0.document.insertionBase,
-                plotSettings: $0.document.plotSettings)
+                plotSettings: $0.document.plotSettings,
+                pstyleMode: $0.document.pstyleMode)
         }
         try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion, tileMode: tileMode,
-                        psltscale: psltscale)
+                        psltscale: psltscale, namedSetups: namedSetups)
     }
 
     public static func exportToDXF(
@@ -245,7 +249,8 @@ public enum DXFWriterBridge {
         filePath: String,
         dxfVersion: DXFVersion = .defaultExport,
         tileMode: Int = 1,
-        psltscale: Int = 1
+        psltscale: Int = 1,
+        namedSetups: [CADNamedPageSetup] = []
     ) throws {
         guard !sourceViews.isEmpty else {
             throw DXFWriter.WriterError.invalidEntity("Cannot export a DXF without a drawing view")
@@ -387,6 +392,8 @@ public enum DXFWriterBridge {
         writer.headerVars["$TILEMODE"] = tileMode
         // $PSLTSCALE from the active view's document (paper linetypes).
         writer.headerVars["$PSLTSCALE"] = psltscale
+        // $PSTYLEMODE from the model view's document (plot-style mode).
+        writer.headerVars["$PSTYLEMODE"] = modelView.pstyleMode == 0 ? 0 : 1
         // $INSBASE in DXF file coordinates (Y negated, like $EXTMIN below).
         let base = modelView.insertionBase
         writer.headerVars["$INSBASE"] = Vector3(x: base.x, y: -base.y, z: base.z)
@@ -405,6 +412,23 @@ public enum DXFWriterBridge {
             let groupAppID = DXFAppIdEntry()
             groupAppID.name = CADGroup.dxfAppID
             writer.addAppId(groupAppID)
+        }
+        // XDATA appid for plot transparency / PDF options (LAYOUT + PLOTSETTINGS).
+        // Registered only when actually emitted, so files without plot extras
+        // stay byte-identical to before.
+        let needsPlotXData = !namedSetups.isEmpty || orderedViews.contains(where: {
+            guard let ps = $0.plotSettings else { return false }
+            return ps.plotTransparency || ps.pdfOptions != PDFOptions()
+        })
+        if needsPlotXData {
+            let plotAppID = DXFAppIdEntry()
+            plotAppID.name = "ZEPHYR_PLOT"
+            writer.addAppId(plotAppID)
+        }
+        for setup in namedSetups {
+            writer.addPlotSettings(DXFPlotSettingsEntry(
+                handle: 0, ownerHandle: 0, name: setup.name,
+                settings: setup.settings, isModelType: setup.isModelType))
         }
 
         revisionCloudArcLength: for view in orderedViews {

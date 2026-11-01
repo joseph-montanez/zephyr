@@ -597,7 +597,7 @@ internal final class EngineInputHandler {
             case .finished:
                 engine.commandProcessor.finishFeatureCommand(engine: engine)
                 return
-            case .handled:
+            case .handled, .consumed:
                 return
             case .continue:
                 break
@@ -637,7 +637,7 @@ internal final class EngineInputHandler {
             case .finished:
                 engine.commandProcessor.finishFeatureCommand(engine: engine)
                 return
-            case .handled:
+            case .handled, .consumed:
                 return
             case .continue:
                 let enterResult = featureCmd.handleKeyDown(
@@ -648,7 +648,7 @@ internal final class EngineInputHandler {
                 case .finished:
                     engine.commandProcessor.finishFeatureCommand(engine: engine)
                     return
-                case .handled:
+                case .handled, .consumed:
                     return
                 case .continue:
                     break  // fall through to global Space behaviour below
@@ -797,7 +797,7 @@ internal final class EngineInputHandler {
                     case .finished:
                         engine.commandProcessor.finishFeatureCommand(engine: engine)
                         return
-                    case .handled:
+                    case .handled, .consumed:
                         return
                     case .continue:
                         break  // fall through to global hotkey behavior

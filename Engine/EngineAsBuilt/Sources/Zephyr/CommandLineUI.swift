@@ -240,25 +240,37 @@ struct CommandLineUI {
                         prepareForParameterEntry(engine: engine, descriptor: desc)
                     } else {
                         engine.commandProcessor.commandLineActive = false
+                        engine.commandProcessor.commandBuffer = ""
                         engine.commandProcessor.executeCommand(desc.canonicalName)
+                        if engine.commandProcessor.commandLineActive {
+                            _needsClearSelection = true
+                            _needsFocus = true
+                        }
                     }
                 } else {
                     let hint = findParameterHint(input: newTextFromInput)
                     if let hintDesc = hint {
-                        let cmdLen = hintDesc.canonicalName.count + 1
-                        if newTextFromInput.count > cmdLen {
+                        let parts = newTextFromInput.split(maxSplits: 1, whereSeparator: \.isWhitespace)
+                        if parts.count > 1 {
                             engine.commandProcessor.commandLineActive = false
+                            engine.commandProcessor.commandBuffer = ""
                             engine.commandProcessor.executeCommand(newTextFromInput)
                         } else if hintDesc.bareEnterExecutes {
                             // Bare "NAME " + Enter: run it (LOAD/SCRIPT pick a file).
                             engine.commandProcessor.commandLineActive = false
+                            engine.commandProcessor.commandBuffer = ""
                             engine.commandProcessor.executeCommand(hintDesc.canonicalName)
                         } else {
                             prepareForParameterEntry(engine: engine, descriptor: hintDesc)
                         }
                     } else {
                         engine.commandProcessor.commandLineActive = false
+                        engine.commandProcessor.commandBuffer = ""
                         engine.commandProcessor.executeCommand(newTextFromInput)
+                    }
+                    if engine.commandProcessor.commandLineActive {
+                        _needsClearSelection = true
+                        _needsFocus = true
                     }
                 }
             }
@@ -401,10 +413,15 @@ struct CommandLineUI {
                 index == selectedIndex,
                 0,
                 ImVec2(x: 0, y: 0)) {
-                engine.commandProcessor.commandBuffer = option.value
-                engine.commandProcessor.commandSelectionIndex = index
-                _needsClearSelection = true
-                _needsFocus = true
+                engine.commandProcessor.commandLineActive = false
+                engine.commandProcessor.commandBuffer = ""
+                _ = engine.commandProcessor.submitTextToActiveFeatureCommand(
+                    option.value,
+                    engine: engine)
+                if engine.commandProcessor.commandLineActive {
+                    _needsClearSelection = true
+                    _needsFocus = true
+                }
             }
             if !option.description.isEmpty {
                 ImGuiSameLine(260, 0)

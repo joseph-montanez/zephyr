@@ -362,6 +362,23 @@ public final class EngineUIManager {
     public var styleManagerActive: Bool = false
     public var leaderStyleManagerActive: Bool = false
     public var dimStyleManagerActive: Bool = false
+    /// Whether the Page Setup Manager window is visible (`PAGESETUP`).
+    public var pageSetupManagerActive: Bool = false
+    /// Whether the Page Setup dialog is visible (Manager Modify/New).
+    public var pageSetupDialogActive: Bool = false
+    /// When true, the Manager opens its Import dialog immediately (PSETUPIN).
+    /// Consumed (reset) by `PageSetupManagerUI` on next render.
+    public var pageSetupAutoImport: Bool = false
+    /// Whether the PLOT dialog window is visible (`PLOT`/`PRINT`).
+    public var plotDialogActive: Bool = false
+    /// Whether the live plot preview is visible (`PREVIEW`).
+    public var previewActive: Bool = false
+    /// Plot-settings snapshot rendered by the preview window.
+    public var previewSettings: CADPlotSettings? = nil
+    /// Edit target for the Page Setup dialog: layout name or named setup.
+    public var pageSetupEditName: String? = nil
+    /// True when the dialog edits a named setup, false for a layout.
+    public var pageSetupEditIsSetup: Bool = false
 
     /// Whether the Layers panel is visible (toggled via "LA"/"LAYER" command). Default true.
     public var layersPanelVisible: Bool = false

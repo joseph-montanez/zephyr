@@ -256,6 +256,18 @@ struct AppUI {
         if showsActiveTab && engine.ui.dimStyleManagerActive {
             DimStyleManagerUI.render(engine: engine, dw: dw, dh: dh)
         }
+        if showsActiveTab && engine.ui.pageSetupManagerActive {
+            PageSetupManagerUI.render(engine: engine, dw: dw, dh: dh)
+        }
+        if showsActiveTab && engine.ui.pageSetupDialogActive {
+            PageSetupDialogUI.render(engine: engine, dw: dw, dh: dh)
+        }
+        if showsActiveTab && engine.ui.plotDialogActive {
+            PlotDialogUI.render(engine: engine, dw: dw, dh: dh)
+        }
+        if showsActiveTab && engine.ui.previewActive {
+            PreviewUI.render(engine: engine, dw: dw, dh: dh)
+        }
 
         // 9b. Text editor modal dialog (when creating/editing text).
         if showsActiveTab && engine.textManager.isEditorActive {
@@ -526,7 +538,10 @@ struct AppUI {
     private static func completeSetup(engine: PhrostEngine) {
         engine.ui.hasCompletedSetup = true
         _setupDismissedThisSession = true
-        UserSettings.capture(ui: engine.ui).save()
+        let regs = engine.commandProcessor.plotRegistrySnapshot()
+        UserSettings.capture(ui: engine.ui, plotOffset: regs.0, paperUpdate: regs.1,
+                             plotRotMode: regs.2,
+                             plotTransparencyOverride: regs.3).save()
     }
 
     private static func renderTabCloseConfirmation(engine: PhrostEngine, dw: Float) {

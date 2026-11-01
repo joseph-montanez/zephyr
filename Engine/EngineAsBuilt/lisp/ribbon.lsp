@@ -471,6 +471,10 @@
               (zr-small "PDFIMPORT" "Import PDF" "pdf" nil)
               (zr-small "PDFATTACH" "Attach PDF" "pdf" nil)))
 
+          (zr-panel "Plot"
+            (list
+              (zr-small "PAGESETUP" "Page Setup" "print" nil)))
+
           (zr-panel "System"
             (list
               (zr-small "SETUISCALE"  "UI Scale"  "zoom"  nil)

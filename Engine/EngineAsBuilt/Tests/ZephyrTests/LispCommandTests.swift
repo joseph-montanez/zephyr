@@ -109,6 +109,11 @@ final class LispCommandTests: XCTestCase {
         // current mode instead of waiting for a keyword.
         let optionalArgumentCommands: Set<String> = [
             "LOAD", "SCRIPT", "UNDO", "REDO", "RIBBONMODE", "VPRESIZE",
+            // Plot: bare Enter lists (SCALELISTEDIT) or opens the file
+            // picker (PSETUPIN) instead of waiting for arguments.
+            "PSETUPIN", "SCALELISTEDIT", "-SCALELISTEDIT",
+            // LAYOUT: bare Enter enters the modal option prompt.
+            "LAYOUT",
         ]
         let others = CommandDescriptor.allCommands.filter {
             !$0.syntax.isEmpty

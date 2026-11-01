@@ -780,6 +780,14 @@ public final class PhrostEngine {
         if let mode = RibbonDisplayMode(rawValue: settings.ribbonMode) {
             self.ui.ribbonMode = mode
         }
+        // Seed the plot registry sysvars from persisted settings.
+        self.commandProcessor.applyPlotRegistry(
+            offset: settings.plotOffset, update: settings.paperUpdate,
+            rotMode: settings.plotRotMode, transparency: settings.plotTransparencyOverride)
+        self.tabManager.autoOpenPageSetupForNewLayouts = settings.displayPageSetupForNewLayouts
+        self.tabManager.onRequestPageSetup = { [weak self] in
+            self?.ui.pageSetupManagerActive = true
+        }
 
         print("Zephyr Initialized Successfully")
     }
@@ -1463,7 +1471,10 @@ public final class PhrostEngine {
     /// after the user has explicitly chosen to discard changes and exit.
     public func stop() {
         // Persist user settings and ImGui docking layout before shutting down.
-        UserSettings.capture(ui: ui).save()
+        let plotRegs = commandProcessor.plotRegistrySnapshot()
+        UserSettings.capture(ui: ui, plotOffset: plotRegs.0, paperUpdate: plotRegs.1,
+                             plotRotMode: plotRegs.2,
+                             plotTransparencyOverride: plotRegs.3).save()
         if let iniURL = UserSettings.imguiIniURL() {
             let dir = iniURL.deletingLastPathComponent()
             if !FileManager.default.fileExists(atPath: dir.path) {

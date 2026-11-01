@@ -270,6 +270,9 @@ public struct DXFLayoutEntry: Sendable {
     public var paperImageOriginY: Double
     /// Post-marker layout flags (bit 0 = PSLTSCALE, bit 1 = LIMCHECK).
     public var layoutFlags: Int
+    /// XDATA-only (appid ZEPHYR_PLOT): transparency + PDF options.
+    public var plotTransparency: Bool
+    public var pdfOptions: PDFOptions
 
     public init(
         name: String = "",
@@ -308,7 +311,9 @@ public struct DXFLayoutEntry: Sendable {
         standardScaleFactor: Double = 1,
         paperImageOriginX: Double = 0,
         paperImageOriginY: Double = 0,
-        layoutFlags: Int = 0
+        layoutFlags: Int = 0,
+        plotTransparency: Bool = false,
+        pdfOptions: PDFOptions = PDFOptions()
     ) {
         self.name = name
         self.tabOrder = tabOrder
@@ -347,6 +352,34 @@ public struct DXFLayoutEntry: Sendable {
         self.paperImageOriginX = paperImageOriginX
         self.paperImageOriginY = paperImageOriginY
         self.layoutFlags = layoutFlags
+        self.plotTransparency = plotTransparency
+        self.pdfOptions = pdfOptions
+    }
+}
+
+// MARK: - Standalone PLOTSETTINGS (ACAD_PLOTSETTINGS dictionary)
+
+/// Named page setup object (OBJECTS section, owner = ACAD_PLOTSETTINGS dict).
+/// Plot Codes 1/70/76 here are unambiguous (no AcDbLayout half).
+public struct DXFPlotSettingsEntry: Sendable {
+    public var handle: UInt32
+    public var ownerHandle: UInt32
+    public var name: String
+    public var settings: CADPlotSettings
+    public var isModelType: Bool
+
+    public init(
+        handle: UInt32 = 0,
+        ownerHandle: UInt32 = 0,
+        name: String = "",
+        settings: CADPlotSettings = CADPlotSettings(),
+        isModelType: Bool = false
+    ) {
+        self.handle = handle
+        self.ownerHandle = ownerHandle
+        self.name = name
+        self.settings = settings
+        self.isModelType = isModelType
     }
 }
 

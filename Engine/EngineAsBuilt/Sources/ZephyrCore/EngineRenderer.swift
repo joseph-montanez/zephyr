@@ -717,6 +717,7 @@ public final class EngineRenderer {
         if includeCrosshair {
             renderCrosshairCursor(cam: transform, origin: origin)
         }
+        renderSheetOverlay(cam: transform)
         renderGrid(cam: transform)
         renderSnapIndicator(cam: transform)
 
@@ -3256,6 +3257,84 @@ public final class EngineRenderer {
             drawn += 1
         }
         _foregroundVertexEstimate += drawn * 2
+    }
+
+    // MARK: - Paper Sheet Overlay
+
+    /// Paper sheet + printable-area overlay for the active sheet view.
+    /// Drawn via the ImGui background draw list (like the grid), so the sheet
+    /// is never selectable, snappable, or printable: it adds no entities,
+    /// never enters extents/zoom-extents, and `PDFExporter` never sees it.
+    /// Geometry comes from `PaperSheetGeometry.overlayRects` so the canvas
+    /// and the Page Setup Partial Preview share one implementation.
+    private func renderSheetOverlay(cam: CameraTransform) {
+        guard let tab = engine.tabManager.activeTab,
+              tab.drawingViews.indices.contains(tab.activeViewIndex),
+              tab.drawingViews[tab.activeViewIndex].kind == .sheet
+        else { return }
+        let doc = tab.drawingViews[tab.activeViewIndex].document
+        let settings: CADPlotSettings? = doc.plotSettings ?? doc.layoutSettings.map {
+            CADPlotSettings(
+                paperName: $0.paperName,
+                paperWidthMM: $0.paperWidthMM, paperHeightMM: $0.paperHeightMM,
+                marginLM: $0.marginLM, marginBM: $0.marginBM,
+                marginRM: $0.marginRM, marginTM: $0.marginTM,
+                plotPaperUnits: $0.plotPaperUnits, plotRotation: $0.plotRotation)
+        }
+        guard let settings,
+              let rects = PaperSheetGeometry.overlayRects(for: settings)
+        else { return }
+
+        func toScreen(_ wx: Double, _ wy: Double) -> ImVec2 {
+            let p = EngineCameraManager.worldToScreen(worldX: wx, worldY: wy, cam: cam)
+            return ImVec2(x: p.x, y: p.y)
+        }
+        // Cull when the whole sheet is off-screen.
+        let vp = engine.camera.worldViewportRect(windowWidth: Int32(engine.windowWidth),
+                                                 windowHeight: Int32(engine.windowHeight))
+        if rects.paper.maxX < vp.minX || rects.paper.minX > vp.maxX
+            || rects.paper.maxY < vp.minY || rects.paper.minY > vp.maxY { return }
+
+        let drawList = igGetBackgroundDrawList(nil)
+        let pMin = toScreen(rects.paper.minX, rects.paper.minY)
+        let pMax = toScreen(rects.paper.maxX, rects.paper.maxY)
+        // Drop shadow (screen-space offset so it stays constant under zoom).
+        let shadow: Float = 8
+        ImDrawListAddRectFilled(drawList,
+            ImVec2(x: pMin.x + shadow, y: pMin.y + shadow),
+            ImVec2(x: pMax.x + shadow, y: pMax.y + shadow),
+            makeImCol32(r: 0, g: 0, b: 0, a: 70), 0.0, 0)
+        // Paper fill + thin edge (visible on both white and dark canvases).
+        ImDrawListAddRectFilled(drawList, pMin, pMax,
+            makeImCol32(r: 255, g: 255, b: 255, a: 255), 0.0, 0)
+        ImDrawListAddRect(drawList, pMin, pMax,
+            makeImCol32(r: 150, g: 150, b: 150, a: 255), 0.0, 1.0, 0)
+        // Dashed printable boundary.
+        let dMin = toScreen(rects.printable.minX, rects.printable.minY)
+        let dMax = toScreen(rects.printable.maxX, rects.printable.maxY)
+        let dashCol = makeImCol32(r: 110, g: 110, b: 110, a: 255)
+        let dashLen: Float = 7, gapLen: Float = 5
+        var segs = 0
+        let maxSegs = 256
+        func dashLine(_ ax: Float, _ ay: Float, _ bx: Float, _ by: Float) {
+            let dx = bx - ax, dy = by - ay
+            let total = (dx * dx + dy * dy).squareRoot()
+            guard total > 0.001 else { return }
+            var t: Float = 0
+            while t < total, segs < maxSegs {
+                let t0 = t, t1 = min(t + dashLen, total)
+                let sx = ax + dx * (t0 / total), sy = ay + dy * (t0 / total)
+                let ex = ax + dx * (t1 / total), ey = ay + dy * (t1 / total)
+                ImDrawListAddLine(drawList, ImVec2(x: sx, y: sy), ImVec2(x: ex, y: ey), dashCol, 1.0)
+                segs += 1
+                t += dashLen + gapLen
+            }
+        }
+        dashLine(dMin.x, dMin.y, dMax.x, dMin.y)
+        dashLine(dMax.x, dMin.y, dMax.x, dMax.y)
+        dashLine(dMax.x, dMax.y, dMin.x, dMax.y)
+        dashLine(dMin.x, dMax.y, dMin.x, dMin.y)
+        _foregroundVertexEstimate += 8 + segs * 2
     }
 
     // MARK: - Snap Indicator

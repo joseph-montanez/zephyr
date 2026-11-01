@@ -30,6 +30,7 @@ public struct CADCommandAliasEntry: Sendable {
     /// True when this is a known LT name with no implementation yet.
     /// Stubs are discoverable (autocomplete) but never execute anything.
     public let isReservedStub: Bool
+    public let bareEnterExecutes: Bool
 
     public init(
         canonicalName: String,
@@ -37,7 +38,8 @@ public struct CADCommandAliasEntry: Sendable {
         category: CommandCategory,
         syntax: String = "",
         description: String = "",
-        isReservedStub: Bool = false
+        isReservedStub: Bool = false,
+        bareEnterExecutes: Bool = false
     ) {
         self.canonicalName = canonicalName.uppercased()
         self.aliases = aliases.map { $0.uppercased() }
@@ -45,6 +47,7 @@ public struct CADCommandAliasEntry: Sendable {
         self.syntax = syntax
         self.description = description
         self.isReservedStub = isReservedStub
+        self.bareEnterExecutes = bareEnterExecutes
     }
 
     /// Descriptor form, for seeding the S1 autocomplete registry.
@@ -54,7 +57,8 @@ public struct CADCommandAliasEntry: Sendable {
             aliases: aliases,
             category: category,
             syntax: syntax,
-            description: description)
+            description: description,
+            bareEnterExecutes: bareEnterExecutes)
     }
 }
 
@@ -103,6 +107,50 @@ public enum CADCommandAliasTable {
             canonicalName: "-DIMSTYLE", aliases: [],
             category: .settings,
             description: "Set the current dimension style (command-line)"),
+        CADCommandAliasEntry(
+            canonicalName: "PAGESETUP", aliases: [],
+            category: .settings,
+            description: "Manage page setups for the active layout"),
+        CADCommandAliasEntry(
+            canonicalName: "PLOT", aliases: ["PRINT"],
+            category: .draw,
+            description: "Plot the active layout to PDF (page setup)"),
+        CADCommandAliasEntry(
+            canonicalName: "PREVIEW", aliases: [],
+            category: .view,
+            description: "Preview the active layout as plotted"),
+        CADCommandAliasEntry(
+            canonicalName: "-PAGESETUP", aliases: [],
+            category: .settings,
+            description: "Assign a page setup from the command line"),
+        CADCommandAliasEntry(
+            canonicalName: "-PLOT", aliases: [],
+            category: .draw,
+            description: "Configure and run a plot from the command line"),
+        CADCommandAliasEntry(
+            canonicalName: "PSETUPIN", aliases: [],
+            category: .settings,
+            description: "Import page setups from another drawing"),
+        CADCommandAliasEntry(
+            canonicalName: "-PSETUPIN", aliases: [],
+            category: .settings,
+            description: "Import page setups from the command line"),
+        CADCommandAliasEntry(
+            canonicalName: "SCALELISTEDIT", aliases: [],
+            category: .settings,
+            description: "Edit the drawing custom scale list"),
+        CADCommandAliasEntry(
+            canonicalName: "-SCALELISTEDIT", aliases: [],
+            category: .settings,
+            description: "Edit the drawing custom scale list (command line)"),
+        CADCommandAliasEntry(
+            canonicalName: "STYLESMANAGER", aliases: [],
+            category: .settings,
+            description: "Open the plot styles folder"),
+        CADCommandAliasEntry(
+            canonicalName: "PLOTTERMANAGER", aliases: [],
+            category: .settings,
+            description: "Open the plotters folder"),
         CADCommandAliasEntry(
             canonicalName: "DRAW", aliases: ["TOOLS"], category: .draw,
             description: "Open the draw tools palette"),
@@ -249,9 +297,10 @@ public enum CADCommandAliasTable {
             syntax: "[name|index]",
             description: "List, select, or cycle model and sheet views"),
         CADCommandAliasEntry(
-            canonicalName: "LAYOUT", aliases: ["SHEET", "LO"], category: .view,
-            syntax: "[name|index]",
-            description: "Select or cycle imported DXF sheet layouts"),
+            canonicalName: "LAYOUT", aliases: ["SHEET", "LO", "-LAYOUT"], category: .view,
+            syntax: "[Copy/Delete/New/Template/Rename/SAveas/Set/?]",
+            description: "Manage sheet layouts",
+            bareEnterExecutes: true),
         CADCommandAliasEntry(
             canonicalName: "INSERT", aliases: ["I", "-I", "-INSERT"],
             category: .block,

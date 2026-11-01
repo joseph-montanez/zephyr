@@ -458,6 +458,21 @@ struct AppCommandRegistration {
             factory: { StyleCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "PLOT",
+            aliases: ["PRINT"],
+            factory: { PlotCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PREVIEW",
+            aliases: [],
+            factory: { PreviewCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PAGESETUP",
+            aliases: [],
+            factory: { PageSetupCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "TABLE",
             aliases: ["TB", "DATATABLE"],
             factory: { DataTableCommand() }
@@ -567,6 +582,11 @@ struct AppCommandRegistration {
             name: "ZOOM",
             aliases: ["Z"],
             factory: { ZoomCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "LAYOUT",
+            aliases: ["SHEET", "LO", "-LAYOUT"],
+            factory: { LayoutCommand() }
         )
         
         // --- Dimension commands ---

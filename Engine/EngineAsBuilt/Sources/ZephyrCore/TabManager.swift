@@ -186,6 +186,13 @@ public struct DocumentTab {
     /// Referenced-media (image/PDF underlay) runtime state.
     public let mediaStore = MediaReferenceStore()
 
+    /// Drawing-scoped named page setups (ACAD_PLOTSETTINGS). Per-layout
+    /// association rides each view's `plotSettings.pageSetupName`.
+    public var namedPageSetups: [CADNamedPageSetup] = []
+    public var customScaleFactors: [Double] = []
+    /// Last plot settings used by PLOT (`Start with: <Previous plot>`).
+    public var lastPlotSettings: CADPlotSettings? = nil
+
     public init(document: CADDocument = CADDocument(),
                 fileURL: URL? = nil,
                 displayName: String = "Untitled",
@@ -195,7 +202,9 @@ public struct DocumentTab {
                 parentDocument: CADDocument? = nil,
                 cameraState: CameraState = .default,
                 drawingViews: [DrawingView]? = nil,
-                isFloated: Bool = false) {
+                isFloated: Bool = false,
+                namedPageSetups: [CADNamedPageSetup] = [],
+                customScaleFactors: [Double] = []) {
         self.drawingViews = drawingViews ?? [
             DrawingView(name: "Model", kind: .model, document: document, cameraState: cameraState)
         ]
@@ -214,6 +223,8 @@ public struct DocumentTab {
         self.editingBlockID = editingBlockID
         self.parentDocument = parentDocument
         self.isFloated = isFloated
+        self.namedPageSetups = namedPageSetups
+        self.customScaleFactors = customScaleFactors
         for view in self.drawingViews {
             view.document.xrefRuntimeStore = xrefStore
             view.document.mediaRuntimeStore = mediaStore
@@ -250,8 +261,56 @@ public struct DocumentTab {
             viewEditRevisions: viewEditRevisions,
             formatVersion: formatVersion,
             appVersion: appVersion,
-            activeViewIndex: activeViewIndex
+            activeViewIndex: activeViewIndex,
+            namedPageSetups: namedPageSetups,
+            customScaleFactors: customScaleFactors
         )
+    }
+}
+
+// MARK: - Custom drawing scale list (Phase 4 step 27)
+
+public extension TabManager {
+    /// Add a custom scale factor (paper units per drawing unit).
+    /// Duplicates (within tolerance) and non-finite values are rejected.
+    @discardableResult
+    func addCustomScaleFactor(_ factor: Double) -> Bool {
+        guard var tab = activeTab else { return false }
+        guard factor.isFinite, factor > 0 else { return false }
+        if tab.customScaleFactors.contains(where: { abs($0 - factor) <= max(1e-9, abs($0) * 1e-9) }) {
+            return false
+        }
+        tab.customScaleFactors.append(factor)
+        tab.customScaleFactors.sort()
+        tabs[activeIndex].customScaleFactors = tab.customScaleFactors
+        onActiveTabChanged?()
+        return true
+    }
+
+    /// Remove a custom scale factor by 1-based list index.
+    @discardableResult
+    func removeCustomScaleFactor(atOneBasedIndex index: Int) -> Bool {
+        guard var tab = activeTab else { return false }
+        guard index >= 1, index <= tab.customScaleFactors.count else { return false }
+        tab.customScaleFactors.remove(at: index - 1)
+        tabs[activeIndex].customScaleFactors = tab.customScaleFactors
+        onActiveTabChanged?()
+        return true
+    }
+
+    /// Drop all custom scales (back to the canonical 0–32 table).
+    func resetCustomScaleFactors() {
+        guard activeTab != nil else { return }
+        tabs[activeIndex].customScaleFactors = []
+        onActiveTabChanged?()
+    }
+
+    /// Display label for a custom factor (`Custom 1:50` / `Custom 2:1`).
+    static func customScaleLabel(for factor: Double) -> String {
+        if factor < 1 {
+            return "Custom 1:\(String(format: "%.4g", 1 / factor))"
+        }
+        return "Custom \(String(format: "%.4g", factor)):1"
     }
 }
 
@@ -318,6 +377,17 @@ public final class TabManager {
     /// Callback invoked when the active tab changes (after the switch).
     /// Engine uses this to clear selection and trigger regeneration.
     public var onActiveTabChanged: (() -> Void)? = nil
+    /// Record last-used plot settings (`Start with: <Previous plot>`).
+    public func recordLastPlotSettings(_ settings: CADPlotSettings) {
+        guard activeIndex >= 0, activeIndex < tabs.count else { return }
+        tabs[activeIndex].lastPlotSettings = settings
+    }
+
+    /// When true, creating a layout requests the Page Setup dialog
+    /// (mirrors "Display when creating a new layout"; seeded from UserSettings).
+    public var autoOpenPageSetupForNewLayouts: Bool = false
+    /// Fired after `createLayout` when `autoOpenPageSetupForNewLayouts`.
+    public var onRequestPageSetup: (() -> Void)? = nil
 
     /// Callback invoked when a tab is closed.
     public var onTabClosed: ((Int) -> Void)? = nil
@@ -530,6 +600,7 @@ public final class TabManager {
                     uniqueKeysWithValues: viewGroups.map { ($0.name, $0) })
                 doc.plotSettings = view.plotSettings
                 doc.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
+                doc.pstyleMode = imported.pstyleMode
                 doc.insertionBase = imported.insBase
                 doc.dxfRoundTripPayload = imported.roundTripPayload
                 doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
@@ -554,7 +625,8 @@ public final class TabManager {
                 document: drawingViews[0].document,
                 fileURL: url,
                 displayName: displayName,
-                drawingViews: drawingViews
+                drawingViews: drawingViews,
+                namedPageSetups: imported.namedPageSetups
             )
             tabs.append(tab)
         kickXrefLoads(for: tab)
@@ -590,6 +662,7 @@ public final class TabManager {
                 uniqueKeysWithValues: paperGroups.map { ($0.name, $0) })
             doc.plotSettings = view.plotSettings
             doc.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
+            doc.pstyleMode = imported.pstyleMode
             doc.insertionBase = imported.insBase
             doc.dxfRoundTripPayload = imported.roundTripPayload
             doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
@@ -617,7 +690,8 @@ public final class TabManager {
             document: doc,
             fileURL: url,
             displayName: displayName,
-            drawingViews: drawingViews
+            drawingViews: drawingViews,
+            namedPageSetups: imported.namedPageSetups
         )
         tabs.append(tab)
         kickXrefLoads(for: tab)
@@ -921,7 +995,7 @@ public final class TabManager {
         paperWidthMM: 279.4, paperHeightMM: 215.9,
         plotPaperUnits: 1)
 
-    private func layoutNameTaken(_ name: String) -> Bool {
+    public func layoutNameTaken(_ name: String) -> Bool {
         guard let tab = activeTab else { return false }
         let needle = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return tab.drawingViews.contains {
@@ -982,10 +1056,36 @@ public final class TabManager {
         doc.savedRevision = doc.editRevision
         let newIndex = tabs[activeIndex].drawingViews.count - 1
         guard switchToView(at: newIndex) else { return false }
+        if autoOpenPageSetupForNewLayouts { onRequestPageSetup?() }
         // Full-sheet frame in paper units (mm); fits model extents.
         createSheetViewport(
             paperX1: 0, paperY1: 0,
             paperX2: settings.paperWidthMM, paperY2: settings.paperHeightMM)
+        return true
+    }
+
+    /// Apply plot settings to a sheet view (Phase 1 test hook until the Page
+    /// Setup dialog lands in Phase 2). Syncs the lightweight paper view,
+    /// marks the document edited (persist + regen), and returns false for
+    /// unknown views. The canvas sheet overlay reads the live document each
+    /// frame, so the sheet re-renders immediately (e.g. Letter → A3 landscape).
+    @discardableResult
+    public func applyPlotSettings(_ settings: CADPlotSettings, toViewNamed name: String? = nil) -> Bool {
+        guard let tab = activeTab else { return false }
+        let index: Int?
+        if let name {
+            index = layoutIndex(named: name)
+        } else {
+            index = tab.activeViewIndex
+        }
+        guard let idx = index, tab.drawingViews.indices.contains(idx),
+              tab.drawingViews[idx].kind == .sheet else { return false }
+        let doc = tab.drawingViews[idx].document
+        doc.plotSettings = settings
+        doc.layoutSettings = settings.layoutSettings
+        doc.unit = (settings.plotPaperUnits == 0) ? .inch : .millimeter
+        doc.markEdited()
+        onActiveTabChanged?()
         return true
     }
 
@@ -1049,6 +1149,143 @@ public final class TabManager {
             name: trimmed, kind: .sheet, document: copy))
         let newIndex = tabs[activeIndex].drawingViews.count - 1
         return switchToView(at: newIndex)
+    }
+
+    // MARK: - Named page setups (Phase 2, Decision 4)
+
+    /// Reserved characters for page-setup names (mirrors symbol-name rules).
+    public static let reservedPageSetupCharacters = CharacterSet(charactersIn: "<>/:\";?*|=`,")
+
+    /// Validate a candidate setup name: non-blank, no reserved characters,
+    /// unique among named setups (case-insensitive). Returns an error string.
+    public func validatePageSetupName(_ name: String, ignoring existing: String? = nil) -> String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "Name cannot be blank." }
+        if trimmed.rangeOfCharacter(from: Self.reservedPageSetupCharacters) != nil {
+            return "Name cannot contain <>/:\";?*|=`, characters."
+        }
+        guard let tab = activeTab else { return "No active drawing." }
+        if tab.namedPageSetups.contains(where: {
+            $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+                && (existing == nil || $0.name.caseInsensitiveCompare(existing!) != .orderedSame)
+        }) { return "A page setup named '\(trimmed)' already exists." }
+        return nil
+    }
+
+    /// Create a named setup from explicit settings. The setup's stored
+    /// `pageSetupName` is normalized to `name`.
+    @discardableResult
+    public func createNamedSetup(name: String, from settings: CADPlotSettings,
+                                  isModelType: Bool = false) -> Bool {
+        guard activeTab != nil else { return false }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard validatePageSetupName(trimmed) == nil else { return false }
+        var stored = settings
+        stored.pageSetupName = trimmed
+        tabs[activeIndex].namedPageSetups.append(
+            CADNamedPageSetup(name: trimmed, settings: stored, isModelType: isModelType))
+        onActiveTabChanged?()
+        return true
+    }
+
+    /// Rename a named setup (and re-point bound layouts' Code-1 names).
+    @discardableResult
+    public func renameNamedSetup(from oldName: String, to newName: String) -> Bool {
+        guard let tab = activeTab else { return false }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard validatePageSetupName(trimmed, ignoring: oldName) == nil else { return false }
+        guard let idx = tab.namedPageSetups.firstIndex(where: {
+            $0.name.caseInsensitiveCompare(oldName) == .orderedSame
+        }) else { return false }
+        tabs[activeIndex].namedPageSetups[idx].name = trimmed
+        tabs[activeIndex].namedPageSetups[idx].settings.pageSetupName = trimmed
+        for viewIdx in tabs[activeIndex].drawingViews.indices
+        where tabs[activeIndex].drawingViews[viewIdx].kind == .sheet {
+            let doc = tabs[activeIndex].drawingViews[viewIdx].document
+            if doc.plotSettings?.pageSetupName.caseInsensitiveCompare(oldName) == .orderedSame {
+                doc.plotSettings?.pageSetupName = trimmed
+                doc.markEdited()
+            }
+        }
+        onActiveTabChanged?()
+        return true
+    }
+
+    /// Layout names currently bound to a named setup (for delete guards).
+    public func layoutsBound(to setupName: String) -> [String] {
+        guard let tab = activeTab else { return [] }
+        return tab.drawingViews.filter {
+            $0.kind == .sheet
+                && $0.document.plotSettings?.pageSetupName.caseInsensitiveCompare(setupName) == .orderedSame
+        }.map(\.name)
+    }
+
+    /// Delete a named setup. Refused while any layout is bound to it
+    /// (AutoCAD warns; v1 blocks with the bound-layout list).
+    /// Returns false when missing or in use.
+    @discardableResult
+    public func deleteNamedSetup(named name: String) -> Bool {
+        guard let tab = activeTab else { return false }
+        guard tab.namedPageSetups.contains(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) else { return false }
+        guard layoutsBound(to: name).isEmpty else { return false }
+        tabs[activeIndex].namedPageSetups.removeAll {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }
+        onActiveTabChanged?()
+        return true
+    }
+
+    /// Apply a named setup to a layout: copies all fields and records the
+    /// association in plot Code 1 (`pageSetupName`). One undoable step on
+    /// the layout's document. Direct layout edits keep the name (divergence
+    /// allowed); editing the setup itself propagates (see `updateNamedSetup`).
+    @discardableResult
+    public func applyNamedSetupToLayout(_ setupName: String, layoutName: String) -> Bool {
+        guard let tab = activeTab else { return false }
+        guard let setup = tab.namedPageSetups.first(where: {
+            $0.name.caseInsensitiveCompare(setupName) == .orderedSame
+        }) else { return false }
+        guard let idx = layoutIndex(named: layoutName),
+              tab.drawingViews.indices.contains(idx),
+              tab.drawingViews[idx].kind == .sheet else { return false }
+        let doc = tab.drawingViews[idx].document
+        var applied = setup.settings
+        applied.pageSetupName = setup.name
+        doc.undoManager.pushUndo(doc.snapshot())
+        doc.plotSettings = applied
+        doc.layoutSettings = applied.layoutSettings
+        doc.unit = (applied.plotPaperUnits == 0) ? .inch : .millimeter
+        doc.markEdited()
+        onActiveTabChanged?()
+        return true
+    }
+
+    /// Update a named setup and propagate to all bound layouts (AutoCAD
+    /// behavior per Decision 4). Each bound layout gets one undoable step.
+    @discardableResult
+    public func updateNamedSetup(name: String, with settings: CADPlotSettings) -> Bool {
+        guard let tab = activeTab else { return false }
+        guard let idx = tab.namedPageSetups.firstIndex(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) else { return false }
+        var stored = settings
+        stored.pageSetupName = tab.namedPageSetups[idx].name
+        tabs[activeIndex].namedPageSetups[idx].settings = stored
+        for viewIdx in tabs[activeIndex].drawingViews.indices
+        where tabs[activeIndex].drawingViews[viewIdx].kind == .sheet {
+            let doc = tabs[activeIndex].drawingViews[viewIdx].document
+            if doc.plotSettings?.pageSetupName.caseInsensitiveCompare(name) == .orderedSame {
+                doc.undoManager.pushUndo(doc.snapshot())
+                doc.plotSettings = stored
+                doc.layoutSettings = stored.layoutSettings
+                doc.unit = (stored.plotPaperUnits == 0) ? .inch : .millimeter
+                doc.markEdited()
+            }
+        }
+        onActiveTabChanged?()
+        return true
     }
 
     /// Viewport picked by the user on the active sheet (via
@@ -1836,7 +2073,9 @@ public final class TabManager {
         }
         let ext = url.pathExtension.lowercased()
         if ext == "eab" {
-            try EABWriter.write(views: tab.drawingViews, to: url)
+            try EABWriter.write(views: tab.drawingViews, to: url,
+                                namedSetups: tab.namedPageSetups,
+                                scaleList: tab.customScaleFactors)
         } else if ext == "pdf" {
             let activeView = tab.drawingViews[tab.activeViewIndex]
             let bg = activeView.backgroundColor ?? getBackgroundColor?()
@@ -1854,13 +2093,15 @@ public final class TabManager {
             try DXFExporter.export(
                 views: tab.drawingViews, to: tempDXF, dxfVersion: dxfVersion,
                 tileMode: tab.drawingViews[tab.activeViewIndex].kind == .sheet ? 0 : 1,
-                psltscale: tab.drawingViews[tab.activeViewIndex].document.paperSpaceLinetypeScale)
+                psltscale: tab.drawingViews[tab.activeViewIndex].document.paperSpaceLinetypeScale,
+                namedSetups: tab.namedPageSetups)
             try ODADWGConverter.convertSync(input: tempDXF, output: url, toFormat: "DWG")
         } else {
             try DXFExporter.export(
                 views: tab.drawingViews, to: url, dxfVersion: dxfVersion,
                 tileMode: tab.drawingViews[tab.activeViewIndex].kind == .sheet ? 0 : 1,
-                psltscale: tab.drawingViews[tab.activeViewIndex].document.paperSpaceLinetypeScale)
+                psltscale: tab.drawingViews[tab.activeViewIndex].document.paperSpaceLinetypeScale,
+                namedSetups: tab.namedPageSetups)
         }
         tab.fileURL = url
         tab.displayName = url.lastPathComponent
@@ -2089,7 +2330,9 @@ public final class TabManager {
                 try EABWriter.write(
                     snapshots: snapshot.drawingViews,
                     to: targetURL,
-                    progress: progressHandler
+                    progress: progressHandler,
+                    namedSetups: snapshot.namedPageSetups,
+                    scaleList: snapshot.customScaleFactors
                 )
             } else if ext == "pdf" {
                 let viewIndex = (snapshot.activeViewIndex >= 0 && snapshot.activeViewIndex < snapshot.drawingViews.count)
@@ -2116,7 +2359,8 @@ public final class TabManager {
                     dxfVersion: dxfVersion,
                     tileMode: snapshotTileMode,
                     psltscale: snapshotPsltscale,
-                    progress: progressHandler
+                    progress: progressHandler,
+                    namedSetups: snapshot.namedPageSetups
                 )
                 progressHandler?(0.9)
                 try await ODADWGConverter.convert(input: tempDXF, output: targetURL, toFormat: "DWG")
@@ -2128,7 +2372,8 @@ public final class TabManager {
                     dxfVersion: dxfVersion,
                     tileMode: snapshotTileMode,
                     psltscale: snapshotPsltscale,
-                    progress: progressHandler
+                    progress: progressHandler,
+                    namedSetups: snapshot.namedPageSetups
                 )
             }
 
@@ -2228,7 +2473,9 @@ public final class TabManager {
     @discardableResult
     public func openEAB(url: URL) throws -> Int {
         let views = try EABReader.readViews(from: url)
-        
+        let data = (try? Data(contentsOf: url)) ?? Data()
+        let namedSetups = (try? EABReader.readNamedPageSetups(from: data)) ?? []
+        let scaleList = (try? EABReader.readScaleList(from: data)) ?? []
         let displayName = url.lastPathComponent
         // Mark documents as clean (just loaded) and needing regeneration
         for view in views {
@@ -2240,7 +2487,9 @@ public final class TabManager {
             document: views.first?.document ?? CADDocument(),
             fileURL: url,
             displayName: displayName,
-            drawingViews: views
+            drawingViews: views,
+            namedPageSetups: namedSetups,
+            customScaleFactors: scaleList
         )
         tabs.append(tab)
         kickXrefLoads(for: tab)

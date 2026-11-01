@@ -95,6 +95,15 @@ struct DrawingViewTabBarUI {
                             }
                         }
 
+                        if igBeginPopupContextItem("##DrawingView_\(tab.id.uuidString)_\(index)_ctx", Int32(ImGuiPopupFlags_MouseButtonRight.rawValue)) {
+                            if view.kind == .sheet {
+                                if igMenuItem_Bool("Page Setup…", nil, false, true) {
+                                    engine.commandProcessor.executeCommand("PAGESETUP")
+                                }
+                            }
+                            ImGuiEndPopup()
+                        }
+
                         if index == effectiveSelectedIndex {
                             let min = ImGuiGetItemRectMin()
                             let max = ImGuiGetItemRectMax()

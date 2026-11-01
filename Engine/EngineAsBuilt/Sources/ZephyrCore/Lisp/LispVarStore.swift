@@ -44,6 +44,7 @@ final class LispVarStore: @unchecked Sendable {
         "CMLJUST": .int(0),
         "CMLSCALE": .real(1),
         "CMLSTYLE": .string("Standard"),
+        "CMDDIA": .int(1),
         "CURSORSIZE": .int(5),
         "DATE": .real(2460600.5),
         "DIMSCALE": .real(1),
@@ -94,6 +95,7 @@ final class LispVarStore: @unchecked Sendable {
         "OSMODE": .int(0),
         "PDMODE": .int(0),
         "PDSIZE": .real(0),
+        "PAPERUPDATE": .int(0),
         "PICKADD": .int(1),
         "PICKAUTO": .int(1),
         "PICKBOX": .int(3),
@@ -101,6 +103,9 @@ final class LispVarStore: @unchecked Sendable {
         "PICKFIRST": .int(1),
         "PICKSTYLE": .int(1),
         "PLATFORM": .string("Zephyr"),
+        "PLOTOFFSET": .int(0),
+        "PLOTROTMODE": .int(1),
+        "PLOTTRANSPARENCYOVERRIDE": .int(1),
         "PSLTSCALE": .int(1),
         "QTEXTMODE": .int(0),
         "REGENMODE": .int(1),
@@ -120,7 +125,7 @@ final class LispVarStore: @unchecked Sendable {
     private static let readOnly: Set<String> = [
         "ACADVER", "AREA", "CMDNAMES", "CSPACE", "CTAB", "CVPORT", "DATE", "DWGNAME",
         "DWGPREFIX", "DWGTITLED", "ERRNO", "EXTMAX", "EXTMIN", "LASTANGLE",
-        "LOGINNAME", "MILLISECS", "PERIMETER", "PLATFORM", "TILEMODE",
+        "LOGINNAME", "MILLISECS", "PERIMETER", "PLATFORM", "PSTYLEMODE", "TILEMODE",
         "UNDOCTL", "VERSION",
     ]
 
@@ -150,6 +155,8 @@ final class LispVarStore: @unchecked Sendable {
             return .real(document.globalLineTypeScale)
         case "PSLTSCALE":
             return .int(document.paperSpaceLinetypeScale)
+        case "PSTYLEMODE":
+            return .int(document.pstyleMode)
         case "DIMSCALE", "DIMASZ", "DIMTXT", "DIMGAP", "DIMEXO", "DIMEXE":
             // Raw stored values of the current dimension style (Phase 2.1):
             // DIMSCALE is the overall factor, the rest are unscaled metrics.
@@ -278,6 +285,18 @@ final class LispVarStore: @unchecked Sendable {
             document.paperSpaceLinetypeScale = intVal
             document.markNeedsRegeneration()
             store(name, value)
+            return nil
+        case "CMDDIA", "PAPERUPDATE", "PLOTOFFSET":
+            guard case let .int(intVal) = value, (0...1).contains(intVal) else {
+                return "\(name) requires 0 or 1"
+            }
+            store(name, .int(intVal))
+            return nil
+        case "PLOTROTMODE", "PLOTTRANSPARENCYOVERRIDE":
+            guard case let .int(intVal) = value, (0...2).contains(intVal) else {
+                return "\(name) requires 0, 1, or 2"
+            }
+            store(name, .int(intVal))
             return nil
         case "DIMSCALE":
             guard let realVal = numericReal(value), realVal > 0, realVal.isFinite else {
@@ -498,6 +517,37 @@ final class LispVarStore: @unchecked Sendable {
 
     private func store(_ name: String, _ value: LispValue) {
         lock.withLock { memory[name] = value }
+    }
+
+    // MARK: - Plot registry (UserSettings persistence)
+
+    /// Snapshot the four registry plot sysvars for `UserSettings` saves.
+    /// Order: PLOTOFFSET, PAPERUPDATE, PLOTROTMODE, PLOTTRANSPARENCYOVERRIDE.
+    func plotRegistrySnapshot() -> (Int, Int, Int, Int) {
+        lock.withLock {
+            (intValue(memory["PLOTOFFSET"]) ?? 0,
+             intValue(memory["PAPERUPDATE"]) ?? 0,
+             intValue(memory["PLOTROTMODE"]) ?? 1,
+             intValue(memory["PLOTTRANSPARENCYOVERRIDE"]) ?? 1)
+        }
+    }
+
+    /// Seed the registry plot sysvars from persisted `UserSettings`.
+    func applyPlotRegistry(offset: Int, update: Int, rotMode: Int, transparency: Int) {
+        lock.withLock {
+            memory["PLOTOFFSET"] = .int((0...1).contains(offset) ? offset : 0)
+            memory["PAPERUPDATE"] = .int((0...1).contains(update) ? update : 0)
+            memory["PLOTROTMODE"] = .int((0...2).contains(rotMode) ? rotMode : 1)
+            memory["PLOTTRANSPARENCYOVERRIDE"] = .int((0...2).contains(transparency) ? transparency : 1)
+        }
+    }
+
+    private func intValue(_ value: LispValue?) -> Int? {
+        switch value {
+        case .int(let i): return i
+        case .real(let r): return Int(r)
+        default: return nil
+        }
     }
 
     private func numericReal(_ value: LispValue) -> Double? {

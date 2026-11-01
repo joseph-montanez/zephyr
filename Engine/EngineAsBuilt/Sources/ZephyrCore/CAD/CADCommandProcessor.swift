@@ -56,6 +56,11 @@ public enum CommandResult {
     case `continue`
     /// The event was consumed by the command — the engine should NOT run its default behavior.
     case handled
+    /// Modal prompt input consumed — the command stays active awaiting more
+    /// input (used by multi-step command-line flows such as LAYOUT). Behaves
+    /// like `handled` for dispatch: anything other than `finished` keeps the
+    /// feature command alive.
+    case consumed
     /// Command is finished — the processor will call `cancel()` and release it.
     case finished
 }
@@ -334,7 +339,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "ZOOM",        aliases: ["Z"],             category: .view,    syntax: "", description: "Zoom: All/Center/Dynamic/Extents/Left/Previous/Right/Scale/Object/Window"),
         CommandDescriptor(canonicalName: "ZOOMEXTENTS",aliases: ["ZOOME"],         category: .view,    syntax: "", description: "Zoom to fit all entities in the viewport"),
         CommandDescriptor(canonicalName: "VIEW",       aliases: ["V", "VIEWS"],     category: .view,    syntax: "[name|index]", description: "List, select, or cycle model and sheet views"),
-        CommandDescriptor(canonicalName: "LAYOUT",     aliases: ["SHEET", "LO"],   category: .view,    syntax: "[name|index|NEW name|RENAME old new|DELETE name|COPY src dst|?]", description: "Manage sheet layouts"),
+        CommandDescriptor(canonicalName: "LAYOUT",     aliases: ["SHEET", "LO", "-LAYOUT"], category: .view, syntax: "[Copy/Delete/New/Template/Rename/SAveas/Set/?]", description: "Manage sheet layouts", bareEnterExecutes: true),
         CommandDescriptor(canonicalName: "MODEL",      aliases: ["2DVIEW"],        category: .view,    syntax: "", description: "Switch to the DXF 2D model-space view"),
         CommandDescriptor(canonicalName: "NEXTVIEW",   aliases: ["VIEWNEXT"],      category: .view,    syntax: "", description: "Switch to the next model or sheet view"),
         CommandDescriptor(canonicalName: "PREVIOUSVIEW", aliases: ["PREVVIEW", "VIEWPREV"], category: .view, syntax: "", description: "Switch to the previous model or sheet view"),
@@ -391,6 +396,17 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "ALIASEDIT",  aliases: [],                category: .settings, syntax: "", description: "Edit and reload user command aliases"),
         // --- Settings ---
         CommandDescriptor(canonicalName: "STYLE",      aliases: ["ST"], category: .settings, syntax: "", description: "Create and edit text styles"),
+        CommandDescriptor(canonicalName: "PAGESETUP",  aliases: [], category: .settings, syntax: "", description: "Manage page setups for the active layout"),
+        CommandDescriptor(canonicalName: "PLOT",      aliases: ["PRINT"], category: .draw, syntax: "", description: "Plot the active layout to PDF (page setup)"),
+        CommandDescriptor(canonicalName: "PREVIEW",   aliases: [], category: .view, syntax: "", description: "Preview the active layout as plotted"),
+        CommandDescriptor(canonicalName: "-PAGESETUP", aliases: [], category: .settings, syntax: "", description: "Assign a page setup from the command line"),
+        CommandDescriptor(canonicalName: "-PLOT",      aliases: [], category: .draw, syntax: "", description: "Configure and run a plot from the command line"),
+        CommandDescriptor(canonicalName: "PSETUPIN",   aliases: [], category: .settings, syntax: "[file]", description: "Import page setups from another drawing"),
+        CommandDescriptor(canonicalName: "-PSETUPIN",  aliases: [], category: .settings, syntax: "", description: "Import page setups from the command line"),
+        CommandDescriptor(canonicalName: "SCALELISTEDIT", aliases: [], category: .settings, syntax: "[List|Add <factor>|Delete <n>|Reset]", description: "Edit the drawing custom scale list"),
+        CommandDescriptor(canonicalName: "-SCALELISTEDIT", aliases: [], category: .settings, syntax: "[List|Add <factor>|Delete <n>|Reset]", description: "Edit the drawing custom scale list (command line)"),
+        CommandDescriptor(canonicalName: "STYLESMANAGER", aliases: [], category: .settings, syntax: "", description: "Open the plot styles folder"),
+        CommandDescriptor(canonicalName: "PLOTTERMANAGER", aliases: [], category: .settings, syntax: "", description: "Open the plotters folder"),
         CommandDescriptor(canonicalName: "MLEADERSTYLE", aliases: ["MLS"], category: .settings, syntax: "", description: "Create and edit multileader styles"),
         CommandDescriptor(canonicalName: "THEME",      aliases: ["DARKMODE", "LIGHTMODE"], category: .settings, syntax: "[DARK|LIGHT]", description: "Toggle or set the UI theme (dark/light mode)"),
         CommandDescriptor(canonicalName: "FPS",        aliases: [],                        category: .settings, syntax: "", description: "Toggle FPS counter in the title bar"),
@@ -492,20 +508,15 @@ public final class CADCommandProcessor {
         }
     }
 
-    // MARK: LAYOUT Interactive State
-    /// Pending LAYOUT sub-operation while `activeCommand == "LAYOUT"`.
-    /// nil = awaiting option (Copy/Delete/New/Rename/SAveas/Set/Template/?).
-    /// Otherwise one of: NEW, SET, DELETE, COPY_SRC, COPY_DST, RENAME_SRC, RENAME_DST.
-    public internal(set) var layoutPendingOp: String? = nil
-    /// Auxiliary stored name for two-step LAYOUT RENAME/COPY (old/source name).
-    public internal(set) var layoutPendingName: String? = nil
-
     // MARK: Feature Command State
 
     /// Currently active feature command (class-bound protocol reference).
     /// When non-nil, all mouse/key events are routed to it instead of the
     /// built-in tool handlers.
     public internal(set) var activeFeatureCommand: (any FeatureCommand)? = nil
+
+    /// Active modal `-PLOT` / `-PAGESETUP` / `-PSETUPIN` CLI session, if any.
+    public var plotCliSession: PlotCliSession? = nil
 
     /// Registry of feature command factories, keyed by canonical name and aliases.
     public typealias FeatureCommandFactory = () -> any FeatureCommand
@@ -613,7 +624,13 @@ public final class CADCommandProcessor {
 
     // MARK: Initialization
 
-    public init() {}
+    public init() {
+        registerFeatureCommand(
+            name: "LAYOUT",
+            aliases: ["SHEET", "LO", "-LAYOUT"],
+            factory: { LayoutCommand() }
+        )
+    }
 
     // MARK: - Chrome support (ribbon)
 
@@ -797,11 +814,17 @@ public final class CADCommandProcessor {
         // other command may start. Must precede lastExecutedCommand so a
         // rejected command never poisons spacebar repeat.
         if rejectCommandIfLispActive(text) { return }
-        // AutoCAD-style LAYOUT prompts stay modal: while LAYOUT is
+        // AutoCAD-style LAYOUT prompts stay modal: while LayoutCommand is
         // awaiting an option/name, every line (including bare Enter)
         // is consumed as the prompt response.
-        if activeCommand == "LAYOUT", let eng = engine {
-            handleLayoutPromptInput(text, engine: eng)
+        if activeFeatureCommand is LayoutCommand, let eng = engine {
+            _ = submitTextToActiveFeatureCommand(text, engine: eng)
+            return
+        }
+        // Modal `-PLOT` / `-PAGESETUP` / `-PSETUPIN` sessions consume
+        // every line (including bare Enter) until they finish.
+        if plotCliSession != nil, let eng = engine {
+            plotCliSession?.handle(text, ctx: makePlotCliContext(engine: eng))
             return
         }
         var upper = text.uppercased().trimmingCharacters(in: .whitespaces)
@@ -816,7 +839,7 @@ public final class CADCommandProcessor {
         lastExecutedCommand = text
 
         if handleDrawingViewCommand(text) {
-            if activeCommand != "LAYOUT" { clearCommand() }
+            clearCommand()
             return
         }
 
@@ -931,6 +954,58 @@ public final class CADCommandProcessor {
             let hatchCmd = HatchCommand()
             activeFeatureCommand = hatchCmd
             hatchCmd.start(engine: engine, processor: self)
+        case "PAGESETUP":
+            // CMDDIA == 0 falls back to the command-line flow.
+            guard let engine = engine else { clearCommand(); return }
+            if cmdiaValue() == 0 {
+                startPlotCliSession(.pageSetup, engine: engine)
+            } else if let factory = featureCommandRegistry["PAGESETUP"] {
+                let cmd = factory()
+                activeFeatureCommand = cmd
+                cmd.start(engine: engine, processor: self)
+            } else {
+                clearCommand()
+            }
+        case "-PAGESETUP":
+            guard let engine = engine else { clearCommand(); return }
+            startPlotCliSession(.pageSetup, engine: engine)
+        case "PLOT", "PRINT":
+            // CMDDIA == 0 falls back to the command-line flow.
+            guard let engine = engine else { clearCommand(); return }
+            if cmdiaValue() == 0 {
+                startPlotCliSession(.plot, engine: engine)
+            } else if let factory = featureCommandRegistry["PLOT"] {
+                let cmd = factory()
+                activeFeatureCommand = cmd
+                cmd.start(engine: engine, processor: self)
+            } else {
+                clearCommand()
+            }
+        case "-PLOT":
+            guard let engine = engine else { clearCommand(); return }
+            startPlotCliSession(.plot, engine: engine)
+        case "PSETUPIN":
+            // FILEDIA == 0 falls back to the command-line flow.
+            guard let engine = engine else { clearCommand(); return }
+            if filediaValue() == 0 {
+                startPlotCliSession(.psetupin, engine: engine)
+            } else {
+                engine.ui.pageSetupAutoImport = true
+                engine.ui.pageSetupManagerActive = true
+                clearCommand()
+            }
+        case "-PSETUPIN":
+            guard let engine = engine else { clearCommand(); return }
+            startPlotCliSession(.psetupin, engine: engine)
+        case "SCALELISTEDIT", "-SCALELISTEDIT":
+            guard let engine = engine else { clearCommand(); return }
+            runScaleListEdit(text: text, upper: upper, engine: engine)
+        case "STYLESMANAGER":
+            openSupportFolder(named: "Plot Styles")
+            clearCommand()
+        case "PLOTTERMANAGER":
+            openSupportFolder(named: "Plotters", createIfMissing: true)
+            clearCommand()
         case "-HATCH":
             guard let engine = engine else { clearCommand(); return }
             startDashHatchCommand(text: text, upper: upper, engine: engine)
@@ -2060,7 +2135,8 @@ public final class CADCommandProcessor {
                 activeFeatureCommand = cmd
                 cmd.start(engine: eng, processor: self)
                 if parts.count > 1, activeFeatureCommand != nil {
-                    let argument = String(parts[1])
+                    let rawParts = text.trimmingCharacters(in: .whitespaces).split(maxSplits: 1, whereSeparator: \.isWhitespace)
+                    let argument = rawParts.count > 1 ? String(rawParts[1]) : String(parts[1])
                     let result = cmd.handleCommandText(argument, engine: eng, processor: self)
                     if result == .finished, activeFeatureCommand != nil {
                         finishFeatureCommand(engine: eng)
@@ -2166,38 +2242,6 @@ public final class CADCommandProcessor {
             } else {
                 print("[CAD] Unknown view '\(argument)'.")
                 printAvailableViews(engine.tabManager)
-            }
-            return true
-        case "LAYOUT", "SHEET", "LO":
-            if handleLayoutLifecycle(argument, engine: engine) {
-                // Single-shot forms (NEW name, DELETE name, ...) clear
-                // themselves on success; interactive prompts leave
-                // activeCommand == "LAYOUT" so the caller preserves it.
-                return true
-            }
-            if argument.isEmpty {
-                // AutoCAD: bare LAYOUT prompts for an option, it does not
-                // cycle sheets. Stay modal until the option/name completes.
-                enterLayoutOptionPrompt()
-                return true
-            } else {
-                let sheets = engine.tabManager.availableViews.enumerated().filter { $0.element.kind == .sheet }
-                let targetIndex: Int?
-                if let sheetNumber = Int(argument),
-                   sheetNumber >= 1, sheetNumber <= sheets.count {
-                    targetIndex = sheets[sheetNumber - 1].offset
-                } else {
-                    targetIndex = sheets.first(where: {
-                        $0.element.name.caseInsensitiveCompare(argument) == .orderedSame
-                    })?.offset
-                }
-                if let targetIndex, engine.tabManager.switchToView(at: targetIndex) {
-                    engine.zoomExtents()
-                    print("[CAD] Sheet: \(engine.tabManager.activeViewName ?? argument)")
-                } else {
-                    print("[CAD] Unknown sheet '\(argument)'.")
-                    printAvailableViews(engine.tabManager)
-                }
             }
             return true
         case "MVIEW", "MV":
@@ -2326,342 +2370,6 @@ public final class CADCommandProcessor {
         print("[CAD] \(viewport.detailDescription)")
     }
 
-    private func handleLayoutLifecycle(_ argument: String, engine: PhrostEngine) -> Bool {
-        let tokens = argument.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard let verb = tokens.first?.uppercased() else { return false }
-        let manager = engine.tabManager
-        switch verb {
-        case "?", "LIST", "L":
-            let views = manager.availableViews
-            guard !views.isEmpty else {
-                print("[CAD] No views in this drawing.")
-                return true
-            }
-            for (index, view) in views.enumerated() {
-                let marker = index == (manager.activeTab?.activeViewIndex ?? -1) ? "*" : " "
-                print("[CAD] \(marker)\(index + 1): \(view.name)\(view.kind == .model ? " (Model)" : "")")
-            }
-            return true
-        case "NEW", "N":
-            let inlineName = tokens.count > 1 ? tokens[1...].joined(separator: " ") : nil
-            guard let inlineName, !inlineName.trimmingCharacters(in: .whitespaces).isEmpty else {
-                startCommand("LAYOUT", prompt: "Enter new layout name:")
-                layoutPendingOp = "NEW"
-                layoutPendingName = nil
-                print("[CAD] Enter new layout name:")
-                return true
-            }
-            if manager.createLayout(named: inlineName) {
-                engine.zoomExtents()
-                print("[CAD] Layout '\(manager.activeViewName ?? "")' created.")
-            } else {
-                print("[CAD] LAYOUT NEW needs a unique, non-blank name.")
-            }
-            return true
-        case "RENAME", "REN", "R":
-            if tokens.count >= 3 {
-                let newName = tokens[2...].joined(separator: " ")
-                if manager.renameLayout(from: tokens[1], to: newName) {
-                    print("[CAD] Renamed to '\(newName)'.")
-                } else {
-                    print("[CAD] Cannot rename '\(tokens[1])' (Model is fixed; names must be unique).")
-                }
-                return true
-            }
-            if tokens.count == 2 {
-                startCommand("LAYOUT", prompt: "Enter new layout name:")
-                layoutPendingOp = "RENAME_DST"
-                layoutPendingName = tokens[1]
-                print("[CAD] Enter new layout name:")
-                return true
-            }
-            startCommand("LAYOUT", prompt: "Enter layout name to rename:")
-            layoutPendingOp = "RENAME_SRC"
-            layoutPendingName = nil
-            print("[CAD] Enter layout name to rename:")
-            return true
-            return true
-        case "DELETE", "DEL", "D":
-            guard tokens.count >= 2 else {
-                startCommand("LAYOUT", prompt: "Enter layout name to delete:")
-                layoutPendingOp = "DELETE"
-                layoutPendingName = nil
-                print("[CAD] Enter layout name to delete:")
-                return true
-            }
-            let name = tokens[1...].joined(separator: " ")
-            if manager.deleteLayout(named: name) {
-                engine.zoomExtents()
-                print("[CAD] Layout '\(name)' deleted.")
-            } else {
-                print("[CAD] Cannot delete '\(name)' (Model and the last view are kept).")
-            }
-            return true
-        case "COPY", "C":
-            if tokens.count >= 3 {
-                let dst = tokens[2...].joined(separator: " ")
-                if manager.copyLayout(from: tokens[1], to: dst) {
-                    engine.zoomExtents()
-                    print("[CAD] Layout '\(dst)' copied.")
-                } else {
-                    print("[CAD] Cannot copy '\(tokens[1])' to '\(dst)' (source must be a sheet; names must be unique).")
-                }
-                return true
-            }
-            if tokens.count == 2 {
-                startCommand("LAYOUT", prompt: "Enter new layout name:")
-                layoutPendingOp = "COPY_DST"
-                layoutPendingName = tokens[1]
-                print("[CAD] Enter new layout name:")
-                return true
-            }
-            startCommand("LAYOUT", prompt: "Enter layout to copy:")
-            layoutPendingOp = "COPY_SRC"
-            layoutPendingName = nil
-            print("[CAD] Enter layout to copy:")
-            return true
-        case "SET", "S":
-            if tokens.count > 1 {
-                let nm = tokens[1...].joined(separator: " ")
-                if setLayout(named: nm, engine: engine) { clearCommand() }
-                return true
-            }
-            startCommand("LAYOUT", prompt: "Enter layout name to make current:")
-            layoutPendingOp = "SET"
-            layoutPendingName = nil
-            print("[CAD] Enter layout name to make current:")
-            return true
-        case "SAVEAS", "SA":
-            print("[CAD] LAYOUT Saveas is not supported yet (use COPY).")
-            return true
-        case "TEMPLATE", "T":
-            print("[CAD] LAYOUT Template is not supported yet (use COPY).")
-            return true
-        default:
-            return false
-        }
-    }
-
-    // MARK: - LAYOUT interactive prompts (AutoCAD-compatible)
-    private func enterLayoutOptionPrompt() {
-        startCommand("LAYOUT", prompt: "Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:")
-        layoutPendingOp = nil
-        layoutPendingName = nil
-        print("[CAD] Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:")
-    }
-
-    private func handleLayoutPromptInput(_ text: String, engine: PhrostEngine) {
-        var raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let up = raw.uppercased()
-        if up == "LAYOUT" || up == "SHEET" || up == "LO" {
-            raw = ""
-        } else if up.hasPrefix("LAYOUT ") || up.hasPrefix("SHEET ") {
-            let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let space = t.firstIndex(of: " ") {
-                raw = String(t[t.index(after: space)...]).trimmingCharacters(in: .whitespaces)
-            }
-        } else if up.hasPrefix("LO ") {
-            raw = String(raw.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-        }
-        if let pending = layoutPendingOp {
-            handleLayoutPendingResponse(pending: pending, raw: raw, engine: engine)
-            return
-        }
-        if raw.isEmpty {
-            layoutPendingOp = "SET"
-            commandPrompt = "Enter layout name to make current:"
-            print("[CAD] Enter layout name to make current:")
-            return
-        }
-        let parts = raw.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard let keyword = parts.first?.uppercased() else {
-            commandPrompt = "Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:"
-            return
-        }
-        let inline = parts.count > 1 ? parts[1...].joined(separator: " ") : ""
-        switch keyword {
-        case "?", "LIST", "L", "HELP":
-            printLayoutList(engine: engine)
-            commandPrompt = "Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:"
-        case "N", "NEW":
-            if inline.isEmpty {
-                layoutPendingOp = "NEW"
-                commandPrompt = "Enter new layout name:"
-                print("[CAD] Enter new layout name:")
-            } else if finishCreateLayout(named: inline, engine: engine) {
-                clearCommand()
-            }
-        case "C", "COPY":
-            if inline.isEmpty {
-                layoutPendingOp = "COPY_SRC"
-                commandPrompt = "Enter layout to copy:"
-                print("[CAD] Enter layout to copy:")
-            } else {
-                layoutPendingOp = "COPY_DST"
-                layoutPendingName = inline
-                commandPrompt = "Enter new layout name:"
-                print("[CAD] Enter new layout name:")
-            }
-        case "D", "DELETE", "DEL":
-            if inline.isEmpty {
-                layoutPendingOp = "DELETE"
-                commandPrompt = "Enter layout name to delete:"
-                print("[CAD] Enter layout name to delete:")
-            } else if finishDeleteLayout(named: inline, engine: engine) {
-                clearCommand()
-            }
-        case "R", "REN", "RENAME":
-            if inline.isEmpty {
-                layoutPendingOp = "RENAME_SRC"
-                commandPrompt = "Enter layout name to rename:"
-                print("[CAD] Enter layout name to rename:")
-            } else {
-                layoutPendingOp = "RENAME_DST"
-                layoutPendingName = inline
-                commandPrompt = "Enter new layout name:"
-                print("[CAD] Enter new layout name:")
-            }
-        case "SA", "SAVEAS":
-            print("[CAD] LAYOUT Saveas is not supported yet (use COPY).")
-        case "S", "SET":
-            if inline.isEmpty {
-                layoutPendingOp = "SET"
-                commandPrompt = "Enter layout name to make current:"
-                print("[CAD] Enter layout name to make current:")
-            } else if setLayout(named: inline, engine: engine) {
-                clearCommand()
-            }
-        case "T", "TEMPLATE":
-            print("[CAD] LAYOUT Template is not supported yet (use COPY).")
-        default:
-            if setLayout(named: raw, engine: engine) {
-                clearCommand()
-            }
-        }
-    }
-
-    private func handleLayoutPendingResponse(pending: String, raw: String, engine: PhrostEngine) {
-        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch pending {
-        case "NEW":
-            guard !name.isEmpty else {
-                print("[CAD] LAYOUT NEW needs a unique, non-blank name.")
-                return
-            }
-            if finishCreateLayout(named: name, engine: engine) { clearCommand() }
-        case "SET":
-            guard !name.isEmpty else {
-                print("[CAD] Enter layout name to make current:")
-                return
-            }
-            if setLayout(named: name, engine: engine) { clearCommand() }
-        case "DELETE":
-            guard !name.isEmpty else {
-                print("[CAD] Enter layout name to delete:")
-                return
-            }
-            if finishDeleteLayout(named: name, engine: engine) { clearCommand() }
-        case "COPY_SRC":
-            guard !name.isEmpty else {
-                print("[CAD] Enter layout to copy:")
-                return
-            }
-            layoutPendingOp = "COPY_DST"
-            layoutPendingName = name
-            commandPrompt = "Enter new layout name:"
-            print("[CAD] Enter new layout name:")
-        case "COPY_DST":
-            guard !name.isEmpty, let src = layoutPendingName, !src.isEmpty else {
-                print("[CAD] Enter new layout name:")
-                return
-            }
-            if engine.tabManager.copyLayout(from: src, to: name) {
-                engine.zoomExtents()
-                print("[CAD] Layout '\(name)' copied.")
-                clearCommand()
-            } else {
-                print("[CAD] Cannot copy '\(src)' to '\(name)' (source must be a sheet; names must be unique).")
-            }
-        case "RENAME_SRC":
-            guard !name.isEmpty else {
-                print("[CAD] Enter layout name to rename:")
-                return
-            }
-            layoutPendingOp = "RENAME_DST"
-            layoutPendingName = name
-            commandPrompt = "Enter new layout name:"
-            print("[CAD] Enter new layout name:")
-        case "RENAME_DST":
-            guard !name.isEmpty, let old = layoutPendingName, !old.isEmpty else {
-                print("[CAD] Enter new layout name:")
-                return
-            }
-            if engine.tabManager.renameLayout(from: old, to: name) {
-                print("[CAD] Renamed to '\(name)'.")
-                clearCommand()
-            } else {
-                print("[CAD] Cannot rename '\(old)' (Model is fixed; names must be unique).")
-            }
-        default:
-            layoutPendingOp = nil
-            layoutPendingName = nil
-            commandPrompt = "Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:"
-        }
-    }
-
-    @discardableResult
-    private func finishCreateLayout(named name: String, engine: PhrostEngine) -> Bool {
-        if engine.tabManager.createLayout(named: name) {
-            engine.zoomExtents()
-            print("[CAD] Layout '\(engine.tabManager.activeViewName ?? name)' created.")
-            return true
-        }
-        print("[CAD] LAYOUT NEW needs a unique, non-blank name.")
-        return false
-    }
-
-    @discardableResult
-    private func finishDeleteLayout(named name: String, engine: PhrostEngine) -> Bool {
-        if engine.tabManager.deleteLayout(named: name) {
-            engine.zoomExtents()
-            print("[CAD] Layout '\(name)' deleted.")
-            return true
-        }
-        print("[CAD] Cannot delete '\(name)' (Model and the last view are kept).")
-        return false
-    }
-
-    @discardableResult
-    private func setLayout(named name: String, engine: PhrostEngine) -> Bool {
-        let sheets = engine.tabManager.availableViews.enumerated().filter { $0.element.kind == .sheet }
-        if let n = Int(name.trimmingCharacters(in: .whitespaces)), n >= 1, n <= sheets.count {
-            if engine.tabManager.switchToView(at: sheets[n - 1].offset) {
-                engine.zoomExtents()
-                print("[CAD] Sheet: \(engine.tabManager.activeViewName ?? name)")
-                return true
-            }
-        } else if engine.tabManager.switchToView(named: name) {
-            engine.zoomExtents()
-            print("[CAD] Sheet: \(engine.tabManager.activeViewName ?? name)")
-            return true
-        }
-        print("[CAD] Unknown sheet '\(name)'.")
-        printAvailableViews(engine.tabManager)
-        return false
-    }
-
-    private func printLayoutList(engine: PhrostEngine) {
-        let views = engine.tabManager.availableViews
-        guard !views.isEmpty else {
-            print("[CAD] No views in this drawing.")
-            return
-        }
-        for (index, view) in views.enumerated() {
-            let marker = index == (engine.tabManager.activeTab?.activeViewIndex ?? -1) ? "*" : " "
-            print("[CAD] \(marker)\(index + 1): \(view.name)\(view.kind == .model ? " (Model)" : "")")
-        }
-    }
-
     private func parsePaperPoint(_ text: String) -> (x: Double, y: Double)? {
         let cleaned = text.trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "(", with: "")
@@ -2733,8 +2441,7 @@ public final class CADCommandProcessor {
     /// Cancel any active command.
     internal func clearCommand() {
         activeCommand = nil
-        layoutPendingOp = nil
-        layoutPendingName = nil
+        plotCliSession = nil
         commandPrompt = nil
         commandRefPoint = nil
         isSelectingObjects = false
@@ -3091,6 +2798,132 @@ public final class CADCommandProcessor {
             guard let eng, let url else { return }
             eng.tabManager.startSaveActiveTabAs(url: url, dxfVersion: dxfVersion)
         }
+    }
+
+    /// Registry plot sysvars for CLI plot flows.
+    private func cliInt(_ name: String, fallback: Int) -> Int {
+        if case .int(let v) = systemVariable(name) { return v }
+        return fallback
+    }
+
+    private func cmdiaValue() -> Int {
+        cliInt("CMDDIA", fallback: 1)
+    }
+
+    private func filediaValue() -> Int {
+        cliInt("FILEDIA", fallback: 1)
+    }
+
+    /// Host services for modal plot CLI sessions.
+    private func makePlotCliContext(engine: PhrostEngine) -> PlotCliContext {
+        PlotCliContext(
+            tabManager: engine.tabManager,
+            printLine: { print($0) },
+            requestSavePDF: { [weak engine] suggested, completion in
+                guard let engine else { completion(nil); return }
+                NativeFileDialog.showSaveDialog(
+                    window: engine.dialogParentWindow,
+                    filters: [NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"])],
+                    defaultName: suggested, completion: completion)
+            },
+            paperUpdate: cliInt("PAPERUPDATE", fallback: 0),
+            plotOffset: cliInt("PLOTOFFSET", fallback: 0),
+            transparencyOverride: cliInt("PLOTTRANSPARENCYOVERRIDE", fallback: 1),
+            onFinish: { [weak self] in self?.clearCommand() })
+    }
+
+    /// Begin a modal `-PAGESETUP` / `-PLOT` / `-PSETUPIN` run.
+    /// Open a support folder (plot styles, plotters) in the OS file manager.
+    private func openSupportFolder(named folder: String, createIfMissing: Bool = false) {
+        let url = URL(fileURLWithPath: folder)
+        if createIfMissing {
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            print("[CAD] Folder not found: \(folder)")
+            return
+        }
+        let process = Process()
+        #if os(Windows)
+        process.executableURL = URL(
+            fileURLWithPath: "\(ProcessInfo.processInfo.environment["SystemRoot"] ?? "C:\\Windows")\\System32\\cmd.exe")
+        process.arguments = ["/c", "start", "", url.path]
+        #elseif os(macOS)
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = [url.path]
+        #else
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xdg-open")
+        process.arguments = [url.path]
+        #endif
+        do {
+            try process.run()
+        } catch {
+            print("[CAD] Could not open \(folder): \(error)")
+        }
+    }
+
+    /// `SCALELISTEDIT` list/add/delete/reset over the drawing custom scales.
+    private func runScaleListEdit(text: String, upper: String, engine: PhrostEngine) {
+        let manager = engine.tabManager
+        let tail = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .split(separator: " ", maxSplits: 1).map(String.init)
+            .dropFirst().first ?? ""
+        let words = tail.split(separator: " ", maxSplits: 1).map(String.init)
+        let verb = (words.first ?? "LIST").uppercased()
+        let rest = words.count > 1 ? words[1].trimmingCharacters(in: .whitespaces) : ""
+        func listScales() {
+            let customs = manager.activeTab?.customScaleFactors ?? []
+            if customs.isEmpty {
+                print("[CAD] Custom scale list is empty (canonical 0-32 table only).")
+            } else {
+                for (i, f) in customs.enumerated() {
+                    print("[CAD] \(i + 1): \(TabManager.customScaleLabel(for: f))")
+                }
+            }
+        }
+        if verb == "LIST" || verb == "?" || verb.isEmpty {
+            listScales()
+            print("[CAD] Usage: SCALELISTEDIT Add <a:b|a=b|factor> | Delete <n> | Reset | List")
+        } else if verb == "ADD" {
+            guard let f = PlotCliPrompts.parseScaleFactor(rest) else {
+                print("[CAD] Cannot parse scale '\(rest)'. Try 1:50, 1=2, or 0.5.")
+                clearCommand()
+                return
+            }
+            if manager.addCustomScaleFactor(f) {
+                print("[CAD] Added \(TabManager.customScaleLabel(for: f)).")
+            } else {
+                print("[CAD] Scale \(TabManager.customScaleLabel(for: f)) already listed.")
+            }
+            listScales()
+        } else if verb == "DELETE" || verb == "DEL" {
+            guard let n = Int(rest), manager.removeCustomScaleFactor(atOneBasedIndex: n) else {
+                print("[CAD] Usage: SCALELISTEDIT Delete <list number>.")
+                clearCommand()
+                return
+            }
+            print("[CAD] Deleted entry \(n).")
+            listScales()
+        } else if verb == "RESET" {
+            manager.resetCustomScaleFactors()
+            print("[CAD] Custom scale list cleared.")
+        } else {
+            print("[CAD] Usage: SCALELISTEDIT Add <a:b|a=b|factor> | Delete <n> | Reset | List")
+        }
+        clearCommand()
+    }
+
+    private func startPlotCliSession(_ flow: PlotCliSession.Flow, engine: PhrostEngine) {
+        let ctx = makePlotCliContext(engine: engine)
+        let session = PlotCliSession.start(flow: flow, ctx: ctx)
+        plotCliSession = session
+        let label: String
+        switch flow {
+        case .pageSetup: label = "-PAGESETUP"
+        case .plot: label = "-PLOT"
+        case .psetupin: label = "-PSETUPIN"
+        }
+        startCommand(label, prompt: session.currentPrompt(ctx: ctx))
     }
 
     internal func startCommand(_ name: String, prompt: String, selectingObjects: Bool = false) {

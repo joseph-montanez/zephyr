@@ -571,6 +571,22 @@ public enum EABReader {
             marginLM: marginLM, marginBM: marginBM,
             marginRM: marginRM, marginTM: marginTM,
             plotPaperUnits: units, plotRotation: rotation)
+        // Phase 0b trailing extras (transparency + PDF options). Pre-0b
+        // payloads end at layoutFlags; missing bytes yield defaults.
+        var plotTransparency = false
+        var pdfOptions = PDFOptions()
+        if r.remaining >= 1 + 4 + 4 + 4 + 4 {
+            plotTransparency = r.readUInt8() != 0
+            let vDPI = Int(r.readInt32()), rDPI = Int(r.readInt32())
+            let merge = Int(r.readInt32())
+            let li = r.readUInt8() != 0, hl = r.readUInt8() != 0
+            let cf = r.readUInt8() != 0, cg = r.readUInt8() != 0
+            pdfOptions = PDFOptions(
+                vectorDPI: vDPI, rasterDPI: rDPI,
+                mergeControl: merge == 1 ? .mergeLines : .overwriteLines,
+                includeLayerInfo: li, includeHyperlinks: hl,
+                captureFonts: cf, convertTextToGeometry: cg)
+        }
         return (layout, CADPlotSettings(
             paperName: layout.paperName,
             paperWidthMM: width, paperHeightMM: height,
@@ -594,7 +610,153 @@ public enum EABReader {
             shadePlotMode: shade,
             shadePlotResolution: shadeRes,
             shadePlotCustomDPI: shadeDPI,
-            layoutFlags: layoutFlags))
+            layoutFlags: layoutFlags,
+            plotTransparency: plotTransparency,
+            pdfOptions: pdfOptions))
+    }
+
+    /// Named page setups section (plotSetups). Each entry is length-prefixed;
+    /// unknown trailing bytes inside an entry are ignored for forward compat.
+    private static func parsePlotSetups(_ r: BinaryReader) -> [CADNamedPageSetup] {
+        guard r.remaining >= 4 else { return [] }
+        let count = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "plotSetups")
+        var out: [CADNamedPageSetup] = []
+        for _ in 0..<count {
+            guard r.remaining >= 2 else { break }
+            let name = r.readString()
+            guard r.remaining >= 1 + 4 else { break }
+            let isModel = r.readUInt8() != 0
+            let byteCount = safeCount(r.readUInt32(), limit: 1 << 20, label: "plotSetups.entry")
+            guard r.remaining >= byteCount else { break }
+            let payload = r.readBytes(count: byteCount)
+            let pr = BinaryReader(data: payload)
+            let parsed = parseLayoutSettings(pr)
+            var settings = parsed.plot ?? CADPlotSettings()
+            settings.pageSetupName = name
+            if name.isEmpty { continue }
+            out.append(CADNamedPageSetup(name: name, settings: settings, isModelType: isModel))
+        }
+        return out
+    }
+
+    /// Drawing-scoped named page setups stored in an .eab file (union across
+    /// views; first wins on case-insensitive name collision).
+    public static func readNamedPageSetups(from data: Data) throws -> [CADNamedPageSetup] {
+        let r = BinaryReader(data: data)
+        let magic = r.readUInt32()
+        if magic == EABArchiveMagic {
+            let version = r.readUInt32()
+            _ = r.readUInt32() // viewCount (re-walked below)
+            let rawDirOffset = r.readUInt64()
+            guard let directoryOffset = safeInt(rawDirOffset),
+                  directoryOffset >= 16, directoryOffset < data.count else { return [] }
+            let dirReader = BinaryReader(
+                data: data, startOffset: directoryOffset,
+                usesLongStringSentinel: version >= EABVersionLongStrings)
+            var ranges: [(offset: Int, size: Int)] = []
+            while dirReader.remaining > 0 {
+                guard dirReader.canRead(1 + 32 + 8 + 8) else { break }
+                _ = dirReader.readString()
+                _ = dirReader.readUInt8()
+                _ = dirReader.readFloat64(); _ = dirReader.readFloat64()
+                _ = dirReader.readFloat64(); _ = dirReader.readFloat64()
+                guard let off = safeInt(dirReader.readUInt64()),
+                      let size = safeInt(dirReader.readUInt64()),
+                      let range = checkedRange(offset: off, size: size, count: data.count) else { break }
+                ranges.append((offset: range.lowerBound, size: range.count))
+                if ranges.count > 10_000 { break }
+            }
+            var union: [CADNamedPageSetup] = []
+            var seen = Set<String>()
+            for range in ranges {
+                let viewData = data.subdata(in: range.offset..<(range.offset + range.size))
+                for setup in (try? readPlotSetupsSection(from: viewData)) ?? [] {
+                    let key = setup.name.uppercased()
+                    guard !key.isEmpty, seen.insert(key).inserted else { continue }
+                    union.append(setup)
+                }
+            }
+            return union
+        }
+        return (try? readPlotSetupsSection(from: data)) ?? []
+    }
+
+    /// Custom scale list section (scaleList): count + f64 factors.
+    private static func parseScaleList(_ r: BinaryReader) -> [Double] {
+        guard r.remaining >= 4 else { return [] }
+        let count = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "scaleList")
+        var out: [Double] = []
+        for _ in 0..<count {
+            guard r.remaining >= 8 else { break }
+            let f = r.readFloat64()
+            if f.isFinite, f > 0 { out.append(f) }
+        }
+        return out
+    }
+
+    /// Drawing custom scale factors stored in an .eab file (first non-empty
+    /// per-view section wins; sections duplicate the drawing-scoped list).
+    public static func readScaleList(from data: Data) throws -> [Double] {
+        let r = BinaryReader(data: data)
+        let magic = r.readUInt32()
+        if magic == EABArchiveMagic {
+            let version = r.readUInt32()
+            _ = r.readUInt32()
+            let rawDirOffset = r.readUInt64()
+            guard let directoryOffset = safeInt(rawDirOffset),
+                  directoryOffset >= 16, directoryOffset < data.count else { return [] }
+            let dirReader = BinaryReader(
+                data: data, startOffset: directoryOffset,
+                usesLongStringSentinel: version >= EABVersionLongStrings)
+            while dirReader.remaining > 0 {
+                guard dirReader.canRead(1 + 32 + 8 + 8) else { break }
+                _ = dirReader.readString()
+                _ = dirReader.readUInt8()
+                _ = dirReader.readFloat64(); _ = dirReader.readFloat64()
+                _ = dirReader.readFloat64(); _ = dirReader.readFloat64()
+                guard let off = safeInt(dirReader.readUInt64()),
+                      let size = safeInt(dirReader.readUInt64()),
+                      let range = checkedRange(offset: off, size: size, count: data.count) else { break }
+                let viewData = data.subdata(in: range)
+                if let list = try? readScaleListSection(from: viewData), !list.isEmpty {
+                    return list
+                }
+            }
+            return []
+        }
+        return (try? readScaleListSection(from: data)) ?? []
+    }
+
+    /// Parse just the scaleList section of one V6 document payload.
+    private static func readScaleListSection(from viewData: Data) throws -> [Double] {
+        let header = try parseHeader(from: viewData)
+        let rawTableOffset = header.sectionTableOffset
+        guard rawTableOffset <= UInt64(Int.max) else { return [] }
+        let entries = try parseSectionTable(from: viewData, at: Int(rawTableOffset))
+        guard let entry = entries.first(where: { $0.type == .scaleList }),
+              let off = safeInt(entry.offset), let size = safeInt(entry.size),
+              let range = checkedRange(offset: off, size: size, count: viewData.count) else { return [] }
+        let sectionData = viewData.subdata(in: range)
+        let reader = BinaryReader(
+            data: sectionData,
+            usesLongStringSentinel: header.version >= EABVersionLongStrings)
+        return parseScaleList(reader)
+    }
+
+    /// Parse just the plotSetups section of one V6 document payload.
+    private static func readPlotSetupsSection(from viewData: Data) throws -> [CADNamedPageSetup] {
+        let header = try parseHeader(from: viewData)
+        let rawTableOffset = header.sectionTableOffset
+        guard rawTableOffset <= UInt64(Int.max) else { return [] }
+        let entries = try parseSectionTable(from: viewData, at: Int(rawTableOffset))
+        guard let entry = entries.first(where: { $0.type == .plotSetups }),
+              let off = safeInt(entry.offset), let size = safeInt(entry.size),
+              let range = checkedRange(offset: off, size: size, count: viewData.count) else { return [] }
+        let sectionData = viewData.subdata(in: range)
+        let reader = BinaryReader(
+            data: sectionData,
+            usesLongStringSentinel: header.version >= EABVersionLongStrings)
+        return parsePlotSetups(reader)
     }
 
     private static func parseMediaDefinitions(

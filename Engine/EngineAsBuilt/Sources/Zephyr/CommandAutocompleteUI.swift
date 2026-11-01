@@ -348,7 +348,12 @@ struct CommandAutocompleteUI {
                     ImVec2(x: itemAvailW, y: itemH)
                 ) {
                     engine.commandProcessor.commandLineActive = false
+                    engine.commandProcessor.commandBuffer = ""
                     engine.commandProcessor.executeCommand(canonical)
+                    if engine.commandProcessor.commandLineActive {
+                        CommandLineUI._needsClearSelection = true
+                        CommandLineUI._needsFocus = true
+                    }
                 }
 
                 ImGuiPopStyleColor(3)
@@ -367,7 +372,12 @@ struct CommandAutocompleteUI {
                 let clicked = isHovered && ImGuiIsMouseClicked(ImGuiMouseButton(ImGuiMouseButton_Left.rawValue), false)
                 if clicked {
                     engine.commandProcessor.commandLineActive = false
+                    engine.commandProcessor.commandBuffer = ""
                     engine.commandProcessor.executeCommand(canonical)
+                    if engine.commandProcessor.commandLineActive {
+                        CommandLineUI._needsClearSelection = true
+                        CommandLineUI._needsFocus = true
+                    }
                 }
 
                 // ---- Full-width highlight background ----

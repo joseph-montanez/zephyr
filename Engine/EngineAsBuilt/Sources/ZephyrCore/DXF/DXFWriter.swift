@@ -112,6 +112,11 @@ public class DXFWriter {
     private var mlineStyleEntryByName: [String: DXFMlineStyleEntry] = [:]
     private var activeViewportHandleByBlockName: [String: String] = [:]
     private var outputLayouts: [DXFLayoutDefinition] = []
+    private var plotSettingsDictionaryHandle: String = ""
+    private var plotSettingsHandleByName: [String: String] = [:]
+    private var outputPlotSettings: [DXFPlotSettingsEntry] = []
+    /// Named-setup inputs (populated via addPlotSettings before buildDXF).
+    private var inputPlotSettings: [DXFPlotSettingsEntry] = []
 
     public init() {}
 
@@ -164,6 +169,24 @@ public class DXFWriter {
         layouts.append(layout)
     }
 
+    /// Named page setup (standalone PLOTSETTINGS). Same-named entries
+    /// replace each other; empty names are ignored.
+    public func addPlotSettings(_ entry: DXFPlotSettingsEntry) {
+        let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        if let idx = inputPlotSettings.firstIndex(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) {
+            inputPlotSettings[idx] = entry
+        } else {
+            inputPlotSettings.append(entry)
+        }
+    }
+
+    private func resolvedPlotSettings() -> [DXFPlotSettingsEntry] {
+        inputPlotSettings
+    }
+
     /// Write DXF file to path
     public func write(to path: String) throws {
         let content = buildDXF()
@@ -214,6 +237,9 @@ public class DXFWriter {
         mlineStyleEntryByName.removeAll(keepingCapacity: true)
         activeViewportHandleByBlockName.removeAll(keepingCapacity: true)
         outputLayouts = resolvedLayouts()
+        plotSettingsDictionaryHandle = ""
+        plotSettingsHandleByName.removeAll(keepingCapacity: true)
+        outputPlotSettings = resolvedPlotSettings()
         prepareObjectHandles()
 
         var out = ""
@@ -501,6 +527,16 @@ public class DXFWriter {
             materialGlobalHandle = preservedOrAllocatedHandle(materialEntries["GLOBAL"])
         }
 
+        if !outputPlotSettings.isEmpty {
+            plotSettingsDictionaryHandle = preservedOrAllocatedHandle(rootEntries["ACAD_PLOTSETTINGS"])
+            let plotEntries = dictionaryEntries(preservedObject(withHandle: plotSettingsDictionaryHandle))
+            for setup in outputPlotSettings {
+                let key = normalizedName(setup.name)
+                guard plotSettingsHandleByName[key] == nil else { continue }
+                plotSettingsHandleByName[key] = preservedOrAllocatedHandle(plotEntries[key])
+            }
+        }
+
         if !outputLayouts.isEmpty {
             layoutDictionaryHandle = preservedOrAllocatedHandle(rootEntries["ACAD_LAYOUT"])
             let layoutEntries = dictionaryEntries(preservedObject(withHandle: layoutDictionaryHandle))
@@ -774,6 +810,7 @@ public class DXFWriter {
         writeHdrInt("$INSUNITS", headerVars["$INSUNITS"] as? Int ?? 4, 70, &out)
         writeHdrInt("$MEASUREMENT", headerVars["$MEASUREMENT"] as? Int ?? 1, 70, &out)
         writeHdrInt("$TILEMODE", 1, 70, &out)
+        writeHdrInt("$PSTYLEMODE", headerVars["$PSTYLEMODE"] as? Int ?? 1, 290, &out)
         writeHdrInt("$PLINEGEN", 0, 70, &out)
         writeHdrStr("$CMLSTYLE", "Standard", 2, &out)
 
@@ -796,7 +833,7 @@ public class DXFWriter {
             "$DIMALTZ", "$DIMALTTZ", "$DIMFIT", "$DIMUPT", "$DIMATFIT", "$DIMFXLON",
             "$DIMFXL", "$DIMTXSTY", "$DIMLWD", "$DIMLWE",
             "$LUNITS", "$LUPREC", "$INSUNITS", "$MEASUREMENT", "$TILEMODE",
-            "$PLINEGEN", "$CMLSTYLE"
+            "$PSTYLEMODE", "$PLINEGEN", "$CMLSTYLE"
         ]
         for (key, val) in headerVars {
             if written.contains(key) { continue }
@@ -3108,6 +3145,10 @@ public class DXFWriter {
                 normalizedHandle(materialGlobalHandle)
             ].filter { !$0.isEmpty && $0 != "0" })
         }
+        if !plotSettingsDictionaryHandle.isEmpty {
+            generatedHandles.insert(normalizedHandle(plotSettingsDictionaryHandle))
+            generatedHandles.formUnion(plotSettingsHandleByName.values.map { normalizedHandle($0) })
+        }
         if !layoutDictionaryHandle.isEmpty {
             generatedHandles.insert(normalizedHandle(layoutDictionaryHandle))
             generatedHandles.formUnion(layoutHandleByBlockName.values.map { normalizedHandle($0) })
@@ -3158,6 +3199,19 @@ public class DXFWriter {
                     }
                 }
             }
+            // Regenerated named page setups supersede preserved PLOTSETTINGS.
+            if !outputPlotSettings.isEmpty,
+               normalizedName(record.type) == "PLOTSETTINGS" {
+                return false
+            }
+            // Regenerated ACAD_PLOTSETTINGS dictionary supersedes preserved one.
+            if !plotSettingsDictionaryHandle.isEmpty,
+               normalizedName(record.type) == "DICTIONARY"
+                || normalizedName(record.type) == "ACDBDICTIONARYWDFLT" {
+                if recordHandle(record) == normalizedHandle(plotSettingsDictionaryHandle) {
+                    return false
+                }
+            }
             if handle == rawRootHandle { return false }
             if generatedHandles.contains(handle) { return false }
             if skippedRawDictionaryHandles.contains(handle) || skippedRawDictionaryHandles.contains(owner) {
@@ -3185,6 +3239,9 @@ public class DXFWriter {
         }
         if hasMaterials {
             out += "  3\r\nACAD_MATERIAL\r\n350\r\n\(materialDictionaryHandle)\r\n"
+        }
+        if !plotSettingsDictionaryHandle.isEmpty {
+            out += "  3\r\nACAD_PLOTSETTINGS\r\n350\r\n\(plotSettingsDictionaryHandle)\r\n"
         }
         out += "  3\r\nACAD_PLOTSTYLENAME\r\n350\r\n\(plotStyleDictionaryHandle)\r\n"
         if let outputImageDictionaryHandle {
@@ -3223,6 +3280,7 @@ public class DXFWriter {
 
         writePlotStyleObjects(&out)
         if hasMaterials { writeMaterialObjects(&out) }
+        writeNamedPlotSettingsObjects(&out)
 
         if !layoutDictionaryHandle.isEmpty {
             out += "  0\r\nDICTIONARY\r\n  5\r\n\(layoutDictionaryHandle)\r\n"
@@ -3568,6 +3626,71 @@ public class DXFWriter {
         writeInt(94, 63, &out)
     }
 
+    /// XDATA-only plot extras (appid ZEPHYR_PLOT): 8× code-1070 ints.
+    /// Reader and writer must agree on order (see DXFReader.parseLayout).
+    private func writePlotSettingsXData(plotTransparency: Bool, pdfOptions: PDFOptions, _ out: inout String) {
+        let isDefault = !plotTransparency
+            && pdfOptions == PDFOptions()
+        guard !isDefault else { return }
+        writeStr(1001, "ZEPHYR_PLOT", &out)
+        writeInt(1070, plotTransparency ? 1 : 0, &out)
+        writeInt(1070, pdfOptions.vectorDPI, &out)
+        writeInt(1070, pdfOptions.rasterDPI, &out)
+        writeInt(1070, pdfOptions.mergeControl == .mergeLines ? 1 : 0, &out)
+        writeInt(1070, pdfOptions.includeLayerInfo ? 1 : 0, &out)
+        writeInt(1070, pdfOptions.includeHyperlinks ? 1 : 0, &out)
+        writeInt(1070, pdfOptions.captureFonts ? 1 : 0, &out)
+        writeInt(1070, pdfOptions.convertTextToGeometry ? 1 : 0, &out)
+    }
+
+    private func writeNamedPlotSettingsObjects(_ out: inout String) {
+        guard !plotSettingsDictionaryHandle.isEmpty else { return }
+        out += "  0\r\nDICTIONARY\r\n  5\r\n\(plotSettingsDictionaryHandle)\r\n"
+        out += "330\r\n\(rootDictionaryHandle)\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n"
+        for setup in outputPlotSettings {
+            guard let handle = plotSettingsHandleByName[normalizedName(setup.name)] else { continue }
+            writeStr(3, setup.name, &out)
+            writeStr(350, handle, &out)
+        }
+        for setup in outputPlotSettings {
+            guard let handle = plotSettingsHandleByName[normalizedName(setup.name)] else { continue }
+            let ps = setup.settings
+            out += "  0\r\nPLOTSETTINGS\r\n  5\r\n\(handle)\r\n"
+            out += "330\r\n\(plotSettingsDictionaryHandle)\r\n100\r\nAcDbPlotSettings\r\n"
+            writeStrAllowEmpty(1, setup.name, &out)
+            writeStrAllowEmpty(2, ps.plotConfigName, &out)
+            writeStrAllowEmpty(4, ps.canonicalMediaName, &out)
+            writeStrAllowEmpty(6, ps.plotViewName, &out)
+            writeDbl(40, ps.marginLM, &out)
+            writeDbl(41, ps.marginBM, &out)
+            writeDbl(42, ps.marginRM, &out)
+            writeDbl(43, ps.marginTM, &out)
+            writeDbl(44, ps.paperWidthMM, &out)
+            writeDbl(45, ps.paperHeightMM, &out)
+            writeDbl(46, ps.plotOriginXMM, &out)
+            writeDbl(47, ps.plotOriginYMM, &out)
+            writeDbl(48, ps.plotWindowMinX, &out)
+            writeDbl(49, ps.plotWindowMinY, &out)
+            writeDbl(140, ps.plotWindowMaxX, &out)
+            writeDbl(141, ps.plotWindowMaxY, &out)
+            writeDbl(142, ps.customScaleNumerator, &out)
+            writeDbl(143, ps.customScaleDenominator, &out)
+            writeInt(70, ps.plotFlags | (setup.isModelType ? 1024 : 0), &out)
+            writeInt(72, ps.plotPaperUnits, &out)
+            writeInt(73, ps.plotRotation, &out)
+            writeInt(74, ps.plotType, &out)
+            writeStrAllowEmpty(7, ps.styleSheet, &out)
+            writeInt(75, ps.standardScaleType, &out)
+            writeDbl(147, ps.standardScaleFactor, &out)
+            writeInt(76, ps.shadePlotMode, &out)
+            writeInt(77, ps.shadePlotResolution, &out)
+            writeInt(78, ps.shadePlotCustomDPI, &out)
+            writeDbl(148, ps.paperImageOriginX, &out)
+            writeDbl(149, ps.paperImageOriginY, &out)
+            writePlotSettingsXData(plotTransparency: ps.plotTransparency, pdfOptions: ps.pdfOptions, &out)
+        }
+    }
+
     private func writeLayoutObject(
         _ layout: DXFLayoutDefinition,
         handle: String,
@@ -3609,13 +3732,22 @@ public class DXFWriter {
         writeInt(78, ps?.shadePlotCustomDPI ?? 300, &out)
         writeDbl(148, ps?.paperImageOriginX ?? 0, &out)
         writeDbl(149, ps?.paperImageOriginY ?? 0, &out)
+        if let ps, ps.plotTransparency || ps.pdfOptions != PDFOptions() {
+            writePlotSettingsXData(plotTransparency: ps.plotTransparency, pdfOptions: ps.pdfOptions, &out)
+        }
 
         out += "100\r\nAcDbLayout\r\n"
         writeStr(1, layout.name, &out)
         writeInt(70, ps?.layoutFlags ?? (isModel ? 1 : 0), &out)
         writeInt(71, layout.tabOrder, &out)
-        writePoint(10, layout.minimumLimits, &out)
-        writePoint(11, layout.maximumLimits, &out)
+        // LIMMIN/LIMMAX sync (spec §4.3): paper corners in scaled paper units
+        // relative to the plot origin when full plot settings are present;
+        // otherwise preserve the incoming limits untouched.
+        let synced = ps.map { $0.syncedLimits }
+        let minPt = synced.map { Vector3(x: $0.min.x, y: $0.min.y, z: 0) } ?? layout.minimumLimits
+        let maxPt = synced.map { Vector3(x: $0.max.x, y: $0.max.y, z: 0) } ?? layout.maximumLimits
+        writePoint(10, minPt, &out)
+        writePoint(11, maxPt, &out)
         writePoint3(12, .zero, &out)
         writePoint3(14, .zero, &out)
         writePoint3(15, .zero, &out)

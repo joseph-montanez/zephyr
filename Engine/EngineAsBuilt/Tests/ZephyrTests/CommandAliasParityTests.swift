@@ -60,7 +60,7 @@ final class CommandAliasParityTests: XCTestCase {
         ("IAT", "IMAGEATTACH"),
         ("UN", "UNITS"), ("UNIT", "UNITS"), ("DDUNITS", "UNITS"),
         ("V", "VIEW"), ("VIEWS", "VIEW"),
-        ("LO", "LAYOUT"), ("SHEET", "LAYOUT"), ("LAYOUT", "LAYOUT"),
+        ("LO", "LAYOUT"), ("SHEET", "LAYOUT"), ("LAYOUT", "LAYOUT"), ("-LAYOUT", "LAYOUT"),
         ("I", "INSERT"), ("-I", "INSERT"),
         ("CP", "COPY"), ("BH", "HATCH"), ("U", "UNDO"),
         ("GD", "GRADIENT"),
@@ -96,6 +96,13 @@ final class CommandAliasParityTests: XCTestCase {
         ("LAYMCH", "LAYMCH"),
         ("MV", "MVIEW"), ("MVIEW", "MVIEW"),
         ("CHSPACE", "CHSPACE"),
+        ("PAGESETUP", "PAGESETUP"),
+        ("PLOT", "PLOT"), ("PRINT", "PLOT"),
+        ("PREVIEW", "PREVIEW"),
+        ("-PAGESETUP", "-PAGESETUP"), ("-PLOT", "-PLOT"),
+        ("PSETUPIN", "PSETUPIN"), ("-PSETUPIN", "-PSETUPIN"),
+        ("SCALELISTEDIT", "SCALELISTEDIT"), ("-SCALELISTEDIT", "-SCALELISTEDIT"),
+        ("STYLESMANAGER", "STYLESMANAGER"), ("PLOTTERMANAGER", "PLOTTERMANAGER"),
     ]
 
     func testGoldenLTAliasesResolveToCanonical() {
@@ -204,6 +211,70 @@ final class CommandAliasParityTests: XCTestCase {
             ["TB", "DATATABLE"])
         XCTAssertEqual(processor.featureCommandKeys["TB"], "TABLE")
         XCTAssertEqual(processor.featureCommandKeys["TABLE"], "TABLE")
+        XCTAssertEqual(processor.featureCommandKeys["LAYOUT"], "LAYOUT")
+        XCTAssertEqual(processor.featureCommandKeys["LO"], "LAYOUT")
+        XCTAssertEqual(processor.featureCommandKeys["SHEET"], "LAYOUT")
+        XCTAssertEqual(processor.featureCommandKeys["-LAYOUT"], "LAYOUT")
+        XCTAssertEqual(
+            CommandDescriptor.allCommands.first {
+                $0.canonicalName == "LAYOUT"
+            }?.bareEnterExecutes,
+            true)
+        assertLayoutCommandFlow(processor: processor)
+    }
+
+    private func assertLayoutCommandFlow(processor: CADCommandProcessor) {
+        let modelDoc = CADDocument()
+        let sheetDoc = CADDocument()
+        let manager = TabManager()
+        manager.addTab(DocumentTab(
+            document: modelDoc,
+            displayName: "LayoutParity",
+            drawingViews: [
+                DrawingView(name: "Model", kind: .model, document: modelDoc),
+                DrawingView(name: "Layout1", kind: .sheet, document: sheetDoc),
+            ]))
+
+        let cmd = LayoutCommand()
+        cmd.start(tabManager: manager, processor: processor)
+        XCTAssertTrue(processor.commandLineActive)
+        XCTAssertEqual(processor.commandPrompt, LayoutCommand.optionPrompt)
+        XCTAssertEqual(cmd.phase, .option)
+        XCTAssertEqual(
+            cmd.commandTextOptions(for: "").map(\.value),
+            ["C", "D", "N", "T", "R", "SA", "S", "?"])
+
+        // "n" + Enter prompts for new layout name with <Layout2> default
+        XCTAssertEqual(
+            cmd.handleCommandText("n", tabManager: manager, processor: processor),
+            .consumed)
+        XCTAssertTrue(processor.commandLineActive)
+        XCTAssertEqual(cmd.phase, .newName(defaultName: "Layout2"))
+        XCTAssertEqual(processor.commandPrompt, "Enter new Layout name <Layout2>:")
+        XCTAssertTrue(cmd.commandTextOptions(for: "Floor").isEmpty)
+
+        // Duplicate/invalid names stay in .newName
+        XCTAssertEqual(
+            cmd.handleCommandText("Layout1", tabManager: manager, processor: processor),
+            .consumed)
+        XCTAssertEqual(cmd.phase, .newName(defaultName: "Layout2"))
+
+        // Custom layout name creates and activates layout
+        XCTAssertEqual(
+            cmd.handleCommandText("FloorPlan", tabManager: manager, processor: processor),
+            .finished)
+        XCTAssertFalse(processor.commandLineActive)
+        XCTAssertEqual(manager.activeViewName, "FloorPlan")
+
+        // Bare Enter on .newName uses default <Layout2>
+        let cmdDefault = LayoutCommand()
+        cmdDefault.start(tabManager: manager, processor: processor)
+        _ = cmdDefault.handleCommandText("N", tabManager: manager, processor: processor)
+        XCTAssertEqual(cmdDefault.phase, .newName(defaultName: "Layout2"))
+        XCTAssertEqual(
+            cmdDefault.handleCommandText("", tabManager: manager, processor: processor),
+            .finished)
+        XCTAssertEqual(manager.activeViewName, "Layout2")
     }
 }
 

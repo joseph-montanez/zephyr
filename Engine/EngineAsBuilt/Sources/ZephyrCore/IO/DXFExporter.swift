@@ -25,10 +25,11 @@ public enum DXFExporter {
         to url: URL,
         dxfVersion: DXFVersion = .defaultExport,
         tileMode: Int = 1,
-        psltscale: Int = 1
+        psltscale: Int = 1,
+        namedSetups: [CADNamedPageSetup] = []
     ) throws {
         try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion, tileMode: tileMode,
-                                   psltscale: psltscale)
+                                   psltscale: psltscale, namedSetups: namedSetups)
     }
 
     /// Background-save: export from a snapshot with progress and cancellation.
@@ -47,7 +48,8 @@ public enum DXFExporter {
                               dxfVersion: DXFVersion = .defaultExport,
                               tileMode: Int = 1,
                               psltscale: Int = 1,
-                              progress: ((Float) -> Void)? = nil) throws {
+                              progress: ((Float) -> Void)? = nil,
+                              namedSetups: [CADNamedPageSetup] = []) throws {
         try Task.checkCancellation()
         guard !snapshots.isEmpty else {
             throw DXFWriter.WriterError.invalidEntity("Cannot export a DXF without a drawing view")
@@ -67,7 +69,7 @@ public enum DXFExporter {
             progress?(0.1 + 0.4 * Float(index + 1) / Float(snapshots.count))
         }
         try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion, tileMode: tileMode,
-                                   psltscale: psltscale)
+                                   psltscale: psltscale, namedSetups: namedSetups)
         progress?(1.0)
     }
 
@@ -1591,12 +1593,23 @@ public enum DXFExporter {
         output += "100\r\nAcDbDictionary\r\n"
         output += "281\r\n1\r\n"
 
-        // PLOTSETTINGS — standalone object (no owner 330, matching LibreCAD)
+        // PLOTSETTINGS — legacy single-document path (modern exports route
+        // through DXFWriterBridge/DXFWriter). Emit the document's real plot
+        // settings when present so this path never silently zeroes them.
+        let lps = ctx.document.plotSettings
         output += "  0\r\nPLOTSETTINGS\r\n"
         output += "  5\r\n\(ExportContext.handlePlotSettings)\r\n"
         output += "100\r\nAcDbPlotSettings\r\n"
-        output += "  6\r\n1x1\r\n"
-        output += " 40\r\n0.0\r\n 41\r\n0.0\r\n 42\r\n0.0\r\n 43\r\n0.0\r\n"
+        output += "  1\r\n\(lps?.pageSetupName ?? "")\r\n"
+        output += "  2\r\n\(lps?.plotConfigName ?? "")\r\n"
+        output += "  4\r\n\(lps?.canonicalMediaName ?? "")\r\n"
+        output += "  6\r\n\(lps?.plotViewName ?? "")\r\n"
+        output += "  7\r\n\(lps?.styleSheet ?? "")\r\n"
+        output += " 40\r\n\(dxfDouble(lps?.marginLM ?? 0))\r\n 41\r\n\(dxfDouble(lps?.marginBM ?? 0))\r\n 42\r\n\(dxfDouble(lps?.marginRM ?? 0))\r\n 43\r\n\(dxfDouble(lps?.marginTM ?? 0))\r\n"
+        output += " 44\r\n\(dxfDouble(lps?.paperWidthMM ?? 0))\r\n 45\r\n\(dxfDouble(lps?.paperHeightMM ?? 0))\r\n"
+        output += " 70\r\n\(lps?.plotFlags ?? 0)\r\n 72\r\n\(lps?.plotPaperUnits ?? 0)\r\n 73\r\n\(lps?.plotRotation ?? 0)\r\n 74\r\n\(lps?.plotType ?? 5)\r\n"
+        output += " 75\r\n\(lps?.standardScaleType ?? 0)\r\n"
+        output += " 76\r\n\(lps?.shadePlotMode ?? 0)\r\n 77\r\n\(lps?.shadePlotResolution ?? 2)\r\n 78\r\n\(lps?.shadePlotCustomDPI ?? 300)\r\n"
 
         output += "  0\r\nENDSEC\r\n"
     }

@@ -113,6 +113,12 @@ public enum EABSectionType: UInt32, Sendable {
     /// Per-view paper size/margins/plot units (Phase 4). Written only when
     /// the document has layout settings; older readers skip it.
     case layoutSettings = 20
+    /// Drawing-scoped named page setups (Phase 0b). Written once per V6
+    /// document (duplicated across views, unioned on read); absent when empty.
+    case plotSetups = 21
+    /// Drawing custom scale factors for the Scale dropdown (Phase 4 step 27).
+    /// Duplicated across views like plotSetups; absent when empty.
+    case scaleList = 22
 }
 
 /// Compression mode for a data section.

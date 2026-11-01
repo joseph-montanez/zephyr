@@ -84,6 +84,12 @@ public struct DXFImportResult: Sendable {
     /// Source drawing's $PSLTSCALE (paper-space linetype scale, 0 or 1).
     /// Defaults to 1 when the header omits it, matching AutoCAD.
     public let paperSpaceLinetypeScale: Int
+    /// Source drawing's $PSTYLEMODE (plot-style mode, 0 = .stb, 1 = .ctb).
+    /// Defaults to 1 when the header omits it, matching AutoCAD.
+    public let pstyleMode: Int
+    /// Named page setups (standalone PLOTSETTINGS, owner = ACAD_PLOTSETTINGS).
+    /// Empty for files without named setups; `<None>` layouts carry no entry.
+    public let namedPageSetups: [CADNamedPageSetup]
     /// Source unit when the $INSUNITS code maps to a Zephyr unit.
     public var sourceUnit: CADUnit? { CADUnit(dxfINSUNITS: insUnits) }
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
@@ -99,7 +105,9 @@ public struct DXFImportResult: Sendable {
                 imageDefinitions: [CADImageDefinition] = [],
                 pdfDefinitions: [CADPdfDefinition] = [],
                 groups: [CADGroup] = [],
-                paperSpaceLinetypeScale: Int = 1) {
+                paperSpaceLinetypeScale: Int = 1,
+                pstyleMode: Int = 1,
+                namedPageSetups: [CADNamedPageSetup] = []) {
         self.layers = layers; self.blocks = blocks; self.entities = entities
         self.textStyles = textStyles; self.linetypePatterns = linetypePatterns
         self.dimensionStyles = dimensionStyles
@@ -114,6 +122,8 @@ public struct DXFImportResult: Sendable {
         self.pdfDefinitions = pdfDefinitions
         self.groups = groups
         self.paperSpaceLinetypeScale = paperSpaceLinetypeScale
+        self.pstyleMode = (pstyleMode == 0) ? 0 : 1
+        self.namedPageSetups = namedPageSetups
     }
 
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
@@ -1989,7 +1999,9 @@ public enum DXFImporter {
                     shadePlotMode: layout.shadePlotMode,
                     shadePlotResolution: layout.shadePlotResolution,
                     shadePlotCustomDPI: layout.shadePlotCustomDPI,
-                    layoutFlags: layout.layoutFlags)
+                    layoutFlags: layout.layoutFlags,
+                    plotTransparency: layout.plotTransparency,
+                    pdfOptions: layout.pdfOptions)
 
                 importedViews.append(DXFDrawingView(
                     name: layout.name,
@@ -2008,6 +2020,11 @@ public enum DXFImporter {
         let paperSpaceLinetypeScale: Int = {
             if let value = reader.header.headerVars["$PSLTSCALE"] as? Int { return value == 0 ? 0 : 1 }
             if let value = reader.header.headerVars["$PSLTSCALE"] as? Int32 { return value == 0 ? 0 : 1 }
+            return 1
+        }()
+        let pstyleMode: Int = {
+            if let value = reader.header.headerVars["$PSTYLEMODE"] as? Int { return value == 0 ? 0 : 1 }
+            if let value = reader.header.headerVars["$PSTYLEMODE"] as? Int32 { return value == 0 ? 0 : 1 }
             return 1
         }()
         return DXFImportResult(
@@ -2038,7 +2055,11 @@ public enum DXFImporter {
             imageDefinitions: imageDefinitions,
             pdfDefinitions: pdfDefinitions,
             groups: groupStaging.map { CADGroup(name: $0.key, members: $0.value) },
-            paperSpaceLinetypeScale: paperSpaceLinetypeScale)
+            paperSpaceLinetypeScale: paperSpaceLinetypeScale,
+            pstyleMode: pstyleMode,
+            namedPageSetups: reader.plotSettingsEntries.map {
+                CADNamedPageSetup(name: $0.name, settings: $0.settings, isModelType: $0.isModelType)
+            })
     }
 
     /// Moves `CADGroup.stagingPrefix` keys staged during conversion out of

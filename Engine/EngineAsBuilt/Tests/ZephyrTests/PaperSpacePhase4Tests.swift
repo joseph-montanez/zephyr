@@ -346,4 +346,135 @@ final class PaperSpacePhase4Tests: XCTestCase {
         XCTAssertEqual(reloadedWidth, 279.4, accuracy: 1e-9)
         XCTAssertEqual(reloadedHeight, 215.9, accuracy: 1e-9)
     }
+
+    // MARK: - AutoCAD LT LAYOUT FeatureCommand
+
+    @MainActor
+    func testLayoutCommandInteractiveNewAndDefaults() {
+        let (modelDoc, _) = makeLayeredDoc(layerName: "ModelLayer")
+        let (sheetDoc, _) = makeLayeredDoc(layerName: "SheetLayer")
+        let manager = makeManager(modelDoc: modelDoc, sheetDoc: sheetDoc)
+        let processor = CADCommandProcessor()
+        let cmd = LayoutCommand()
+
+        let desc = CommandDescriptor.allCommands.first { $0.canonicalName == "LAYOUT" }
+        XCTAssertEqual(desc?.bareEnterExecutes, true)
+        XCTAssertEqual(desc?.aliases, ["SHEET", "LO", "-LAYOUT"])
+
+        cmd.start(tabManager: manager, processor: processor)
+        XCTAssertTrue(processor.commandLineActive)
+        XCTAssertEqual(processor.commandPrompt, LayoutCommand.optionPrompt)
+        XCTAssertEqual(cmd.phase, .option)
+        XCTAssertEqual(
+            cmd.commandTextOptions(for: "").map(\.value),
+            ["C", "D", "N", "T", "R", "SA", "S", "?"])
+
+        // Step 1: Type "n" + Enter
+        let step1 = cmd.handleCommandText("n", tabManager: manager, processor: processor)
+        XCTAssertEqual(step1, .consumed)
+        XCTAssertTrue(processor.commandLineActive)
+        XCTAssertEqual(cmd.phase, .newName(defaultName: "Layout2"))
+        XCTAssertEqual(processor.commandPrompt, "Enter new Layout name <Layout2>:")
+        XCTAssertTrue(cmd.commandTextOptions(for: "Floor").isEmpty)
+
+        // Duplicate or invalid names keep LayoutCommand in .newName
+        XCTAssertEqual(
+            cmd.handleCommandText("Layout1", tabManager: manager, processor: processor),
+            .consumed)
+        XCTAssertEqual(cmd.phase, .newName(defaultName: "Layout2"))
+        XCTAssertEqual(
+            cmd.handleCommandText("Bad/Name", tabManager: manager, processor: processor),
+            .consumed)
+        XCTAssertEqual(cmd.phase, .newName(defaultName: "Layout2"))
+
+        // Step 2: Type custom layout name + Enter
+        var zoomed = false
+        let step2 = cmd.handleCommandText(
+            "FloorPlan",
+            tabManager: manager,
+            processor: processor,
+            onZoomExtents: { zoomed = true })
+        XCTAssertEqual(step2, .finished)
+        XCTAssertFalse(processor.commandLineActive)
+        XCTAssertTrue(zoomed)
+        XCTAssertEqual(manager.activeViewName, "FloorPlan")
+        XCTAssertTrue(manager.paperLayoutNames.contains("FloorPlan"))
+
+        // Bare Enter on .newName uses <Layout2>
+        let cmd2 = LayoutCommand()
+        cmd2.start(tabManager: manager, processor: processor)
+        _ = cmd2.handleCommandText("N", tabManager: manager, processor: processor)
+        XCTAssertEqual(cmd2.phase, .newName(defaultName: "Layout2"))
+        XCTAssertEqual(
+            cmd2.handleCommandText("", tabManager: manager, processor: processor),
+            .finished)
+        XCTAssertEqual(manager.activeViewName, "Layout2")
+    }
+
+    @MainActor
+    func testLayoutCommandSetCopyRenameDeleteAndInformationalOptions() {
+        let (modelDoc, _) = makeLayeredDoc(layerName: "ModelLayer")
+        let (sheetDoc, _) = makeLayeredDoc(layerName: "SheetLayer")
+        let manager = makeManager(modelDoc: modelDoc, sheetDoc: sheetDoc)
+        let processor = CADCommandProcessor()
+
+        // 1. Bare Enter at option prompt -> Set -> Bare Enter activates <Layout1>
+        let setCmd = LayoutCommand()
+        setCmd.start(tabManager: manager, processor: processor)
+        XCTAssertEqual(
+            setCmd.handleCommandText("", tabManager: manager, processor: processor),
+            .consumed)
+        XCTAssertEqual(setCmd.phase, .setName(defaultName: "Layout1"))
+        XCTAssertEqual(
+            setCmd.handleCommandText("", tabManager: manager, processor: processor),
+            .finished)
+        XCTAssertEqual(manager.activeViewName, "Layout1")
+
+        // 2. Copy with defaults -> Layout1 (2)
+        let copyCmd = LayoutCommand()
+        copyCmd.start(tabManager: manager, processor: processor)
+        _ = copyCmd.handleCommandText("c", tabManager: manager, processor: processor)
+        XCTAssertEqual(copyCmd.phase, .copySource(defaultSource: "Layout1"))
+        _ = copyCmd.handleCommandText("", tabManager: manager, processor: processor)
+        XCTAssertEqual(copyCmd.phase, .copyDest(sourceName: "Layout1", defaultDest: "Layout1 (2)"))
+        XCTAssertEqual(
+            copyCmd.handleCommandText("", tabManager: manager, processor: processor),
+            .finished)
+        XCTAssertEqual(manager.activeViewName, "Layout1 (2)")
+
+        // 3. Rename Layout1 (2) -> SheetB
+        let renameCmd = LayoutCommand()
+        renameCmd.start(tabManager: manager, processor: processor)
+        _ = renameCmd.handleCommandText("r", tabManager: manager, processor: processor)
+        XCTAssertEqual(renameCmd.phase, .renameSource(defaultSource: "Layout1 (2)"))
+        _ = renameCmd.handleCommandText("", tabManager: manager, processor: processor)
+        XCTAssertEqual(renameCmd.phase, .renameDest(oldName: "Layout1 (2)"))
+        XCTAssertEqual(
+            renameCmd.handleCommandText("SheetB", tabManager: manager, processor: processor),
+            .finished)
+        XCTAssertEqual(manager.paperLayoutNames, ["Layout1", "SheetB"])
+
+        // 4. ?, SAveas, Template stay in .option
+        let infoCmd = LayoutCommand()
+        infoCmd.start(tabManager: manager, processor: processor)
+        for kw in ["?", "sa", "t"] {
+            XCTAssertEqual(
+                infoCmd.handleCommandText(kw, tabManager: manager, processor: processor),
+                .consumed)
+            XCTAssertEqual(infoCmd.phase, .option)
+            XCTAssertTrue(processor.commandLineActive)
+        }
+
+        // 5. Delete SheetB (after guarding Model)
+        let deleteCmd = LayoutCommand()
+        deleteCmd.start(tabManager: manager, processor: processor)
+        _ = deleteCmd.handleCommandText("d", tabManager: manager, processor: processor)
+        XCTAssertEqual(
+            deleteCmd.handleCommandText("Model", tabManager: manager, processor: processor),
+            .consumed)
+        XCTAssertEqual(
+            deleteCmd.handleCommandText("SheetB", tabManager: manager, processor: processor),
+            .finished)
+        XCTAssertEqual(manager.paperLayoutNames, ["Layout1"])
+    }
 }

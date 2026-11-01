@@ -73,8 +73,10 @@ public enum PDFExporter {
     /// /Measure dictionary is kept consistent with the effective scale, so
     /// Bluebeam auto-calibration remains correct even when the page is
     /// fit-scaled down).
-    public static func export(document: CADDocument, to url: URL, backgroundColor: ColorRGBA? = nil) throws {
-        let pdfData = try generatePDF(document: document, backgroundColor: backgroundColor)
+    public static func export(document: CADDocument, to url: URL, backgroundColor: ColorRGBA? = nil,
+                              plotContext: PlotContext = .default) throws {
+        let pdfData = try generatePDF(document: document, backgroundColor: backgroundColor,
+                                        plotContext: plotContext)
         try pdfData.write(to: url, options: .atomic)
     }
 
@@ -116,8 +118,276 @@ public enum PDFExporter {
 #endif
     }
 
+    // ---------------------------------------------------------------------
+    // MARK: Plot mode (Phase 3 step 20)
+    // ---------------------------------------------------------------------
+
+    /// Exact paper-space plot framing for a layout with plot settings.
+    /// Nil when the document has no usable settings (legacy auto-fit path).
+    /// Rotation (DXF 73) swaps page dims like the canvas sheet; content
+    /// itself is not rotated (canvas and PDF share this model, so their
+    /// framing matches exactly — full rotated-content plotting is deferred).
+    struct PlotFrame: Sendable, Equatable {
+        /// Page size in points (rotation-swapped).
+        var pageW: Double
+        var pageH: Double
+        /// Points per paper-space unit (unit factor × plot scale factor).
+        var scale: Double
+        /// Page CTM translation (device = scale * world + t).
+        var tx: Double
+        var ty: Double
+        /// Printable clip rect in paper-space (world) coords.
+        var clipMinX: Double
+        var clipMinY: Double
+        var clipMaxX: Double
+        var clipMaxY: Double
+    }
+
+    /// Points per paper-space unit for a plot-paper-units code.
+    static func pointsPerPaperUnit(_ units: Int) -> Double {
+        switch units {
+        case 0: return 72.0 // inches
+        case 2: return 1.0 // pixels (≈1pt)
+        default: return 72.0 / 25.4 // millimeters
+        }
+    }
+
+    /// Compute exact plot framing. `transparencyOverride` mirrors
+    /// PLOTTRANSPARENCYOVERRIDE (0 suppress, 1 per-setup, 2 force).
+    /// `worldBounds` is the drawing's world bbox (Extents/Display source).
+    /// `plotTable` is applied when the setup enables PlotPlotStyles (bit 32).
+    static func plotFrame(
+        settings: CADPlotSettings,
+        worldBounds: (minX: Double, minY: Double, maxX: Double, maxY: Double)?,
+        transparencyOverride: Int = 1,
+        plotTable: PlotStyleTable? = nil,
+        plotOffset: Int = 0
+    ) -> PlotFrame? {
+        guard settings.paperWidthMM > 0, settings.paperHeightMM > 0 else { return nil }
+        let ppu = pointsPerPaperUnit(settings.plotPaperUnits)
+        let sheet = PaperSheetGeometry.sheetSize(for: settings)
+        var pageW = sheet.width * ppu
+        var pageH = sheet.height * ppu
+        // Landscape swap is inside sheetSize; guard degenerate sizes.
+        pageW = max(pageW, 10.0)
+        pageH = max(pageH, 10.0)
+
+        // Plot scale factor (paper units per drawing unit).
+        let factor: Double
+        if settings.standardScaleType == 0 || !settings.useStandardScale,
+           !settings.isCustomScale {
+            factor = .nan // Scaled to Fit → computed below
+        } else if settings.useStandardScale {
+            factor = CADPlotSettings.standardScaleFactor(for: settings.standardScaleType)
+                ?? settings.effectiveScaleFactor
+        } else {
+            factor = settings.effectiveScaleFactor
+        }
+
+        // Plot-area world rect + printable rect (paper-space coords).
+        let printable = PaperSheetGeometry.printableRect(for: settings)
+        let origin = PaperSheetGeometry.paperSpaceOrigin(for: settings, plotOffset: plotOffset)
+        func shift(_ r: (minX: Double, minY: Double, maxX: Double, maxY: Double))
+            -> (minX: Double, minY: Double, maxX: Double, maxY: Double) {
+            (r.minX - origin.x, r.minY - origin.y, r.maxX - origin.x, r.maxY - origin.y)
+        }
+        let printPS = shift((printable.minX, printable.minY, printable.maxX, printable.maxY))
+        let areaPS: (minX: Double, minY: Double, maxX: Double, maxY: Double)?
+        switch settings.plotType {
+        case 5, 2: // Layout / Limits → printable / paper corners
+            areaPS = settings.plotType == 5 ? printPS : {
+                let l = PaperSheetGeometry.syncedLimits(for: settings)
+                return (l.min.x, l.min.y, l.max.x, l.max.y)
+            }()
+        case 4: // Window
+            areaPS = (settings.plotWindowMinX, settings.plotWindowMinY,
+                        settings.plotWindowMaxX, settings.plotWindowMaxY)
+        case 0, 1, 3: // Display / Extents / View (no named views in v1)
+            if let wb = worldBounds {
+                areaPS = wb
+            } else {
+                areaPS = printPS
+            }
+        default:
+            areaPS = printPS
+        }
+        let area = areaPS ?? printPS
+        let areaW = max(area.maxX - area.minX, 1e-9)
+        let areaH = max(area.maxY - area.minY, 1e-9)
+        let printW = max(printPS.maxX - printPS.minX, 1e-9)
+        let printH = max(printPS.maxY - printPS.minY, 1e-9)
+
+        let plotScale: Double
+        if factor.isNaN {
+            plotScale = min(printW / areaW, printH / areaH)
+        } else {
+            plotScale = factor.isFinite && factor > 0 ? factor : 1
+        }
+        let scale = ppu * plotScale
+
+        // Offset: stored origin, or centered math when PlotCentered (bit 4).
+        let ox: Double
+        let oy: Double
+        if settings.plotFlags & 4 != 0, settings.plotType != 5 {
+            let m = PaperSheetGeometry.permutedMargins(for: settings)
+            let c = PlotSettingsValidator.centeredOffset(
+                printableWidth: printW, printableHeight: printH,
+                plotAreaWidth: areaW, plotAreaHeight: areaH,
+                scale: plotScale, plotOffset: plotOffset,
+                marginLeft: m.left, marginBottom: m.bottom)
+            ox = c.x
+            oy = c.y
+        } else {
+            let div = PaperSheetGeometry.unitDivisor(for: settings)
+            ox = settings.plotOriginXMM / div
+            oy = settings.plotOriginYMM / div
+        }
+        // Map area origin to printable origin + offset (paper-space units).
+        let devOX = (printPS.minX + ox - area.minX) * scale
+        let devOY = (printPS.minY + oy - area.minY) * scale
+        // Y-flip CTM: device.y = -scale * world.y + ty with area bottom
+        // at page bottom offset. In PDF points, printable box sits at
+        // devOY from the bottom.
+        let tx = devOX
+        let ty = devOY + area.maxY * scale
+        _ = (transparencyOverride, plotTable)
+        return PlotFrame(pageW: pageW, pageH: pageH, scale: scale,
+                           tx: tx, ty: ty,
+                           clipMinX: printPS.minX, clipMinY: printPS.minY,
+                           clipMaxX: printPS.maxX, clipMaxY: printPS.maxY)
+    }
+
+    /// Apply plot-style table mapping + lineweight/transparency policy to
+    /// collected items. Returns items with resolved colors/lineweights.
+    /// - transparencyOverride mirrors PLOTTRANSPARENCYOVERRIDE.
+    static func applyPlotStyles(
+        items: [RenderItem],
+        document: CADDocument,
+        settings: CADPlotSettings,
+        plotTable: PlotStyleTable?,
+        transparencyOverride: Int = 1
+    ) -> [RenderItem] {
+        let doStyles = settings.plotFlags & 32 != 0
+        let printLW = settings.plotFlags & 128 != 0
+        let scaleLW = settings.plotFlags & 64 != 0
+        let plotScale = settings.effectiveScaleFactor.isFinite ? settings.effectiveScaleFactor : 1
+        // Screening gate: 0 suppress, 2 force, else the setup checkbox.
+        let screeningOn: Bool
+        switch transparencyOverride {
+        case 0: screeningOn = false
+        case 2: screeningOn = true
+        default: screeningOn = settings.plotTransparency
+        }
+        guard doStyles || !printLW || scaleLW || screeningOn else { return items }
+        return items.map { item in
+            switch item {
+            case .geometry(let entity, let color, let lineWeightMM):
+                // Raw (unadjusted) color + lineweight, mirroring collectItems
+                // without displayAdjusted (plot works on true colors).
+                let raw: ColorRGBA
+                if let cv = entity.xdata["dxf.color"], case .string(let hex) = cv,
+                   let c = ColorRGBA(hex: hex) {
+                    raw = c
+                } else if let layer = document.layer(for: entity.layerID) {
+                    raw = layer.color
+                } else {
+                    raw = color
+                }
+                let lw0: Double
+                if let lw = entity.xdata["dxf.lineWeight"], case .double(let v) = lw, v > 0 {
+                    lw0 = v
+                } else if let layer = document.layer(for: entity.layerID) {
+                    lw0 = layer.lineWeight
+                } else {
+                    lw0 = lineWeightMM
+                }
+                let pen: PlotStylePen?
+                if doStyles, let table = plotTable {
+                    let aci = Int(DXFColorTable.rgbaToACI(raw))
+                    pen = table.pen(forACI: aci)
+                } else {
+                    pen = nil
+                }
+                let lwBase = printLW ? lw0 : 0
+                let resolved = PlotPenApplication.resolve(
+                    objectACI: nil,
+                    objectRGB: (raw.r, raw.g, raw.b),
+                    pen: pen,
+                    objectLineweightMM: lwBase,
+                    scaleLineweights: scaleLW, plotScale: plotScale)
+                var rgb = (resolved.r, resolved.g, resolved.b)
+                if screeningOn, resolved.screening01 < 1 {
+                    // Screening = ink coverage: blend toward white paper.
+                    let t = resolved.screening01
+                    rgb = (UInt8((Double(rgb.0) * t + 255 * (1 - t)).rounded()),
+                           UInt8((Double(rgb.1) * t + 255 * (1 - t)).rounded()),
+                           UInt8((Double(rgb.2) * t + 255 * (1 - t)).rounded()))
+                }
+                return .geometry(
+                    entity: entity,
+                    color: ColorRGBA(r: rgb.0, g: rgb.1, b: rgb.2, a: color.a),
+                    lineWeightMM: resolved.lineweightMM ?? lwBase)
+            case .textStrokes(let prims, let color):
+                if !screeningOn { return item }
+                // Text strokes use the default color; screening applies
+                // uniformly when the setup enables transparency.
+                return .textStrokes(prims: prims, color: color)
+            case .textFallback:
+                return item
+            }
+        }
+    }
+
+    /// DrawViewportsFirst (bit 512): viewport-projected content plots first
+    /// (underneath), paper-space entities last. Stable within each group.
+    static func orderForDrawViewportsFirst(_ items: [RenderItem], enabled: Bool) -> [RenderItem] {
+        guard enabled else { return items }
+        let projected = items.filter {
+            if case .geometry(let e, _, _) = $0 { return e.isViewportProjected }
+            return false
+        }
+        let paper = items.filter {
+            if case .geometry(let e, _, _) = $0 { return !e.isViewportProjected }
+            return true
+        }
+        return projected + paper
+    }
+
+    /// Plot-time host inputs (sysvars + CTB loader). Defaults preserve the
+    /// legacy auto-fit path when no plot settings apply.
+    public struct PlotContext: @unchecked Sendable {
+        /// Mirrors PLOTTRANSPARENCYOVERRIDE (0 suppress, 1 per-setup, 2 force).
+        public var transparencyOverride: Int
+        /// Mirrors PLOTOFFSET (0 printable area, 1 paper edge).
+        public var plotOffset: Int
+        /// Resolves a style-sheet filename to a parsed table (CTB/STB).
+        public var plotTableLoader: ((String) -> PlotStyleTable?)?
+
+        public init(transparencyOverride: Int = 1, plotOffset: Int = 0,
+                    plotTableLoader: ((String) -> PlotStyleTable?)? = nil) {
+            self.transparencyOverride = transparencyOverride
+            self.plotOffset = plotOffset
+            self.plotTableLoader = plotTableLoader
+        }
+
+        public static let `default` = PlotContext()
+    }
+
+    /// Locate a plot-style file in the well-known support folders.
+    public static func defaultPlotTableLoader(name: String) -> PlotStyleTable? {
+        guard !name.isEmpty else { return nil }
+        let dirs = ["Plot Styles", "./Plot Styles",
+                    "Engine/EngineAsBuilt/Plot Styles"]
+        for dir in dirs {
+            let url = URL(fileURLWithPath: dir).appendingPathComponent(name)
+            if let table = try? PlotStyleTable.parse(url: url) { return table }
+        }
+        return nil
+    }
+
     /// Generate PDF data from a document (extracted for reuse by both sync and async paths).
-    static func generatePDF(document: CADDocument, backgroundColor: ColorRGBA?) throws -> Data {
+    static func generatePDF(document: CADDocument, backgroundColor: ColorRGBA?,
+                            plotContext: PlotContext = .default) throws -> Data {
         // Background and contrast adjustment:
         // Default PDF page background in viewers is white.
         let pageBg = backgroundColor ?? ColorRGBA.white
@@ -128,7 +398,7 @@ public enum PDFExporter {
         let isLightBackground = bgLuminance >= 0.5
 
         // ---- Pre-pass: collect drawables in screen-parity order ----------
-        let items = collectItems(document: document, isLightBackground: isLightBackground)
+        var items = collectItems(document: document, isLightBackground: isLightBackground)
 
         // ---- World bounding box (engine Y-down space) ---------------------
         // Text-entity bounds come from the exploded glyph strokes; the cached
@@ -169,8 +439,40 @@ public enum PDFExporter {
         let pageW: Double
         let pageH: Double
         let margin: Double
+        var plotClip: (Double, Double, Double, Double)? = nil
+        var plotTX: Double? = nil
+        var plotTY: Double? = nil
 
-        if let layout = document.layoutSettings, layout.paperWidthMM > 0, layout.paperHeightMM > 0 {
+        // Plot mode: exact paper size, scale, offset, and printable clip
+        // from the layout's settings. Legacy auto-fit otherwise.
+        let plotTable: PlotStyleTable?
+        if let ps = document.plotSettings {
+            plotTable = ps.styleSheet.isEmpty ? nil
+                : (plotContext.plotTableLoader ?? Self.defaultPlotTableLoader)(ps.styleSheet)
+        } else {
+            plotTable = nil
+        }
+        if let ps = document.plotSettings,
+           let frame = Self.plotFrame(
+               settings: ps,
+               worldBounds: hasGeom ? (minX, minY, maxX, maxY) : nil,
+               transparencyOverride: plotContext.transparencyOverride,
+               plotTable: plotTable,
+               plotOffset: plotContext.plotOffset) {
+            items = Self.orderForDrawViewportsFirst(
+                items, enabled: ps.plotFlags & 512 != 0)
+            items = Self.applyPlotStyles(
+                items: items, document: document, settings: ps,
+                plotTable: plotTable,
+                transparencyOverride: plotContext.transparencyOverride)
+            pageW = frame.pageW
+            pageH = frame.pageH
+            margin = 0.0
+            scale = frame.scale
+            plotTX = frame.tx
+            plotTY = frame.ty
+            plotClip = (frame.clipMinX, frame.clipMinY, frame.clipMaxX, frame.clipMaxY)
+        } else if let layout = document.layoutSettings, layout.paperWidthMM > 0, layout.paperHeightMM > 0 {
             var pw = layout.paperWidthMM * 72.0 / 25.4
             var ph = layout.paperHeightMM * 72.0 / 25.4
             if layout.plotRotation == 1 || layout.plotRotation == 3 {
@@ -235,7 +537,9 @@ public enum PDFExporter {
         }
         writeContent(items: items, document: document, scale: scale, margin: margin,
                      minX: minX, maxX: maxX, minY: minY, maxY: maxY,
-                     pageW: pageW, pageH: pageH, isLightBackground: isLightBackground, to: content)
+                     pageW: pageW, pageH: pageH, isLightBackground: isLightBackground, to: content,
+                     plotTX: plotTX, plotTY: plotTY, plotScale: plotTX == nil ? nil : scale,
+                     clipWorld: plotClip)
         w.beginObject(4)
         w.writeCompressedStream(content.build())
         w.endObject()
@@ -453,19 +757,37 @@ public enum PDFExporter {
         items: [RenderItem], document: CADDocument, scale: Double, margin: Double,
         minX: Double, maxX: Double = 0, minY: Double = 0, maxY: Double,
         pageW: Double = 0, pageH: Double = 0, isLightBackground: Bool = false,
-        to cb: PDFContentBuilder
+        to cb: PDFContentBuilder,
+        plotTX: Double? = nil, plotTY: Double? = nil, plotScale: Double? = nil,
+        clipWorld: (Double, Double, Double, Double)? = nil
     ) {
         // Y-FLIPPING page CTM: engine Y-down → PDF Y-up.
         //   device.x =  scale * world.x + tx
         //   device.y = -scale * world.y + ty
         // World maxY (engine "bottom" of bbox) maps to the page bottom margin.
-        let contentW = (maxX - minX) * scale
-        let contentH = (maxY - minY) * scale
-        let offsetX = margin > 0 ? margin : max(0.0, (pageW - contentW) * 0.5)
-        let offsetY = margin > 0 ? margin : max(0.0, (pageH - contentH) * 0.5)
-        let tx = offsetX - minX * scale
-        let ty = offsetY + maxY * scale
-        cb.num(scale); cb.num(0); cb.num(0); cb.num(-scale); cb.num(tx); cb.num(ty); cb.raw("cm\n")
+        // Plot mode supplies an explicit CTM + printable-area clip instead.
+        let tx: Double
+        let ty: Double
+        if let plotScale, let plotTX, let plotTY {
+            tx = plotTX
+            ty = plotTY
+            cb.num(plotScale); cb.num(0); cb.num(0); cb.num(-plotScale)
+            cb.num(tx); cb.num(ty); cb.raw("cm\n")
+            if let clipWorld {
+                let cw = clipWorld.2 - clipWorld.0
+                let ch = clipWorld.3 - clipWorld.1
+                cb.num(clipWorld.0); cb.num(clipWorld.1); cb.num(cw); cb.num(ch)
+                cb.raw("re W n\n")
+            }
+        } else {
+            let contentW = (maxX - minX) * scale
+            let contentH = (maxY - minY) * scale
+            let offsetX = margin > 0 ? margin : max(0.0, (pageW - contentW) * 0.5)
+            let offsetY = margin > 0 ? margin : max(0.0, (pageH - contentH) * 0.5)
+            tx = offsetX - minX * scale
+            ty = offsetY + maxY * scale
+            cb.num(scale); cb.num(0); cb.num(0); cb.num(-scale); cb.num(tx); cb.num(ty); cb.raw("cm\n")
+        }
 
         for item in items {
             switch item {
