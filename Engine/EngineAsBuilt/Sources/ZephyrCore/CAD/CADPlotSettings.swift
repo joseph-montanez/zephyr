@@ -160,6 +160,44 @@ public struct CADPlotSettings: Sendable, Equatable {
         self.pdfOptions = pdfOptions
     }
 
+    public init(layout: DXFLayoutEntry) {
+        self.init(
+            paperName: layout.paperName,
+            paperWidthMM: layout.paperWidthMM ?? 0,
+            paperHeightMM: layout.paperHeightMM ?? 0,
+            marginLM: layout.marginLM ?? 0,
+            marginBM: layout.marginBM ?? 0,
+            marginRM: layout.marginRM ?? 0,
+            marginTM: layout.marginTM ?? 0,
+            plotPaperUnits: layout.plotPaperUnits,
+            plotRotation: layout.plotRotation,
+            pageSetupName: layout.pageSetupName,
+            plotConfigName: layout.plotConfigName,
+            canonicalMediaName: layout.canonicalMediaName,
+            plotViewName: layout.plotViewName,
+            styleSheet: layout.styleSheet,
+            plotOriginXMM: layout.plotOriginXMM,
+            plotOriginYMM: layout.plotOriginYMM,
+            plotWindowMinX: layout.plotWindowMinX,
+            plotWindowMinY: layout.plotWindowMinY,
+            plotWindowMaxX: layout.plotWindowMaxX,
+            plotWindowMaxY: layout.plotWindowMaxY,
+            customScaleNumerator: layout.customScaleNumerator,
+            customScaleDenominator: layout.customScaleDenominator,
+            standardScaleFactor: layout.standardScaleFactor,
+            paperImageOriginX: layout.paperImageOriginX,
+            paperImageOriginY: layout.paperImageOriginY,
+            plotFlags: layout.plotFlags,
+            plotType: layout.plotType,
+            standardScaleType: layout.standardScaleType,
+            shadePlotMode: layout.shadePlotMode,
+            shadePlotResolution: layout.shadePlotResolution,
+            shadePlotCustomDPI: layout.shadePlotCustomDPI,
+            layoutFlags: layout.layoutFlags,
+            plotTransparency: layout.plotTransparency,
+            pdfOptions: layout.pdfOptions)
+    }
+
     // MARK: - UseStandardScale (Code 70 bit 16)
 
     /// DXF 70 bit 16. Cleared = Custom/Fit dialog state (Code 75 stays 16,

@@ -490,6 +490,7 @@ public enum DXFImporter {
 
     private static func defaultLayoutProjection(
         layout: DXFLayoutEntry,
+        effectivePlotSettings: CADPlotSettings? = nil,
         modelEntities: [CADEntity],
         header: DXFHeaderData
     ) -> Transform3D? {
@@ -536,7 +537,25 @@ public enum DXFImporter {
         var paperMinY = layout.minimumLimits.y
         var paperMaxX = layout.maximumLimits.x
         var paperMaxY = layout.maximumLimits.y
-        if !validRange(paperMinX, paperMaxX) || !validRange(paperMinY, paperMaxY) {
+        let limitsValid = validRange(paperMinX, paperMaxX) && validRange(paperMinY, paperMaxY)
+        let isDefault12x9Limits = limitsValid && abs(paperMinX) < epsilon && abs(paperMinY) < epsilon
+            && abs(paperMaxX - 12.0) < epsilon && abs(paperMaxY - 9.0) < epsilon
+
+        if let ps = effectivePlotSettings, ps.paperWidthMM > 0, ps.paperHeightMM > 0,
+           (!limitsValid || isDefault12x9Limits) {
+            if let rects = PaperSheetGeometry.overlayRects(for: ps) {
+                paperMinX = rects.paper.minX
+                paperMinY = rects.paper.minY
+                paperMaxX = rects.paper.maxX
+                paperMaxY = rects.paper.maxY
+            } else {
+                let phys = PaperSheetGeometry.physicalSheetSize(for: ps)
+                paperMinX = 0
+                paperMinY = 0
+                paperMaxX = phys.width
+                paperMaxY = phys.height
+            }
+        } else if !limitsValid {
             paperMinX = 0
             paperMinY = 0
             paperMaxX = 12
@@ -1850,10 +1869,42 @@ public enum DXFImporter {
                     ?? blockHandleByName["*MODEL_SPACE"]
                     ?? 0), stagingInto: &groupStaging)
 
+            let modelPlotSettings = modelLayout.map { CADPlotSettings(layout: $0) }
+            let modelLayoutSettings = modelPlotSettings?.layoutSettings
+
             var importedViews: [DXFDrawingView] = [DXFDrawingView(
                 name: modelLayout?.name ?? "Model",
                 kind: .model,
-                entities: modelEntities)]
+                entities: modelEntities,
+                layoutSettings: modelLayoutSettings,
+                plotSettings: modelPlotSettings)]
+
+            let fallbackSettings: CADPlotSettings? = {
+                // 1. Another paper-space layout with standard paper units (inches=0 or mm=1)
+                if let standardPaperLayout = orderedLayouts.first(where: {
+                    $0.name.caseInsensitiveCompare("Model") != .orderedSame
+                        && ($0.paperWidthMM ?? 0) > 0 && ($0.paperHeightMM ?? 0) > 0
+                        && ($0.plotPaperUnits == 0 || $0.plotPaperUnits == 1)
+                }) {
+                    return CADPlotSettings(layout: standardPaperLayout)
+                }
+                // 2. Model's plot settings if configured
+                if let modelPlotSettings, modelPlotSettings.paperWidthMM > 0, modelPlotSettings.paperHeightMM > 0 {
+                    return modelPlotSettings
+                }
+                // 3. Named plot settings entries
+                if let named = reader.plotSettingsEntries.first(where: { $0.settings.paperWidthMM > 0 && $0.settings.paperHeightMM > 0 }) {
+                    return named.settings
+                }
+                // 4. Any paper-space layout with non-zero paper dimensions
+                if let anyPaperLayout = orderedLayouts.first(where: {
+                    $0.name.caseInsensitiveCompare("Model") != .orderedSame
+                        && ($0.paperWidthMM ?? 0) > 0 && ($0.paperHeightMM ?? 0) > 0
+                }) {
+                    return CADPlotSettings(layout: anyPaperLayout)
+                }
+                return nil
+            }()
 
             for layout in orderedLayouts where
                 layout.name.caseInsensitiveCompare("Model") != .orderedSame {
@@ -1926,10 +1977,35 @@ public enum DXFImporter {
                     if entity is DXFUnderlayEntity { return false }
                     return true
                 }
+                let hasConfiguredPaper = (layout.paperWidthMM ?? 0) > 0 && (layout.paperHeightMM ?? 0) > 0
+                let effectivePlotSettings: CADPlotSettings
+                if hasConfiguredPaper {
+                    effectivePlotSettings = CADPlotSettings(layout: layout)
+                } else if let fallback = fallbackSettings {
+                    var s = fallback
+                    s.pageSetupName = layout.pageSetupName.isEmpty ? fallback.pageSetupName : layout.pageSetupName
+                    // Unconfigured paper-space layouts inherit the physical media size & margins,
+                    // but their paper-space plot scale is always 1:1 layout plotting.
+                    s.plotType = 5 // Layout
+                    s.useStandardScale = true
+                    s.standardScaleType = 16 // 1:1
+                    s.standardScaleFactor = 1.0
+                    s.customScaleNumerator = 1.0
+                    s.customScaleDenominator = 1.0
+                    s.plotOriginXMM = 0.0
+                    s.plotOriginYMM = 0.0
+                    s.plotFlags &= ~4
+                    effectivePlotSettings = s
+                } else {
+                    effectivePlotSettings = CADPlotSettings(layout: layout)
+                }
+                let layoutSettings = effectivePlotSettings.layoutSettings
+
                 if viewports.isEmpty,
                    !paperHasDraftedContent,
                    let projection = Self.defaultLayoutProjection(
                     layout: layout,
+                    effectivePlotSettings: effectivePlotSettings,
                     modelEntities: modelEntities,
                     header: reader.header) {
                     let projectionString = Self.viewportProjectionString(projection)
@@ -1952,57 +2028,6 @@ public enum DXFImporter {
                     }
                 }
 
-                var layoutSettings: CADLayoutSettings? = nil
-                if let pw = layout.paperWidthMM, let ph = layout.paperHeightMM, pw > 0, ph > 0 {
-                    layoutSettings = CADLayoutSettings(
-                        paperName: layout.paperName,
-                        paperWidthMM: pw,
-                        paperHeightMM: ph,
-                        marginLM: layout.marginLM ?? 0,
-                        marginBM: layout.marginBM ?? 0,
-                        marginRM: layout.marginRM ?? 0,
-                        marginTM: layout.marginTM ?? 0,
-                        plotPaperUnits: layout.plotPaperUnits,
-                        plotRotation: layout.plotRotation
-                    )
-                }
-
-                let plotSettings = CADPlotSettings(
-                    paperName: layout.paperName,
-                    paperWidthMM: layout.paperWidthMM ?? 0,
-                    paperHeightMM: layout.paperHeightMM ?? 0,
-                    marginLM: layout.marginLM ?? 0,
-                    marginBM: layout.marginBM ?? 0,
-                    marginRM: layout.marginRM ?? 0,
-                    marginTM: layout.marginTM ?? 0,
-                    plotPaperUnits: layout.plotPaperUnits,
-                    plotRotation: layout.plotRotation,
-                    pageSetupName: layout.pageSetupName,
-                    plotConfigName: layout.plotConfigName,
-                    canonicalMediaName: layout.canonicalMediaName,
-                    plotViewName: layout.plotViewName,
-                    styleSheet: layout.styleSheet,
-                    plotOriginXMM: layout.plotOriginXMM,
-                    plotOriginYMM: layout.plotOriginYMM,
-                    plotWindowMinX: layout.plotWindowMinX,
-                    plotWindowMinY: layout.plotWindowMinY,
-                    plotWindowMaxX: layout.plotWindowMaxX,
-                    plotWindowMaxY: layout.plotWindowMaxY,
-                    customScaleNumerator: layout.customScaleNumerator,
-                    customScaleDenominator: layout.customScaleDenominator,
-                    standardScaleFactor: layout.standardScaleFactor,
-                    paperImageOriginX: layout.paperImageOriginX,
-                    paperImageOriginY: layout.paperImageOriginY,
-                    plotFlags: layout.plotFlags,
-                    plotType: layout.plotType,
-                    standardScaleType: layout.standardScaleType,
-                    shadePlotMode: layout.shadePlotMode,
-                    shadePlotResolution: layout.shadePlotResolution,
-                    shadePlotCustomDPI: layout.shadePlotCustomDPI,
-                    layoutFlags: layout.layoutFlags,
-                    plotTransparency: layout.plotTransparency,
-                    pdfOptions: layout.pdfOptions)
-
                 importedViews.append(DXFDrawingView(
                     name: layout.name,
                     kind: .sheet,
@@ -2010,7 +2035,7 @@ public enum DXFImporter {
                     backgroundColor: .white,
                     layoutSettings: layoutSettings,
                     groups: viewGroupStaging.map { CADGroup(name: $0.key, members: $0.value) },
-                    plotSettings: plotSettings))
+                    plotSettings: effectivePlotSettings))
             }
             views = importedViews
         }

@@ -37,9 +37,24 @@ public enum PaperSheetGeometry {
         return (settings.paperWidthMM / s * k, settings.paperHeightMM / s * k)
     }
 
+    /// Physical unrotated sheet size in paper-space units (without plot-scale multiplier 143/142).
+    public static func physicalUnrotatedSheetSize(for settings: CADPlotSettings) -> (width: Double, height: Double) {
+        let s = unitDivisor(for: settings)
+        return (settings.paperWidthMM / s, settings.paperHeightMM / s)
+    }
+
     /// Rotated sheet size. Portrait (73=0/2): as-is; Landscape (73=1/3): swapped.
     public static func sheetSize(for settings: CADPlotSettings) -> (width: Double, height: Double) {
         let u = unrotatedSheetSize(for: settings)
+        switch settings.plotRotation {
+        case 1, 3: return (u.height, u.width)
+        default: return u
+        }
+    }
+
+    /// Physical rotated sheet size in paper-space units (without plot-scale multiplier 143/142).
+    public static func physicalSheetSize(for settings: CADPlotSettings) -> (width: Double, height: Double) {
+        let u = physicalUnrotatedSheetSize(for: settings)
         switch settings.plotRotation {
         case 1, 3: return (u.height, u.width)
         default: return u
@@ -57,6 +72,21 @@ public enum PaperSheetGeometry {
         let b = settings.marginBM / s * k
         let r = settings.marginRM / s * k
         let t = settings.marginTM / s * k
+        switch settings.plotRotation {
+        case 1: return (t, l, b, r) // 90° CCW
+        case 2: return (r, t, l, b) // 180°
+        case 3: return (b, r, t, l) // 90° CW
+        default: return (l, b, r, t) // 0° portrait
+        }
+    }
+
+    /// Physical unprintable margins [L, B, R, T] in paper units (without plot-scale multiplier 143/142).
+    public static func physicalPermutedMargins(for settings: CADPlotSettings) -> (left: Double, bottom: Double, right: Double, top: Double) {
+        let s = unitDivisor(for: settings)
+        let l = settings.marginLM / s
+        let b = settings.marginBM / s
+        let r = settings.marginRM / s
+        let t = settings.marginTM / s
         switch settings.plotRotation {
         case 1: return (t, l, b, r) // 90° CCW
         case 2: return (r, t, l, b) // 180°

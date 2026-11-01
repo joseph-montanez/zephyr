@@ -3289,29 +3289,44 @@ public final class EngineRenderer {
             let p = EngineCameraManager.worldToScreen(worldX: wx, worldY: wy, cam: cam)
             return ImVec2(x: p.x, y: p.y)
         }
+        // In Zephyr world space, paper-space Y is negated so the sheet frame
+        // sits at [minX, maxX] x [-maxY, -minY], matching imported entities.
+        let sheetWorldMinX = rects.paper.minX
+        let sheetWorldMaxX = rects.paper.maxX
+        let sheetWorldMinY = -rects.paper.maxY
+        let sheetWorldMaxY = -rects.paper.minY
+
         // Cull when the whole sheet is off-screen.
         let vp = engine.camera.worldViewportRect(windowWidth: Int32(engine.windowWidth),
                                                  windowHeight: Int32(engine.windowHeight))
-        if rects.paper.maxX < vp.minX || rects.paper.minX > vp.maxX
-            || rects.paper.maxY < vp.minY || rects.paper.minY > vp.maxY { return }
+        if sheetWorldMaxX < vp.minX || sheetWorldMinX > vp.maxX
+            || sheetWorldMaxY < vp.minY || sheetWorldMinY > vp.maxY { return }
 
         let drawList = igGetBackgroundDrawList(nil)
-        let pMin = toScreen(rects.paper.minX, rects.paper.minY)
-        let pMax = toScreen(rects.paper.maxX, rects.paper.maxY)
+        let pTopLeft = toScreen(sheetWorldMinX, sheetWorldMinY)
+        let pBottomRight = toScreen(sheetWorldMaxX, sheetWorldMaxY)
+        let pMin = ImVec2(x: min(pTopLeft.x, pBottomRight.x), y: min(pTopLeft.y, pBottomRight.y))
+        let pMax = ImVec2(x: max(pTopLeft.x, pBottomRight.x), y: max(pTopLeft.y, pBottomRight.y))
         // Drop shadow (screen-space offset so it stays constant under zoom).
+        // Exterior right and bottom strips only, so the shadow never tints or occludes the drawing interior.
         let shadow: Float = 8
         ImDrawListAddRectFilled(drawList,
-            ImVec2(x: pMin.x + shadow, y: pMin.y + shadow),
+            ImVec2(x: pMax.x, y: pMin.y + shadow),
             ImVec2(x: pMax.x + shadow, y: pMax.y + shadow),
             makeImCol32(r: 0, g: 0, b: 0, a: 70), 0.0, 0)
-        // Paper fill + thin edge (visible on both white and dark canvases).
-        ImDrawListAddRectFilled(drawList, pMin, pMax,
-            makeImCol32(r: 255, g: 255, b: 255, a: 255), 0.0, 0)
+        ImDrawListAddRectFilled(drawList,
+            ImVec2(x: pMin.x + shadow, y: pMax.y),
+            ImVec2(x: pMax.x, y: pMax.y + shadow),
+            makeImCol32(r: 0, g: 0, b: 0, a: 70), 0.0, 0)
+        // Thin grey sheet edge (the sheet canvas background is already cleared to paper white;
+        // do NOT draw an opaque filled rect here, as ImGui renders over the GPU CAD geometry pass).
         ImDrawListAddRect(drawList, pMin, pMax,
             makeImCol32(r: 150, g: 150, b: 150, a: 255), 0.0, 1.0, 0)
         // Dashed printable boundary.
-        let dMin = toScreen(rects.printable.minX, rects.printable.minY)
-        let dMax = toScreen(rects.printable.maxX, rects.printable.maxY)
+        let dTopLeft = toScreen(rects.printable.minX, -rects.printable.maxY)
+        let dBottomRight = toScreen(rects.printable.maxX, -rects.printable.minY)
+        let dMin = ImVec2(x: min(dTopLeft.x, dBottomRight.x), y: min(dTopLeft.y, dBottomRight.y))
+        let dMax = ImVec2(x: max(dTopLeft.x, dBottomRight.x), y: max(dTopLeft.y, dBottomRight.y))
         let dashCol = makeImCol32(r: 110, g: 110, b: 110, a: 255)
         let dashLen: Float = 7, gapLen: Float = 5
         var segs = 0

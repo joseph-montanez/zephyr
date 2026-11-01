@@ -105,6 +105,46 @@
             "target": "Zephyr",
             "configuration": "release",
             "preLaunchTask": "swift: Build Release Zephyr (Engine\\EngineAsBuilt)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:as-built}/Engine\\EngineAsBuilt",
+            "name": "Debug ZephyrBench (Engine\\EngineAsBuilt)",
+            "target": "ZephyrBench",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug ZephyrBench (Engine\\EngineAsBuilt)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:as-built}/Engine\\EngineAsBuilt",
+            "name": "Release ZephyrBench (Engine\\EngineAsBuilt)",
+            "target": "ZephyrBench",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release ZephyrBench (Engine\\EngineAsBuilt)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:as-built}/Engine\\EngineAsBuilt",
+            "name": "Debug LispGen (Engine\\EngineAsBuilt)",
+            "target": "LispGen",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug LispGen (Engine\\EngineAsBuilt)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:as-built}/Engine\\EngineAsBuilt",
+            "name": "Release LispGen (Engine\\EngineAsBuilt)",
+            "target": "LispGen",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release LispGen (Engine\\EngineAsBuilt)"
         }
     ]
 }

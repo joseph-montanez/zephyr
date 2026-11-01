@@ -116,4 +116,145 @@ final class PDFExportPlotModeTests: XCTestCase {
         let legacy = PDFExporter.orderForDrawViewportsFirst(items, enabled: false)
         XCTAssertEqual(legacy.count, 2)
     }
+
+    func testPlotFrameCustomScaleKeepsPhysicalPageSize() throws {
+        var ps = a3Settings()
+        ps.paperWidthMM = 296.926
+        ps.paperHeightMM = 420.116
+        ps.plotRotation = 1 // Landscape
+        ps.customScaleNumerator = 1.0
+        ps.customScaleDenominator = 5.0 // 1:5 custom scale
+        ps.useStandardScale = false
+        let frame = try XCTUnwrap(PDFExporter.plotFrame(settings: ps, worldBounds: (-17.52, -1390, 1890, 0)))
+        // Must stay physical A3 Landscape (420.12 x 296.93 mm in points), NOT 5x larger
+        XCTAssertEqual(frame.pageW, 420.116 * 72.0 / 25.4, accuracy: 1.0)
+        XCTAssertEqual(frame.pageH, 296.926 * 72.0 / 25.4, accuracy: 1.0)
+    }
+
+    func testStandaloneTextRespectsTransformScaleInPDFExport() throws {
+        let doc = makeSheetDoc()
+        let layerID = doc.allLayers.first!.handle
+        var xdata: [String: XDataValue] = [:]
+        xdata["dxf.text"] = .string("TEST LABEL")
+        xdata["dxf.textHeight"] = .double(17.5)
+        let scale = 0.0056618
+        let transform = Transform3D.scaled(by: Vector3(x: scale, y: scale, z: 1.0))
+        let textEntity = CADEntity(
+            layerID: layerID,
+            localGeometry: [],
+            transform: transform,
+            xdata: xdata
+        )
+        doc.addEntity(textEntity)
+        let items = PDFExporter.collectItems(document: doc)
+        XCTAssertEqual(items.count, 1)
+        switch items[0] {
+        case .textStrokes(let prims, _):
+            guard let bounds = PDFExporter.primsBounds(prims) else {
+                XCTFail("Missing text strokes bounds")
+                return
+            }
+            let height = bounds.maxY - bounds.minY
+            // Text height should be ~17.5 * 0.0056618 = 0.099, NOT raw 17.5
+            XCTAssertLessThan(height, 0.5, "Text height must be scaled by transform")
+        case .textFallback(_, _, _, let h, _):
+            XCTAssertLessThan(h, 0.5, "Fallback text height must be scaled by transform")
+        default:
+            XCTFail("Expected text strokes or fallback")
+        }
+    }
+
+    func testA000217DXFExportProducesA3LandscapePDF() throws {
+        let dxfPath = "C:/dev/dxf/A_000217.dxf"
+        guard FileManager.default.fileExists(atPath: dxfPath) else { return }
+        let imported = try DXFImporter.importDXFViews(filePath: dxfPath)
+        XCTAssertGreaterThanOrEqual(imported.views.count, 2)
+        // Model view should have plotSettings from Model LAYOUT
+        let modelView = try XCTUnwrap(imported.views.first(where: { $0.kind == .model }))
+        XCTAssertNotNil(modelView.plotSettings)
+        XCTAssertEqual(modelView.plotSettings?.canonicalMediaName, "A3")
+
+        // Layout1 should inherit fallback A3 landscape page setup
+        let layoutView = try XCTUnwrap(imported.views.first(where: { $0.kind == .sheet }))
+        XCTAssertNotNil(layoutView.plotSettings)
+        XCTAssertEqual(layoutView.plotSettings?.canonicalMediaName, "A3")
+        XCTAssertEqual(layoutView.plotSettings?.plotRotation, 1)
+
+        // Build document and export to PDF
+        let doc = CADDocument()
+        doc.importLayersBlocksEntities(layers: imported.layers, blocks: imported.blocks, entities: layoutView.entities)
+        doc.plotSettings = layoutView.plotSettings
+        doc.layoutSettings = layoutView.layoutSettings
+        doc.unit = (layoutView.layoutSettings?.plotPaperUnits == 0) ? .inch : .millimeter
+
+        let pdfData = try PDFExporter.generatePDF(document: doc, backgroundColor: .white)
+        let pdfString = String(data: pdfData, encoding: .isoLatin1) ?? ""
+        XCTAssertTrue(pdfString.contains("/MediaBox [0 0 1191 842]"), "Must be A3 Landscape 1191x842 pt")
+    }
+
+    func testPirateShipDXFLayoutsImportAndScaleCorrectly() throws {
+        let dxfPath = "C:/dev/dxf/186-841 - KOMPAN, Inc. - Pirate Ship.dxf"
+        guard FileManager.default.fileExists(atPath: dxfPath) else { return }
+        let imported = try DXFImporter.importDXFViews(filePath: dxfPath)
+
+        // CADdetails layout has configured paper (2450x3150 Pixels at 1:0.45 scale)
+        let cadDetails = try XCTUnwrap(imported.views.first(where: { $0.name == "CADdetails" }))
+        XCTAssertEqual(cadDetails.kind, .sheet)
+        let cadPs = try XCTUnwrap(cadDetails.plotSettings)
+        XCTAssertEqual(cadPs.paperWidthMM, 2450.0)
+        XCTAssertEqual(cadPs.paperHeightMM, 3150.0)
+        XCTAssertEqual(cadPs.customScaleDenominator, 0.45)
+        let cadRects = try XCTUnwrap(PaperSheetGeometry.overlayRects(for: cadPs))
+        XCTAssertEqual(cadRects.paper.maxX - cadRects.paper.minX, 1102.5, accuracy: 1e-4)
+        XCTAssertEqual(cadRects.paper.maxY - cadRects.paper.minY, 1417.5, accuracy: 1e-4)
+        XCTAssertGreaterThan(cadDetails.entities.count, 1000, "CADdetails should have projected CAD geometry")
+
+        // Layout2 layout was unconfigured, should inherit normalized Letter 1:1 setup
+        let layout2 = try XCTUnwrap(imported.views.first(where: { $0.name == "Layout2" }))
+        XCTAssertEqual(layout2.kind, .sheet)
+        let l2Ps = try XCTUnwrap(layout2.plotSettings)
+        XCTAssertEqual(l2Ps.plotType, 5, "Unconfigured layout should normalize to Layout plotType")
+        XCTAssertEqual(l2Ps.customScaleDenominator, 1.0, "Unconfigured layout must not inherit model 27.58x scale")
+        XCTAssertEqual(l2Ps.plotOriginXMM, 0.0)
+        XCTAssertEqual(l2Ps.plotOriginYMM, 0.0)
+        let l2Rects = try XCTUnwrap(PaperSheetGeometry.overlayRects(for: l2Ps))
+        XCTAssertEqual(l2Rects.paper.maxX - l2Rects.paper.minX, 215.9 / 25.4, accuracy: 1e-3)
+        XCTAssertEqual(l2Rects.paper.maxY - l2Rects.paper.minY, 279.4 / 25.4, accuracy: 1e-3)
+
+        // Verify CADdetails PDF export places geometry onto the 2450x3150 page
+        let doc = CADDocument()
+        doc.importLayersBlocksEntities(layers: imported.layers, blocks: imported.blocks, entities: cadDetails.entities)
+        doc.plotSettings = cadPs
+        doc.layoutSettings = cadDetails.layoutSettings
+
+        let frame = try XCTUnwrap(PDFExporter.plotFrame(settings: cadPs, worldBounds: nil))
+        XCTAssertEqual(frame.pageW, 2450.0, accuracy: 1e-3)
+        XCTAssertEqual(frame.pageH, 3150.0, accuracy: 1e-3)
+        XCTAssertEqual(frame.scale, 1.0 / 0.45, accuracy: 1e-4)
+        XCTAssertEqual(frame.tx, 0.0, accuracy: 1e-3)
+        XCTAssertEqual(frame.ty, -25.0, accuracy: 1e-3)
+
+        // Verify transformed entities land inside [0, 2450] x [0, 3150]
+        var devMinX = Double.infinity, devMinY = Double.infinity
+        var devMaxX = -Double.infinity, devMaxY = -Double.infinity
+        for entity in cadDetails.entities {
+            guard let bb = entity.worldBoundingBox else { continue }
+            // Under PDF CTM: device.x = scale * worldX + tx; device.y = -scale * worldY + ty
+            let x0 = frame.scale * bb.min.x + frame.tx
+            let x1 = frame.scale * bb.max.x + frame.tx
+            let y0 = -frame.scale * bb.max.y + frame.ty
+            let y1 = -frame.scale * bb.min.y + frame.ty
+            devMinX = min(devMinX, min(x0, x1))
+            devMaxX = max(devMaxX, max(x0, x1))
+            devMinY = min(devMinY, min(y0, y1))
+            devMaxY = max(devMaxY, max(y0, y1))
+        }
+        XCTAssertGreaterThan(devMinX, 0.0, "Drawing content should be inside page left edge")
+        XCTAssertLessThan(devMaxX, frame.pageW, "Drawing content should be inside page right edge")
+        XCTAssertGreaterThan(devMinY, 0.0, "Drawing content should be inside page bottom edge")
+        XCTAssertLessThan(devMaxY, frame.pageH, "Drawing content should be inside page top edge")
+
+        let pdfData = try PDFExporter.generatePDF(document: doc, backgroundColor: .white)
+        XCTAssertGreaterThan(pdfData.count, 1000)
+    }
 }

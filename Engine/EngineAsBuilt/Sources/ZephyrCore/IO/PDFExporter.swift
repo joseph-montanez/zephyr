@@ -141,6 +141,11 @@ public enum PDFExporter {
         var clipMinY: Double
         var clipMaxX: Double
         var clipMaxY: Double
+        /// Printable clip rect in PDF device points (emitted before cm).
+        var clipPageX: Double?
+        var clipPageY: Double?
+        var clipPageW: Double?
+        var clipPageH: Double?
     }
 
     /// Points per paper-space unit for a plot-paper-units code.
@@ -165,10 +170,10 @@ public enum PDFExporter {
     ) -> PlotFrame? {
         guard settings.paperWidthMM > 0, settings.paperHeightMM > 0 else { return nil }
         let ppu = pointsPerPaperUnit(settings.plotPaperUnits)
-        let sheet = PaperSheetGeometry.sheetSize(for: settings)
-        var pageW = sheet.width * ppu
-        var pageH = sheet.height * ppu
-        // Landscape swap is inside sheetSize; guard degenerate sizes.
+        let physSheet = PaperSheetGeometry.physicalSheetSize(for: settings)
+        var pageW = physSheet.width * ppu
+        var pageH = physSheet.height * ppu
+        // Landscape swap is inside physicalSheetSize; guard degenerate sizes.
         pageW = max(pageW, 10.0)
         pageH = max(pageH, 10.0)
 
@@ -184,7 +189,12 @@ public enum PDFExporter {
             factor = settings.effectiveScaleFactor
         }
 
-        // Plot-area world rect + printable rect (paper-space coords).
+        // Physical printable margins (paper units)
+        let physM = PaperSheetGeometry.physicalPermutedMargins(for: settings)
+        let printW = max(physSheet.width - physM.left - physM.right, 1e-9)
+        let printH = max(physSheet.height - physM.bottom - physM.top, 1e-9)
+
+        // Also compute scaled printable rect for backward-compatible clipMin/Max test assertions
         let printable = PaperSheetGeometry.printableRect(for: settings)
         let origin = PaperSheetGeometry.paperSpaceOrigin(for: settings, plotOffset: plotOffset)
         func shift(_ r: (minX: Double, minY: Double, maxX: Double, maxY: Double))
@@ -192,13 +202,36 @@ public enum PDFExporter {
             (r.minX - origin.x, r.minY - origin.y, r.maxX - origin.x, r.maxY - origin.y)
         }
         let printPS = shift((printable.minX, printable.minY, printable.maxX, printable.maxY))
+
+        // For plotType == 5 (Layout), map the paper frame directly to the PDF page:
+        // DXF paper-space coordinates [minX, maxX] x [minY, maxY] map to [0, pageW] x [0, pageH].
+        // This ensures what is shown on the canvas sheet overlay is exactly what prints to the PDF page.
+        if settings.plotType == 5,
+           let rects = PaperSheetGeometry.overlayRects(for: settings, plotOffset: plotOffset) {
+            let paperW = max(rects.paper.maxX - rects.paper.minX, 1e-9)
+            let paperH = max(rects.paper.maxY - rects.paper.minY, 1e-9)
+            let scale = min(pageW / paperW, pageH / paperH)
+            let tx = -scale * rects.paper.minX
+            let ty = -scale * rects.paper.minY
+
+            let clipPageX = (rects.printable.minX - rects.paper.minX) * scale
+            let clipPageY = (rects.printable.minY - rects.paper.minY) * scale
+            let clipPageW = (rects.printable.maxX - rects.printable.minX) * scale
+            let clipPageH = (rects.printable.maxY - rects.printable.minY) * scale
+
+            return PlotFrame(pageW: pageW, pageH: pageH, scale: scale,
+                             tx: tx, ty: ty,
+                             clipMinX: rects.printable.minX, clipMinY: rects.printable.minY,
+                             clipMaxX: rects.printable.maxX, clipMaxY: rects.printable.maxY,
+                             clipPageX: clipPageX, clipPageY: clipPageY,
+                             clipPageW: clipPageW, clipPageH: clipPageH)
+        }
+
         let areaPS: (minX: Double, minY: Double, maxX: Double, maxY: Double)?
         switch settings.plotType {
-        case 5, 2: // Layout / Limits → printable / paper corners
-            areaPS = settings.plotType == 5 ? printPS : {
-                let l = PaperSheetGeometry.syncedLimits(for: settings)
-                return (l.min.x, l.min.y, l.max.x, l.max.y)
-            }()
+        case 2: // Limits
+            let l = PaperSheetGeometry.syncedLimits(for: settings)
+            areaPS = (l.min.x, l.min.y, l.max.x, l.max.y)
         case 4: // Window
             areaPS = (settings.plotWindowMinX, settings.plotWindowMinY,
                         settings.plotWindowMaxX, settings.plotWindowMaxY)
@@ -214,8 +247,6 @@ public enum PDFExporter {
         let area = areaPS ?? printPS
         let areaW = max(area.maxX - area.minX, 1e-9)
         let areaH = max(area.maxY - area.minY, 1e-9)
-        let printW = max(printPS.maxX - printPS.minX, 1e-9)
-        let printH = max(printPS.maxY - printPS.minY, 1e-9)
 
         let plotScale: Double
         if factor.isNaN {
@@ -251,10 +282,18 @@ public enum PDFExporter {
         let tx = devOX
         let ty = devOY + area.maxY * scale
         _ = (transparencyOverride, plotTable)
+
+        let clipPageX = physM.left * ppu
+        let clipPageY = physM.bottom * ppu
+        let clipPageW = printW * ppu
+        let clipPageH = printH * ppu
+
         return PlotFrame(pageW: pageW, pageH: pageH, scale: scale,
-                           tx: tx, ty: ty,
-                           clipMinX: printPS.minX, clipMinY: printPS.minY,
-                           clipMaxX: printPS.maxX, clipMaxY: printPS.maxY)
+                         tx: tx, ty: ty,
+                         clipMinX: printPS.minX, clipMinY: printPS.minY,
+                         clipMaxX: printPS.maxX, clipMaxY: printPS.maxY,
+                         clipPageX: clipPageX, clipPageY: clipPageY,
+                         clipPageW: clipPageW, clipPageH: clipPageH)
     }
 
     /// Apply plot-style table mapping + lineweight/transparency policy to
@@ -440,6 +479,7 @@ public enum PDFExporter {
         let pageH: Double
         let margin: Double
         var plotClip: (Double, Double, Double, Double)? = nil
+        var plotClipPage: (x: Double, y: Double, w: Double, h: Double)? = nil
         var plotTX: Double? = nil
         var plotTY: Double? = nil
 
@@ -472,6 +512,10 @@ public enum PDFExporter {
             plotTX = frame.tx
             plotTY = frame.ty
             plotClip = (frame.clipMinX, frame.clipMinY, frame.clipMaxX, frame.clipMaxY)
+            if let cx = frame.clipPageX, let cy = frame.clipPageY,
+               let cw = frame.clipPageW, let ch = frame.clipPageH {
+                plotClipPage = (x: cx, y: cy, w: cw, h: ch)
+            }
         } else if let layout = document.layoutSettings, layout.paperWidthMM > 0, layout.paperHeightMM > 0 {
             var pw = layout.paperWidthMM * 72.0 / 25.4
             var ph = layout.paperHeightMM * 72.0 / 25.4
@@ -539,7 +583,7 @@ public enum PDFExporter {
                      minX: minX, maxX: maxX, minY: minY, maxY: maxY,
                      pageW: pageW, pageH: pageH, isLightBackground: isLightBackground, to: content,
                      plotTX: plotTX, plotTY: plotTY, plotScale: plotTX == nil ? nil : scale,
-                     clipWorld: plotClip)
+                     clipWorld: plotClip, clipPageRect: plotClipPage)
         w.beginObject(4)
         w.writeCompressedStream(content.build())
         w.endObject()
@@ -574,7 +618,7 @@ public enum PDFExporter {
             scale *= min((maxPagePoints - margin * 2) / (w * scale),
                          (maxPagePoints - margin * 2) / (h * scale))
         }
-        if w * scale + margin * 2 < minPageW || h * scale + margin * 2 < minPageH {
+        if w * scale + margin * 2 < minPageW && h * scale + margin * 2 < minPageH {
             scale *= min((minPageW - margin * 2) / (w * scale),
                          (minPageH - margin * 2) / (h * scale))
         }
@@ -646,14 +690,25 @@ public enum PDFExporter {
                 } else {
                     styleName = nil
                 }
+                let textStyle = CADTextStyle.resolve(styleName, in: document.textStyles)
                 let fontFile = CADFontManager.resolveTextStyleFont(
                     styleName: styleName,
                     textStyleFonts: document.textStyleFonts)
-                let formattedSHXFont = CADFontManager.resolveFormattedSHXFont(
+                let formattedTTFPath = CADFontManager.resolveFormattedTTFPath(
                     formatted,
                     styleName: styleName,
                     textStyleFonts: document.textStyleFonts)
+                let formattedSHXFont = formattedTTFPath == nil
+                    ? CADFontManager.resolveFormattedSHXFont(
+                        formatted,
+                        styleName: styleName,
+                        textStyleFonts: document.textStyleFonts)
+                    : nil
+                let exactStyleSHXFont = CADFontManager.getOrLoadSHXFont(
+                    filename: fontFile,
+                    allowFallback: false)
                 let shapeFont = formattedSHXFont
+                    ?? (formattedTTFPath == nil ? exactStyleSHXFont : nil)
                     ?? CADFontManager.getOrLoadSHXFont(filename: fontFile)
 
                 let alignH: Int
@@ -665,6 +720,65 @@ public enum PDFExporter {
                 let mtextWidth: Double?
                 if let mw = entity.xdata["dxf.mtextWidth"], case .double(let v) = mw { mtextWidth = v }
                 else { mtextWidth = nil }
+
+                // Basis vectors & scales from entity.transform (mirrors CADRendererBridge)
+                let origin = entity.transform.position
+                let localX = Vector3(x: 1, y: 0, z: 0)
+                let localY = Vector3(x: 0, y: 1, z: 0)
+                let worldX = entity.transform.transformPoint(localX) - origin
+                let worldY = entity.transform.transformPoint(localY) - origin
+                let heightScale = max(worldY.magnitude, 1e-12)
+                let widthScale = max(worldX.magnitude, 1e-12)
+                let worldRotation = atan2(worldX.y, worldX.x)
+
+                let heightOverride: Bool
+                if let value = entity.xdata["dxf.textHeightOverride"], case .int(let flag) = value {
+                    heightOverride = flag != 0
+                } else {
+                    heightOverride = entity.xdata["dxf.textEntityType"] != nil
+                }
+
+                let isMTextEntity: Bool
+                if let entityType = entity.xdata["dxf.textEntityType"], case .string(let value) = entityType {
+                    isMTextEntity = value.uppercased() == "MTEXT"
+                } else {
+                    isMTextEntity = false
+                }
+
+                let widthFactor: Double
+                if !isMTextEntity, let width = entity.xdata["dxf.textWidthScale"], case .double(let value) = width, value > 0 {
+                    widthFactor = value
+                } else {
+                    widthFactor = 1.0
+                }
+
+                let widthFactorOverride: Bool
+                if !isMTextEntity, let value = entity.xdata["dxf.textWidthScaleOverride"], case .int(let flag) = value {
+                    widthFactorOverride = flag != 0
+                } else {
+                    widthFactorOverride = !isMTextEntity && abs(widthFactor - 1.0) > 1e-12
+                }
+
+                let oblique: Double
+                if let value = entity.xdata["dxf.textOblique"], case .double(let angle) = value {
+                    oblique = angle
+                } else {
+                    oblique = 0
+                }
+
+                let obliqueOverride: Bool
+                if !isMTextEntity, let value = entity.xdata["dxf.textObliqueOverride"], case .int(let flag) = value {
+                    obliqueOverride = flag != 0
+                } else {
+                    obliqueOverride = !isMTextEntity && abs(oblique) > 1e-12
+                }
+
+                let baseWidthFactor = widthFactorOverride ? widthFactor : textStyle.widthFactor
+                let effectiveWidthFactor = baseWidthFactor * widthScale / heightScale
+                let effectiveHeight = (heightOverride || textStyle.fixedHeight <= 0) ? height : textStyle.fixedHeight
+                let worldHeight = effectiveHeight * heightScale
+                let effectiveOblique = obliqueOverride ? oblique : textStyle.obliqueAngle
+                let worldWidth = mtextWidth.map { $0 * widthScale }
 
                 if let font = shapeFont {
                     let lineSpacingFactor: Double
@@ -684,34 +798,51 @@ public enum PDFExporter {
                         lineSpacingStyle = 1
                     }
                     let prims: [CADPrimitive]
-                    if let formatted {
+                    if var formatted {
+                        let localHeightScale = effectiveHeight / max(height, 1e-12)
+                        formatted.styleName = textStyle.name
+                        formatted.defaultFont = fontFile
+                        formatted.defaultHeight *= localHeightScale * heightScale
+                        for paragraphIndex in formatted.paragraphs.indices {
+                            for runIndex in formatted.paragraphs[paragraphIndex].runs.indices {
+                                if let runHeight = formatted.paragraphs[paragraphIndex].runs[runIndex].height {
+                                    formatted.paragraphs[paragraphIndex].runs[runIndex].height = runHeight * localHeightScale * heightScale
+                                }
+                                if formatted.paragraphs[paragraphIndex].runs[runIndex].oblique == nil {
+                                    formatted.paragraphs[paragraphIndex].runs[runIndex].oblique = effectiveOblique
+                                }
+                            }
+                        }
                         prims = font.renderFormattedText(
                             formatted,
-                            origin: entity.transform.position,
-                            rotation: entity.transform.rotation,
+                            origin: origin,
+                            rotation: worldRotation,
                             alignH: alignH,
                             alignV: alignV,
-                            maxWidth: mtextWidth,
+                            widthFactor: effectiveWidthFactor,
+                            maxWidth: worldWidth,
                             lineSpacingFactor: lineSpacingFactor,
                             lineSpacingStyle: lineSpacingStyle,
                             textStyleFonts: document.textStyleFonts)
                     } else {
                         prims = font.renderText(
                             displayText,
-                            origin: entity.transform.position,
-                            height: height,
-                            rotation: entity.transform.rotation,
+                            origin: origin,
+                            height: worldHeight,
+                            rotation: worldRotation,
                             alignH: alignH,
                             alignV: alignV,
-                            maxWidth: mtextWidth)
+                            widthFactor: effectiveWidthFactor,
+                            obliqueAngle: effectiveOblique,
+                            maxWidth: worldWidth)
                     }
                     items.append(.textStrokes(prims: prims, color: entityColor))
                 } else {
                     items.append(.textFallback(
                         text: displayText,
-                        position: entity.transform.position,
-                        rotation: entity.transform.rotation,
-                        height: height,
+                        position: origin,
+                        rotation: worldRotation,
+                        height: worldHeight,
                         color: entityColor))
                 }
                 continue   // NEVER fall through to geometry — the .text primitive
@@ -759,7 +890,8 @@ public enum PDFExporter {
         pageW: Double = 0, pageH: Double = 0, isLightBackground: Bool = false,
         to cb: PDFContentBuilder,
         plotTX: Double? = nil, plotTY: Double? = nil, plotScale: Double? = nil,
-        clipWorld: (Double, Double, Double, Double)? = nil
+        clipWorld: (Double, Double, Double, Double)? = nil,
+        clipPageRect: (x: Double, y: Double, w: Double, h: Double)? = nil
     ) {
         // Y-FLIPPING page CTM: engine Y-down → PDF Y-up.
         //   device.x =  scale * world.x + tx
@@ -771,9 +903,13 @@ public enum PDFExporter {
         if let plotScale, let plotTX, let plotTY {
             tx = plotTX
             ty = plotTY
+            if let clip = clipPageRect {
+                cb.num(clip.x); cb.num(clip.y); cb.num(clip.w); cb.num(clip.h)
+                cb.raw("re W n\n")
+            }
             cb.num(plotScale); cb.num(0); cb.num(0); cb.num(-plotScale)
             cb.num(tx); cb.num(ty); cb.raw("cm\n")
-            if let clipWorld {
+            if clipPageRect == nil, let clipWorld {
                 let cw = clipWorld.2 - clipWorld.0
                 let ch = clipWorld.3 - clipWorld.1
                 cb.num(clipWorld.0); cb.num(clipWorld.1); cb.num(cw); cb.num(ch)
