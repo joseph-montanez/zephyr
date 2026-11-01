@@ -2,6 +2,11 @@
 
 Monthly digest condensed from the git history. Instead of per-release notes, all changes are grouped by calendar month and summarized under **New Features** (brand-new capabilities), **New Commands** (new drawing/modify commands on existing features), **Improvements** (refinements to existing features), **DXF & File Formats**, **Bug Fixes**, **Maintenance** (toolchain, packaging, CI, housekeeping), and **Performance**. Fixes and refinements made to a feature during the same month it ships are folded into that feature's entry rather than listed again.
 
+## November 2026
+
+### Improvements
+- **LAYOUT goes modal like AutoCAD** — bare `LAYOUT` no longer cycles sheets; it prompts `Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:` and stays active across the option/name steps, so `LAYOUT` → `N` → `<name>` creates and activates a sheet just like AutoCAD. `NEW`/`DELETE`/`RENAME`/`COPY`/`SET` with a missing name now prompt for it instead of printing usage, and a bare layout name or sheet index at the prompt switches to that sheet (`Esc` cancels)
+
 ## October 2026
 
 ### New Features

@@ -492,6 +492,14 @@ public final class CADCommandProcessor {
         }
     }
 
+    // MARK: LAYOUT Interactive State
+    /// Pending LAYOUT sub-operation while `activeCommand == "LAYOUT"`.
+    /// nil = awaiting option (Copy/Delete/New/Rename/SAveas/Set/Template/?).
+    /// Otherwise one of: NEW, SET, DELETE, COPY_SRC, COPY_DST, RENAME_SRC, RENAME_DST.
+    public internal(set) var layoutPendingOp: String? = nil
+    /// Auxiliary stored name for two-step LAYOUT RENAME/COPY (old/source name).
+    public internal(set) var layoutPendingName: String? = nil
+
     // MARK: Feature Command State
 
     /// Currently active feature command (class-bound protocol reference).
@@ -685,6 +693,19 @@ public final class CADCommandProcessor {
         self.engine = engine
     }
 
+    /// Snapshot the registry plot sysvars for `UserSettings` persistence.
+    /// Order: PLOTOFFSET, PAPERUPDATE, PLOTROTMODE, PLOTTRANSPARENCYOVERRIDE.
+    /// Cross-module (Zephyr UI) accessor over the internal var store.
+    public func plotRegistrySnapshot() -> (Int, Int, Int, Int) {
+        lispVars.plotRegistrySnapshot()
+    }
+
+    /// Seed the registry plot sysvars from persisted `UserSettings`.
+    public func applyPlotRegistry(offset: Int, update: Int, rotMode: Int, transparency: Int) {
+        lispVars.applyPlotRegistry(offset: offset, update: update,
+                                    rotMode: rotMode, transparency: transparency)
+    }
+
     // MARK: - Feature Command Registry
 
     /// Register a feature command factory under a canonical name and optional aliases.
@@ -776,6 +797,13 @@ public final class CADCommandProcessor {
         // other command may start. Must precede lastExecutedCommand so a
         // rejected command never poisons spacebar repeat.
         if rejectCommandIfLispActive(text) { return }
+        // AutoCAD-style LAYOUT prompts stay modal: while LAYOUT is
+        // awaiting an option/name, every line (including bare Enter)
+        // is consumed as the prompt response.
+        if activeCommand == "LAYOUT", let eng = engine {
+            handleLayoutPromptInput(text, engine: eng)
+            return
+        }
         var upper = text.uppercased().trimmingCharacters(in: .whitespaces)
         // User PGP aliases resolve before everything (user wins).
         upper = userAliases[upper] ?? upper
@@ -788,7 +816,7 @@ public final class CADCommandProcessor {
         lastExecutedCommand = text
 
         if handleDrawingViewCommand(text) {
-            clearCommand()
+            if activeCommand != "LAYOUT" { clearCommand() }
             return
         }
 
@@ -2141,16 +2169,19 @@ public final class CADCommandProcessor {
             }
             return true
         case "LAYOUT", "SHEET", "LO":
-            if handleLayoutLifecycle(argument, engine: engine) { return true }
-            let sheets = engine.tabManager.availableViews.enumerated().filter { $0.element.kind == .sheet }
+            if handleLayoutLifecycle(argument, engine: engine) {
+                // Single-shot forms (NEW name, DELETE name, ...) clear
+                // themselves on success; interactive prompts leave
+                // activeCommand == "LAYOUT" so the caller preserves it.
+                return true
+            }
             if argument.isEmpty {
-                if engine.tabManager.cycleView(direction: 1, sheetsOnly: true) {
-                    engine.zoomExtents()
-                    print("[CAD] Sheet: \(engine.tabManager.activeViewName ?? "")")
-                } else {
-                    print("[CAD] This drawing has no sheet layouts.")
-                }
+                // AutoCAD: bare LAYOUT prompts for an option, it does not
+                // cycle sheets. Stay modal until the option/name completes.
+                enterLayoutOptionPrompt()
+                return true
             } else {
+                let sheets = engine.tabManager.availableViews.enumerated().filter { $0.element.kind == .sheet }
                 let targetIndex: Int?
                 if let sheetNumber = Int(argument),
                    sheetNumber >= 1, sheetNumber <= sheets.count {
@@ -2311,30 +2342,51 @@ public final class CADCommandProcessor {
                 print("[CAD] \(marker)\(index + 1): \(view.name)\(view.kind == .model ? " (Model)" : "")")
             }
             return true
-        case "NEW":
-            let name = tokens.count > 1 ? tokens[1...].joined(separator: " ") : nil
-            if manager.createLayout(named: name) {
+        case "NEW", "N":
+            let inlineName = tokens.count > 1 ? tokens[1...].joined(separator: " ") : nil
+            guard let inlineName, !inlineName.trimmingCharacters(in: .whitespaces).isEmpty else {
+                startCommand("LAYOUT", prompt: "Enter new layout name:")
+                layoutPendingOp = "NEW"
+                layoutPendingName = nil
+                print("[CAD] Enter new layout name:")
+                return true
+            }
+            if manager.createLayout(named: inlineName) {
                 engine.zoomExtents()
                 print("[CAD] Layout '\(manager.activeViewName ?? "")' created.")
             } else {
                 print("[CAD] LAYOUT NEW needs a unique, non-blank name.")
             }
             return true
-        case "RENAME", "REN":
-            guard tokens.count >= 3 else {
-                print("[CAD] Usage: LAYOUT RENAME <old> <new>.")
+        case "RENAME", "REN", "R":
+            if tokens.count >= 3 {
+                let newName = tokens[2...].joined(separator: " ")
+                if manager.renameLayout(from: tokens[1], to: newName) {
+                    print("[CAD] Renamed to '\(newName)'.")
+                } else {
+                    print("[CAD] Cannot rename '\(tokens[1])' (Model is fixed; names must be unique).")
+                }
                 return true
             }
-            let newName = tokens[2...].joined(separator: " ")
-            if manager.renameLayout(from: tokens[1], to: newName) {
-                print("[CAD] Renamed to '\(newName)'.")
-            } else {
-                print("[CAD] Cannot rename '\(tokens[1])' (Model is fixed; names must be unique).")
+            if tokens.count == 2 {
+                startCommand("LAYOUT", prompt: "Enter new layout name:")
+                layoutPendingOp = "RENAME_DST"
+                layoutPendingName = tokens[1]
+                print("[CAD] Enter new layout name:")
+                return true
             }
+            startCommand("LAYOUT", prompt: "Enter layout name to rename:")
+            layoutPendingOp = "RENAME_SRC"
+            layoutPendingName = nil
+            print("[CAD] Enter layout name to rename:")
             return true
-        case "DELETE", "DEL":
+            return true
+        case "DELETE", "DEL", "D":
             guard tokens.count >= 2 else {
-                print("[CAD] Usage: LAYOUT DELETE <name>.")
+                startCommand("LAYOUT", prompt: "Enter layout name to delete:")
+                layoutPendingOp = "DELETE"
+                layoutPendingName = nil
+                print("[CAD] Enter layout name to delete:")
                 return true
             }
             let name = tokens[1...].joined(separator: " ")
@@ -2345,21 +2397,268 @@ public final class CADCommandProcessor {
                 print("[CAD] Cannot delete '\(name)' (Model and the last view are kept).")
             }
             return true
-        case "COPY":
-            guard tokens.count >= 3 else {
-                print("[CAD] Usage: LAYOUT COPY <source> <new>.")
+        case "COPY", "C":
+            if tokens.count >= 3 {
+                let dst = tokens[2...].joined(separator: " ")
+                if manager.copyLayout(from: tokens[1], to: dst) {
+                    engine.zoomExtents()
+                    print("[CAD] Layout '\(dst)' copied.")
+                } else {
+                    print("[CAD] Cannot copy '\(tokens[1])' to '\(dst)' (source must be a sheet; names must be unique).")
+                }
                 return true
             }
-            let dst = tokens[2...].joined(separator: " ")
-            if manager.copyLayout(from: tokens[1], to: dst) {
-                engine.zoomExtents()
-                print("[CAD] Layout '\(dst)' copied.")
-            } else {
-                print("[CAD] Cannot copy '\(tokens[1])' to '\(dst)' (source must be a sheet; names must be unique).")
+            if tokens.count == 2 {
+                startCommand("LAYOUT", prompt: "Enter new layout name:")
+                layoutPendingOp = "COPY_DST"
+                layoutPendingName = tokens[1]
+                print("[CAD] Enter new layout name:")
+                return true
             }
+            startCommand("LAYOUT", prompt: "Enter layout to copy:")
+            layoutPendingOp = "COPY_SRC"
+            layoutPendingName = nil
+            print("[CAD] Enter layout to copy:")
+            return true
+        case "SET", "S":
+            if tokens.count > 1 {
+                let nm = tokens[1...].joined(separator: " ")
+                if setLayout(named: nm, engine: engine) { clearCommand() }
+                return true
+            }
+            startCommand("LAYOUT", prompt: "Enter layout name to make current:")
+            layoutPendingOp = "SET"
+            layoutPendingName = nil
+            print("[CAD] Enter layout name to make current:")
+            return true
+        case "SAVEAS", "SA":
+            print("[CAD] LAYOUT Saveas is not supported yet (use COPY).")
+            return true
+        case "TEMPLATE", "T":
+            print("[CAD] LAYOUT Template is not supported yet (use COPY).")
             return true
         default:
             return false
+        }
+    }
+
+    // MARK: - LAYOUT interactive prompts (AutoCAD-compatible)
+    private func enterLayoutOptionPrompt() {
+        startCommand("LAYOUT", prompt: "Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:")
+        layoutPendingOp = nil
+        layoutPendingName = nil
+        print("[CAD] Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:")
+    }
+
+    private func handleLayoutPromptInput(_ text: String, engine: PhrostEngine) {
+        var raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let up = raw.uppercased()
+        if up == "LAYOUT" || up == "SHEET" || up == "LO" {
+            raw = ""
+        } else if up.hasPrefix("LAYOUT ") || up.hasPrefix("SHEET ") {
+            let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let space = t.firstIndex(of: " ") {
+                raw = String(t[t.index(after: space)...]).trimmingCharacters(in: .whitespaces)
+            }
+        } else if up.hasPrefix("LO ") {
+            raw = String(raw.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+        }
+        if let pending = layoutPendingOp {
+            handleLayoutPendingResponse(pending: pending, raw: raw, engine: engine)
+            return
+        }
+        if raw.isEmpty {
+            layoutPendingOp = "SET"
+            commandPrompt = "Enter layout name to make current:"
+            print("[CAD] Enter layout name to make current:")
+            return
+        }
+        let parts = raw.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let keyword = parts.first?.uppercased() else {
+            commandPrompt = "Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:"
+            return
+        }
+        let inline = parts.count > 1 ? parts[1...].joined(separator: " ") : ""
+        switch keyword {
+        case "?", "LIST", "L", "HELP":
+            printLayoutList(engine: engine)
+            commandPrompt = "Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:"
+        case "N", "NEW":
+            if inline.isEmpty {
+                layoutPendingOp = "NEW"
+                commandPrompt = "Enter new layout name:"
+                print("[CAD] Enter new layout name:")
+            } else if finishCreateLayout(named: inline, engine: engine) {
+                clearCommand()
+            }
+        case "C", "COPY":
+            if inline.isEmpty {
+                layoutPendingOp = "COPY_SRC"
+                commandPrompt = "Enter layout to copy:"
+                print("[CAD] Enter layout to copy:")
+            } else {
+                layoutPendingOp = "COPY_DST"
+                layoutPendingName = inline
+                commandPrompt = "Enter new layout name:"
+                print("[CAD] Enter new layout name:")
+            }
+        case "D", "DELETE", "DEL":
+            if inline.isEmpty {
+                layoutPendingOp = "DELETE"
+                commandPrompt = "Enter layout name to delete:"
+                print("[CAD] Enter layout name to delete:")
+            } else if finishDeleteLayout(named: inline, engine: engine) {
+                clearCommand()
+            }
+        case "R", "REN", "RENAME":
+            if inline.isEmpty {
+                layoutPendingOp = "RENAME_SRC"
+                commandPrompt = "Enter layout name to rename:"
+                print("[CAD] Enter layout name to rename:")
+            } else {
+                layoutPendingOp = "RENAME_DST"
+                layoutPendingName = inline
+                commandPrompt = "Enter new layout name:"
+                print("[CAD] Enter new layout name:")
+            }
+        case "SA", "SAVEAS":
+            print("[CAD] LAYOUT Saveas is not supported yet (use COPY).")
+        case "S", "SET":
+            if inline.isEmpty {
+                layoutPendingOp = "SET"
+                commandPrompt = "Enter layout name to make current:"
+                print("[CAD] Enter layout name to make current:")
+            } else if setLayout(named: inline, engine: engine) {
+                clearCommand()
+            }
+        case "T", "TEMPLATE":
+            print("[CAD] LAYOUT Template is not supported yet (use COPY).")
+        default:
+            if setLayout(named: raw, engine: engine) {
+                clearCommand()
+            }
+        }
+    }
+
+    private func handleLayoutPendingResponse(pending: String, raw: String, engine: PhrostEngine) {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch pending {
+        case "NEW":
+            guard !name.isEmpty else {
+                print("[CAD] LAYOUT NEW needs a unique, non-blank name.")
+                return
+            }
+            if finishCreateLayout(named: name, engine: engine) { clearCommand() }
+        case "SET":
+            guard !name.isEmpty else {
+                print("[CAD] Enter layout name to make current:")
+                return
+            }
+            if setLayout(named: name, engine: engine) { clearCommand() }
+        case "DELETE":
+            guard !name.isEmpty else {
+                print("[CAD] Enter layout name to delete:")
+                return
+            }
+            if finishDeleteLayout(named: name, engine: engine) { clearCommand() }
+        case "COPY_SRC":
+            guard !name.isEmpty else {
+                print("[CAD] Enter layout to copy:")
+                return
+            }
+            layoutPendingOp = "COPY_DST"
+            layoutPendingName = name
+            commandPrompt = "Enter new layout name:"
+            print("[CAD] Enter new layout name:")
+        case "COPY_DST":
+            guard !name.isEmpty, let src = layoutPendingName, !src.isEmpty else {
+                print("[CAD] Enter new layout name:")
+                return
+            }
+            if engine.tabManager.copyLayout(from: src, to: name) {
+                engine.zoomExtents()
+                print("[CAD] Layout '\(name)' copied.")
+                clearCommand()
+            } else {
+                print("[CAD] Cannot copy '\(src)' to '\(name)' (source must be a sheet; names must be unique).")
+            }
+        case "RENAME_SRC":
+            guard !name.isEmpty else {
+                print("[CAD] Enter layout name to rename:")
+                return
+            }
+            layoutPendingOp = "RENAME_DST"
+            layoutPendingName = name
+            commandPrompt = "Enter new layout name:"
+            print("[CAD] Enter new layout name:")
+        case "RENAME_DST":
+            guard !name.isEmpty, let old = layoutPendingName, !old.isEmpty else {
+                print("[CAD] Enter new layout name:")
+                return
+            }
+            if engine.tabManager.renameLayout(from: old, to: name) {
+                print("[CAD] Renamed to '\(name)'.")
+                clearCommand()
+            } else {
+                print("[CAD] Cannot rename '\(old)' (Model is fixed; names must be unique).")
+            }
+        default:
+            layoutPendingOp = nil
+            layoutPendingName = nil
+            commandPrompt = "Enter layout option [Copy/Delete/New/Rename/SAveas/Set/Template/?] <set>:"
+        }
+    }
+
+    @discardableResult
+    private func finishCreateLayout(named name: String, engine: PhrostEngine) -> Bool {
+        if engine.tabManager.createLayout(named: name) {
+            engine.zoomExtents()
+            print("[CAD] Layout '\(engine.tabManager.activeViewName ?? name)' created.")
+            return true
+        }
+        print("[CAD] LAYOUT NEW needs a unique, non-blank name.")
+        return false
+    }
+
+    @discardableResult
+    private func finishDeleteLayout(named name: String, engine: PhrostEngine) -> Bool {
+        if engine.tabManager.deleteLayout(named: name) {
+            engine.zoomExtents()
+            print("[CAD] Layout '\(name)' deleted.")
+            return true
+        }
+        print("[CAD] Cannot delete '\(name)' (Model and the last view are kept).")
+        return false
+    }
+
+    @discardableResult
+    private func setLayout(named name: String, engine: PhrostEngine) -> Bool {
+        let sheets = engine.tabManager.availableViews.enumerated().filter { $0.element.kind == .sheet }
+        if let n = Int(name.trimmingCharacters(in: .whitespaces)), n >= 1, n <= sheets.count {
+            if engine.tabManager.switchToView(at: sheets[n - 1].offset) {
+                engine.zoomExtents()
+                print("[CAD] Sheet: \(engine.tabManager.activeViewName ?? name)")
+                return true
+            }
+        } else if engine.tabManager.switchToView(named: name) {
+            engine.zoomExtents()
+            print("[CAD] Sheet: \(engine.tabManager.activeViewName ?? name)")
+            return true
+        }
+        print("[CAD] Unknown sheet '\(name)'.")
+        printAvailableViews(engine.tabManager)
+        return false
+    }
+
+    private func printLayoutList(engine: PhrostEngine) {
+        let views = engine.tabManager.availableViews
+        guard !views.isEmpty else {
+            print("[CAD] No views in this drawing.")
+            return
+        }
+        for (index, view) in views.enumerated() {
+            let marker = index == (engine.tabManager.activeTab?.activeViewIndex ?? -1) ? "*" : " "
+            print("[CAD] \(marker)\(index + 1): \(view.name)\(view.kind == .model ? " (Model)" : "")")
         }
     }
 
@@ -2434,6 +2733,8 @@ public final class CADCommandProcessor {
     /// Cancel any active command.
     internal func clearCommand() {
         activeCommand = nil
+        layoutPendingOp = nil
+        layoutPendingName = nil
         commandPrompt = nil
         commandRefPoint = nil
         isSelectingObjects = false
