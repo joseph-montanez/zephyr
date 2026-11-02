@@ -346,8 +346,16 @@ public enum PDFExporter {
             oy = settings.plotOriginYMM / div
         }
         // Map area origin to printable origin + offset (paper-space units).
+        // Engine content is Y-down (import negates DXF Y) while the
+        // printable rect is Y-up, so for Extents areas sourced from engine
+        // worldBounds the Y offset must compose against the area bottom
+        // (maxY, placed by ty below), not the area top: subtracting minY
+        // inflates ty by a full area height and pushes the sheet off-page.
+        // Window/Limits areas keep the legacy composition.
         let devOX = (printPS.minX + ox - area.minX) * scale
-        let devOY = (printPS.minY + oy - area.minY) * scale
+        let devOY = settings.plotType == 1
+            ? (printPS.minY + oy) * scale
+            : (printPS.minY + oy - area.minY) * scale
         // Y-flip CTM: device.y = -scale * world.y + ty with area bottom
         // at page bottom offset. In PDF points, printable box sits at
         // devOY from the bottom.

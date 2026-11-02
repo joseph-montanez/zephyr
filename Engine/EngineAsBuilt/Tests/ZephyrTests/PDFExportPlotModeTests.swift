@@ -1,4 +1,5 @@
 import XCTest
+import Foundation
 @testable import ZephyrCore
 
 /// Phase 3 step 20/24: PDF plot-mode geometry — exact paper size,
@@ -72,6 +73,31 @@ final class PDFExportPlotModeTests: XCTestCase {
         XCTAssertEqual(frame.ty, 88.5 * s + 100 * s, accuracy: 1e-4)
     }
 
+    func testPlotFrameCenteredExtentsPlacesEngineDownContentOnPage() throws {
+        // Engine content is Y-down (import negates DXF Y) while the
+        // printable rect is Y-up: Extents must compose the Y offset against
+        // the area bottom, or ty overshoots by a full area height (Assembly
+        // sheet exported entirely above the page).
+        var ps = a3Settings(plotType: 1) // Extents
+        ps.plotFlags |= 4 // Center the plot
+        ps.useStandardScale = true
+        // 100x100 area, engine-down (top y=-100, bottom y=0), into the same
+        // 400x277 printable as testPlotFrameCenteredOffset.
+        let frame = try XCTUnwrap(PDFExporter.plotFrame(
+            settings: ps, worldBounds: (0, -100, 100, 0)))
+        let s = 72.0 / 25.4
+        XCTAssertEqual(frame.tx, 150 * s, accuracy: 1e-6)
+        // Old composition gave 188.5 * s here (full area height too high).
+        XCTAssertEqual(frame.ty, 88.5 * s, accuracy: 1e-4)
+        // Sheet corners must land inside the A3 page (1191 x 842 pt).
+        let topDevY = -s * -100 + frame.ty
+        let bottomDevY = -s * 0 + frame.ty
+        XCTAssertGreaterThan(topDevY, 0)
+        XCTAssertLessThan(topDevY, 842)
+        XCTAssertGreaterThan(bottomDevY, 0)
+        XCTAssertLessThan(bottomDevY, 842)
+    }
+
     func testPlotFrameNilWithoutPaper() {
         XCTAssertNil(PDFExporter.plotFrame(
             settings: CADPlotSettings(), worldBounds: (0, 0, 10, 10)))
@@ -129,6 +155,47 @@ final class PDFExportPlotModeTests: XCTestCase {
         // Must stay physical A3 Landscape (420.12 x 296.93 mm in points), NOT 5x larger
         XCTAssertEqual(frame.pageW, 420.116 * 72.0 / 25.4, accuracy: 1.0)
         XCTAssertEqual(frame.pageH, 296.926 * 72.0 / 25.4, accuracy: 1.0)
+    }
+
+    func testMechanicalSampleAssemblyTitleExtractsOnPage() throws {
+        // The Assembly layout plots Extents + centered over engine-down
+        // content: the title block used to land a full sheet height above
+        // the page (only its bottom strip survived at the top edge).
+        let dxfPath = "C:/dev/dxf/Mechanical Sample.dxf"
+        guard FileManager.default.fileExists(atPath: dxfPath) else { return }
+        let imported = try DXFImporter.importDXFViews(filePath: dxfPath)
+        let sheet = try XCTUnwrap(imported.views.first(where: { $0.name == "Assembly" }))
+        let doc = CADDocument()
+        doc.importLayersBlocksEntities(
+            layers: imported.layers, blocks: imported.blocks, entities: sheet.entities)
+        for (name, style) in imported.textStyles {
+            doc.textStyles[name] = style
+        }
+        doc.plotSettings = sheet.plotSettings
+        doc.layoutSettings = sheet.layoutSettings
+        let pdfData = try PDFExporter.generatePDF(document: doc, backgroundColor: .white)
+        let pdfString = String(data: pdfData, encoding: .isoLatin1) ?? ""
+        XCTAssertTrue(
+            pdfString.contains("/MediaBox [0 0 2592 1728]"),
+            "Assembly must keep the ARCH D 36x24in page")
+        let tmpURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("assembly_\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+        try pdfData.write(to: tmpURL)
+        guard let page = PDFiumBridge.extractVectorPage(path: tmpURL.path, pageIndex: 0) else {
+            throw XCTSkip("pdfium unavailable in this environment")
+        }
+        var title: (text: String, y: Double)? = nil
+        for prim in page.textEntities.flatMap({ $0 }) {
+            if case .text(let pos, let text, _, _, _, _, _, _, _) = prim,
+               text.contains("MANUFACTURED") {
+                title = (text, pos.y)
+                break
+            }
+        }
+        let run = try XCTUnwrap(title, "Assembly title block text must extract")
+        XCTAssertGreaterThan(run.y, 0, "title must sit above the page bottom")
+        XCTAssertLessThan(run.y, 1728, "title must sit below the page top")
     }
 
     func testStandaloneTextRespectsTransformScaleInPDFExport() throws {
