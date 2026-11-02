@@ -2,6 +2,11 @@
 
 Monthly digest condensed from the git history. Instead of per-release notes, all changes are grouped by calendar month and summarized under **New Features** (brand-new capabilities), **New Commands** (new drawing/modify commands on existing features), **Improvements** (refinements to existing features), **DXF & File Formats**, **Bug Fixes**, **Maintenance** (toolchain, packaging, CI, housekeeping), and **Performance**. Fixes and refinements made to a feature during the same month it ships are folded into that feature's entry rather than listed again.
 
+## November 2026
+
+### Bug Fixes
+- **AutoLISP `atof` overflow** — out-of-range exponents such as `"1e400"` parsed to infinity and were returned as-is; results now clamp to `±greatestFiniteMagnitude` with the sign preserved, while underflow (`"1e-400"`) still yields `0.0` and in-range values are untouched
+
 ## October 2026
 
 ### New Features
