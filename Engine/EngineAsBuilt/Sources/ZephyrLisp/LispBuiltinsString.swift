@@ -174,7 +174,11 @@ enum StringBuiltins {
         try BuiltinArgs.exactly("atof", args, 1)
         let text = try BuiltinArgs.string("atof", args[0])
         let (head, _) = scanNumberPrefix(text)
-        return .real(Double(head) ?? 0.0)
+        let value = Double(head) ?? 0.0
+        if value.isInfinite {
+            return .real(head.hasPrefix("-") ? -Double.greatestFiniteMagnitude : Double.greatestFiniteMagnitude)
+        }
+        return .real(value)
     }
 
     // MARK: - Wildcard match (case-insensitive)

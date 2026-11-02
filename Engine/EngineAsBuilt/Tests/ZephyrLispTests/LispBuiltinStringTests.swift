@@ -20,6 +20,9 @@ final class LispBuiltinStringTests: XCTestCase {
         try await assertEval("(atoi \"ab\")", .int(0))
         try await assertEval("(atof \"3.5x\")", .real(3.5))
         try await assertEval("(atof \"x\")", .real(0.0))
+        try await assertEval("(atof \"1e400\")", .real(Double.greatestFiniteMagnitude))
+        try await assertEval("(atof \"-1e400\")", .real(-Double.greatestFiniteMagnitude))
+        try await assertEval("(atof \"1e-400\")", .real(0.0))
         try await assertEval(
             "(acad_strlsort '(\"b\" \"a\"))", LispValue(stringList: ["a", "b"]))
     }
