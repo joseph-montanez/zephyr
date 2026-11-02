@@ -90,6 +90,13 @@ private final class NativeOpenPanelDelegate: NSObject, NSOpenSavePanelDelegate {
 @MainActor
 public enum NativeFileDialog {
 
+    /// Open a file with the OS default handler (AutoCAD "Open in viewer
+    /// when done"). Best effort: failures are swallowed — the export
+    /// itself already succeeded.
+    public static func openInSystemViewer(url: URL) {
+        _ = url.absoluteString.withCString { SDL_OpenURL($0) }
+    }
+
     // MARK: - Filter
 
     /// A user-visible file filter for the native dialog.

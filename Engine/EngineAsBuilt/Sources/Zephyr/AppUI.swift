@@ -265,6 +265,9 @@ struct AppUI {
         if showsActiveTab && engine.ui.plotDialogActive {
             PlotDialogUI.render(engine: engine, dw: dw, dh: dh)
         }
+        if showsActiveTab && engine.ui.exportPDFDialogActive {
+            ExportPDFDialogUI.render(engine: engine, dw: dw, dh: dh)
+        }
         if showsActiveTab && engine.ui.previewActive {
             PreviewUI.render(engine: engine, dw: dw, dh: dh)
         }

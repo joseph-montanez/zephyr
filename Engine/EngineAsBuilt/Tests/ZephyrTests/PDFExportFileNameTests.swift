@@ -64,4 +64,54 @@ final class PDFExportFileNameTests: XCTestCase {
             from: URL(fileURLWithPath: "drawing.dxf"))
         XCTAssertEqual(url.pathExtension, "pdf")
     }
+
+    // MARK: - Headless -EXPORTPDF target resolution
+
+    func testDashExportPDFCommandIsRegistered() {
+        XCTAssertTrue(
+            CommandDescriptor.allCommands.contains { $0.canonicalName == "-EXPORTPDF" },
+            "-EXPORTPDF must be a registered command")
+    }
+
+    func testDashExportPDFExplicitAbsolutePathWins() {
+        let target = CADCommandProcessor.dashExportPDFTarget(
+            pathTail: "C:/dev/out/sheet",
+            displayName: "Pirate Ship.dxf",
+            drawingFolder: URL(fileURLWithPath: "C:/dev/dxf"))
+        XCTAssertEqual(target?.lastPathComponent, "sheet.pdf")
+        XCTAssertEqual(target?.deletingLastPathComponent().path,
+                       URL(fileURLWithPath: "C:/dev/out").path)
+    }
+
+    func testDashExportPDFStripsQuotesAndKeepsPdfExtension() {
+        let target = CADCommandProcessor.dashExportPDFTarget(
+            pathTail: "\"C:/dev/out/my sheet.pdf\"",
+            displayName: "Pirate Ship.dxf",
+            drawingFolder: nil)
+        XCTAssertEqual(target?.lastPathComponent, "my sheet.pdf")
+    }
+
+    func testDashExportPDFRelativePathAnchorsAtDrawingFolder() {
+        let target = CADCommandProcessor.dashExportPDFTarget(
+            pathTail: "out/sheet",
+            displayName: "Pirate Ship.dxf",
+            drawingFolder: URL(fileURLWithPath: "C:/dev/dxf"))
+        XCTAssertEqual(target?.lastPathComponent, "sheet.pdf")
+        XCTAssertEqual(target?.deletingLastPathComponent().lastPathComponent, "out")
+    }
+
+    func testDashExportPDFDefaultsToDrawingFolderAndName() {
+        let target = CADCommandProcessor.dashExportPDFTarget(
+            pathTail: "",
+            displayName: "Pirate Ship.dxf",
+            drawingFolder: URL(fileURLWithPath: "C:/dev/dxf"))
+        XCTAssertEqual(target?.lastPathComponent, "Pirate Ship.pdf")
+        XCTAssertEqual(target?.deletingLastPathComponent().path,
+                       URL(fileURLWithPath: "C:/dev/dxf").path)
+    }
+
+    func testDashExportPDFUnsavedDrawingWithoutPathReturnsNil() {
+        XCTAssertNil(CADCommandProcessor.dashExportPDFTarget(
+            pathTail: "  ", displayName: "Untitled", drawingFolder: nil))
+    }
 }

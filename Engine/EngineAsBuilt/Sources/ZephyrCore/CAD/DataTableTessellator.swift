@@ -591,15 +591,31 @@ public enum DataTableTessellator {
                 end: transform.transformPoint(end),
                 color: color)
         case .text(let position, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, let color):
+            // Text height rides the transform exactly like geometry: the
+            // entity-level text paths (screen `CADPrimitiveGenerator` and
+            // PDF `PDFPrimitives`) scale `height` by the Y-basis magnitude
+            // of the matrix they render under, so a pre-transformed visual
+            // must already carry the scaled height and width — otherwise
+            // the glyphs stay local-sized while the cell boxes they sit in
+            // are world-sized. Basis vectors (not the `scale`
+            // decomposition) so mirror and skew survive, matching the text
+            // paths.
+            let localX = Vector3(x: cos(rotation), y: sin(rotation), z: 0)
+            let localY = Vector3(x: -sin(rotation), y: cos(rotation), z: 0)
+            let tPos = transform.transformPoint(position)
+            let widthScale = max(
+                (transform.transformPoint(position + localX) - tPos).magnitude, 1e-12)
+            let heightScale = max(
+                (transform.transformPoint(position + localY) - tPos).magnitude, 1e-12)
             return .text(
-                position: transform.transformPoint(position),
+                position: tPos,
                 text: text,
-                height: height,
+                height: height * heightScale,
                 rotation: rotation + transform.rotation,
                 style: style,
                 alignH: alignH,
                 alignV: alignV,
-                mtextWidth: mtextWidth,
+                mtextWidth: mtextWidth.map { $0 * widthScale },
                 color: color)
         case .fillRect(let origin, let size, let color):
             return .fillRect(

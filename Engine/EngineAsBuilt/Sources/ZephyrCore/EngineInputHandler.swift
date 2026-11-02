@@ -764,9 +764,7 @@ internal final class EngineInputHandler {
                     if engine.io.pointee.KeyShift {
                         engine.commandProcessor.executeCommand("PDFIMPORT")
                     } else {
-                        // No plot dialog yet (Phase 3A): route to the PDF
-                        // export flow rather than swallowing the keystroke.
-                        engine.commandProcessor.executeCommand("EXPORTPDF")
+                        engine.commandProcessor.executeCommand("PLOT")
                     }
                 // ── Ctrl/Cmd+Alt+Arrow nudges the focused pane's divider ──
                 case SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN:

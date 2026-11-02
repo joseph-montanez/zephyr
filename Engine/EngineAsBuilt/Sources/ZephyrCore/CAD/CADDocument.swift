@@ -4132,6 +4132,15 @@ public final class CADDocument {
         return [:]
     }
 
+        /// Per-primitive xdata aligned with `resolvedGeometry(for:)`
+    /// (block xdata for instances, empty for loose geometry).
+    public func primitiveXData(for entity: CADEntity) -> [Int: [String: XDataValue]] {
+        if let bid = entity.blockID, let block = effectiveBlock(for: bid) {
+            return block.primitiveXData
+        }
+        return [:]
+    }
+
     public func layersByUppercasedName() -> [String: Layer] {
         documentLock.withLock {
             if let cached = cachedLayersByUpper { return cached }

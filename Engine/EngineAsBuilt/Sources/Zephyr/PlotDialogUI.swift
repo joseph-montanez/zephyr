@@ -192,7 +192,8 @@ struct PlotDialogUI {
         do {
             try PDFExporter.export(
                 document: doc, to: URL(fileURLWithPath: destination),
-                backgroundColor: .white, plotContext: context)
+                backgroundColor: .white, plotContext: context,
+                options: PDFExporter.PDFExportOptions.loadPersisted())
             message = "Plotted to \(destination)."
         } catch {
             message = "Plot failed: \(error)."

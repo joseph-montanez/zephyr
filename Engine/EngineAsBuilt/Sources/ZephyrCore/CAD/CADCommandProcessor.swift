@@ -199,6 +199,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SAVEAS",     aliases: [],                category: .draw,    syntax: "", description: "Save the current drawing as a new file"),
         CommandDescriptor(canonicalName: "DXFVERSION", aliases: ["DXFVER"],        category: .settings, syntax: "[2018|2013|2010|2007|2004|2000|R14|R13|R12|R10]", description: "Set the DXF version used by Save and Save As"),
         CommandDescriptor(canonicalName: "EXPORTPDF",  aliases: ["PDFEXPORT", "EPDF"], category: .draw, syntax: "", description: "Export the current drawing to a PDF file"),
+        CommandDescriptor(canonicalName: "-EXPORTPDF", aliases: [],                category: .draw, syntax: "[path]", description: "Export the current layout to PDF from the command line (no dialog)"),
         CommandDescriptor(canonicalName: "PDFIMPORT",  aliases: ["PDFI", "PDF"],   category: .draw,    syntax: "", description: "Import a PDF page as an image underlay"),
         CommandDescriptor(canonicalName: "TABLEFT",    aliases: ["TABL"],          category: .draw,    syntax: "", description: "Move the active drawing tab one position left"),
         CommandDescriptor(canonicalName: "TABRIGHT",   aliases: ["TABR"],          category: .draw,    syntax: "", description: "Move the active drawing tab one position right"),
@@ -1238,21 +1239,17 @@ public final class CADCommandProcessor {
         case "EXPORTPDF", "PDFEXPORT", "EPDF":
             guard let eng = engine else { clearCommand(); return }
             clearCommand()
-            let pdfName = Self.pdfExportDefaultName(
-                for: eng.tabManager.activeTab?.displayName)
-            NativeFileDialog.showSaveDialog(
-                window: eng.dialogParentWindow,
-                filters: [
-                    NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"])
-                ],
-                defaultName: pdfName
-            ) { [weak eng] url in
-                guard let eng, let url else { return }
-                eng.tabManager.startSaveActiveTabAs(
-                    url: Self.pdfExportTargetURL(from: url),
-                    dxfVersion: eng.tabManager.activeTab?.dxfVersion ?? .r2018
-                )
-            }
+            // Options popup first; the popup's Export button opens the
+            // system save window, then exports without touching the tab's
+            // file association.
+            eng.ui.exportPDFDialogActive = true
+            commandPrompt = "Export options for the active layout to PDF."
+        case "-EXPORTPDF":
+            guard let eng = engine else { clearCommand(); return }
+            runDashExportPDF(text: text, engine: eng)
+        case _ where upper.hasPrefix("-EXPORTPDF "):
+            guard let eng = engine else { clearCommand(); return }
+            runDashExportPDF(text: text, engine: eng)
         // --- Existing commands ---
         case "M", "MOVE":
             guard let engine = engine else { clearCommand(); return }
@@ -2762,7 +2759,7 @@ public final class CADCommandProcessor {
     /// to the DXF branch in `TabManager` and writes DXF bytes to what the
     /// user believes is a PDF. Matching is case-insensitive and already-suffixed
     /// names are not doubled.
-    static func pdfExportDefaultName(for displayName: String?) -> String {
+    public static func pdfExportDefaultName(for displayName: String?) -> String {
         var base = (displayName ?? "untitled").trimmingCharacters(in: .whitespacesAndNewlines)
         if base.isEmpty { base = "untitled" }
         for ext in [".dxf", ".dwg", ".eab", ".pdf"] {
@@ -2777,8 +2774,64 @@ public final class CADCommandProcessor {
     /// Normalize a raw save-dialog URL from the PDFEXPORT flow. If SDL returned
     /// the name without an extension (or with a non-PDF one), append `.pdf` so
     /// the save pipeline routes to `PDFExporter` instead of `DXFExporter`.
-    static func pdfExportTargetURL(from url: URL) -> URL {
+    public static func pdfExportTargetURL(from url: URL) -> URL {
         url.pathExtension.lowercased() == "pdf" ? url : url.appendingPathExtension("pdf")
+    }
+
+    /// Resolve the `-EXPORTPDF [path]` output target without any dialog. An
+    /// explicit path wins: absolute paths as given, relative paths anchored
+    /// at the drawing's folder (falling back to the process working
+    /// directory). Without a path, the drawing's folder plus the default
+    /// `<drawing>.pdf` name. Returns nil when no path was given and the
+    /// drawing was never saved.
+    public static func dashExportPDFTarget(
+        pathTail: String, displayName: String?, drawingFolder: URL?
+    ) -> URL? {
+        var tail = pathTail.trimmingCharacters(in: .whitespacesAndNewlines)
+        if tail.count >= 2,
+           (tail.hasPrefix("\"") && tail.hasSuffix("\""))
+            || (tail.hasPrefix("'") && tail.hasSuffix("'")) {
+            tail = String(tail.dropFirst().dropLast())
+        }
+        if !tail.isEmpty {
+            let expanded = (tail as NSString).expandingTildeInPath
+            let isAbsolute = expanded.hasPrefix("/")
+                || expanded.hasPrefix("\\\\")
+                || (expanded.count > 2
+                    && expanded[expanded.index(expanded.startIndex, offsetBy: 1)] == ":")
+            let url: URL
+            if isAbsolute {
+                url = URL(fileURLWithPath: expanded)
+            } else if let folder = drawingFolder {
+                url = folder.appendingPathComponent(expanded)
+            } else {
+                url = URL(fileURLWithPath: expanded)
+            }
+            return pdfExportTargetURL(from: url)
+        }
+        guard let folder = drawingFolder else { return nil }
+        return folder.appendingPathComponent(pdfExportDefaultName(for: displayName))
+    }
+
+    /// `-EXPORTPDF [path]`: headless export with the persisted options — no
+    /// popup, no save window. The background export reuses the save slot
+    /// (`Exporting...`) without touching the tab's file association.
+    private func runDashExportPDF(text: String, engine eng: PhrostEngine) {
+        let tail = text.split(separator: " ", maxSplits: 1).map(String.init)
+            .dropFirst().first ?? ""
+        let tab = eng.tabManager.activeTab
+        let folder = tab?.fileURL?.deletingLastPathComponent()
+        guard let target = Self.dashExportPDFTarget(
+            pathTail: tail, displayName: tab?.displayName, drawingFolder: folder)
+        else {
+            print("[CAD] -EXPORTPDF needs a path for an unsaved drawing: -EXPORTPDF <path>.")
+            clearCommand()
+            return
+        }
+        eng.tabManager.startExportPDFActiveTab(
+            url: target, options: PDFExporter.PDFExportOptions.loadPersisted())
+        print("[CAD] Exporting current layout to \(target.path)...")
+        clearCommand()
     }
 
     /// Show the native file-save dialog and, on confirmation, save the active tab.

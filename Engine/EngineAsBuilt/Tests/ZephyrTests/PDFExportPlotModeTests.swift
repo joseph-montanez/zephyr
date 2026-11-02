@@ -147,7 +147,9 @@ final class PDFExportPlotModeTests: XCTestCase {
         )
         doc.addEntity(textEntity)
         let items = PDFExporter.collectItems(document: doc)
-        XCTAssertEqual(items.count, 1)
+        // Default options include hidden searchable text over SHX strokes
+        // (EPDFSHX = 1 equivalent): strokes + one hidden-text item.
+        XCTAssertEqual(items.count, 2)
         switch items[0] {
         case .textStrokes(let prims, _):
             guard let bounds = PDFExporter.primsBounds(prims) else {
@@ -161,6 +163,14 @@ final class PDFExportPlotModeTests: XCTestCase {
             XCTAssertLessThan(h, 0.5, "Fallback text height must be scaled by transform")
         default:
             XCTFail("Expected text strokes or fallback")
+        }
+        // Second item carries the same text invisibly for search/select.
+        switch items[1] {
+        case .hiddenText(let text, _, _, let h):
+            XCTAssertEqual(text, "TEST LABEL")
+            XCTAssertLessThan(h, 0.5, "Hidden text height must be scaled by transform")
+        default:
+            XCTFail("Expected hidden searchable text over SHX strokes")
         }
     }
 

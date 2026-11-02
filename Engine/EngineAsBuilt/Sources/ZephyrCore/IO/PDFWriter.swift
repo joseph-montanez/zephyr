@@ -168,6 +168,11 @@ final class PDFContentBuilder {
         data.append(Data(s.utf8))
     }
 
+    /// Append pre-encoded bytes (e.g. WinAnsi for hidden text).
+    func rawBytes(_ bytes: [UInt8]) {
+        data.append(contentsOf: bytes)
+    }
+
     var count: Int { data.count }
     func build() -> Data { data }
 }

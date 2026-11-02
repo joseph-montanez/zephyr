@@ -149,6 +149,70 @@ public enum CADFontManager {
 
     internal nonisolated static let cacheLock = NSRecursiveLock()
     internal static nonisolated(unsafe) var shxFontCache: [String: SHXShapeFont] = [:]
+    internal static nonisolated(unsafe) var ttfFontCache: [String: CADTrueTypeFont] = [:]
+
+    /// Load (and cache) a TrueType font from a resolved file path.
+    /// Returns nil when the file is missing or unparsable.
+    public static func getOrLoadTTFFont(path: String) -> CADTrueTypeFont? {
+        let key = path.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !key.isEmpty else { return nil }
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        if let cached = ttfFontCache[key] { return cached }
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        guard let font = try? CADTrueTypeFont(url: URL(fileURLWithPath: path)) else {
+            return nil
+        }
+        ttfFontCache[key] = font
+        return font
+    }
+
+    /// Styled-face sibling of a base TTF path, mirroring the candidate
+    /// search in `EngineTextManager.styledFontPath` (Arial Narrow names
+    /// first, then generic Bold/Italic suffixes). Returns the base path
+    /// when no sibling file exists.
+    public static func resolveStyledTTFPath(basePath: String, bold: Bool, italic: Bool) -> String {
+        guard bold || italic else { return basePath }
+        let baseURL = URL(fileURLWithPath: basePath)
+        let directory = baseURL.deletingLastPathComponent()
+        let ext = baseURL.pathExtension
+        let stem = baseURL.deletingPathExtension().lastPathComponent
+        let lowerStem = stem.lowercased()
+        var candidates: [String] = []
+        func add(_ name: String) {
+            guard !name.isEmpty, !candidates.contains(name) else { return }
+            candidates.append(name)
+        }
+        if lowerStem == "arialn" || lowerStem.contains("arial narrow") {
+            if bold && italic {
+                add("ARIALNBI.TTF"); add("arialnbi.ttf")
+                add("Arial Narrow Bold Italic.ttf"); add("Arial Narrow BoldItalic.ttf")
+            } else if bold {
+                add("ARIALNB.TTF"); add("arialnb.ttf")
+                add("Arial Narrow Bold.ttf")
+            } else {
+                add("ARIALNI.TTF"); add("arialni.ttf")
+                add("Arial Narrow Italic.ttf")
+            }
+        }
+        let suffixes: [String]
+        if bold && italic {
+            suffixes = [" Bold Italic", " BoldItalic", "-BoldItalic", "BI"]
+        } else if bold {
+            suffixes = [" Bold", "-Bold", "Bold", "B"]
+        } else {
+            suffixes = [" Italic", "-Italic", "Italic", "I"]
+        }
+        let extensionSuffix = ext.isEmpty ? "" : ".\(ext)"
+        for suffix in suffixes {
+            add(stem + suffix + extensionSuffix)
+        }
+        for candidate in candidates {
+            let url = directory.appendingPathComponent(candidate)
+            if FileManager.default.fileExists(atPath: url.path) { return url.path }
+        }
+        return basePath
+    }
 
     private static let platformSHXFontDirectories: [URL] = {
 #if os(Windows)

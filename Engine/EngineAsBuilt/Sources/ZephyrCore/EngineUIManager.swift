@@ -371,6 +371,10 @@ public final class EngineUIManager {
     public var pageSetupAutoImport: Bool = false
     /// Whether the PLOT dialog window is visible (`PLOT`/`PRINT`).
     public var plotDialogActive: Bool = false
+    /// Whether the EXPORTPDF options popup is visible (`EXPORTPDF`).
+    /// Export itself happens after the popup's Export button opens the
+    /// system save window.
+    public var exportPDFDialogActive: Bool = false
     /// Whether the live plot preview is visible (`PREVIEW`).
     public var previewActive: Bool = false
     /// Plot-settings snapshot rendered by the preview window.

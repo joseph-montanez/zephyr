@@ -45,7 +45,9 @@ enum PDFPrimitives {
     static func writeEntity(_ entity: CADEntity, in document: CADDocument,
                             entityColor: ColorRGBA, lineWeightMM: Double,
                             pageScale: Double, isLightBackground: Bool = false,
-                            to cb: PDFContentBuilder) {
+                            to cb: PDFContentBuilder,
+                            options: PDFExporter.PDFExportOptions = .default,
+                            catalog: PDFTextEmitter.PDFFontCatalog? = nil) {
         guard let geometry = entity.resolvedGeometry(in: document), !geometry.isEmpty
         else { return }
 
@@ -76,6 +78,7 @@ enum PDFPrimitives {
         var fills: [(Int, CADPrimitive)] = []
         var strokes: [(Int, CADPrimitive)] = []
         var texts: [(Int, CADPrimitive)] = []
+        var tables: [(Int, CADPrimitive)] = []
         for (index, prim) in geometry.enumerated() {
             guard CADPrimitiveVisibility.isVisible(
                 style: primStyles[index], layersByName: layersByName) else { continue }
@@ -84,6 +87,8 @@ enum PDFPrimitives {
                 fills.append((index, prim))
             case .text:
                 texts.append((index, prim))
+            case .table:
+                tables.append((index, prim))
             default:
                 strokes.append((index, prim))
             }
@@ -145,7 +150,59 @@ enum PDFPrimitives {
             writeTextPrimitive(prim, transform: t, document: document,
                                entityColor: resolvedColor(index, prim),
                                lineWeightMM: resolvedLineWeightMM(index),
-                               pageScale: pageScale, isLightBackground: isLightBackground, to: cb)
+                               pageScale: pageScale, isLightBackground: isLightBackground, to: cb,
+                               primitiveXData: document.primitiveXData(for: entity)[index],
+                               options: options, catalog: catalog)
+        }
+
+        // Native tables (ACAD_TABLE): expand through the same tessellator
+        // the screen uses, with the entity transform baked into world
+        // space — mirroring `CADPrimitiveGenerator`'s `.table` case, which
+        // tessellates then continues with an identity transform.
+        for (index, prim) in tables {
+            guard case .table(let data, let origin, _) = prim else { continue }
+            if clip?.isEnabled == true,
+               !CADClipMetadata.accepts(worldPoint: t.transformPoint(origin), entity: entity) {
+                continue
+            }
+            let visuals = DataTableTessellator.generateVisualPrimitives(
+                data: data, origin: origin, transform: t)
+            writeWorldVisuals(visuals, defaultColor: resolvedColor(index, prim),
+                              lineWeightMM: resolvedLineWeightMM(index),
+                              pageScale: pageScale, isLightBackground: isLightBackground,
+                              document: document, to: cb,
+                              options: options, catalog: catalog)
+        }
+    }
+
+    /// Write world-space table visuals: path geometry directly, text through
+    /// the renderer-parity text path (identity transform — positions are
+    /// already world-space from the tessellator).
+    static func writeWorldVisuals(_ prims: [CADPrimitive], defaultColor: ColorRGBA,
+                                 lineWeightMM: Double, pageScale: Double,
+                                 isLightBackground: Bool = false,
+                                 document: CADDocument, to cb: PDFContentBuilder,
+                                 options: PDFExporter.PDFExportOptions = .default,
+                                 catalog: PDFTextEmitter.PDFFontCatalog? = nil) {
+        guard !prims.isEmpty else { return }
+        var paths: [CADPrimitive] = []
+        var texts: [CADPrimitive] = []
+        for prim in prims {
+            if case .text = prim { texts.append(prim) }
+            else if case .table = prim { continue } // no nested tables
+            else { paths.append(prim) }
+        }
+        if !paths.isEmpty {
+            writeWorldPrimitives(paths, defaultColor: defaultColor,
+                                 lineWeightMM: lineWeightMM, pageScale: pageScale,
+                                 isLightBackground: isLightBackground, to: cb)
+        }
+        for prim in texts {
+            writeTextPrimitive(prim, transform: .identity, document: document,
+                               entityColor: defaultColor,
+                               lineWeightMM: lineWeightMM,
+                               pageScale: pageScale, isLightBackground: isLightBackground, to: cb,
+                               options: options, catalog: catalog)
         }
     }
 
@@ -177,13 +234,17 @@ enum PDFPrimitives {
     /// Renderer-parity text placement: transform the insertion point and the
     /// local X/Y basis through the FULL entity matrix, derive world rotation
     /// from the transformed X direction and positive height/width scales from
-    /// the basis magnitudes, then explode through the same SHX font the
-    /// renderer would pick (`textStyleFonts[style] ?? "simplex.shx"`).
+    /// the basis magnitudes. TrueType faces go through the shared live-text
+    /// pipeline (`PDFTextEmitter`); SHX faces explode through the same SHX
+    /// font the renderer would pick.
     private static func writeTextPrimitive(_ prim: CADPrimitive, transform: Transform3D,
                                            document: CADDocument, entityColor: ColorRGBA,
                                            lineWeightMM: Double, pageScale: Double,
                                            isLightBackground: Bool = false,
-                                           to cb: PDFContentBuilder) {
+                                           to cb: PDFContentBuilder,
+                                           primitiveXData: [String: XDataValue]? = nil,
+                                           options: PDFExporter.PDFExportOptions = .default,
+                                           catalog: PDFTextEmitter.PDFFontCatalog? = nil) {
         guard case .text(let pos, let text, let height, let rotation, let style,
                          let alignH, let alignV, let mtextWidth, let color) = prim
         else { return }
@@ -201,7 +262,93 @@ enum PDFPrimitives {
         let finalHeight = height * heightScale
         let finalMaxWidth = mtextWidth.map { $0 * widthScale }
 
-        let resolvedColor = color ?? entityColor
+        let resolvedColor = (color ?? entityColor)
+            .displayAdjusted(forLightBackground: isLightBackground)
+
+        // ---- TTF route (block-nested MTEXT, table cells, attributes) ----
+        // Formatted runs ride primitive xdata when the importer captured
+        // them; per-run families beyond bold/italic degrade to the base
+        // face in v1 (documented in PDFTextEmitter).
+        let formatted: FormattedText?
+        if let xd = primitiveXData?["dxf.formattedText"],
+           case .string(let json) = xd,
+           let jsonData = json.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(FormattedText.self, from: jsonData) {
+            formatted = decoded
+        } else {
+            formatted = nil
+        }
+        let styleRef: String? = {
+            if let formatted, !formatted.defaultFont.isEmpty { return formatted.defaultFont }
+            return style
+        }()
+        if let styleRef,
+           let baseFace = PDFTextEmitter.resolveFace(
+               reference: styleRef, styleName: style,
+               textStyleFonts: document.textStyleFonts) {
+            // Optional width/oblique/line-spacing overrides from xdata.
+            // Renderer parity: MTEXT reference widths are NOT width
+            // factors — `dxf.textWidthScale` applies to TEXT prims only.
+            let isMTextPrimitive: Bool
+            if let xd = primitiveXData?["dxf.textEntityType"], case .string(let t) = xd {
+                isMTextPrimitive = t.uppercased() == "MTEXT"
+            } else {
+                isMTextPrimitive = false
+            }
+            var widthFactor = 1.0
+            if !isMTextPrimitive,
+               let xd = primitiveXData?["dxf.textWidthScale"], case .double(let v) = xd, v > 0 {
+                widthFactor = v
+            }
+            var oblique = 0.0
+            if !isMTextPrimitive,
+               let xd = primitiveXData?["dxf.textOblique"], case .double(let v) = xd {
+                oblique = v
+            }
+            var spacing = 1.0
+            if let xd = primitiveXData?["dxf.mtextLineSpacing"], case .double(let v) = xd, v > 0 {
+                spacing = v
+            }
+            var spacingStyle = 1
+            if let xd = primitiveXData?["dxf.mtextLineSpacingStyle"], case .int(let v) = xd, v == 2 {
+                spacingStyle = 2
+            }
+            let laid = PDFTextEmitter.layout(
+                formatted: formatted, plainText: text,
+                origin: origin, rotation: finalRotation,
+                heightWorld: finalHeight, widthFactor: widthFactor * widthScale / heightScale,
+                maxWidthWorld: finalMaxWidth,
+                alignH: alignH, alignV: alignV,
+                lineSpacingFactor: spacing, lineSpacingStyle: spacingStyle,
+                baseFace: baseFace)
+            let displayName: String
+            if let runFont = formatted?.paragraphs.first?.runs.first?.fontName,
+               !runFont.isEmpty {
+                displayName = runFont
+            } else {
+                displayName = styleRef
+            }
+            if options.convertAllTextToGeometry, baseFace.font.hasGlyphOutlines {
+                writeWorldPrimitives(
+                    PDFTextEmitter.geometryOutlines(
+                        laid, rotation: finalRotation,
+                        widthFactor: widthFactor * widthScale / heightScale,
+                        obliqueDegrees: oblique),
+                    defaultColor: resolvedColor,
+                    lineWeightMM: lineWeightMM, pageScale: pageScale,
+                    isLightBackground: false, to: cb)
+            } else {
+                let catalog = catalog ?? PDFTextEmitter.PDFFontCatalog()
+                PDFTextEmitter.emit(
+                    laid, displayName: displayName,
+                    rotation: finalRotation,
+                    widthFactor: widthFactor * widthScale / heightScale,
+                    obliqueDegrees: oblique, color: resolvedColor,
+                    options: options, catalog: catalog, to: cb)
+            }
+            return
+        }
+
         let fontFile = CADFontManager.resolveTextStyleFont(
             styleName: style,
             textStyleFonts: document.textStyleFonts)
@@ -217,10 +364,16 @@ enum PDFPrimitives {
                 maxWidth: finalMaxWidth)
             writeWorldPrimitives(glyphPrims, defaultColor: resolvedColor,
                                  lineWeightMM: lineWeightMM, pageScale: pageScale,
-                                 isLightBackground: isLightBackground, to: cb)
+                                 isLightBackground: false, to: cb)
+            if options.includeHiddenTextForSHX {
+                PDFTextEmitter.emitHiddenText(
+                    formatted?.toPlainText() ?? text,
+                    position: origin, rotation: finalRotation,
+                    height: finalHeight, to: cb)
+            }
         } else {
             cb.raw("q\n")
-            setColor(resolvedColor.displayAdjusted(forLightBackground: isLightBackground), to: cb)
+            setColor(resolvedColor, to: cb)
             writeFallbackText(text, position: origin, rotation: finalRotation,
                               height: finalHeight, to: cb)
             cb.raw("Q\n")

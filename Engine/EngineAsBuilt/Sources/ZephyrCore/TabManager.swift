@@ -360,6 +360,7 @@ private struct PendingSaveCompletion: Sendable {
     let snapshot: SaveTabSnapshot
     let targetURL: URL
     let isAutosave: Bool
+    let isExport: Bool
     let dxfVersion: DXFVersion
     let success: Bool
     let errorMessage: String?
@@ -2128,6 +2129,18 @@ public final class TabManager {
         startSave(tab: tab, to: url, isAutosave: false, dxfVersion: dxfVersion)
     }
 
+    /// Export the active tab's active view to PDF without touching the
+    /// tab's file association: fileURL, display name, and saved revision
+    /// are left alone. Status and error reporting reuse the save slot.
+    public func startExportPDFActiveTab(
+        url: URL,
+        options: PDFExporter.PDFExportOptions = .default
+    ) {
+        guard let tab = activeTab, tab.editingBlockID == nil else { return }
+        startSave(tab: tab, to: url, isAutosave: false, dxfVersion: tab.dxfVersion,
+                  isExport: true, exportOptions: options)
+    }
+
     /// Autosave triggered by the timer. Does NOT update fileURL, displayName, or savedRevision.
     public func startAutosave(tabID: UUID) {
         guard let idx = tabs.firstIndex(where: { $0.id == tabID }),
@@ -2206,16 +2219,25 @@ public final class TabManager {
         tab: DocumentTab,
         to url: URL,
         isAutosave: Bool,
-        dxfVersion: DXFVersion
+        dxfVersion: DXFVersion,
+        isExport: Bool = false,
+        exportOptions: PDFExporter.PDFExportOptions = .default
     ) {
-        if !isAutosave { warnAboutDXFXrefTargets(tab: tab, url: url) }
+        if !isAutosave, !isExport { warnAboutDXFXrefTargets(tab: tab, url: url) }
         let saveID = UUID()
         cancelSave(for: tab.id, reason: .restart)
         let snapshot = tab.buildSaveSnapshot()
         let activeView = tab.drawingViews[tab.activeViewIndex]
         let backgroundColor = activeView.backgroundColor ?? getBackgroundColor?()
         let status: SaveStatus = isAutosave ? .autosaving : .saving
-        let statusText = isAutosave ? "Autosaving..." : "Saving..."
+        let statusText: String
+        if isAutosave {
+            statusText = "Autosaving..."
+        } else if isExport {
+            statusText = "Exporting..."
+        } else {
+            statusText = "Saving..."
+        }
         saveStateByTabID[tab.id] = SaveProgressState(
             progress: 0, statusText: statusText,
             status: status, saveID: saveID,
@@ -2228,7 +2250,9 @@ public final class TabManager {
                 snapshot: snapshot, saveID: saveID,
                 targetURL: url, isAutosave: isAutosave,
                 dxfVersion: dxfVersion,
-                backgroundColor: backgroundColor
+                backgroundColor: backgroundColor,
+                isExport: isExport,
+                exportOptions: exportOptions
             )
         }
         saveTasksByTabID[tab.id] = (task, saveID)
@@ -2285,6 +2309,7 @@ public final class TabManager {
                 snapshot: completion.snapshot,
                 targetURL: completion.targetURL,
                 isAutosave: completion.isAutosave,
+                isExport: completion.isExport,
                 dxfVersion: completion.dxfVersion,
                 success: completion.success,
                 errorMessage: completion.errorMessage
@@ -2299,7 +2324,9 @@ public final class TabManager {
         snapshot: SaveTabSnapshot, saveID: UUID,
         targetURL: URL, isAutosave: Bool,
         dxfVersion: DXFVersion,
-        backgroundColor: ColorRGBA?
+        backgroundColor: ColorRGBA?,
+        isExport: Bool = false,
+        exportOptions: PDFExporter.PDFExportOptions = .default
     ) async {
         let ext = targetURL.pathExtension.lowercased()
         do {
@@ -2343,7 +2370,8 @@ public final class TabManager {
                     snapshot: viewSnap.docSnapshot,
                     to: targetURL,
                     backgroundColor: backgroundColor,
-                    progress: progressHandler
+                    progress: progressHandler,
+                    options: exportOptions
                 )
             } else if ext == "dwg" {
                 guard ODADWGConverter.isAvailable else {
@@ -2384,6 +2412,7 @@ public final class TabManager {
                 snapshot: snapshot,
                 targetURL: targetURL,
                 isAutosave: isAutosave,
+                isExport: isExport,
                 dxfVersion: dxfVersion,
                 success: true,
                 errorMessage: nil
@@ -2395,6 +2424,7 @@ public final class TabManager {
                 snapshot: snapshot,
                 targetURL: targetURL,
                 isAutosave: isAutosave,
+                isExport: isExport,
                 dxfVersion: dxfVersion,
                 success: false,
                 errorMessage: nil
@@ -2406,6 +2436,7 @@ public final class TabManager {
                 snapshot: snapshot,
                 targetURL: targetURL,
                 isAutosave: isAutosave,
+                isExport: isExport,
                 dxfVersion: dxfVersion,
                 success: false,
                 errorMessage: error.localizedDescription
@@ -2416,13 +2447,14 @@ public final class TabManager {
     @MainActor
     private func finishSave(tabID: UUID, saveID: UUID, snapshot: SaveTabSnapshot,
                              targetURL: URL, isAutosave: Bool,
+                             isExport: Bool = false,
                              dxfVersion: DXFVersion, success: Bool,
                              errorMessage: String? = nil) {
         guard saveStateByTabID[tabID]?.saveID == saveID else { return }
         saveTasksByTabID.removeValue(forKey: tabID)
 
         if success {
-            if !isAutosave {
+            if !isAutosave, !isExport {
                 // Manual save: update file metadata and mark saved
                 if let idx = tabs.firstIndex(where: { $0.id == tabID }) {
                     tabs[idx].fileURL = targetURL

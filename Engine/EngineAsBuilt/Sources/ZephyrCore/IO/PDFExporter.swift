@@ -58,8 +58,15 @@ public enum PDFExporter {
         /// Standalone TEXT/MTEXT entity pre-exploded to world-space SHX
         /// stroke primitives (renderer parity).
         case textStrokes(prims: [CADPrimitive], color: ColorRGBA)
-        /// Standalone TEXT/MTEXT entity for which no SHX font could be
+        /// Live TrueType text: laid out with TTF advances, emitted against
+        /// embedded or referenced CID fonts.
+        case embeddedText(PDFTextEmitter.EmbeddedItem)
+        /// Invisible searchable text over SHX strokes (EPDFSHX equivalent).
+        case hiddenText(text: String, position: Vector3, rotation: Double,
+                        height: Double)
+        /// Standalone TEXT/MTEXT entity for which no font at all could be
         /// loaded — emitted as a Standard-14 Helvetica text object.
+        /// Last resort only; SHX and TTF paths are preferred.
         case textFallback(text: String, position: Vector3, rotation: Double,
                           height: Double, color: ColorRGBA)
     }
@@ -74,20 +81,85 @@ public enum PDFExporter {
     /// Bluebeam auto-calibration remains correct even when the page is
     /// fit-scaled down).
     public static func export(document: CADDocument, to url: URL, backgroundColor: ColorRGBA? = nil,
-                              plotContext: PlotContext = .default) throws {
+                              plotContext: PlotContext = .default,
+                              options: PDFExportOptions = .default) throws {
         let pdfData = try generatePDF(document: document, backgroundColor: backgroundColor,
-                                        plotContext: plotContext)
+                                        plotContext: plotContext, options: options)
         try pdfData.write(to: url, options: .atomic)
+    }
+
+    /// Font handling for PDF text export (AutoCAD parity).
+    ///
+    /// - `captureFonts`: embed TTF subsets so text is live without local
+    ///   fonts. Off = reference faces by name (viewer substitutes).
+    /// - `convertAllTextToGeometry`: explode TTF glyphs to vector outlines.
+    ///   Overrides `captureFonts`; text is no longer searchable.
+    /// - `includeHiddenTextForSHX`: emit invisible searchable text over SHX
+    ///   stroke geometry (EPDFSHX equivalent).
+    public struct PDFExportOptions: Sendable {
+        public var captureFonts: Bool
+        public var convertAllTextToGeometry: Bool
+        public var includeHiddenTextForSHX: Bool
+
+        public init(captureFonts: Bool = true,
+                    convertAllTextToGeometry: Bool = false,
+                    includeHiddenTextForSHX: Bool = true) {
+            self.captureFonts = captureFonts
+            self.convertAllTextToGeometry = convertAllTextToGeometry
+            self.includeHiddenTextForSHX = includeHiddenTextForSHX
+        }
+
+        public static let `default` = PDFExportOptions()
+
+        private static let captureKey = "Zephyr.ExportPDF.CaptureFonts"
+        private static let convertKey = "Zephyr.ExportPDF.ConvertAllTextToGeometry"
+        private static let hiddenSHXKey = "Zephyr.ExportPDF.IncludeHiddenTextForSHX"
+        private static let openViewerKey = "Zephyr.ExportPDF.OpenInViewer"
+
+        /// Options persisted from the EXPORTPDF popup (AutoCAD defaults:
+        /// capture on, convert off, SHX hidden text on).
+        public static func loadPersisted() -> PDFExportOptions {
+            let store = UserDefaults.standard
+            var options = PDFExportOptions()
+            if store.object(forKey: captureKey) != nil {
+                options.captureFonts = store.bool(forKey: captureKey)
+            }
+            if store.object(forKey: convertKey) != nil {
+                options.convertAllTextToGeometry = store.bool(forKey: convertKey)
+            }
+            if store.object(forKey: hiddenSHXKey) != nil {
+                options.includeHiddenTextForSHX = store.bool(forKey: hiddenSHXKey)
+            }
+            return options
+        }
+
+        public func persist() {
+            let store = UserDefaults.standard
+            store.set(captureFonts, forKey: Self.captureKey)
+            store.set(convertAllTextToGeometry, forKey: Self.convertKey)
+            store.set(includeHiddenTextForSHX, forKey: Self.hiddenSHXKey)
+        }
+
+        /// "Open in viewer when done" is UI chrome, not an export input.
+        public static func loadPersistedOpenInViewer() -> Bool {
+            UserDefaults.standard.object(forKey: openViewerKey) as? Bool ?? false
+        }
+
+        public static func persistOpenInViewer(_ value: Bool) {
+            UserDefaults.standard.set(value, forKey: openViewerKey)
+        }
     }
 
     /// Background-save: export from a snapshot with progress and cancellation.
     public static func export(snapshot: CADDocumentSnapshot, to url: URL,
                                backgroundColor: ColorRGBA? = nil,
-                               progress: ((Float) -> Void)? = nil) throws {
+                               progress: ((Float) -> Void)? = nil,
+                               options: PDFExportOptions = .default) throws {
         try Task.checkCancellation()
         let tempDoc = CADDocument()
         tempDoc.restore(from: snapshot)
-        let pdfData = try generatePDF(document: tempDoc, backgroundColor: backgroundColor)
+        let pdfData = try generatePDF(document: tempDoc, backgroundColor: backgroundColor,
+                                      options: options)
         try Task.checkCancellation()
         progress?(0.95)
         try atomicWrite(data: pdfData, to: url)
@@ -371,7 +443,9 @@ public enum PDFExporter {
                 // Text strokes use the default color; screening applies
                 // uniformly when the setup enables transparency.
                 return .textStrokes(prims: prims, color: color)
-            case .textFallback:
+            case .embeddedText, .hiddenText, .textFallback:
+                // Live text keeps its resolved color (screening blends only
+                // plot-mapped geometry pens, as with SHX text strokes).
                 return item
             }
         }
@@ -426,7 +500,8 @@ public enum PDFExporter {
 
     /// Generate PDF data from a document (extracted for reuse by both sync and async paths).
     static func generatePDF(document: CADDocument, backgroundColor: ColorRGBA?,
-                            plotContext: PlotContext = .default) throws -> Data {
+                            plotContext: PlotContext = .default,
+                            options: PDFExportOptions = .default) throws -> Data {
         // Background and contrast adjustment:
         // Default PDF page background in viewers is white.
         let pageBg = backgroundColor ?? ColorRGBA.white
@@ -437,7 +512,8 @@ public enum PDFExporter {
         let isLightBackground = bgLuminance >= 0.5
 
         // ---- Pre-pass: collect drawables in screen-parity order ----------
-        var items = collectItems(document: document, isLightBackground: isLightBackground)
+        var items = collectItems(document: document, isLightBackground: isLightBackground,
+                                 options: options)
 
         // ---- World bounding box (engine Y-down space) ---------------------
         // Text-entity bounds come from the exploded glyph strokes; the cached
@@ -463,6 +539,12 @@ public enum PDFExporter {
                 if let bb = primsBounds(prims) {
                     grow(bb.minX, bb.minY); grow(bb.maxX, bb.maxY)
                 }
+            case .embeddedText(let embedded):
+                if let bb = embedded.bounds() {
+                    grow(bb.minX, bb.minY); grow(bb.maxX, bb.maxY)
+                }
+            case .hiddenText:
+                break // invisible: no page-fit contribution
             case .textFallback(let text, let position, _, let height, _):
                 // Rough extent: baseline-left origin, ~0.6·h average advance.
                 let w = Double(text.count) * height * 0.6
@@ -538,6 +620,28 @@ public enum PDFExporter {
         let measC = String(format: "%.6f", 1.0 / scale)
         let unitLabel = document.unit.description
 
+        // Content first: text emission registers TTF faces in the catalog,
+        // whose numbers the page Resources dict must reference. Object
+        // order in the file is arbitrary, so this is safe.
+        let catalog = PDFTextEmitter.PDFFontCatalog()
+        let content = PDFContentBuilder()
+        if let bg = backgroundColor {
+            content.raw("q\n")
+            let r = Double(bg.r) / 255.0
+            let g = Double(bg.g) / 255.0
+            let b = Double(bg.b) / 255.0
+            content.num(r); content.num(g); content.num(b); content.raw("rg\n")
+            content.num(0); content.num(0); content.num(pageW); content.num(pageH); content.raw("re f\n")
+            content.raw("Q\n")
+        }
+        writeContent(items: items, document: document, scale: scale, margin: margin,
+                     minX: minX, maxX: maxX, minY: minY, maxY: maxY,
+                     pageW: pageW, pageH: pageH, isLightBackground: isLightBackground, to: content,
+                     plotTX: plotTX, plotTY: plotTY, plotScale: plotTX == nil ? nil : scale,
+                     clipWorld: plotClip, clipPageRect: plotClipPage,
+                     options: options, catalog: catalog)
+        let contentData = content.build()
+
         let w = PDFByteWriter()
 
         // PDF 1.7 header with binary marker bytes (required per spec)
@@ -560,7 +664,7 @@ public enum PDFExporter {
         w.write("     /X [ << /Type /NumberFormat /U (\(unitLabel)) /C \(measC) >> ]")
         w.write("   >> >> ]")
         w.write(" /Contents 4 0 R")
-        w.write(" /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>\n")
+        w.write(" /Resources << /Font << /F1 5 0 R /F2 6 0 R \(catalog.resourceString()) >> >> >>\n")
         w.endObject()
 
         // Pages tree (obj 3)
@@ -569,28 +673,15 @@ public enum PDFExporter {
         w.endObject()
 
         // Content stream (obj 4) — FlateDecode compressed via zlib-ng
-        let content = PDFContentBuilder()
-        if let bg = backgroundColor {
-            content.raw("q\n")
-            let r = Double(bg.r) / 255.0
-            let g = Double(bg.g) / 255.0
-            let b = Double(bg.b) / 255.0
-            content.num(r); content.num(g); content.num(b); content.raw("rg\n")
-            content.num(0); content.num(0); content.num(pageW); content.num(pageH); content.raw("re f\n")
-            content.raw("Q\n")
-        }
-        writeContent(items: items, document: document, scale: scale, margin: margin,
-                     minX: minX, maxX: maxX, minY: minY, maxY: maxY,
-                     pageW: pageW, pageH: pageH, isLightBackground: isLightBackground, to: content,
-                     plotTX: plotTX, plotTY: plotTY, plotScale: plotTX == nil ? nil : scale,
-                     clipWorld: plotClip, clipPageRect: plotClipPage)
         w.beginObject(4)
-        w.writeCompressedStream(content.build())
+        w.writeCompressedStream(contentData)
         w.endObject()
 
         // Fonts (obj 5, 6) — Standard 14 references
         writeFontRef(w, obj: 5, name: "Helvetica")
         writeFontRef(w, obj: 6, name: "Courier")
+        // Embedded / referenced TTF faces (obj 7+).
+        catalog.writeObjects(into: w)
 
         return w.finalize(rootObj: 1)
     }
@@ -634,7 +725,8 @@ public enum PDFExporter {
     /// Sort entities exactly like `CADRendererBridge.computeSpecs`, resolve the
     /// per-entity color the same way (`dxf.color` xdata → layer color), and
     /// pre-explode text entities through the SHX path.
-    static func collectItems(document: CADDocument, isLightBackground: Bool = false) -> [RenderItem] {
+    static func collectItems(document: CADDocument, isLightBackground: Bool = false,
+                             options: PDFExportOptions = .default) -> [RenderItem] {
         let sortedEntities = document.entitiesView.sorted { e1, e2 in
             let o1 = e1.drawOrder
             let o2 = e2.drawOrder
@@ -780,6 +872,74 @@ public enum PDFExporter {
                 let effectiveOblique = obliqueOverride ? oblique : textStyle.obliqueAngle
                 let worldWidth = mtextWidth.map { $0 * widthScale }
 
+                // ---- TTF route: live vector text (AutoCAD capture model) ----
+                // A resolvable TrueType face takes precedence over SHX: the
+                // screen renders these styles through SDL_ttf, and the PDF
+                // now measures with the same face's advances.
+                let ttfBaseReference: String?
+                if let formatted, !formatted.defaultFont.isEmpty {
+                    ttfBaseReference = formatted.defaultFont
+                } else {
+                    ttfBaseReference = styleName
+                }
+                if let ttfBaseReference,
+                   let baseFace = PDFTextEmitter.resolveFace(
+                       reference: ttfBaseReference, styleName: styleName,
+                       textStyleFonts: document.textStyleFonts) {
+                    let lineSpacingFactor: Double
+                    if let spacing = entity.xdata["dxf.mtextLineSpacing"],
+                       case .double(let value) = spacing,
+                       value > 0 {
+                        lineSpacingFactor = value
+                    } else {
+                        lineSpacingFactor = 1.0
+                    }
+                    let lineSpacingStyle: Int
+                    if let style = entity.xdata["dxf.mtextLineSpacingStyle"],
+                       case .int(let value) = style,
+                       value == 2 {
+                        lineSpacingStyle = 2
+                    } else {
+                        lineSpacingStyle = 1
+                    }
+                    let laid = PDFTextEmitter.layout(
+                        formatted: formatted,
+                        plainText: displayText,
+                        origin: origin,
+                        rotation: worldRotation,
+                        heightWorld: worldHeight,
+                        widthFactor: effectiveWidthFactor,
+                        maxWidthWorld: worldWidth,
+                        alignH: alignH,
+                        alignV: alignV,
+                        lineSpacingFactor: lineSpacingFactor,
+                        lineSpacingStyle: lineSpacingStyle,
+                        baseFace: baseFace)
+                    if options.convertAllTextToGeometry, baseFace.font.hasGlyphOutlines {
+                        items.append(.textStrokes(
+                            prims: PDFTextEmitter.geometryOutlines(
+                                laid, rotation: worldRotation,
+                                widthFactor: effectiveWidthFactor,
+                                obliqueDegrees: effectiveOblique),
+                            color: entityColor))
+                    } else {
+                        let displayName: String
+                        if let runFont = formatted?.paragraphs.first?.runs.first?.fontName,
+                           !runFont.isEmpty {
+                            displayName = runFont
+                        } else {
+                            displayName = ttfBaseReference
+                        }
+                        items.append(.embeddedText(PDFTextEmitter.EmbeddedItem(
+                            laid: laid, displayName: displayName,
+                            rotation: worldRotation,
+                            widthFactor: effectiveWidthFactor,
+                            obliqueDegrees: effectiveOblique,
+                            color: entityColor)))
+                    }
+                    continue
+                }
+
                 if let font = shapeFont {
                     let lineSpacingFactor: Double
                     if let spacing = entity.xdata["dxf.mtextLineSpacing"],
@@ -837,6 +997,13 @@ public enum PDFExporter {
                             maxWidth: worldWidth)
                     }
                     items.append(.textStrokes(prims: prims, color: entityColor))
+                    if options.includeHiddenTextForSHX {
+                        items.append(.hiddenText(
+                            text: displayText,
+                            position: origin,
+                            rotation: worldRotation,
+                            height: worldHeight))
+                    }
                 } else {
                     items.append(.textFallback(
                         text: displayText,
@@ -891,7 +1058,9 @@ public enum PDFExporter {
         to cb: PDFContentBuilder,
         plotTX: Double? = nil, plotTY: Double? = nil, plotScale: Double? = nil,
         clipWorld: (Double, Double, Double, Double)? = nil,
-        clipPageRect: (x: Double, y: Double, w: Double, h: Double)? = nil
+        clipPageRect: (x: Double, y: Double, w: Double, h: Double)? = nil,
+        options: PDFExportOptions = .default,
+        catalog: PDFTextEmitter.PDFFontCatalog? = nil
     ) {
         // Y-FLIPPING page CTM: engine Y-down → PDF Y-up.
         //   device.x =  scale * world.x + tx
@@ -925,16 +1094,30 @@ public enum PDFExporter {
             cb.num(scale); cb.num(0); cb.num(0); cb.num(-scale); cb.num(tx); cb.num(ty); cb.raw("cm\n")
         }
 
+        // A throwaway catalog keeps direct callers (tests) working; the real
+        // export passes its own so font objects land in the file.
+        let catalog = catalog ?? PDFTextEmitter.PDFFontCatalog()
         for item in items {
             switch item {
             case .geometry(let entity, let color, let lineWeightMM):
                 PDFPrimitives.writeEntity(entity, in: document, entityColor: color,
                                           lineWeightMM: lineWeightMM, pageScale: scale,
-                                          isLightBackground: isLightBackground, to: cb)
+                                          isLightBackground: isLightBackground, to: cb,
+                                          options: options, catalog: catalog)
             case .textStrokes(let prims, let color):
                 PDFPrimitives.writeWorldPrimitives(prims, defaultColor: color,
                                                    lineWeightMM: 0.25, pageScale: scale,
                                                    isLightBackground: isLightBackground, to: cb)
+            case .embeddedText(let embedded):
+                PDFTextEmitter.emit(
+                    embedded.laid, displayName: embedded.displayName,
+                    rotation: embedded.rotation, widthFactor: embedded.widthFactor,
+                    obliqueDegrees: embedded.obliqueDegrees,
+                    color: embedded.color.displayAdjusted(forLightBackground: isLightBackground),
+                    options: options, catalog: catalog, to: cb)
+            case .hiddenText(let text, let position, let rotation, let height):
+                PDFTextEmitter.emitHiddenText(
+                    text, position: position, rotation: rotation, height: height, to: cb)
             case .textFallback(let text, let position, let rotation, let height, let color):
                 cb.raw("q\n")
                 PDFPrimitives.setColor(color.displayAdjusted(forLightBackground: isLightBackground), to: cb)
