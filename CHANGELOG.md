@@ -4,6 +4,13 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 
 ## November 2026
 
+### New Commands
+- **-EXPORTPDF** — headless command-line export of the current layout to PDF with the persisted options (no popup, no save window); an explicit path wins, otherwise `<drawing>.pdf` beside the drawing, and unsaved drawings without a path report usage instead of failing silently
+
+### Improvements
+- **PDF export font handling (AutoCAD parity)** — `EXPORTPDF` now opens a standalone options popup (never inside the file-export window) before the system save window: `Capture fonts used in the drawing` embeds TTF subsets as live searchable text measured with real font advances, `Convert all text to geometry` explodes glyphs to vector outlines (overrides Capture and greys it out), and SHX renders as stroke geometry with invisible searchable text (`EPDFSHX` equivalent); options persist across sessions and are shared with `PLOT`, export leaves the tab's file association, display name, and saved revision untouched, and bare `Ctrl+P` now routes to `PLOT`
+- **PDF table text sizing** — cell text tessellated under a scaled table transform now carries world-sized heights and widths instead of local ones, fixing undersized text on scaled title-block tables (e.g. 3.18-high text in 5.0-high rows under a 4.69x insert)
+
 ### Bug Fixes
 - **AutoLISP `atof` overflow** — out-of-range exponents such as `"1e400"` parsed to infinity and were returned as-is; results now clamp to `+/-greatestFiniteMagnitude` with the sign preserved, while underflow (`"1e-400"`) still yields `0.0` and in-range values are untouched
 
