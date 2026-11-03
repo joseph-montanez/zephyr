@@ -362,7 +362,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "NAV",        aliases: ["RADIALNAV"],     category: .view,    syntax: "", description: "Show/hide the radial navigation tool"),
         CommandDescriptor(canonicalName: "PAN",        aliases: ["P"],             category: .view,    syntax: "", description: "Pan the view by clicking and dragging"),
         CommandDescriptor(canonicalName: "-PAN",       aliases: [],                category: .view,    syntax: "", description: "Pan the view by specifying a displacement vector"),
-        CommandDescriptor(canonicalName: "PLAN",       aliases: [],                category: .view,    syntax: "", description: "Reset view rotation to standard orientation"),
+        CommandDescriptor(canonicalName: "UCS",        aliases: [],                category: .view,    syntax: "[World/3point/View/Z/Origin/Prev] <World>", description: "Define the planar user coordinate system"),
+        CommandDescriptor(canonicalName: "PLAN",       aliases: [],                category: .view,    syntax: "[Current ucs/Ucs/World] <Current>", description: "Align the view to the current or World UCS XY plane and zoom to extents"),
         CommandDescriptor(canonicalName: "DVIEW",      aliases: ["DV"],            category: .view,    syntax: "", description: "Dynamic view: twist the 2D view angle"),
         CommandDescriptor(canonicalName: "SNAPANG",    aliases: [],                category: .settings, syntax: "<degrees>", description: "Set the crosshair and ortho rotation angle"),
         // --- Layer ---
@@ -856,6 +857,16 @@ public final class CADCommandProcessor {
         // User PGP aliases resolve before everything (user wins).
         upper = userAliases[upper] ?? upper
         if upper.isEmpty {
+            // Bare Enter while UCS/PLAN awaits input accepts the prompt
+            // default instead of dying in the empty-text early return below.
+            if activeFeatureCommand is UCSCommand, let eng = engine {
+                _ = submitTextToActiveFeatureCommand(text, engine: eng)
+                return
+            }
+            if activeFeatureCommand is PlanCommand, let eng = engine {
+                _ = submitTextToActiveFeatureCommand(text, engine: eng)
+                return
+            }
             if isSelectingObjects {
                 confirmObjectSelection()
             }
@@ -863,6 +874,10 @@ public final class CADCommandProcessor {
         }
         lastExecutedCommand = text
 
+        if activeFeatureCommand is UCSCommand, let eng = engine {
+            _ = submitTextToActiveFeatureCommand(text, engine: eng)
+            return
+        }
         if handleDrawingViewCommand(text) {
             clearCommand()
             return
@@ -1431,11 +1446,15 @@ public final class CADCommandProcessor {
             guard engine != nil else { clearCommand(); return }
             startCommand("-PAN", prompt: "Specify base point")
 
+        case _ where upper == "UCS" || upper.hasPrefix("UCS "):
+            startUCSFeatureCommand(text: upper, engine: engine, processor: self)
+        case _ where upper.hasPrefix("PLAN "):
+            startPlanFeatureCommand(text: upper, engine: engine, processor: self)
         case "PLAN":
             guard let engine = engine else { clearCommand(); return }
-            engine.camera.rotation = 0
+            engine.camera.rotation = engine.document.ucsState.definition.angle
             engine.zoomExtents()
-            print("[CAD] View reset to PLAN (standard orientation).")
+            print("[CAD] Plan view of current UCS (XY plane).")
             clearCommand()
 
         case "DVIEW", "DV":

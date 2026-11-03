@@ -642,6 +642,8 @@ public final class CADDocument {
     /// sysvar, never undoable; round-tripped via DXF HEADER and EAB
     /// metadata (custom bytes).
     public var insertionBase: Vector3 = .zero
+    /// Live planar UCS for the view that owns this document (session-only).
+    public var ucsState: UCSViewState = .world
     public var anglePrecision: Int = 0 {
         didSet { anglePrecision = max(0, min(8, anglePrecision)) }
     }
