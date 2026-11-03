@@ -581,46 +581,8 @@ public final class TabManager {
                 CADFontManager.debugFontLookup(font)
             }
 
-            let drawingViews = imported.views.map { view -> DrawingView in
-                let doc = CADDocument()
-                doc.importLayersBlocksEntities(
-                    layers: imported.layers,
-                    blocks: imported.blocks,
-                    entities: view.entities
-                )
-                doc.textStyles = imported.textStyles
-                doc.importMediaDefinitions(
-                    image: imported.imageDefinitions, pdf: imported.pdfDefinitions)
-                doc.linetypePatterns = imported.linetypePatterns
-                doc.dimensionStyles = imported.dimensionStyles
-                doc.leaderStyles = imported.leaderStyles
-                // Model views own model-space groups; sheets own their
-                // paper-space groups (projected copies never join groups).
-                let viewGroups = view.kind == .sheet ? view.groups : imported.groups
-                doc.groups = Dictionary(
-                    uniqueKeysWithValues: viewGroups.map { ($0.name, $0) })
-                doc.plotSettings = view.plotSettings
-                doc.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
-                doc.pstyleMode = imported.pstyleMode
-                doc.insertionBase = imported.insBase
-                doc.dxfRoundTripPayload = imported.roundTripPayload
-                doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
-                    ? (imported.leaderStyles.keys.sorted().first ?? "Standard")
-                    : "Standard"
-                if let ls = view.layoutSettings {
-                    doc.layoutSettings = ls
-                    doc.unit = (ls.plotPaperUnits == 0) ? .inch : .millimeter
-                } else if let su = imported.sourceUnit {
-                    doc.unit = su
-                }
-                doc.savedRevision = doc.editRevision
-                return DrawingView(
-                    name: view.name,
-                    kind: view.kind,
-                    document: doc,
-                    backgroundColor: view.backgroundColor
-                )
-            }
+            let drawingViews = DrawingViewFactory.makeDrawingViews(
+                from: imported, sourceFileName: url.lastPathComponent)
             let displayName = url.lastPathComponent
             let tab = DocumentTab(
                 document: drawingViews[0].document,
@@ -643,48 +605,8 @@ public final class TabManager {
             CADFontManager.debugFontLookup(font)
         }
 
-        let drawingViews = imported.views.map { view -> DrawingView in
-            let doc = CADDocument()
-            doc.importLayersBlocksEntities(
-                layers: imported.layers,
-                blocks: imported.blocks,
-                entities: view.entities
-            )
-            doc.textStyles = imported.textStyles
-            doc.importMediaDefinitions(
-                image: imported.imageDefinitions, pdf: imported.pdfDefinitions)
-            doc.linetypePatterns = imported.linetypePatterns
-            doc.dimensionStyles = imported.dimensionStyles
-            doc.leaderStyles = imported.leaderStyles
-            // Model views own model-space groups; sheets own their
-            // paper-space groups (projected copies never join groups).
-            let paperGroups = view.kind == .sheet ? view.groups : imported.groups
-            doc.groups = Dictionary(
-                uniqueKeysWithValues: paperGroups.map { ($0.name, $0) })
-            doc.plotSettings = view.plotSettings
-            doc.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
-            doc.pstyleMode = imported.pstyleMode
-            doc.insertionBase = imported.insBase
-            doc.dxfRoundTripPayload = imported.roundTripPayload
-            doc.currentLeaderStyleName = imported.leaderStyles["Standard"] == nil
-                ? (imported.leaderStyles.keys.sorted().first ?? "Standard")
-                : "Standard"
-            if let ls = view.layoutSettings {
-                doc.layoutSettings = ls
-                doc.unit = (ls.plotPaperUnits == 0) ? .inch : .millimeter
-            } else if let su = imported.sourceUnit {
-                doc.unit = su
-            }
-            doc.savedRevision = doc.editRevision  // freshly imported
-            doc.finalizeOpen(
-                sourceFileName: url.lastPathComponent, layoutName: view.name)
-            return DrawingView(
-                name: view.name,
-                kind: view.kind,
-                document: doc,
-                backgroundColor: view.backgroundColor
-            )
-        }
+        let drawingViews = DrawingViewFactory.makeDrawingViews(
+            from: imported, sourceFileName: url.lastPathComponent)
         let doc = drawingViews[0].document
         let displayName = url.lastPathComponent
         let tab = DocumentTab(
@@ -1065,7 +987,7 @@ public final class TabManager {
         return true
     }
 
-    /// Apply plot settings to a sheet view (Phase 1 test hook until the Page
+    /// Apply plot settings to a view (Phase 1 test hook until the Page
     /// Setup dialog lands in Phase 2). Syncs the lightweight paper view,
     /// marks the document edited (persist + regen), and returns false for
     /// unknown views. The canvas sheet overlay reads the live document each
@@ -1079,12 +1001,14 @@ public final class TabManager {
         } else {
             index = tab.activeViewIndex
         }
-        guard let idx = index, tab.drawingViews.indices.contains(idx),
-              tab.drawingViews[idx].kind == .sheet else { return false }
+        guard let idx = index, tab.drawingViews.indices.contains(idx) else { return false }
+        let isModelView = tab.drawingViews[idx].kind == .model
         let doc = tab.drawingViews[idx].document
         doc.plotSettings = settings
         doc.layoutSettings = settings.layoutSettings
-        doc.unit = (settings.plotPaperUnits == 0) ? .inch : .millimeter
+        if !isModelView {
+            doc.unit = (settings.plotPaperUnits == 0) ? .inch : .millimeter
+        }
         doc.markEdited()
         onActiveTabChanged?()
         return true
@@ -1189,7 +1113,7 @@ public final class TabManager {
         return true
     }
 
-    /// Rename a named setup (and re-point bound layouts' Code-1 names).
+    /// Rename a named setup (and re-point bound views' Code-1 names).
     @discardableResult
     public func renameNamedSetup(from oldName: String, to newName: String) -> Bool {
         guard let tab = activeTab else { return false }
@@ -1200,8 +1124,7 @@ public final class TabManager {
         }) else { return false }
         tabs[activeIndex].namedPageSetups[idx].name = trimmed
         tabs[activeIndex].namedPageSetups[idx].settings.pageSetupName = trimmed
-        for viewIdx in tabs[activeIndex].drawingViews.indices
-        where tabs[activeIndex].drawingViews[viewIdx].kind == .sheet {
+        for viewIdx in tabs[activeIndex].drawingViews.indices {
             let doc = tabs[activeIndex].drawingViews[viewIdx].document
             if doc.plotSettings?.pageSetupName.caseInsensitiveCompare(oldName) == .orderedSame {
                 doc.plotSettings?.pageSetupName = trimmed
@@ -1212,16 +1135,15 @@ public final class TabManager {
         return true
     }
 
-    /// Layout names currently bound to a named setup (for delete guards).
+    /// View names (layouts and Model) currently bound to a named setup (for delete guards).
     public func layoutsBound(to setupName: String) -> [String] {
         guard let tab = activeTab else { return [] }
         return tab.drawingViews.filter {
-            $0.kind == .sheet
-                && $0.document.plotSettings?.pageSetupName.caseInsensitiveCompare(setupName) == .orderedSame
+            $0.document.plotSettings?.pageSetupName.caseInsensitiveCompare(setupName) == .orderedSame
         }.map(\.name)
     }
 
-    /// Delete a named setup. Refused while any layout is bound to it
+    /// Delete a named setup. Refused while any view (layout or Model) is bound to it
     /// (AutoCAD warns; v1 blocks with the bound-layout list).
     /// Returns false when missing or in use.
     @discardableResult
@@ -1238,10 +1160,12 @@ public final class TabManager {
         return true
     }
 
-    /// Apply a named setup to a layout: copies all fields and records the
-    /// association in plot Code 1 (`pageSetupName`). One undoable step on
-    /// the layout's document. Direct layout edits keep the name (divergence
-    /// allowed); editing the setup itself propagates (see `updateNamedSetup`).
+    /// Apply a named setup to a view (layout or Model): copies all fields and
+    /// records the association in plot Code 1 (`pageSetupName`). One undoable
+    /// step on the view's document. The setup ModelType bit must match the
+    /// target space (strict scoping); Model targets keep their drawing unit.
+    /// Direct view edits keep the name (divergence allowed); editing the
+    /// setup itself propagates (see `updateNamedSetup`).
     @discardableResult
     public func applyNamedSetupToLayout(_ setupName: String, layoutName: String) -> Bool {
         guard let tab = activeTab else { return false }
@@ -1249,22 +1173,25 @@ public final class TabManager {
             $0.name.caseInsensitiveCompare(setupName) == .orderedSame
         }) else { return false }
         guard let idx = layoutIndex(named: layoutName),
-              tab.drawingViews.indices.contains(idx),
-              tab.drawingViews[idx].kind == .sheet else { return false }
+              tab.drawingViews.indices.contains(idx) else { return false }
+        let isModelTarget = tab.drawingViews[idx].kind == .model
+        guard setup.isModelType == isModelTarget else { return false }
         let doc = tab.drawingViews[idx].document
         var applied = setup.settings
         applied.pageSetupName = setup.name
         doc.undoManager.pushUndo(doc.snapshot())
         doc.plotSettings = applied
         doc.layoutSettings = applied.layoutSettings
-        doc.unit = (applied.plotPaperUnits == 0) ? .inch : .millimeter
+        if !isModelTarget {
+            doc.unit = (applied.plotPaperUnits == 0) ? .inch : .millimeter
+        }
         doc.markEdited()
         onActiveTabChanged?()
         return true
     }
 
-    /// Update a named setup and propagate to all bound layouts (AutoCAD
-    /// behavior per Decision 4). Each bound layout gets one undoable step.
+    /// Update a named setup and propagate to all bound views of the same space
+    /// (AutoCAD behavior per Decision 4). Each bound view gets one undoable step.
     @discardableResult
     public func updateNamedSetup(name: String, with settings: CADPlotSettings) -> Bool {
         guard let tab = activeTab else { return false }
@@ -1273,15 +1200,19 @@ public final class TabManager {
         }) else { return false }
         var stored = settings
         stored.pageSetupName = tab.namedPageSetups[idx].name
+        let setupIsModel = tabs[activeIndex].namedPageSetups[idx].isModelType
         tabs[activeIndex].namedPageSetups[idx].settings = stored
-        for viewIdx in tabs[activeIndex].drawingViews.indices
-        where tabs[activeIndex].drawingViews[viewIdx].kind == .sheet {
+        for viewIdx in tabs[activeIndex].drawingViews.indices {
+            let isModelView = tabs[activeIndex].drawingViews[viewIdx].kind == .model
+            guard isModelView == setupIsModel else { continue }
             let doc = tabs[activeIndex].drawingViews[viewIdx].document
             if doc.plotSettings?.pageSetupName.caseInsensitiveCompare(name) == .orderedSame {
                 doc.undoManager.pushUndo(doc.snapshot())
                 doc.plotSettings = stored
                 doc.layoutSettings = stored.layoutSettings
-                doc.unit = (stored.plotPaperUnits == 0) ? .inch : .millimeter
+                if !isModelView {
+                    doc.unit = (stored.plotPaperUnits == 0) ? .inch : .millimeter
+                }
                 doc.markEdited()
             }
         }

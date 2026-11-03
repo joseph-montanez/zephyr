@@ -675,7 +675,11 @@ enum PDFTextEmitter {
         }
 
         private(set) var entries: [String: Entry] = [:]
-        private var nextNumber = 7
+        var nextNumber: Int
+
+        init(firstNumber: Int = 7) {
+            nextNumber = firstNumber
+        }
 
         /// Register a face use; returns the Type0 `/F` number.
         func register(

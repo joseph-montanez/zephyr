@@ -135,7 +135,7 @@ final class PlotSettingsValidatorTests: XCTestCase {
 /// Phase 2 catalog coverage (dropdown contents, defaults, raster devices).
 final class PlotDeviceCatalogTests: XCTestCase {
     func testBuiltinDevicesAndDefaults() {
-        XCTAssertEqual(PlotDeviceCatalog.builtins.count, 4)
+        XCTAssertEqual(PlotDeviceCatalog.builtins.count, 5)
         XCTAssertEqual(PlotDeviceCatalog.noneDevice.media.count, 0)
         XCTAssertNotNil(PlotDeviceCatalog.publishJPG.defaultMedium)
         XCTAssertNotNil(PlotDeviceCatalog.publishPNG.defaultMedium)

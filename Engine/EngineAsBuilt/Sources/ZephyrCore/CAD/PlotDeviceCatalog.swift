@@ -206,6 +206,18 @@ public enum PlotDeviceCatalog {
         media: pdfMedia(),
         defaultMediaCanonicalName: "ISO_A4_(297.00_x_210.00_MM)")
 
+    /// Built-in high-quality PDF driver from the reference screenshots
+    /// (`AutoCAD PDF (High Quality Print).pc3`): full-bleed ISO A3 default,
+    /// reference 600 DPI (Normal = 300 DPI).
+    public static let autoCADPDFHighQualityPrint = PlotDevice(
+        name: "AutoCAD PDF (High Quality Print).pc3",
+        plotterDescription: "AutoCAD PDF (High Quality Print) - Autodesk (built-in)",
+        whereText: "File",
+        isPDF: true,
+        referenceDPI: 600,
+        media: pdfMedia(),
+        defaultMediaCanonicalName: "ISO_full_bleed_A3_(420.00_x_297.00_MM)")
+
     public static let publishJPG = PlotDevice(
         name: "PublishToWeb JPG.pc3",
         plotterDescription: "PublishToWeb JPG (built-in raster)",
@@ -225,7 +237,7 @@ public enum PlotDeviceCatalog {
         defaultMediaCanonicalName: "Letter_(8.50_x_11.00_Inches)")
 
     /// All built-in devices, in dropdown order.
-    public static let builtins: [PlotDevice] = [noneDevice, dwgToPDF, publishJPG, publishPNG]
+    public static let builtins: [PlotDevice] = [noneDevice, dwgToPDF, autoCADPDFHighQualityPrint, publishJPG, publishPNG]
 
     /// Case-insensitive lookup. Returns nil for unmatched foreign names;
     /// callers preserve those raw strings (missing-plotter behavior).

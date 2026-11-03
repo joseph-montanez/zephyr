@@ -120,6 +120,18 @@ public enum CADCommandAliasTable {
             category: .view,
             description: "Preview the active layout as plotted"),
         CADCommandAliasEntry(
+            canonicalName: "PUBLISH", aliases: [],
+            category: .draw,
+            description: "Batch-publish drawing sheets to PDF"),
+        CADCommandAliasEntry(
+            canonicalName: "+PUBLISH", aliases: [],
+            category: .draw,
+            description: "Batch-publish, preloading a sheet list file"),
+        CADCommandAliasEntry(
+            canonicalName: "-PUBLISH", aliases: [],
+            category: .draw,
+            description: "Publish a sheet list file from the command line (foreground, CSV log)"),
+        CADCommandAliasEntry(
             canonicalName: "-PAGESETUP", aliases: [],
             category: .settings,
             description: "Assign a page setup from the command line"),

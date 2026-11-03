@@ -377,6 +377,8 @@ public final class EngineUIManager {
     public var exportPDFDialogActive: Bool = false
     /// Whether the live plot preview is visible (`PREVIEW`).
     public var previewActive: Bool = false
+    /// Whether the Publish dialog window is visible (`PUBLISH`).
+    public var publishDialogActive: Bool = false
     /// Plot-settings snapshot rendered by the preview window.
     public var previewSettings: CADPlotSettings? = nil
     /// Edit target for the Page Setup dialog: layout name or named setup.

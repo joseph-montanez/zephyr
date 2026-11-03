@@ -473,7 +473,8 @@
 
           (zr-panel "Plot"
             (list
-              (zr-small "PAGESETUP" "Page Setup" "print" nil)))
+              (zr-small "PAGESETUP" "Page Setup" "print" nil)
+              (zr-small "PUBLISH" "Publish" "pdf" nil)))
 
           (zr-panel "System"
             (list

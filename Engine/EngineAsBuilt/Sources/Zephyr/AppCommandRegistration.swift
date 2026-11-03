@@ -473,6 +473,11 @@ struct AppCommandRegistration {
             factory: { PageSetupCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "PUBLISH",
+            aliases: [],
+            factory: { PublishCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "TABLE",
             aliases: ["TB", "DATATABLE"],
             factory: { DataTableCommand() }

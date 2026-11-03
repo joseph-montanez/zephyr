@@ -147,9 +147,9 @@ public final class PlotCliSession {
             }
             let name = text.isEmpty ? layoutName : text
             guard let view = manager.activeTab?.drawingViews.first(where: {
-                $0.kind == .sheet && $0.name.caseInsensitiveCompare(name) == .orderedSame
+                $0.name.caseInsensitiveCompare(name) == .orderedSame
             }) else {
-                ctx.printLine("Unknown sheet layout '\(name)'.")
+                ctx.printLine("Unknown layout '\(name)'.")
                 ctx.printLine("Enter layout name or [?]:")
                 return
             }
@@ -171,7 +171,7 @@ public final class PlotCliSession {
             // Code 1 by design; <None> explicitly empties it).
             if let tab = manager.activeTab,
                let index = tab.drawingViews.firstIndex(where: {
-                   $0.kind == .sheet && $0.name.caseInsensitiveCompare(layoutName) == .orderedSame
+                   $0.name.caseInsensitiveCompare(layoutName) == .orderedSame
                }) {
                 let doc = tab.drawingViews[index].document
                 doc.undoManager.pushUndo(doc.snapshot())
@@ -185,6 +185,11 @@ public final class PlotCliSession {
         if manager.applyNamedSetupToLayout(text, layoutName: layoutName) {
             ctx.printLine("Applied '\(text)' to \(layoutName).")
             finish(ctx: ctx)
+        } else if manager.activeTab?.namedPageSetups.contains(where: {
+            $0.name.caseInsensitiveCompare(text) == .orderedSame
+        }) == true {
+            ctx.printLine("'\(text)' does not match the space of '\(layoutName)'.")
+            ctx.printLine("Enter page setup name, [?] to list, or . for none:")
         } else {
             ctx.printLine("Unknown page setup '\(text)'.")
             ctx.printLine("Enter page setup name, [?] to list, or . for none:")
@@ -826,15 +831,18 @@ public enum DXFPlotSettingsImport {
 func commitPlotSettings(manager: TabManager, layoutName: String, settings: CADPlotSettings) -> Bool {
     guard let tab = manager.activeTab,
           let index = tab.drawingViews.firstIndex(where: {
-              $0.kind == .sheet && $0.name.caseInsensitiveCompare(layoutName) == .orderedSame
+              $0.name.caseInsensitiveCompare(layoutName) == .orderedSame
           }) else { return false }
+    let isModelTarget = tab.drawingViews[index].kind == .model
     var applied = settings
     applied.pageSetupName = tab.drawingViews[index].document.plotSettings?.pageSetupName ?? ""
     let doc = tab.drawingViews[index].document
     doc.undoManager.pushUndo(doc.snapshot())
     doc.plotSettings = applied
     doc.layoutSettings = applied.layoutSettings
-    doc.unit = (applied.plotPaperUnits == 0) ? .inch : .millimeter
+    if !isModelTarget {
+        doc.unit = (applied.plotPaperUnits == 0) ? .inch : .millimeter
+    }
     doc.markEdited()
     manager.onActiveTabChanged?()
     return true

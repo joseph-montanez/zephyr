@@ -400,6 +400,9 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "PAGESETUP",  aliases: [], category: .settings, syntax: "", description: "Manage page setups for the active layout"),
         CommandDescriptor(canonicalName: "PLOT",      aliases: ["PRINT"], category: .draw, syntax: "", description: "Plot the active layout to PDF (page setup)"),
         CommandDescriptor(canonicalName: "PREVIEW",   aliases: [], category: .view, syntax: "", description: "Preview the active layout as plotted"),
+        CommandDescriptor(canonicalName: "PUBLISH",   aliases: [], category: .draw, syntax: "", description: "Batch-publish drawing sheets to PDF"),
+        CommandDescriptor(canonicalName: "+PUBLISH",  aliases: [], category: .draw, syntax: "[file.dsd]", description: "Batch-publish, preloading a sheet list file"),
+        CommandDescriptor(canonicalName: "-PUBLISH",  aliases: [], category: .draw, syntax: "[file.dsd]", description: "Publish a sheet list file from the command line (foreground, CSV log)"),
         CommandDescriptor(canonicalName: "-PAGESETUP", aliases: [], category: .settings, syntax: "", description: "Assign a page setup from the command line"),
         CommandDescriptor(canonicalName: "-PLOT",      aliases: [], category: .draw, syntax: "", description: "Configure and run a plot from the command line"),
         CommandDescriptor(canonicalName: "PSETUPIN",   aliases: [], category: .settings, syntax: "[file]", description: "Import page setups from another drawing"),
@@ -518,6 +521,7 @@ public final class CADCommandProcessor {
 
     /// Active modal `-PLOT` / `-PAGESETUP` / `-PSETUPIN` CLI session, if any.
     public var plotCliSession: PlotCliSession? = nil
+    public var publishCliSession: PublishCliSession? = nil
 
     /// Registry of feature command factories, keyed by canonical name and aliases.
     public typealias FeatureCommandFactory = () -> any FeatureCommand
@@ -822,10 +826,14 @@ public final class CADCommandProcessor {
             _ = submitTextToActiveFeatureCommand(text, engine: eng)
             return
         }
-        // Modal `-PLOT` / `-PAGESETUP` / `-PSETUPIN` sessions consume
-        // every line (including bare Enter) until they finish.
+        // Modal plot/publish CLI sessions consume
+        // (plot: -PAGESETUP/-PLOT/-PSETUPIN; publish: -PUBLISH) every line.
         if plotCliSession != nil, let eng = engine {
             plotCliSession?.handle(text, ctx: makePlotCliContext(engine: eng))
+            return
+        }
+        if publishCliSession != nil, let eng = engine {
+            publishCliSession?.handle(text, ctx: makePublishCliContext(engine: eng))
             return
         }
         var upper = text.uppercased().trimmingCharacters(in: .whitespaces)
@@ -998,6 +1006,40 @@ public final class CADCommandProcessor {
         case "-PSETUPIN":
             guard let engine = engine else { clearCommand(); return }
             startPlotCliSession(.psetupin, engine: engine)
+        case _ where upper == "+PUBLISH" || upper.hasPrefix("+PUBLISH "):
+            guard let engine = engine else { clearCommand(); return }
+            let plusArg = String(text.dropFirst(8))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !plusArg.isEmpty {
+                PublishDialogPreload.pendingDSDPath = plusArg
+            }
+            if let factory = featureCommandRegistry["PUBLISH"] {
+                let cmd = factory()
+                activeFeatureCommand = cmd
+                cmd.start(engine: engine, processor: self)
+            } else {
+                clearCommand()
+            }
+        case _ where upper == "-PUBLISH" || upper.hasPrefix("-PUBLISH "):
+            guard let engine = engine else { clearCommand(); return }
+            let dashArg = String(text.dropFirst(8))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            startPublishCliSession(engine: engine, initialInput: dashArg.isEmpty ? nil : dashArg)
+        case "PUBLISH":
+            // Dialog flow (see also -PUBLISH for scripts, +PUBLISH for preload).
+            // Sheet picking, Master setup assignment, and `.dsd` I/O live here.
+            guard let engine = engine else { clearCommand(); return }
+            if let factory = featureCommandRegistry["PUBLISH"] {
+                let cmd = factory()
+                activeFeatureCommand = cmd
+                cmd.start(engine: engine, processor: self)
+            } else {
+                clearCommand()
+            }
         case "SCALELISTEDIT", "-SCALELISTEDIT":
             guard let engine = engine else { clearCommand(); return }
             runScaleListEdit(text: text, upper: upper, engine: engine)
@@ -2439,6 +2481,7 @@ public final class CADCommandProcessor {
     internal func clearCommand() {
         activeCommand = nil
         plotCliSession = nil
+        publishCliSession = nil
         commandPrompt = nil
         commandRefPoint = nil
         isSelectingObjects = false
@@ -2964,6 +3007,74 @@ public final class CADCommandProcessor {
             print("[CAD] Usage: SCALELISTEDIT Add <a:b|a=b|factor> | Delete <n> | Reset | List")
         }
         clearCommand()
+    }
+
+    /// Host services for a modal `-PUBLISH` session: open-tab snapshots,
+    /// disk metadata reads, and a foreground publish that writes the CSV
+    /// log beside the `.dsd` when the run finishes.
+    private func makePublishCliContext(engine: PhrostEngine) -> PublishCliContext {
+        let metas = PublishMetadataInspector.readOpenTabs(from: engine.tabManager)
+        var open: [UUID: [String: CADDocumentSnapshot]] = [:]
+        for (index, meta) in metas.enumerated() {
+            if index < engine.tabManager.tabs.count {
+                open[meta.id] = PublishRunner.snapshotsByTabName(
+                    engine.tabManager.tabs[index].drawingViews)
+            }
+        }
+        let openCopy = open
+        var transparency = 1
+        var plotOffset = 0
+        if case .int(let v) = systemVariable("PLOTTRANSPARENCYOVERRIDE") {
+            transparency = v
+        }
+        if case .int(let v) = systemVariable("PLOTOFFSET") {
+            plotOffset = v
+        }
+        let context = PDFExporter.PlotContext(
+            transparencyOverride: transparency,
+            plotOffset: plotOffset,
+            plotTableLoader: PDFExporter.defaultPlotTableLoader)
+        return PublishCliContext(
+            printLine: { print($0) },
+            metadataProvider: { path in
+                if let hit = metas.first(where: {
+                    $0.sourcePath.caseInsensitiveCompare(path) == .orderedSame
+                }) { return hit }
+                guard FileManager.default.fileExists(atPath: path) else { return nil }
+                return try? PublishMetadataInspector.readFile(atPath: path)
+            },
+            openDrawings: openCopy,
+            publish: { spec, dsdPath, completion in
+                Task {
+                    do {
+                        let report = try await PublishRunner.run(
+                            spec: spec, openDrawings: openCopy,
+                            plotContext: context)
+                        let logURL = try? PublishDSDLog.write(
+                            report: report, spec: spec, besideDSDPath: dsdPath)
+                        await MainActor.run { completion(report, logURL) }
+                    } catch {
+                        let message = error.localizedDescription
+                        let failed = PublishJobReport(sheets: spec.sheets.map {
+                            PublishSheetReport(
+                                id: $0.id, sheetName: $0.sheetName,
+                                status: .error, message: message)
+                        })
+                        await MainActor.run { completion(failed, nil) }
+                    }
+                }
+            },
+            onFinish: { [weak self] in self?.clearCommand() })
+    }
+
+    private func startPublishCliSession(engine: PhrostEngine, initialInput: String? = nil) {
+        let ctx = makePublishCliContext(engine: engine)
+        let session = PublishCliSession.start(ctx: ctx)
+        publishCliSession = session
+        startCommand("-PUBLISH", prompt: session.currentPrompt(ctx: ctx))
+        if let initialInput {
+            session.handle(initialInput, ctx: ctx)
+        }
     }
 
     private func startPlotCliSession(_ flow: PlotCliSession.Flow, engine: PhrostEngine) {

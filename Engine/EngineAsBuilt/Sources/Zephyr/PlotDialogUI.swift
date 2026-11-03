@@ -103,8 +103,9 @@ struct PlotDialogUI {
 
     private static func setupOptions(engine: PhrostEngine) -> [String] {
         guard let tab = engine.tabManager.activeTab else { return ["<None>"] }
-        var options = ["<Current layout settings>"]
-        options += tab.namedPageSetups.map { $0.name }
+        let isModel = tab.drawingViews[tab.activeViewIndex].kind == .model
+        var options = ["<Current layout settings>", "<None>", "<Previous plot>"]
+        options += tab.namedPageSetups.filter { $0.isModelType == isModel }.map { $0.name }
         return options
     }
 
@@ -125,19 +126,42 @@ struct PlotDialogUI {
                 let selected = index == setupChoice
                 if ImGuiSelectable(option, selected, 0, ImVec2(x: 0, y: 0)) {
                     setupChoice = index
-                    if index == 0 {
-                        pointDraftAtCurrent(engine: engine)
-                    } else if let tab = engine.tabManager.activeTab,
-                              tab.namedPageSetups.indices.contains(index - 1) {
-                        let setup = tab.namedPageSetups[index - 1]
-                        engine.ui.pageSetupEditName = setup.name
-                        engine.ui.pageSetupEditIsSetup = true
-                        PageSetupDialogUI.ensureDraft(engine: engine)
-                    }
+                    applySetupChoice(engine: engine, index: index)
                 }
                 if selected { ImGuiSetItemDefaultFocus() }
             }
             ImGuiEndCombo()
+        }
+    }
+
+    private static func applySetupChoice(engine: PhrostEngine, index: Int) {
+        let options = setupOptions(engine: engine)
+        guard options.indices.contains(index) else { return }
+        switch index {
+        case 0:
+            pointDraftAtCurrent(engine: engine)
+        case 1: // <None>: current settings with no named association.
+            pointDraftAtCurrent(engine: engine)
+            var detached = PageSetupDialogUI.currentDraft
+            detached.pageSetupName = ""
+            PageSetupDialogUI.currentDraft = detached
+        case 2: // <Previous plot>: last plot settings as the working draft.
+            if let prev = engine.tabManager.activeTab?.lastPlotSettings {
+                pointDraftAtCurrent(engine: engine)
+                PageSetupDialogUI.currentDraft = prev
+                PageSetupDialogUI.currentMessage = ""
+            } else {
+                pointDraftAtCurrent(engine: engine)
+                PageSetupDialogUI.currentMessage = "No previous plot in this drawing yet."
+            }
+        default:
+            if let setup = engine.tabManager.activeTab?.namedPageSetups.first(where: {
+                $0.name.caseInsensitiveCompare(options[index]) == .orderedSame
+            }) {
+                engine.ui.pageSetupEditName = setup.name
+                engine.ui.pageSetupEditIsSetup = true
+                PageSetupDialogUI.ensureDraft(engine: engine)
+            }
         }
     }
 
@@ -150,7 +174,8 @@ struct PlotDialogUI {
         }
         var draft = PageSetupDialogUI.currentDraft
         draft.pageSetupName = trimmed
-        if manager.createNamedSetup(name: trimmed, from: draft) {
+        let isModel = manager.activeTab.map { $0.drawingViews[$0.activeViewIndex].kind == .model } ?? false
+        if manager.createNamedSetup(name: trimmed, from: draft, isModelType: isModel) {
             message = "Saved page setup '\(trimmed)'."
             newSetupName = ""
         } else {
@@ -166,12 +191,11 @@ struct PlotDialogUI {
             message = "Choose a destination file first (Browse...)."
             return
         }
-        guard tab.drawingViews.indices.contains(tab.activeViewIndex),
-              tab.drawingViews[tab.activeViewIndex].kind == .sheet else {
-            message = "PLOT needs an active sheet layout."
+        guard tab.drawingViews.indices.contains(tab.activeViewIndex) else {
+            message = "PLOT needs an active view."
             return
         }
-        // Apply dialog settings to the layout first (one undoable step).
+        // Apply dialog settings to the view first (one undoable step).
         guard PageSetupDialogUI.commitDraft(engine: engine) else {
             message = PageSetupDialogUI.currentMessage
             return

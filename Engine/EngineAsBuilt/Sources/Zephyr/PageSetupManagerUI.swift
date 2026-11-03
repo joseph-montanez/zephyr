@@ -76,9 +76,10 @@ struct PageSetupManagerUI {
         igSeparator()
 
         // ---- List: layouts then named setups ----
+        let activeIsModel = tab.drawingViews[tab.activeViewIndex].kind == .model
         if igBeginChild_Str("##PageSetupList", ImVec2(x: -1, y: 220), 1, 0) {
             ImGuiTextV("Page setups")
-            for view in tab.drawingViews where view.kind == .sheet {
+            for view in tab.drawingViews {
                 let bound = view.document.plotSettings?.pageSetupName ?? ""
                 let title = bound.isEmpty
                     ? view.name
@@ -89,7 +90,7 @@ struct PageSetupManagerUI {
                     selection = key
                 }
             }
-            for setup in tab.namedPageSetups {
+            for setup in tab.namedPageSetups where setup.isModelType == activeIsModel {
                 let key = "setup:\(setup.name)"
                 let selected = selection == key
                 if ImGuiSelectable("   \(setup.name)", selected, 0, ImVec2(x: 0, y: 0)) {
@@ -159,7 +160,6 @@ struct PageSetupManagerUI {
         igEndChild()
 
         // ---- Action bar ----
-        let sheetActive = tab.drawingViews[tab.activeViewIndex].kind == .sheet
         if igButton("Set Current", ImVec2(x: 100, y: 0)) {
             setCurrent(engine: engine)
         }
@@ -171,11 +171,9 @@ struct PageSetupManagerUI {
             newError = ""
         }
         ImGuiSameLine(0, 8)
-        if !sheetActive { ImGuiBeginDisabled(true) }
         if igButton("Modify...", ImVec2(x: 80, y: 0)) {
             openModify(engine: engine)
         }
-        if !sheetActive { ImGuiEndDisabled() }
         ImGuiSameLine(0, 8)
         if igButton("Import...", ImVec2(x: 80, y: 0)) {
             requestImportFile(engine: engine)
@@ -222,7 +220,7 @@ struct PageSetupManagerUI {
         if sel.hasPrefix("layout:") {
             let name = String(sel.dropFirst("layout:".count))
             settings = tab.drawingViews.first {
-                $0.kind == .sheet && $0.name.caseInsensitiveCompare(name) == .orderedSame
+                $0.name.caseInsensitiveCompare(name) == .orderedSame
             }?.document.plotSettings
         } else if sel.hasPrefix("setup:") {
             let name = String(sel.dropFirst("setup:".count))
@@ -248,7 +246,7 @@ struct PageSetupManagerUI {
     }
 
     private static func setCurrent(engine: PhrostEngine) {
-        guard let tab = engine.tabManager.activeTab,
+        guard engine.tabManager.activeTab != nil,
               let sel = selection else {
             message = "Select a layout or named setup first."
             return
@@ -266,7 +264,7 @@ struct PageSetupManagerUI {
             if engine.tabManager.applyNamedSetupToLayout(name, layoutName: layout) {
                 message = "Applied '\(name)' to \(layout)."
             } else {
-                message = "Select a sheet layout first, then Set Current."
+                message = "Setup space does not match the active view."
             }
         }
     }
@@ -294,8 +292,9 @@ struct PageSetupManagerUI {
     private static func startWithOptions(engine: PhrostEngine) -> [String] {
         var options = ["<None>", "<Default output device>", "<Previous plot>"]
         guard let tab = engine.tabManager.activeTab else { return options }
-        options += tab.drawingViews.filter { $0.kind == .sheet }.map { $0.name }
-        options += tab.namedPageSetups.map { $0.name }
+        options += tab.drawingViews.map { $0.name }
+        let activeIsModel = tab.drawingViews[tab.activeViewIndex].kind == .model
+        options += tab.namedPageSetups.filter { $0.isModelType == activeIsModel }.map { $0.name }
         return options
     }
 
@@ -362,7 +361,7 @@ struct PageSetupManagerUI {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         let choice = options[newStartWith]
         let settings: CADPlotSettings
-        let isModel = false
+        let isModel = manager.activeTab.map { $0.drawingViews[$0.activeViewIndex].kind == .model } ?? false
         switch choice {
         case "<None>":
             settings = CADPlotSettings(
@@ -386,7 +385,7 @@ struct PageSetupManagerUI {
         default:
             if let tab = manager.activeTab,
                let view = tab.drawingViews.first(where: {
-                   $0.kind == .sheet && $0.name.caseInsensitiveCompare(choice) == .orderedSame
+                   $0.name.caseInsensitiveCompare(choice) == .orderedSame
                }) {
                 settings = view.document.plotSettings ?? CADPlotSettings(
                     paperWidthMM: 279.4, paperHeightMM: 215.9, plotPaperUnits: 1)

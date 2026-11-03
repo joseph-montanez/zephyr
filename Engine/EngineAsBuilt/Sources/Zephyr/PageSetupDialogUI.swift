@@ -50,28 +50,50 @@ struct PageSetupDialogUI {
                 styleFiles = availableStyleFiles(pstyleMode: 1)
             } else {
                 let doc = tab.drawingViews.first(where: {
-                    $0.kind == .sheet && $0.name.caseInsensitiveCompare(editName) == .orderedSame
+                    $0.name.caseInsensitiveCompare(editName) == .orderedSame
                 })?.document
                 draft = doc?.plotSettings ?? CADPlotSettings(
                     paperWidthMM: 279.4, paperHeightMM: 215.9, plotPaperUnits: 1)
                 styleFiles = availableStyleFiles(pstyleMode: doc?.pstyleMode ?? 1)
             }
+            if draftIsModelType(engine: engine) {
+                // Model space has no Layout plot area or paper-space-only flags.
+                if draft.plotType == 5 { draft.plotType = 1 }
+                draft.plotFlags |= 512
+                draft.plotFlags &= ~64
+                draft.plotFlags &= ~8
+            }
         }
         return true
     }
 
+    /// True when the dialog target lives in Model space: a Model-type named
+    /// setup for setup edits, or a Model view for layout edits.
+    static func draftIsModelType(engine: PhrostEngine) -> Bool {
+        guard let tab = engine.tabManager.activeTab else { return false }
+        if draftIsSetup {
+            return tab.namedPageSetups.first(where: {
+                $0.name.caseInsensitiveCompare(draftName) == .orderedSame
+            })?.isModelType ?? false
+        }
+        return tab.drawingViews.first(where: {
+            $0.name.caseInsensitiveCompare(draftName) == .orderedSame
+        })?.kind == .model
+    }
+
     /// The ten editing groups + conditional PDF Options sub-dialog.
     static func renderGroups(engine: PhrostEngine, dw: Float, dh: Float) {
+        let isModel = draftIsModelType(engine: engine)
         if igBeginChild_Str("##PageSetupGroups", ImVec2(x: -1, y: -52), 1, 0) {
             renderPageSetupGroup()
             renderPrinterGroup(engine: engine)
             renderPaperGroup()
-            renderPlotAreaGroup()
+            renderPlotAreaGroup(isModel: isModel)
             renderOffsetGroup(engine: engine)
-            renderScaleGroup(customScales: engine.tabManager.activeTab?.customScaleFactors ?? [])
+            renderScaleGroup(customScales: engine.tabManager.activeTab?.customScaleFactors ?? [], isModel: isModel)
             renderStyleGroup()
             renderShadeGroup(engine: engine)
-            renderOptionsGroup()
+            renderOptionsGroup(isModel: isModel)
             renderOrientationGroup()
         }
         igEndChild()
@@ -94,14 +116,14 @@ struct PageSetupDialogUI {
             }) {
                 engine.tabManager.updateNamedSetup(name: draftName, with: stored)
             } else {
-                engine.tabManager.createNamedSetup(name: draftName, from: stored)
+                engine.tabManager.createNamedSetup(name: draftName, from: stored, isModelType: draftIsModelType(engine: engine))
             }
             engine.tabManager.recordLastPlotSettings(stored)
         } else {
             guard let index = tab.drawingViews.firstIndex(where: {
-                $0.kind == .sheet && $0.name.caseInsensitiveCompare(draftName) == .orderedSame
+                $0.name.caseInsensitiveCompare(draftName) == .orderedSame
             }) else {
-                message = "Layout '\(draftName)' no longer exists."
+                message = "View '\(draftName)' no longer exists."
                 return false
             }
             var applied = draft
@@ -110,7 +132,9 @@ struct PageSetupDialogUI {
             doc.undoManager.pushUndo(doc.snapshot())
             doc.plotSettings = applied
             doc.layoutSettings = applied.layoutSettings
-            doc.unit = (applied.plotPaperUnits == 0) ? .inch : .millimeter
+            if tab.drawingViews[index].kind != .model {
+                doc.unit = (applied.plotPaperUnits == 0) ? .inch : .millimeter
+            }
             doc.markEdited()
             engine.tabManager.recordLastPlotSettings(applied)
         }
@@ -363,14 +387,25 @@ struct PageSetupDialogUI {
 
     // MARK: - Group 4: Plot area
 
-    private static func renderPlotAreaGroup() {
+    private static func renderPlotAreaGroup(isModel: Bool) {
         igSeparator()
         ImGuiTextV("Plot area")
-        let labels = ["Display", "Extents", "Limits", "View", "Window", "Layout"]
-        let current = (0..<labels.count).contains(draft.plotType) ? labels[draft.plotType] : "Layout"
+        // Model space has no Layout plot area (paper-space frame).
+        let labels = isModel
+            ? ["Display", "Extents", "Limits", "View", "Window"]
+            : ["Display", "Extents", "Limits", "View", "Window", "Layout"]
+        let current: String
+        switch draft.plotType {
+        case 0: current = "Display"
+        case 1: current = "Extents"
+        case 2: current = "Limits"
+        case 3: current = "View"
+        case 4: current = "Window"
+        default: current = isModel ? "Extents" : "Layout"
+        }
         if ImGuiBeginCombo("What to plot", current, 0) {
             for (index, label) in labels.enumerated() {
-                if ImGuiSelectable(label, index == draft.plotType, 0, ImVec2(x: 0, y: 0)) {
+                if ImGuiSelectable(label, label == current, 0, ImVec2(x: 0, y: 0)) {
                     var next = draft
                     next.plotType = index
                     draft = PlotSettingsValidator.enforcePlotTypeRules(settings: next)
@@ -383,7 +418,7 @@ struct PageSetupDialogUI {
             ImGuiTextV("(Named views are not authored in v1; the Code-6 name round-trips.)")
         }
         if draft.plotType == 4 {
-            ImGuiTextV("Window corners (paper space):")
+            ImGuiTextV(isModel ? "Window corners (model units):" : "Window corners (paper space):")
             var x1 = Float(draft.plotWindowMinX), y1 = Float(draft.plotWindowMinY)
             var x2 = Float(draft.plotWindowMaxX), y2 = Float(draft.plotWindowMaxY)
             if ImGuiDragFloat("X1", &x1, 1.0, -1e6, 1e6, "%.2f", ImGuiSliderFlags(0)) {
@@ -461,7 +496,7 @@ struct PageSetupDialogUI {
 
     // MARK: - Group 6: Plot scale
 
-    private static func renderScaleGroup(customScales: [Double] = []) {
+    private static func renderScaleGroup(customScales: [Double] = [], isModel: Bool = false) {
         igSeparator()
         ImGuiTextV("Plot scale")
         var fit = draft.standardScaleType == 0
@@ -541,10 +576,13 @@ struct PageSetupDialogUI {
             }
             ImGuiEndCombo()
         }
+        // Scale lineweights is a Paper Space option; disabled in Model space.
         var scaleLW = draft.plotFlags & 64 != 0
+        if isModel { ImGuiBeginDisabled(true) }
         if ImGuiCheckbox("Scale lineweights", &scaleLW) {
             if scaleLW { draft.plotFlags |= 64 } else { draft.plotFlags &= ~64 }
         }
+        if isModel { ImGuiEndDisabled() }
     }
 
     // MARK: - Group 7: Plot style table
@@ -612,14 +650,18 @@ struct PageSetupDialogUI {
 
     // MARK: - Group 9: Plot options
 
-    private static func renderOptionsGroup() {
+    private static func renderOptionsGroup(isModel: Bool = false) {
         igSeparator()
         ImGuiTextV("Plot options")
         checkboxFlag(label: "Plot object lineweights", bit: 128)
         checkboxTransparency()
         checkboxPlotStyles()
+        // Model space has no paper-space sequencing; these stay at their
+        // Model invariants (paperspace-last on, hide off) and are disabled.
+        if isModel { ImGuiBeginDisabled(true) }
         checkboxFlag(label: "Plot paperspace last", bit: 512)
         checkboxFlag(label: "Hide paperspace objects", bit: 8)
+        if isModel { ImGuiEndDisabled() }
     }
 
     private static func checkboxFlag(label: String, bit: Int) {

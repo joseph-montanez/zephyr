@@ -506,12 +506,86 @@ public enum PDFExporter {
         return nil
     }
 
-    /// Generate PDF data from a document (extracted for reuse by both sync and async paths).
-    static func generatePDF(document: CADDocument, backgroundColor: ColorRGBA?,
+    // ---------------------------------------------------------------------
+    // MARK: Multi-page engine (Phase 2)
+    // ---------------------------------------------------------------------
+
+    /// Errors for multi-page PDF export.
+    public enum PDFExportError: Error, Sendable {
+        /// No page sources were supplied.
+        case noPages
+    }
+
+    /// Sequential allocator for PDF object numbers. The assembler reserves
+    /// every page/content object up front, then the shared font catalog
+    /// numbers embedded faces from the first free number — so mixed page
+    /// sizes and shared fonts never collide.
+    public struct PDFObjectAllocator: Sendable {
+        public var next: Int = 1
+        public init() {}
+        public mutating func allocate() -> Int {
+            defer { next += 1 }
+            return next
+        }
+    }
+
+    /// One logical page for multi-page export: a rendering snapshot plus the
+    /// resolved `CADPlotSettings` for that page (paper, framing, plot-style
+    /// selection, PDF options). The exporter restores each snapshot into a
+    /// throwaway document and applies the settings there, so the source
+    /// drawings are never mutated.
+    public struct PDFMultiPageSource: Sendable {
+        public var snapshot: CADDocumentSnapshot
+        public var plotSettings: CADPlotSettings?
+        public var backgroundColor: ColorRGBA?
+
+        public init(snapshot: CADDocumentSnapshot,
+                    plotSettings: CADPlotSettings? = nil,
+                    backgroundColor: ColorRGBA? = nil) {
+            self.snapshot = snapshot
+            self.plotSettings = plotSettings
+            self.backgroundColor = backgroundColor
+        }
+    }
+
+    /// One fully rendered page: baked content plus per-page size/measure
+    /// metadata for the assembler. Each page keeps its own MediaBox and
+    /// /Measure dictionary, so mixed page sizes stay exact.
+    struct RenderedPage: Sendable {
+        var pageW: Double
+        var pageH: Double
+        var contentData: Data
+        var measureC: String
+        var unitLabel: String
+    }
+
+    /// Resolve the effective text options for a page. `captureFonts` and
+    /// `convertAllTextToGeometry` are wired from the resolved setup's PDF
+    /// options (the PDF Options dialog). The remaining `PDFOptions` fields —
+    /// `vectorDPI` / `rasterDPI`, `mergeControl`, `includeLayerInfo`, and
+    /// `includeHyperlinks` — are parsed and persisted with the setup but
+    /// currently inert: the exporter always emits vector geometry at paper
+    /// scale, overwrites overlapping lines, and writes no OCG layer info or
+    /// hyperlink annotations.
+    static func effectiveOptions(base: PDFExportOptions,
+                                 pdfOptions: PDFOptions?) -> PDFExportOptions {
+        guard let pdfOptions else { return base }
+        var out = base
+        out.captureFonts = pdfOptions.captureFonts
+        out.convertAllTextToGeometry = pdfOptions.convertTextToGeometry
+        return out
+    }
+
+    /// Render one page (framing, fonts, draw order, plot styles) into a
+    /// `RenderedPage`, registering any TrueType faces in the shared catalog.
+    /// Called once per page; the assembler then writes the document.
+    static func renderPage(document: CADDocument, backgroundColor: ColorRGBA?,
                             plotContext: PlotContext = .default,
-                            options: PDFExportOptions = .default) throws -> Data {
+                            options: PDFExportOptions = .default,
+                           catalog: PDFTextEmitter.PDFFontCatalog) throws -> RenderedPage {
         // Background and contrast adjustment:
         // Default PDF page background in viewers is white.
+        let options = Self.effectiveOptions(base: options, pdfOptions: document.plotSettings?.pdfOptions)
         let pageBg = backgroundColor ?? ColorRGBA.white
         let bgRf = Double(pageBg.r) / 255.0
         let bgGf = Double(pageBg.g) / 255.0
@@ -622,7 +696,7 @@ public enum PDFExporter {
                 worldW: worldW, worldH: worldH,
                 pointsPerUnit: document.unit.pointsPerUnit, margin: margin)
         }
-        let pw = Int(round(pageW)); let ph = Int(round(pageH))
+        // (Integer MediaBox dimensions are derived per page by the assembler.)
 
         // /Measure conversion: world units per point at the *effective* scale.
         let measC = String(format: "%.6f", 1.0 / scale)
@@ -631,7 +705,8 @@ public enum PDFExporter {
         // Content first: text emission registers TTF faces in the catalog,
         // whose numbers the page Resources dict must reference. Object
         // order in the file is arbitrary, so this is safe.
-        let catalog = PDFTextEmitter.PDFFontCatalog()
+        // The shared catalog arrives from the caller (one per document). A
+        // throwaway local catalog would drop embedded faces from the file.
         let content = PDFContentBuilder()
         if let bg = backgroundColor {
             content.raw("q\n")
@@ -649,7 +724,98 @@ public enum PDFExporter {
                      clipWorld: plotClip, clipPageRect: plotClipPage,
                      options: options, catalog: catalog)
         let contentData = content.build()
+        return RenderedPage(pageW: pageW, pageH: pageH, contentData: contentData,
+                            measureC: measC, unitLabel: unitLabel)
+    }
 
+    /// Generate PDF data from a document (extracted for reuse by both sync and async paths).
+    /// Single-page wrapper over the multi-page engine: renders one page and
+    /// assembles a one-page document with the legacy object numbering
+    /// (catalog 1, page 2, pages 3, content 4, standard fonts 5–6, embedded 7+).
+    static func generatePDF(document: CADDocument, backgroundColor: ColorRGBA?,
+                            plotContext: PlotContext = .default,
+                            options: PDFExportOptions = .default) throws -> Data {
+        var allocator = PDFObjectAllocator()
+        let catalogObj = allocator.allocate()
+        let pageObj = allocator.allocate()
+        let pagesObj = allocator.allocate()
+        let contentObj = allocator.allocate()
+        let fontObjs = (allocator.allocate(), allocator.allocate())
+        let catalog = PDFTextEmitter.PDFFontCatalog(firstNumber: allocator.next)
+        let page = try renderPage(document: document, backgroundColor: backgroundColor,
+                                  plotContext: plotContext, options: options,
+                                  catalog: catalog)
+        allocator.next = catalog.nextNumber
+        return assembleDocument(pages: [page], catalog: catalog, catalogObj: catalogObj,
+                                pageObjs: [pageObj], pagesObj: pagesObj,
+                                contentObjs: [contentObj], fontObjs: fontObjs)
+    }
+
+    /// Generate a multi-page PDF from restored snapshots plus resolved plot
+    /// settings, without mutating the source drawings. Each entry is restored
+    /// into a throwaway document, its resolved settings applied there, and
+    /// rendered through the same per-page path as single-page export — so
+    /// framing, fonts, draw order, and plot-style behavior match page for
+    /// page. Pages may use mixed sizes; each keeps its own MediaBox/Measure.
+    public static func generateMultiPagePDF(
+        sources: [PDFMultiPageSource],
+        plotContext: PlotContext = .default,
+        options: PDFExportOptions = .default
+    ) throws -> Data {
+        guard !sources.isEmpty else { throw PDFExportError.noPages }
+        var allocator = PDFObjectAllocator()
+        let catalogObj = allocator.allocate()
+        let pageObjs = sources.map { _ in allocator.allocate() }
+        let pagesObj = allocator.allocate()
+        let contentObjs = sources.map { _ in allocator.allocate() }
+        let fontObjs = (allocator.allocate(), allocator.allocate())
+        let catalog = PDFTextEmitter.PDFFontCatalog(firstNumber: allocator.next)
+        var pages: [RenderedPage] = []
+        pages.reserveCapacity(sources.count)
+        for source in sources {
+            try Task.checkCancellation()
+            let tempDoc = CADDocument()
+            tempDoc.restore(from: source.snapshot)
+            if let settings = source.plotSettings {
+                tempDoc.plotSettings = settings
+                tempDoc.layoutSettings = settings.layoutSettings
+            }
+            pages.append(try renderPage(document: tempDoc,
+                                        backgroundColor: source.backgroundColor,
+                                        plotContext: plotContext,
+                                        options: options,
+                                        catalog: catalog))
+        }
+        allocator.next = catalog.nextNumber
+        return assembleDocument(pages: pages, catalog: catalog, catalogObj: catalogObj,
+                                pageObjs: pageObjs, pagesObj: pagesObj,
+                                contentObjs: contentObjs, fontObjs: fontObjs)
+    }
+
+    /// Multi-page file export with progress and cancellation, mirroring the
+    /// single-snapshot `export(snapshot:to:)` path.
+    public static func exportMultiPage(sources: [PDFMultiPageSource], to url: URL,
+                                       plotContext: PlotContext = .default,
+                                       options: PDFExportOptions = .default,
+                                       progress: ((Float) -> Void)? = nil) throws {
+        try Task.checkCancellation()
+        let pdfData = try generateMultiPagePDF(sources: sources,
+                                               plotContext: plotContext,
+                                               options: options)
+        try Task.checkCancellation()
+        progress?(0.95)
+        try atomicWrite(data: pdfData, to: url)
+        progress?(0.99)
+    }
+
+    /// Assemble rendered pages plus the shared font catalog into a complete
+    /// PDF 1.7 document. All object numbers arrive from the caller's
+    /// `PDFObjectAllocator`; each page is written with its own MediaBox and
+    /// /Measure dictionary so mixed page sizes stay exact.
+    static func assembleDocument(pages: [RenderedPage],
+                                 catalog: PDFTextEmitter.PDFFontCatalog,
+                                 catalogObj: Int, pageObjs: [Int], pagesObj: Int,
+                                 contentObjs: [Int], fontObjs: (Int, Int)) -> Data {
         let w = PDFByteWriter()
 
         // PDF 1.7 header with binary marker bytes (required per spec)
@@ -657,41 +823,48 @@ public enum PDFExporter {
         // At least 4 binary bytes with high bit set to flag binary content
         w.write("%\u{00E2}\u{00E3}\u{00CF}\u{00D3}\n")
 
-        // Catalog (obj 1) with PDF 1.7 UseOutlines viewer preference
-        w.beginObject(1)
-        w.write("<< /Type /Catalog /Pages 3 0 R")
+        // Catalog with PDF 1.7 UseOutlines viewer preference
+        w.beginObject(catalogObj)
+        w.write("<< /Type /Catalog /Pages \(pagesObj) 0 R")
         w.write(" /ViewerPreferences << /PrintScaling /None /UseOutlines >> >>\n")
         w.endObject()
 
-        // Page (obj 2)
-        w.beginObject(2)
-        w.write("<< /Type /Page /Parent 3 0 R /MediaBox [0 0 \(pw) \(ph)]")
-        w.write(" /VP [ << /Type /Viewport /BBox [0 0 \(pw) \(ph)]")
-        w.write("   /Measure << /Type /Measure /Subtype /RL")
-        w.write("     /R (\(unitLabel))")
-        w.write("     /X [ << /Type /NumberFormat /U (\(unitLabel)) /C \(measC) >> ]")
-        w.write("   >> >> ]")
-        w.write(" /Contents 4 0 R")
-        w.write(" /Resources << /Font << /F1 5 0 R /F2 6 0 R \(catalog.resourceString()) >> >> >>\n")
+        // Pages (one dict per page: own MediaBox + Measure for mixed sizes)
+        for (index, page) in pages.enumerated() {
+            let pw = Int(round(page.pageW)); let ph = Int(round(page.pageH))
+            w.beginObject(pageObjs[index])
+            w.write("<< /Type /Page /Parent \(pagesObj) 0 R /MediaBox [0 0 \(pw) \(ph)]")
+            w.write(" /VP [ << /Type /Viewport /BBox [0 0 \(pw) \(ph)]")
+            w.write("   /Measure << /Type /Measure /Subtype /RL")
+            w.write("     /R (\(page.unitLabel))")
+            w.write("     /X [ << /Type /NumberFormat /U (\(page.unitLabel)) /C \(page.measureC) >> ]")
+            w.write("   >> >> ]")
+            w.write(" /Contents \(contentObjs[index]) 0 R")
+            w.write(" /Resources << /Font << /F1 \(fontObjs.0) 0 R /F2 \(fontObjs.1) 0 R \(catalog.resourceString()) >> >> >>\n")
         w.endObject()
 
-        // Pages tree (obj 3)
-        w.beginObject(3)
-        w.write("<< /Type /Pages /Kids [2 0 R] /Count 1 >>\n")
+        }
+
+        // Pages tree
+        w.beginObject(pagesObj)
+        w.write("<< /Type /Pages /Kids [\(pageObjs.map { "\($0) 0 R" }.joined(separator: " "))] /Count \(pages.count) >>\n")
         w.endObject()
 
-        // Content stream (obj 4) — FlateDecode compressed via zlib-ng
-        w.beginObject(4)
-        w.writeCompressedStream(contentData)
+        // Content streams — FlateDecode compressed via zlib-ng
+        for (index, page) in pages.enumerated() {
+            w.beginObject(contentObjs[index])
+            w.writeCompressedStream(page.contentData)
         w.endObject()
 
-        // Fonts (obj 5, 6) — Standard 14 references
-        writeFontRef(w, obj: 5, name: "Helvetica")
-        writeFontRef(w, obj: 6, name: "Courier")
-        // Embedded / referenced TTF faces (obj 7+).
+        }
+
+        // Fonts — Standard 14 references
+        writeFontRef(w, obj: fontObjs.0, name: "Helvetica")
+        writeFontRef(w, obj: fontObjs.1, name: "Courier")
+        // Embedded / referenced TTF faces (first free numbers onward).
         catalog.writeObjects(into: w)
 
-        return w.finalize(rootObj: 1)
+        return w.finalize(rootObj: catalogObj)
     }
 
     // ---------------------------------------------------------------------

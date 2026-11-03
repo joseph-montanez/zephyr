@@ -4,7 +4,12 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 
 ## November 2026
 
+### New Features
+- **Model-space plotting** — `PLOT`, `PAGESETUP`, `-PLOT`, `-PAGESETUP`, and `PREVIEW` now work from Model as well as layouts, with named setups strictly scoped to Model or Layout for creation, listing, application, rename/delete binding, plotting, and bulk publish assignment; also adds the AutoCAD PDF High Quality Print device
+- **Batch publishing (`PUBLISH`)** — new sheet-list dialog with multi-select, Model/Layout bulk filtering, cross-drawing Master setup assignment, `Import...`, Add/Remove/Move/Preview, Save/Load sheet list, multi-sheet and single-sheet PDF output, per-sheet errors, cancellation cleanup, and publishing from live unsaved drawings using throwaway copies; DWG rows require the installed ODA converter, sheet lists use an internal tolerant `.dsd` subset with CSV logs, and a split page-renderer/document-assembler supports mixed-size multi-sheet PDFs
+
 ### New Commands
+- **PUBLISH / +PUBLISH / -PUBLISH** — publish dialog workflow, preload the dialog from a sheet list, and foreground command-line publishing with a CSV log beside the `.dsd` file
 - **-EXPORTPDF** — headless command-line export of the current layout to PDF with the persisted options (no popup, no save window); an explicit path wins, otherwise `<drawing>.pdf` beside the drawing, and unsaved drawings without a path report usage instead of failing silently
 
 ### Improvements

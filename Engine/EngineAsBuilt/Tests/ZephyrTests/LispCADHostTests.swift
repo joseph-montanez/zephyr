@@ -488,6 +488,10 @@ final class LispCADHostTests: XCTestCase {
         XCTAssertEqual(
             LispScriptedCommands.disposition(for: "PLOT"), .interactiveReject)
         XCTAssertEqual(
+            LispScriptedCommands.disposition(for: "PUBLISH"), .interactiveReject)
+        XCTAssertEqual(
+            LispScriptedCommands.disposition(for: "_.PUBLISH"), .interactiveReject)
+        XCTAssertEqual(
             LispScriptedCommands.disposition(for: "'_.ZOOM"), .interactiveReject)
     }
 

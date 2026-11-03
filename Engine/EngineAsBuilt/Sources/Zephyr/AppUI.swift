@@ -271,6 +271,9 @@ struct AppUI {
         if showsActiveTab && engine.ui.previewActive {
             PreviewUI.render(engine: engine, dw: dw, dh: dh)
         }
+        if showsActiveTab && engine.ui.publishDialogActive {
+            PublishDialogUI.render(engine: engine, dw: dw, dh: dh)
+        }
 
         // 9b. Text editor modal dialog (when creating/editing text).
         if showsActiveTab && engine.textManager.isEditorActive {

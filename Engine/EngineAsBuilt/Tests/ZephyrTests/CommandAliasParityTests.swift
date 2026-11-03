@@ -99,6 +99,7 @@ final class CommandAliasParityTests: XCTestCase {
         ("PAGESETUP", "PAGESETUP"),
         ("PLOT", "PLOT"), ("PRINT", "PLOT"),
         ("PREVIEW", "PREVIEW"),
+        ("PUBLISH", "PUBLISH"), ("+PUBLISH", "+PUBLISH"), ("-PUBLISH", "-PUBLISH"),
         ("-PAGESETUP", "-PAGESETUP"), ("-PLOT", "-PLOT"),
         ("PSETUPIN", "PSETUPIN"), ("-PSETUPIN", "-PSETUPIN"),
         ("SCALELISTEDIT", "SCALELISTEDIT"), ("-SCALELISTEDIT", "-SCALELISTEDIT"),

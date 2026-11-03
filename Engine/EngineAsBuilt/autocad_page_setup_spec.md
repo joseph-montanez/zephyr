@@ -172,3 +172,61 @@ To bring full AutoCAD LT Page Setup support into an existing Paper Space impleme
    * Upgrade `PDFExporter` to honor exact paper size, printable clipping, plot area, scale, offset, rotation, lineweights, and `DrawViewportsFirst`, and ship the `PDF Options`, `PLOT`, and live-canvas `PREVIEW` workflows.
 5. **Phase 4: CLI State Machines & External Import (`-PAGESETUP`, `-PLOT`, `PSETUPIN`, `-PSETUPIN`)**
    * Implement the command-line prompt state machines for `-PLOT`, `-PAGESETUP`, and `-PSETUPIN`, external drawing `ACAD_PLOTSETTINGS` import (`PSETUPIN` / Manager `Import...`), and folder openers (`STYLESMANAGER`, `PLOTTERMANAGER`).
+
+## 8. Implementation Status (Phases 5–6) & Superseded Canvas Assumptions
+
+Phases 0–4 above are implemented (`CADPlotSettings`, `PaperSheetGeometry`,
+`PlotSettingsValidator`, Page Setup / Plot dialogs, `.ctb`/`.stb` + `PDFExporter`,
+`PREVIEW`, `-PLOT`/`-PAGESETUP`/`PSETUPIN` families). Phases 5–6 added batch
+publish: the `PUBLISH` dialog (`Sources/Zephyr/PublishDialogUI.swift`), the sheet
+model (`PublishSheetModel.swift`), execution (`PublishExecution.swift`), the
+metadata inspector (`PublishMetadataInspector.swift`), the `+PUBLISH` preload /
+`-PUBLISH` foreground CLI with per-sheet CSV log (`PublishCliCommands.swift`,
+`PublishDSD.swift`), and the `PUBLISH` / `+PUBLISH` / `-PUBLISH` registrations
+(`CADCommandProcessor.swift`, `CADCommandAliasTable.swift`).
+
+### 8.1 Canvas assumptions from §4 that no longer hold
+
+1. **Code `147` is persisted, never used for geometry.** §4 scales the sheet by
+   `Code 147`. The implementation round-trips `standardScaleFactor` through DXF
+   read/write but `PaperSheetGeometry.unitDivisor` uses `Code 72` only
+   (`25.4` for inches, `1.0` otherwise — `pixels` (`72 = 2`) is treated as `mm`).
+   Sheet size is `DXF 44/45 ÷ S_unit × (DXF 143 / DXF 142)` with rotation swap.
+2. **The sheet overlay is not a custom canvas widget.** `EngineRenderer`
+   `renderSheetOverlay` draws the paper rect, drop-shadow strips, and dashed
+   printable boundary into the ImGui background draw list: the sheet is never
+   selectable, never enters extents/zoom-extents, and `PDFExporter` never sees
+   it. Paper-space Y is negated to match imported entities, and the overlay is
+   culled when fully off-screen. The same `PaperSheetGeometry.overlayRects`
+   feeds the Page Setup Partial Preview, `PREVIEW` (`PreviewUI.renderCanvas`),
+   and `PDFExporter` Layout clipping, so canvas and preview cannot disagree.
+3. **Live on-canvas `ShowPlotStyles` (§4.4) is not implemented.**
+   `PlotPenApplication.swift` resolves pens for `PDFExporter` (`PlotPlotStyles`,
+   bit `32`) and documents the canvas hook (`ShowPlotStyles`, bit `2`) as
+   explicitly not wired. Plot styles affect PDF output and `PREVIEW`, not the
+   live Paper Space canvas.
+4. **`LIMMIN`/`LIMMAX` sync is shared, not duplicated.**
+   `PaperSheetGeometry.syncedLimits` delegates to `CADPlotSettings.syncedLimits`,
+   so the DXF writer and the validator use one implementation (spec §4.3).
+
+### 8.2 Honest limitations (carried, not regressions)
+
+* **DWG needs an external ODA FileConverter** (`ODADWGConverter.isAvailable`,
+  installed via `INSTALLODA`). Without it, DWG rows fail per-sheet with a
+  converter-missing message while valid rows still publish. DXF/DWT/EAB need no
+  converter.
+* **`.dsd` is a Zephyr-internal tolerant subset** (see `PublishDSD.swift`): no
+  authenticated AutoCAD LT `.dsd` sample exists, so AutoCAD compatibility is
+  not claimed for files written or read here.
+* **PDF only — no DWF output.** `numberOfCopies` and `includePlotStamp`
+  round-trip through jobs and `.dsd` files but are print-device concerns with
+  no file-output meaning.
+* **`PDFOptions` remainder is inert.** `vectorDPI` / `rasterDPI`,
+  `mergeControl`, `includeLayerInfo`, and `includeHyperlinks` are parsed and
+  persisted, but `PDFExporter.effectiveOptions` wires only `captureFonts` and
+  `convertAllTextToGeometry`: output is always vector geometry at paper scale
+  with overwrite blending and no OCG layer info or hyperlink annotations.
+* **Multi-sheet jobs are RAM-bound.** All pages render fully in memory and the
+  file is written once (a failed or cancelled multi-sheet job leaves no file
+  behind). Very large jobs should use single-sheet mode, which bounds memory
+  to one page at a time.

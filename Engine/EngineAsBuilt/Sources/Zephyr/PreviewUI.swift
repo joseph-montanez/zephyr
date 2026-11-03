@@ -26,7 +26,7 @@ struct PreviewUI {
                 message = ""
             }
         } else {
-            message = "PREVIEW needs an active sheet layout."
+            message = "PREVIEW needs an active view with paper size."
         }
         let width: Float = min(900, dw - 60)
         let height: Float = min(700, dh - 60)
