@@ -92,6 +92,7 @@ enum RibbonIconPainter {
             // Chrome
             "reload": reload,
             "close": close,
+            "pattern": pattern,
         ]
     }
 
@@ -313,6 +314,15 @@ enum RibbonIconPainter {
         stroke(dl, r, c, [(0.2, 0.8), (0.8, 0.2)], thickness: 0.9)
         stroke(dl, r, c, [(0.2, 0.55), (0.55, 0.2)], thickness: 0.9)
         stroke(dl, r, c, [(0.45, 0.8), (0.8, 0.45)], thickness: 0.9)
+    }
+
+    private static func pattern(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        outline(dl, r, c, x0: 0.12, y0: 0.14, x1: 0.88, y1: 0.86)
+        stroke(dl, r, c, [(0.12, 0.5), (0.88, 0.5)], thickness: 0.9)
+        stroke(dl, r, c, [(0.5, 0.14), (0.5, 0.86)], thickness: 0.9)
+        stroke(dl, r, c, [(0.2, 0.8), (0.8, 0.2)], thickness: 0.9)
     }
 
     private static func spline(

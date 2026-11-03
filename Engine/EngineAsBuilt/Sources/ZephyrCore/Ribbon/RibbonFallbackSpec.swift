@@ -57,6 +57,8 @@ public enum RibbonFallbackSpec {
                                 command("ARC", "Arc", "arc", size: .small),
                                 command("RECTANGLE", "Rectangle", "rect", size: .small),
                                 command("ELLIPSE", "Ellipse", "ellipse", size: .small),
+                                command("HATCH", "Hatch", "hatch", size: .small),
+                                command("PATTERN", "Pattern", "pattern", size: .small),
                             ]),
                         RibbonPanel(
                             title: "Modify",

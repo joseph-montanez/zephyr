@@ -18,7 +18,7 @@ public enum RibbonIconNames {
     /// Every drawable icon name, lowercase.
     public static let all: Set<String> = [
         // Draw
-        "line", "polyline", "circle", "arc", "ellipse", "rect", "hatch",
+        "line", "polyline", "circle", "arc", "ellipse", "rect", "hatch", "pattern",
         "spline", "pen", "ray", "text", "leader", "dim", "table", "revcloud",
         // Modify
         "move", "copy", "rotate", "scale", "align", "erase", "trim",
