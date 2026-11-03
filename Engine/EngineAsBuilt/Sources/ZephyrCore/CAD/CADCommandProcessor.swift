@@ -82,6 +82,9 @@ public protocol FeatureCommand: AnyObject {
     /// Left mouse button down in world-space coordinates.
     func handleMouseClick(worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult
 
+    /// Left mouse button release in world-space coordinates.
+    func handleMouseUp(worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult
+
     /// Mouse motion in world-space (called every frame the mouse moves).
     func handleMouseMotion(worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor)
 
@@ -125,6 +128,8 @@ public extension FeatureCommand {
 
     /// Default implementation: does nothing.
     func renderImGui(engine: PhrostEngine) {}
+    /// Default: ignore mouse-up (stay active, fall through to default handling).
+    func handleMouseUp(worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult { .continue }
 
     /// Default: ignore command-line text.
     func handleCommandText(_ text: String, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult { .continue }

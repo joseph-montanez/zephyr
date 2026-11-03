@@ -497,6 +497,21 @@ public final class EngineLoopController {
     }
 
     internal func handleToolMouseUp(x: Float, y: Float) {
+        // Route releases to the active feature command first (mirrors
+        // handleToolMouseDown): press-and-hold commands end their drag here.
+        // .continue falls through to the default handling below; anything
+        // else consumes the release.
+        if let featureCmd = engine.commandProcessor.activeFeatureCommand {
+            let (uwx, uwy) = engine.camera.screenToWorld(screenX: x, screenY: y, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
+            let upResult = featureCmd.handleMouseUp(worldX: uwx, worldY: uwy, engine: engine, processor: engine.commandProcessor)
+            if upResult == .finished {
+                engine.commandProcessor.finishFeatureCommand(engine: engine)
+                return
+            }
+            if upResult == .handled || upResult == .consumed {
+                return
+            }
+        }
         let interaction = engine.interaction
         if interaction.lassoActive {
             // Press-and-drag release: commit the freeform lasso polygon —
