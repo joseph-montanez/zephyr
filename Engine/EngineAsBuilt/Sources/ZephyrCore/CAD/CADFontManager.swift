@@ -412,6 +412,17 @@ public enum CADFontManager {
             return nil
         }
 
+        // A style backed by a loadable SHX face — including extension-less
+        // names like "romand" or "simplex" — is an SHX style. Never answer
+        // with a TrueType substitute here: live-text export would measure
+        // and render with the wrong face metrics (SS-11: romand GENERAL
+        // NOTES wrapped when set in Arial).
+        if !normName.hasSuffix(".ttf") && !normName.hasSuffix(".otf") && !normName.hasSuffix(".ttc") {
+            if getOrLoadSHXFont(filename: rawName, allowFallback: false) != nil {
+                return nil
+            }
+        }
+
         let exeDir = URL(fileURLWithPath: Bundle.main.executablePath ?? ".")
             .deletingLastPathComponent()
 

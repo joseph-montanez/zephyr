@@ -1054,6 +1054,13 @@ public enum PDFExporter {
                 let worldWidth = mtextWidth.map { $0 * widthScale }
 
                 // ---- TTF route: live vector text (AutoCAD capture model) ----
+                // Renderer parity: live text only when the screen would use
+                // a TTF face too — an all-TTF formatted run set, or no
+                // loadable SHX face for the style. SHX-backed styles
+                // (romand, simplex, …) fall through to the stroke route even
+                // when a TTF substitute file exists on disk.
+                let rendererTTFPath = formattedTTFPath
+                    ?? (exactStyleSHXFont == nil ? CADFontManager.getTTFEquivalent(filename: fontFile) : nil)
                 // A resolvable TrueType face takes precedence over SHX: the
                 // screen renders these styles through SDL_ttf, and the PDF
                 // now measures with the same face's advances.
@@ -1063,9 +1070,9 @@ public enum PDFExporter {
                 } else {
                     ttfBaseReference = styleName
                 }
-                if let ttfBaseReference,
-                   let baseFace = PDFTextEmitter.resolveFace(
-                       reference: ttfBaseReference, styleName: styleName,
+                if let ttfBaseReference, rendererTTFPath != nil,
+                   let baseFace = PDFTextEmitter.resolveBaseFace(
+                       formatted: formatted, styleName: styleName,
                        textStyleFonts: document.textStyleFonts) {
                     let lineSpacingFactor: Double
                     if let spacing = entity.xdata["dxf.mtextLineSpacing"],

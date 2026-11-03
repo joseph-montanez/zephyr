@@ -282,9 +282,23 @@ enum PDFPrimitives {
             if let formatted, !formatted.defaultFont.isEmpty { return formatted.defaultFont }
             return style
         }()
-        if let styleRef,
-           let baseFace = PDFTextEmitter.resolveFace(
-               reference: styleRef, styleName: style,
+        // Renderer parity with the screen (see PDFExporter.collectItems):
+        // SHX-backed styles explode to strokes; only an all-TTF formatted
+        // run set — or a style with no SHX face at all — takes live text.
+        let primitiveStyleFont = CADFontManager.resolveTextStyleFont(
+            styleName: style,
+            textStyleFonts: document.textStyleFonts)
+        let exactPrimitiveSHXFont = CADFontManager.getOrLoadSHXFont(
+            filename: primitiveStyleFont, allowFallback: false)
+        let primitiveFormattedTTFPath = formatted.flatMap {
+            CADFontManager.resolveFormattedTTFPath(
+                $0, styleName: style, textStyleFonts: document.textStyleFonts)
+        }
+        let rendererPrimitiveTTFPath = primitiveFormattedTTFPath
+            ?? (exactPrimitiveSHXFont == nil ? CADFontManager.getTTFEquivalent(filename: primitiveStyleFont) : nil)
+        if let styleRef, rendererPrimitiveTTFPath != nil,
+           let baseFace = PDFTextEmitter.resolveBaseFace(
+               formatted: formatted, styleName: style,
                textStyleFonts: document.textStyleFonts) {
             // Optional width/oblique/line-spacing overrides from xdata.
             // Renderer parity: MTEXT reference widths are NOT width

@@ -16,17 +16,20 @@ public enum CADTextFormatter {
         public let underline: Bool
         public let bold: Bool
         public let italic: Bool
+        public let heightScale: Double
 
         public init(
             _ text: String,
             underline: Bool,
             bold: Bool = false,
-            italic: Bool = false
+            italic: Bool = false,
+            heightScale: Double = 1.0
         ) {
             self.text = text
             self.underline = underline
             self.bold = bold
             self.italic = italic
+            self.heightScale = heightScale.isFinite && heightScale > 0 ? heightScale : 1.0
         }
     }
 
@@ -62,13 +65,30 @@ public enum CADTextFormatter {
                     } else {
                         value = run.text
                     }
+                    let baseHeight = formatted.defaultHeight
+                    let runScale: Double = {
+                        guard baseHeight.isFinite && baseHeight > 0 else { return 1.0 }
+                        let h = run.height ?? baseHeight
+                        guard h.isFinite && h > 0 else { return 1.0 }
+                        return h / baseHeight
+                    }()
                     return value.map {
+                        Glyph(
+                            String($0),
+                            underline: run.underline,
+                            bold: run.bold,
+                            italic: run.italic,
+                            heightScale: runScale)
+                    }
+                    /* Superseded: pre-scale MTEXT map kept for reference.
+                       The scale-aware block above returns instead.
                         Glyph(
                             String($0),
                             underline: run.underline,
                             bold: run.bold,
                             italic: run.italic)
                     }
+                    */
                 },
                 alignment: paragraph.alignment
             )
@@ -85,6 +105,25 @@ public enum CADTextFormatter {
             parse(raw).map { (glyphs: $0, alignment: 0) },
             maxWidth: maxWidth,
             measure: measure)
+    }
+
+    /// Width of glyphs at their own height scales: contiguous runs of equal
+    /// scale are measured once and scaled, so `\H` runs wrap where the
+    /// shrunken glyphs actually fit. Uniform-scale text measures exactly
+    /// like `measure(string(from:))`.
+    private static func widthOfGlyphs(_ glyphs: [Glyph], measure: (String) -> Double) -> Double {
+        var total = 0.0
+        var index = glyphs.startIndex
+        while index < glyphs.endIndex {
+            let scale = glyphs[index].heightScale
+            var end = glyphs.index(after: index)
+            while end < glyphs.endIndex && glyphs[end].heightScale == scale {
+                end = glyphs.index(after: end)
+            }
+            total += measure(string(from: Array(glyphs[index..<end]))) * scale
+            index = end
+        }
+        return total
     }
 
     private static func layoutParagraphs(
@@ -124,7 +163,7 @@ public enum CADTextFormatter {
                 let candidate = current + pendingWhitespace + run.glyphs
                 let currentHasText = current.contains { !isWhitespace($0) }
 
-                if currentHasText && measure(string(from: candidate)) > maxWidth {
+                if currentHasText && widthOfGlyphs(candidate, measure: measure) > maxWidth {
                     lines.append(Line(
                         glyphs: current,
                         alignment: paragraph.alignment))
@@ -157,7 +196,7 @@ public enum CADTextFormatter {
         var start: Double?
 
         for glyph in line.glyphs {
-            let w = measure(glyph.text)
+            let w = measure(glyph.text) * glyph.heightScale
 
             if glyph.underline {
                 if start == nil { start = x }

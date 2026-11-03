@@ -20,6 +20,12 @@ enum PDFTextEmitter {
     // MARK: Resolved faces
     // ---------------------------------------------------------------------
 
+    /// Wrap tolerance matching the screen renderer (`EngineTextManager`
+    /// reduces SDL measurements ~2% before the reference-width comparison):
+    /// exported lines then break exactly where the canvas breaks. Applied to
+    /// layout measurement only — emission advances stay exact.
+    static let wrapTolerance = 0.98
+
     /// A TTF face file selected for a run of text.
     struct ResolvedFace: Sendable {
         var font: CADTrueTypeFont
@@ -94,6 +100,13 @@ enum PDFTextEmitter {
         } else if compactLower.hasPrefix("lucon") || compactLower.hasPrefix("lucidaconsole") {
             queries.append("lucon.TTF")
         }
+        // An SHX-backed reference (including extension-less SHX style names
+        // like "romand") renders as strokes on screen — never answer with a
+        // TTF substitute here. Callers gate on the renderer parity decision
+        // first and fall through to the SHX route when this returns nil.
+        if CADFontManager.getOrLoadSHXFont(filename: filename, allowFallback: false) != nil {
+            return nil
+        }
         // Two passes: an exact face match for ANY query spelling wins
         // over a substitute file for an earlier spelling.
         var path: String? = nil
@@ -126,6 +139,45 @@ enum PDFTextEmitter {
         return ResolvedFace(font: font, path: facePath, substituted: false, simulatedBold: simulatedBold)
     }
 
+    /// Renderer-parity base face: try per-run `\f` fonts first, then the
+    /// entity default font, then the style name — the first resolvable TTF
+    /// face wins. SHX-backed references resolve to nil (see `resolveFace`),
+    /// so an SHX style with `\fArial` runs still exports its Arial runs as
+    /// live text while pure SHX text falls through to the stroke route.
+    static func resolveBaseFace(
+        formatted: FormattedText?,
+        styleName: String?,
+        textStyleFonts: [String: String]
+    ) -> ResolvedFace? {
+        var references: [String] = []
+        if let formatted {
+            for paragraph in formatted.paragraphs {
+                for run in paragraph.runs {
+                    if let name = run.fontName, !name.isEmpty {
+                        references.append(name)
+                    }
+                }
+            }
+            if !formatted.defaultFont.isEmpty {
+                references.append(formatted.defaultFont)
+            }
+        }
+        if let styleName, !styleName.isEmpty {
+            references.append(styleName)
+        }
+        var seen = Set<String>()
+        for reference in references {
+            let key = reference.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !key.isEmpty, seen.insert(key).inserted else { continue }
+            if let face = resolveFace(
+                reference: reference, styleName: styleName,
+                textStyleFonts: textStyleFonts) {
+                return face
+            }
+        }
+        return nil
+    }
+
     // ---------------------------------------------------------------------
     // MARK: Layout
     // ---------------------------------------------------------------------
@@ -137,6 +189,10 @@ enum PDFTextEmitter {
         /// Glyph IDs (CIDs) parallel to scalars.
         var cids: [Int]
         /// Advance width in em (sum of glyph advances, no width factor).
+        /// Height scale of the run (`\H` overrides, 1.0 normally): emission
+        /// sizes this segment with `emWorld * heightScale` so shrunken runs
+        /// render at their laid-out size.
+        var heightScale: Double
         var widthEm: Double
     }
 
@@ -183,7 +239,7 @@ enum PDFTextEmitter {
                 minY = min(minY, y); maxY = max(maxY, y)
             }
             for line in laid.lines {
-                let widthWorld = line.segments.reduce(0.0) { $0 + $1.widthEm }
+                let widthWorld = line.segments.reduce(0.0) { $0 + $1.widthEm * $1.heightScale }
                     * laid.emWorld * max(widthFactor, 1e-9)
                 let ex = line.origin.x + cosR * widthWorld
                 let ey = line.origin.y + sinR * widthWorld
@@ -222,7 +278,7 @@ enum PDFTextEmitter {
         let emWorld = heightWorld * upm / max(1.0, Double(font.capHeightUnits))
         let wf = max(widthFactor, 1e-9)
         func measureWorld(_ s: String) -> Double {
-            font.widthEm(of: s) * emWorld * wf
+            font.widthEm(of: s) * emWorld * wf * PDFTextEmitter.wrapTolerance
         }
 
         let lines: [CADTextFormatter.Line]
@@ -306,7 +362,8 @@ enum PDFTextEmitter {
         var used: [String: Set<UInt32>] = [:]
         for (lineIndex, line) in lines.enumerated() {
             guard !line.glyphs.isEmpty else { continue }
-            // Group contiguous glyphs by styled face (bold/italic runs).
+            // Group contiguous glyphs by styled face (bold/italic runs)
+            // and height scale (`\H` runs size separately).
             var segments: [Segment] = []
             for glyph in line.glyphs {
                 for scalar in glyph.text.unicodeScalars {
@@ -334,22 +391,27 @@ enum PDFTextEmitter {
                     let gid = face.font.glyphID(for: scalar)
                     let adv = Double(face.font.advanceWidth(glyphID: gid)) / upm
                     if let last = segments.last, last.face.path == face.path,
-                       last.face.simulatedBold == face.simulatedBold {
+                       last.face.simulatedBold == face.simulatedBold,
+                       last.heightScale == glyph.heightScale {
                         segments[segments.count - 1].scalars.append(value)
                         segments[segments.count - 1].cids.append(gid)
                         segments[segments.count - 1].widthEm += adv
                     } else {
                         segments.append(Segment(
                             face: face, scalars: [value], cids: [gid],
+                            heightScale: glyph.heightScale,
                             widthEm: adv))
                     }
                     used[face.path, default: []].insert(value)
                 }
             }
-            let lineWidthWorld = segments.reduce(0.0) { $0 + $1.widthEm } * emWorld * wf
+            let lineWidthWorld = segments.reduce(0.0) { $0 + $1.widthEm * $1.heightScale } * emWorld * wf
             let offsetX = horizontalOffset(line: line, lineWidthWorld: lineWidthWorld)
             let baselineLocal = baseY + Double(lineIndex) * lineAdvance + ascentWorld
-            let ranges = CADTextFormatter.underlineRanges(for: line, measure: measureWorld)
+            func measureExact(_ s: String) -> Double {
+                font.widthEm(of: s) * emWorld * wf
+            }
+            let ranges = CADTextFormatter.underlineRanges(for: line, measure: measureExact)
             out.append(Line(
                 segments: segments,
                 origin: worldPoint(localX: offsetX, localY: baselineLocal),
@@ -393,17 +455,18 @@ enum PDFTextEmitter {
                     face: seg.face, displayName: displayName,
                     captureOn: options.captureFonts,
                     scalars: Set(seg.scalars))
-                let segWidthWorld = seg.widthEm * em * wf
+                let segEm = em * seg.heightScale
+                let segWidthWorld = seg.widthEm * segEm * wf
                 let x = line.origin.x + cosR * cursor
                 let y = line.origin.y + sinR * cursor
                 emitSegment(
-                    num: num, cids: seg.cids, em: em, wf: wf, k: k,
+                    num: num, cids: seg.cids, em: segEm, wf: wf, k: k,
                     cosR: cosR, sinR: sinR, x: x, y: y, to: cb)
                 if seg.face.simulatedBold {
                     emitSegment(
-                        num: num, cids: seg.cids, em: em, wf: wf, k: k,
+                        num: num, cids: seg.cids, em: segEm, wf: wf, k: k,
                         cosR: cosR, sinR: sinR,
-                        x: x + 0.02 * em * cosR, y: y + 0.02 * em * sinR, to: cb)
+                        x: x + 0.02 * segEm * cosR, y: y + 0.02 * segEm * sinR, to: cb)
                 }
                 cursor += segWidthWorld
             }
@@ -452,15 +515,15 @@ enum PDFTextEmitter {
             var cursor = 0.0
             for seg in line.segments {
                 let upm = Double(seg.face.font.unitsPerEm)
-                let s = em / upm
+                let s = em * seg.heightScale / upm
                 for (ci, cid) in seg.cids.enumerated() {
                     _ = ci
                     guard let outline = seg.face.font.outline(glyphID: cid),
                           !outline.contours.isEmpty else {
-                        cursor += Double(seg.face.font.advanceWidth(glyphID: cid)) / upm * em * wf
+                        cursor += Double(seg.face.font.advanceWidth(glyphID: cid)) / upm * em * seg.heightScale * wf
                         continue
                     }
-                    let adv = Double(outline.advance) / upm * em * wf
+                    let adv = Double(outline.advance) / upm * em * seg.heightScale * wf
                     // Flatten each contour to world-space loops.
                     var loops: [[Vector3]] = []
                     for contour in outline.contours {
@@ -681,7 +744,9 @@ enum PDFTextEmitter {
             nextNumber = firstNumber
         }
 
-        /// Register a face use; returns the Type0 `/F` number.
+        /// Register a face use; returns the Type0 `/F` number. Aliased paths
+        /// share one number; `resourceString`/`writeObjects` dedupe by it so
+        /// resources never list a font twice.
         func register(
             face: ResolvedFace, displayName: String,
             captureOn: Bool, scalars: Set<UInt32>
@@ -717,13 +782,27 @@ enum PDFTextEmitter {
 
         /// `/F7 7 0 R /F12 12 0 R …` for the page Resources dict.
         func resourceString() -> String {
-            entries.values.sorted { $0.type0 < $1.type0 }
+            Dictionary(grouping: entries.values, by: { $0.type0 }).values.compactMap { $0.first }.sorted { $0.type0 < $1.type0 }
                 .map { "/F\($0.type0) \($0.type0) 0 R" }
                 .joined(separator: " ")
         }
 
         func writeObjects(into w: PDFByteWriter) {
-            for entry in entries.values.sorted(by: { $0.type0 < $1.type0 }) {
+            // Aliased entries (same face file under several keys) share a
+            // type0 but accumulate `used` scalars independently (value
+            // semantics). Union them here so every emitted CID has a
+            // ToUnicode pair no matter which alias wrote first — SS-11 lost
+            // the apostrophe mapping this way. Sorted for deterministic PDFs.
+            let mergedByNumber = Dictionary(grouping: entries.values, by: { $0.type0 }).values.map { group -> Entry in
+                let ordered = group.sorted { $0.baseName < $1.baseName }
+                var acc = ordered[0]
+                for other in ordered.dropFirst() {
+                    acc.used.formUnion(other.used)
+                    if other.mode == .embedded { acc.mode = .embedded }
+                }
+                return acc
+            }
+            for entry in mergedByNumber.sorted(by: { $0.type0 < $1.type0 }) {
                 writeFontObjects(entry: entry, into: w)
             }
         }

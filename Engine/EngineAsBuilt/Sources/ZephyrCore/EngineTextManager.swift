@@ -444,7 +444,34 @@ public final class EngineTextManager {
             if line.text.isEmpty {
                 return (0.0, metrics.lineHeightPixels)
             }
-            return measureTextPixels(font: font, text: line.text)
+            let lineScales = Set(line.glyphs.map(\.heightScale))
+            guard lineScales.count > 1 else {
+                return measureTextPixels(font: font, text: line.text)
+            }
+            // Mixed `\H` runs: measure each scale group at its own size so
+            // the line box matches the scale-aware wrap width; the tallest
+            // group sets the line height. (World mapping is size-invariant,
+            // so group pixels convert with the same world scale.)
+            var mixedW = 0.0
+            var mixedH = 0.0
+            var glyphIndex = line.glyphs.startIndex
+            while glyphIndex < line.glyphs.endIndex {
+                let groupScale = line.glyphs[glyphIndex].heightScale
+                var groupEnd = line.glyphs.index(after: glyphIndex)
+                while groupEnd < line.glyphs.endIndex, line.glyphs[groupEnd].heightScale == groupScale {
+                    groupEnd = line.glyphs.index(after: groupEnd)
+                }
+                let groupText = line.glyphs[glyphIndex..<groupEnd].map(\.text).joined()
+                if !groupText.isEmpty {
+                    let openScale = min(max(groupScale, 0.001), 1000.0)
+                    let groupFont = getOrCreateFont(path: fontPath, size: fontSize * Float(openScale)) ?? font
+                    let groupMetrics = measureTextPixels(font: groupFont, text: groupText)
+                    mixedW += groupMetrics.w
+                    mixedH = max(mixedH, groupMetrics.h)
+                }
+                glyphIndex = groupEnd
+            }
+            return (mixedW, mixedH)
         }
 
         let cosR = cos(rotation)
@@ -488,18 +515,20 @@ public final class EngineTextManager {
 
         func styledSegments(
             for line: CADTextFormatter.Line
-        ) -> [(text: String, bold: Bool, italic: Bool)] {
-            var result: [(text: String, bold: Bool, italic: Bool)] = []
+        ) -> [(text: String, bold: Bool, italic: Bool, scale: Double)] {
+            var result: [(text: String, bold: Bool, italic: Bool, scale: Double)] = []
             for glyph in line.glyphs {
                 if let last = result.last,
                    last.bold == glyph.bold,
-                   last.italic == glyph.italic {
+                   last.italic == glyph.italic,
+                   last.scale == glyph.heightScale {
                     result[result.count - 1].text += glyph.text
                 } else {
                     result.append((
                         text: glyph.text,
                         bold: glyph.bold,
-                        italic: glyph.italic))
+                        italic: glyph.italic,
+                        scale: glyph.heightScale))
                 }
             }
             return result
@@ -654,7 +683,12 @@ public final class EngineTextManager {
                     bold: segment.bold,
                     italic: segment.italic)
                 let segmentFont =
-                    getOrCreateFont(path: segmentPath, size: fontSize) ?? font
+                    // Open the segment's own size so mixed `\H` runs render at
+                    // their laid-out height. World mapping is size-invariant
+                    // (height/capHeight), so cursor pixels convert uniformly.
+                    // Absurd scales clamp for the font open (wrapping stays
+                    // exact); a failed open falls back to the base font.
+                    getOrCreateFont(path: segmentPath, size: fontSize * Float(min(max(segment.scale, 0.001), 1000.0))) ?? font
                 let rendered = renderTextToTexture(
                     font: segmentFont,
                     text: segment.text,
