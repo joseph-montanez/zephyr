@@ -1290,7 +1290,7 @@ public final class CADCommandProcessor {
             // system save window, then exports without touching the tab's
             // file association.
             eng.ui.exportPDFDialogActive = true
-            commandPrompt = "Export options for the active layout to PDF."
+            // No commandPrompt: the dialog is not a modal command, and a lingering prompt renders as stuck active.
         case "-EXPORTPDF":
             guard let eng = engine else { clearCommand(); return }
             runDashExportPDF(text: text, engine: eng)
