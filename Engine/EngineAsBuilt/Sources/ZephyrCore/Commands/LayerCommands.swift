@@ -58,6 +58,12 @@ public final class LayerPickCommand: FeatureCommand {
             .init(
                 value: "S", title: "Settings", aliases: ["SETTINGS"],
                 description: "Toggle hide-others vs fade-others"),
+            .init(
+                value: "OFF", title: "Off", aliases: [],
+                description: "Isolating hides other layers"),
+            .init(
+                value: "FADE", title: "Fade", aliases: [],
+                description: "Isolating fades other layers"),
         ]
     }
 
@@ -68,7 +74,13 @@ public final class LayerPickCommand: FeatureCommand {
     ) -> CommandResult {
         guard mode == .isolate else { return .continue }
         let upper = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard upper == "S" || upper == "SETTINGS" else { return .continue }
+        if upper == "OFF" {
+            engine.document.layisoFadeOthers = false
+        } else if upper == "FADE" {
+            engine.document.layisoFadeOthers = true
+        } else if upper == "S" || upper == "SETTINGS" {
+            engine.document.layisoFadeOthers.toggle()
+        } else { return .continue }
         engine.document.layisoFadeOthers.toggle()
         processor.commandPrompt = engine.document.layisoFadeOthers
             ? "Isolating fades other layers. Select object on the layer to isolate:"

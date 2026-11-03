@@ -259,7 +259,7 @@ public enum CADBoundaryDetector {
 
         for handle in entityHandles {
             guard let entity = document.entity(for: handle) else { continue }
-            guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+            guard let layer = document.layer(for: entity.layerID), layer.isEffectivelyVisible else { continue }
             guard let geometry = document.resolvedGeometry(for: entity) else { continue }
 
             let worldEdges = collectWorldEdges(from: geometry, transform: entity.transform, handle: handle)
@@ -317,7 +317,7 @@ public enum CADBoundaryDetector {
 
             for handle in nearbyHandles {
                 guard let entity = document.entity(for: handle) else { continue }
-                guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+                guard let layer = document.layer(for: entity.layerID), layer.isEffectivelyVisible else { continue }
                 guard let geometry = document.resolvedGeometry(for: entity) else { continue }
 
                 let worldEdges = collectWorldEdges(from: geometry, transform: entity.transform, handle: handle)
@@ -416,7 +416,7 @@ public enum CADBoundaryDetector {
         var holes: [[Vector3]] = []
         for handle in candidates {
             guard let entity = document.entity(for: handle) else { continue }
-            guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+            guard let layer = document.layer(for: entity.layerID), layer.isEffectivelyVisible else { continue }
             guard let geometry = document.resolvedGeometry(for: entity) else { continue }
 
             for loop in collectClosedWorldLoops(from: geometry, transform: entity.transform) {

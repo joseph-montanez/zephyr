@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 import ImGui
 import SwiftSDL
 
@@ -1269,7 +1269,7 @@ public final class EngineLoopController {
                 if interaction.gripActive, let gripHandle = interaction.gripHandle, handle == gripHandle { return nil }
                 if interaction.dragActive, engine.cadSelection.selectedHandles.contains(handle) { return nil }
                 guard let entity = engine.document.entity(for: handle) else { return nil }
-                guard let layer = engine.document.layer(for: entity.layerID), layer.isVisible else { return nil }
+                guard let layer = engine.document.layer(for: entity.layerID), LayerAccess.isSnappable(layer) else { return nil }
                 guard !engine.document.isIsolatedHidden(entity.handle) else { return nil }
                 return entity
             }
@@ -1279,7 +1279,7 @@ public final class EngineLoopController {
                 if interaction.dragActive, engine.cadSelection.selectedHandles.contains(entity.handle) { return false }
                 guard !engine.document.isIsolatedHidden(entity.handle) else { return false }
                 guard let layer = engine.document.layer(for: entity.layerID) else { return false }
-                return layer.isVisible
+                return LayerAccess.isSnappable(layer)
             }
         }
 

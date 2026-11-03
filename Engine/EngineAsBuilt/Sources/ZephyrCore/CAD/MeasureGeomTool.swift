@@ -275,7 +275,7 @@ public final class MeasureGeomTool: FeatureCommand {
                 guard hitCount < 500 else { break }
                 guard let entity = engine.document.entity(for: handle) else { continue }
                 guard entity.dimensionMetadata == nil else { continue }
-                guard let layer = engine.document.layer(for: entity.layerID), layer.isVisible else { continue }
+                guard let layer = engine.document.layer(for: entity.layerID), layer.isEffectivelyVisible else { continue }
                 guard let geometry = engine.document.resolvedGeometry(for: entity) else { continue }
                 hitCount += 1
 
@@ -409,7 +409,7 @@ public final class MeasureGeomTool: FeatureCommand {
             guard segments.count < 256 else { break }
             guard let entity = engine.document.entity(for: handle) else { continue }
             guard entity.dimensionMetadata == nil else { continue }
-            guard let layer = engine.document.layer(for: entity.layerID), layer.isVisible else { continue }
+            guard let layer = engine.document.layer(for: entity.layerID), layer.isEffectivelyVisible else { continue }
             guard let geometry = engine.document.resolvedGeometry(for: entity) else { continue }
 
             for primitive in geometry {

@@ -18,6 +18,7 @@ public struct DXFDrawingView: Sendable {
     public let groups: [CADGroup]
     /// Full plot settings for this view (paper + device/scale/flags).
     public let plotSettings: CADPlotSettings?
+    public let viewportOverrides: ViewportOverrideMap
 
     public init(
         name: String,
@@ -26,7 +27,8 @@ public struct DXFDrawingView: Sendable {
         backgroundColor: ColorRGBA? = nil,
         layoutSettings: CADLayoutSettings? = nil,
         groups: [CADGroup] = [],
-        plotSettings: CADPlotSettings? = nil
+        plotSettings: CADPlotSettings? = nil,
+        viewportOverrides: ViewportOverrideMap = [:]
     ) {
         self.name = name
         self.kind = kind
@@ -35,6 +37,7 @@ public struct DXFDrawingView: Sendable {
         self.layoutSettings = layoutSettings
         self.groups = groups
         self.plotSettings = plotSettings
+        self.viewportOverrides = viewportOverrides
     }
 }
 
@@ -302,6 +305,7 @@ public enum DXFImporter {
         let viewHeight: Double
         let twistAngle: Double
         let layerName: String
+        let stableID: String
 
         init(
             paperCenterX: Double, paperCenterY: Double,
@@ -310,7 +314,8 @@ public enum DXFImporter {
             viewCenterX: Double, viewCenterY: Double,
             viewTargetX: Double, viewTargetY: Double,
             viewHeight: Double, twistAngle: Double,
-            layerName: String
+            layerName: String,
+            stableID: String = UUID().uuidString
         ) {
             self.paperCenterX = paperCenterX
             self.paperCenterY = paperCenterY
@@ -325,6 +330,7 @@ public enum DXFImporter {
             self.viewHeight = viewHeight
             self.twistAngle = twistAngle
             self.layerName = layerName
+            self.stableID = stableID
         }
 
         init(_ source: DXFViewportEntity) {
@@ -341,6 +347,9 @@ public enum DXFImporter {
             viewHeight = source.viewHeight
             twistAngle = source.twistAngle * .pi / 180.0
             layerName = source.layer
+            stableID = source.stableID.isEmpty
+                ? ViewportIdentity.fallbackKey(viewportNumber: source.vpID)
+                : source.stableID
         }
 
         var isUsable: Bool {
@@ -406,7 +415,8 @@ public enum DXFImporter {
                 viewCenterX: viewCenterX, viewCenterY: viewCenterY,
                 viewTargetX: viewTargetX, viewTargetY: viewTargetY,
                 viewHeight: viewHeight, twistAngle: twistAngle,
-                layerName: layerName)
+                layerName: layerName,
+                stableID: stableID)
         }
 
         func withScale(_ newScale: Double) -> SheetViewport {
@@ -418,7 +428,8 @@ public enum DXFImporter {
                 viewCenterX: viewCenterX, viewCenterY: viewCenterY,
                 viewTargetX: viewTargetX, viewTargetY: viewTargetY,
                 viewHeight: paperHeight / newScale, twistAngle: twistAngle,
-                layerName: layerName)
+                layerName: layerName,
+                stableID: stableID)
         }
 
         func withViewTarget(x: Double, y: Double) -> SheetViewport {
@@ -429,7 +440,8 @@ public enum DXFImporter {
                 viewCenterX: viewCenterX, viewCenterY: viewCenterY,
                 viewTargetX: x, viewTargetY: y,
                 viewHeight: viewHeight, twistAngle: twistAngle,
-                layerName: layerName)
+                layerName: layerName,
+                stableID: stableID)
         }
 
         func withTwistDegrees(_ degrees: Double) -> SheetViewport {
@@ -440,7 +452,8 @@ public enum DXFImporter {
                 viewCenterX: viewCenterX, viewCenterY: viewCenterY,
                 viewTargetX: viewTargetX, viewTargetY: viewTargetY,
                 viewHeight: viewHeight, twistAngle: degrees * .pi / 180.0,
-                layerName: layerName)
+                layerName: layerName,
+                stableID: stableID)
         }
 
         var modelToPaperTransform: Transform3D {
@@ -470,6 +483,7 @@ public enum DXFImporter {
             result["dxf.viewport.viewHeight"] = .double(viewHeight)
             result["dxf.viewport.twistDegrees"] = .double(twistAngle * 180.0 / .pi)
             result["dxf.viewport.layer"] = .string(layerName)
+            result["dxf.viewport.stableID"] = .string(stableID)
             return result
         }
 
@@ -645,6 +659,8 @@ public enum DXFImporter {
         let twistDegrees = dbl("dxf.viewport.twistDegrees") ?? 0
         var layerName = "MODEL"
         if case .string(let value)? = xdata["dxf.viewport.layer"] { layerName = value }
+        var stableID = ViewportIdentity.fallbackKey(viewportNumber: id)
+        if case .string(let value)? = xdata["dxf.viewport.stableID"], !value.isEmpty { stableID = value }
         return SheetViewport(
             paperCenterX: paperCenterX, paperCenterY: paperCenterY,
             paperWidth: paperWidth, paperHeight: paperHeight,
@@ -653,7 +669,8 @@ public enum DXFImporter {
             viewTargetX: viewTargetX, viewTargetY: viewTargetY,
             viewHeight: viewHeight,
             twistAngle: twistDegrees * .pi / 180.0,
-            layerName: layerName)
+            layerName: layerName,
+            stableID: stableID)
     }
 
     /// Recover a sheet's viewport definitions from its projected entities.
@@ -676,7 +693,7 @@ public enum DXFImporter {
             }
             guard let viewport = sheetViewport(fromXData: entity.xdata) else { continue }
             let signature = [
-                String(viewport.id), String(viewport.status),
+                String(viewport.id), String(viewport.status), viewport.stableID,
                 String(format: "%.12g", viewport.paperCenterX),
                 String(format: "%.12g", viewport.paperCenterY),
                 String(format: "%.12g", viewport.paperWidth),
@@ -844,19 +861,39 @@ public enum DXFImporter {
         for table in reader.layers {
             let handle = UUID()
             let name = table.name.isEmpty ? "0" : table.name
-            layerNameToID[name] = handle
+            layerNameToID[name.uppercased()] = handle
             let color = DXFColorTable.aciToRGBA(table.color, color24: table.color24)
+            let absTableColor = Int(abs(table.color))
+            let tableColorSource: LayerColorSource
+            if !table.colorBookName.isEmpty {
+                tableColorSource = .colorBook(name: table.colorBookName)
+            } else if table.color24 >= 0 {
+                tableColorSource = .trueColor
+            } else if (1...255).contains(absTableColor) {
+                tableColorSource = .aci(absTableColor)
+            } else if DXFColorTable.isACI(color) {
+                tableColorSource = .aci(Int(DXFColorTable.rgbaToACI(color)))
+            } else {
+                tableColorSource = .trueColor
+            }
             let layer = Layer(handle: handle,
                               name: name,
                               isVisible: (table.color >= 0),
+                              isFrozen: (table.flags & 1) != 0,
+                              freezeInNewViewports: (table.flags & 2) != 0,
+                              isLocked: (table.flags & 4) != 0,
+                              layerDescription: table.layerDescription,
+                              isReconciled: table.isReconciled,
+                              transparency: DXFColorTable.transparencyPercent(table.transparency),
                               lineWeight: DXFColorTable.lineWeightToMM(Double(table.lWeight.dxfInt)),
                               color: color,
+                              colorSource: tableColorSource,
                               lineType: table.lineType.isEmpty ? "CONTINUOUS" : table.lineType,
                               isPlottable: table.plotFlag,
                               plotStyleHandle: table.plotStyleHandle == 0
                                   ? nil
                                   : String(table.plotStyleHandle, radix: 16).uppercased(),
-                              opacity: DXFColorTable.transparencyToOpacity(table.transparency))
+                              plotStyleName: table.plotStyleName.isEmpty ? "Normal" : table.plotStyleName)
             layers.append(layer)
         }
         if layerNameToID["0"] == nil {
@@ -868,7 +905,7 @@ public enum DXFImporter {
 
         func layerID(for entity: DXFEntity) -> UUID {
             let name = entity.layer.isEmpty ? "0" : entity.layer
-            return layerNameToID[name] ?? layerNameToID["0"]!
+            return layerNameToID[name.uppercased()] ?? layerNameToID["0"]!
         }
 
         var sourceEntityByHandle: [UInt32: DXFEntity] = [:]
@@ -1932,6 +1969,54 @@ public enum DXFImporter {
                 // geometry that also exists in model space, so it must never
                 // drive projection, even when it is the only viewport present.
                 let viewports = usableViewports.filter { !$0.isSystemViewport }
+                // Phase 3: per-viewport layer deltas from VIEWPORT 331
+                // (frozen layers) and ZEPHYR_VP records (style overrides).
+                // Only projecting (usable, non-system) viewports contribute:
+                // an OFF viewport projects nothing and is already lost from
+                // xdata-derived definitions, so its deltas have no live key.
+                let sheetViewportOverrides: ViewportOverrideMap = {
+                    var map: ViewportOverrideMap = [:]
+                    var layerNameByHandle: [UInt32: String] = [:]
+                    for table in reader.layers where table.handle != 0 {
+                        if layerNameByHandle[table.handle] == nil {
+                            layerNameByHandle[table.handle] = table.name
+                        }
+                    }
+                    func layerKey(for name: String) -> String? {
+                        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty,
+                              let id = layerNameToID[trimmed.uppercased()] else { return nil }
+                        return ViewportIdentity.layerKey(id)
+                    }
+                    for entity in paperSource.compactMap({ $0 as? DXFViewportEntity }) {
+                        guard entity.vpStatus != 0,
+                              entity.psWidth > 1e-9, entity.psHeight > 1e-9, entity.viewHeight > 1e-9,
+                              !(entity.vpID > 0 ? entity.vpID == 1 : entity.vpStatus == 1) else { continue }
+                        let key = entity.stableID.isEmpty
+                            ? ViewportIdentity.fallbackKey(viewportNumber: entity.vpID)
+                            : entity.stableID
+                        var deltas = map[key] ?? [:]
+                        for handle in entity.frozenLayerHandles {
+                            guard handle != 0,
+                                  let name = layerNameByHandle[handle],
+                                  let lkey = layerKey(for: name) else { continue }
+                            var current = deltas[lkey] ?? ViewportLayerOverride()
+                            current.frozen = true
+                            deltas[lkey] = current
+                        }
+                        for record in entity.overrideRecords {
+                            guard let (name, parsed) = ViewportOverrideRecord.decode(record),
+                                  let lkey = layerKey(for: name) else { continue }
+                            var current = deltas[lkey] ?? ViewportLayerOverride()
+                            let wasFrozen = current.frozen
+                            current = parsed
+                            current.frozen = wasFrozen || parsed.frozen
+                            if !current.isEmpty { deltas[lkey] = current }
+                        }
+                        if !deltas.isEmpty { map[key] = deltas }
+                    }
+                    return map
+                }()
 
                 for viewport in viewports {
                     let projection = viewport.modelToPaperTransform
@@ -2035,7 +2120,8 @@ public enum DXFImporter {
                     backgroundColor: .white,
                     layoutSettings: layoutSettings,
                     groups: viewGroupStaging.map { CADGroup(name: $0.key, members: $0.value) },
-                    plotSettings: effectivePlotSettings))
+                    plotSettings: effectivePlotSettings,
+                    viewportOverrides: sheetViewportOverrides))
             }
             views = importedViews
         }

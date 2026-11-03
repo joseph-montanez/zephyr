@@ -18,6 +18,11 @@ enum VlaBuiltins {
         "VLAX-SAFEARRAY->LIST": vlaxSafearrayToList,
         "VLA-INTERSECTWITH": vlaIntersectWith,
         "VLAX-CURVE-GETCLOSESTPOINTTO": vlaxCurveGetClosestPointTo,
+        "VLA-GET-LAYERS": vlaGetLayers,
+        "VLA-GET-LAYER-FROZEN": vlaGetLayerFrozen,
+        "VLA-PUT-LAYER-FROZEN": vlaPutLayerFrozen,
+        "VLA-GET-LAYER-LOCKED": vlaGetLayerLocked,
+        "VLA-PUT-LAYER-LOCKED": vlaPutLayerLocked,
     ]
 
     /// (vl-load-com): ActiveX startup hook. Zephyr has no COM runtime, so
@@ -79,6 +84,63 @@ enum VlaBuiltins {
                 expected: "safearray (list)", got: args[0])
         }
         return args[0]
+    }
+
+    // MARK: - Layer collection (Phase 5)
+
+    /// (vla-get-layers): layer names through the host, sorted. Nil when
+    /// the drawing carries no layers.
+    private static func vlaGetLayers(
+        _: LispEvaluator, args: [LispValue], _: inout LispEnvironment, host: any LispHost
+    ) async throws -> LispValue {
+        try BuiltinArgs.range("vla-get-layers", args, min: 0, max: 0)
+        let names = await host.layerNames().sorted()
+        guard !names.isEmpty else { return .nilValue }
+        return LispValue(stringList: names)
+    }
+
+    /// (vla-get-layer-frozen name): T when the layer is frozen, nil when
+    /// thawed or unknown.
+    private static func vlaGetLayerFrozen(
+        _: LispEvaluator, args: [LispValue], _: inout LispEnvironment, host: any LispHost
+    ) async throws -> LispValue {
+        try BuiltinArgs.exactly("vla-get-layer-frozen", args, 1)
+        let name = try BuiltinArgs.string("vla-get-layer-frozen", args[0])
+        guard let frozen = await host.layerIsFrozen(name) else { return .nilValue }
+        return frozen ? .t : .nilValue
+    }
+
+    /// (vla-put-layer-frozen name flag): freeze (non-nil flag) or thaw
+    /// (nil flag). Returns T; nil for unknown or guarded layers.
+    private static func vlaPutLayerFrozen(
+        _: LispEvaluator, args: [LispValue], _: inout LispEnvironment, host: any LispHost
+    ) async throws -> LispValue {
+        try BuiltinArgs.range("vla-put-layer-frozen", args, min: 1, max: 2)
+        let name = try BuiltinArgs.string("vla-put-layer-frozen", args[0])
+        let frozen = args.count < 2 || args[1].isTrue
+        return await host.setLayerFrozen(name, frozen: frozen) ? .t : .nilValue
+    }
+
+    /// (vla-get-layer-locked name): T when locked, nil when unlocked or
+    /// unknown.
+    private static func vlaGetLayerLocked(
+        _: LispEvaluator, args: [LispValue], _: inout LispEnvironment, host: any LispHost
+    ) async throws -> LispValue {
+        try BuiltinArgs.exactly("vla-get-layer-locked", args, 1)
+        let name = try BuiltinArgs.string("vla-get-layer-locked", args[0])
+        guard let locked = await host.layerIsLocked(name) else { return .nilValue }
+        return locked ? .t : .nilValue
+    }
+
+    /// (vla-put-layer-locked name flag): lock (non-nil flag) or unlock
+    /// (nil flag). Returns T; nil for unknown layers.
+    private static func vlaPutLayerLocked(
+        _: LispEvaluator, args: [LispValue], _: inout LispEnvironment, host: any LispHost
+    ) async throws -> LispValue {
+        try BuiltinArgs.range("vla-put-layer-locked", args, min: 1, max: 2)
+        let name = try BuiltinArgs.string("vla-put-layer-locked", args[0])
+        let locked = args.count < 2 || args[1].isTrue
+        return await host.setLayerLocked(name, locked: locked) ? .t : .nilValue
     }
 
     // MARK: - Kernel-backed curve queries (ZephyrKernel)

@@ -1420,6 +1420,10 @@ public class DXFViewportEntity: DXFPointEntity {
     public var viewTarget: Vector3    // 17,27,37
     public var viewHeight: Double     // 45
     public var twistAngle: Double     // 51
+    public var stableID: String = ""
+    public var frozenLayerHandles: [UInt32] = []
+    public var frozenLayerNames: [String] = []
+    public var overrideRecords: [String] = []
 
     public override init(eType: DXFEType = .vIEWPORT) {
         self.vpStatus = 0
@@ -1570,6 +1574,15 @@ public class DXFLayerEntry: DXFTableEntry {
     public var plotStyleHandle: UInt32 // 390
     public var lWeight: DXFLineWidth  // 370
     public var transparency: Int32    // 440
+    public var layerDescription: String = "" // 3
+    /// Color-book name from ZEPHYR_COLORBOOK XDATA (1000); "" when none.
+    public var colorBookName: String = ""
+    /// Reconciled flag from ZEPHYR_LAYER XDATA (1000 "RECONCILED:0/1");
+    /// absent means reconciled (DXF has no standard group code).
+    public var isReconciled: Bool = true
+    /// Named plot style from ZEPHYR_LAYER XDATA (1000 "PLOTSTYLE:<name>");
+    /// absent means "Normal" (DXF group 390 carries only the handle).
+    public var plotStyleName: String = "Normal"
 
     public override init() {
         self.lineType = "CONTINUOUS"

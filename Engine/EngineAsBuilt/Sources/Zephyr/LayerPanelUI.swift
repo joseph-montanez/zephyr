@@ -43,7 +43,7 @@ struct LayerPanelUI {
 
     static func render(engine: PhrostEngine, document: CADDocument) {
         let doc = document
-        let layers = doc.allLayers
+        let layers = LayerManagerUI.displayLayers(for: doc)
         let fontSize = ImGuiGetFontSize()
         let panelW: Float = fontSize * 18
         let layerRowH = ImGuiGetFrameHeightWithSpacing()
@@ -89,6 +89,8 @@ struct LayerPanelUI {
             } else {
                 renderHeader(engine: engine, document: doc, isDocked: wasDocked)
                 renderSortStrip(engine: engine)
+                LayerManagerUI.searchText = _searchText
+                _ = LayerManagerUI.renderStrips(engine: engine, document: doc)
 
                 if layers.isEmpty {
                     ImGuiSetCursorPosX(10)
@@ -112,7 +114,7 @@ struct LayerPanelUI {
                     }
                     let hostLayers = visibleLayers(
                         layers.filter { !doc.isXrefDependentLayer($0) })
-                    for index in 0..<hostLayers.count {
+                    for index in 0..<min(hostLayers.count, LayerManagerUI.renderRowLimit) {
                         renderLayerRow(
                             engine: engine,
                             document: doc,
@@ -137,7 +139,7 @@ struct LayerPanelUI {
                         ImGuiTextV("— Xref: \(owner) (\(group.count)) —")
                         ImGuiPopStyleColor(1)
                         if true {
-                            for layer in group {
+                            for layer in group.prefix(LayerManagerUI.renderRowLimit) {
                                 renderLayerRow(
                                     engine: engine,
                                     document: doc,
@@ -394,7 +396,7 @@ struct LayerPanelUI {
             1,
             0)
 
-        let props = "="
+        let props = "\(LayerManagerUI.vpMarker(for: layer.handle))="
         let propsWidth = ImGuiCalcTextSize(props, nil, false, -1).x
         let nameMaxWidth = max(0, propsMinX - (rowMin.x + 58) - 4)
         ImDrawListAddText(

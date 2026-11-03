@@ -296,7 +296,9 @@
           (zr-panel "Layers"
             (list
               (zr-big   "LAYER" "Layers"          "layers"    nil)
-              (zr-small "LA"    "Layer: %CLAYER%" "layer-cur" nil)))
+              (zr-small "LA"    "Layer: %CLAYER%" "layer-cur" nil)
+              (zr-small "LAYWALK" "Walk" "layers" nil)
+              (zr-small "LAYERSTATE" "States" "layers" nil)))
 
           (zr-panel "Blocks"
             (list

@@ -111,6 +111,7 @@ public class DXFWriter {
     private var mlineStyleHandleByName: [String: String] = [:]
     private var mlineStyleEntryByName: [String: DXFMlineStyleEntry] = [:]
     private var activeViewportHandleByBlockName: [String: String] = [:]
+    private var layerRecordHandleByName: [String: String] = [:]
     private var outputLayouts: [DXFLayoutDefinition] = []
     private var plotSettingsDictionaryHandle: String = ""
     private var plotSettingsHandleByName: [String: String] = [:]
@@ -1670,11 +1671,13 @@ public class DXFWriter {
 
         for layer in entries {
             let handle = preferredTableRecordHandle(tableName: "LAYER", recordName: layer.name, fallback: layer.handle)
+            layerRecordHandleByName[normalizedName(layer.name)] = handle
             out += "  0\r\nLAYER\r\n  5\r\n\(handle)\r\n"
             out += "330\r\n\(tableHandle)\r\n"
             out += "100\r\nAcDbSymbolTableRecord\r\n"
             out += "100\r\nAcDbLayerTableRecord\r\n"
             writeStr(2, layer.name, &out)
+            if !layer.layerDescription.isEmpty { writeStr(3, layer.layerDescription, &out) }
             writeInt(70, layer.flags, &out)
             writeInt(62, Int(layer.color), &out)
             if layer.color24 >= 0 { writeInt(420, Int(layer.color24), &out) }
@@ -1691,6 +1694,21 @@ public class DXFWriter {
                 writeInt(440, Int(layer.transparency), &out)
                 writeStr(1001, "AcCmTransparency", &out)
                 writeInt(1071, Int(layer.transparency), &out)
+            if !layer.colorBookName.isEmpty {
+                writeStr(1001, "ZEPHYR_COLORBOOK", &out)
+                writeStr(1000, layer.colorBookName, &out)
+            }
+            }
+            let needsLayerXData = !layer.isReconciled
+                || (layer.plotStyleName != "Normal" && !layer.plotStyleName.isEmpty)
+            if needsLayerXData {
+                writeStr(1001, "ZEPHYR_LAYER", &out)
+                if !layer.isReconciled {
+                    writeStr(1000, "RECONCILED:0", &out)
+                }
+                if layer.plotStyleName != "Normal" && !layer.plotStyleName.isEmpty {
+                    writeStr(1000, "PLOTSTYLE:" + layer.plotStyleName, &out)
+                }
             }
         }
 
@@ -1787,6 +1805,16 @@ public class DXFWriter {
             let transparency = DXFAppIdEntry()
             transparency.name = "AcCmTransparency"
             append(transparency)
+        }
+        if layers.contains(where: { !$0.colorBookName.isEmpty }) {
+            let colorBook = DXFAppIdEntry()
+            colorBook.name = "ZEPHYR_COLORBOOK"
+            append(colorBook)
+        }
+        if layers.contains(where: { !$0.isReconciled || ($0.plotStyleName != "Normal" && !$0.plotStyleName.isEmpty) }) {
+            let layerExt = DXFAppIdEntry()
+            layerExt.name = "ZEPHYR_LAYER"
+            append(layerExt)
         }
         for app in appids { append(app) }
 
@@ -2739,6 +2767,16 @@ public class DXFWriter {
             writeDbl(41, vp.psHeight, &out)
             writeInt(68, vp.vpStatus, &out)
             writeInt(69, vp.vpID, &out)
+            if !vp.stableID.isEmpty || !vp.overrideRecords.isEmpty {
+                writeStr(1001, "ZEPHYR_VP", &out)
+                if !vp.stableID.isEmpty { writeStr(1000, "VPSTABLEID:" + vp.stableID, &out) }
+                for record in vp.overrideRecords { writeStr(1000, "VPOVR:" + record, &out) }
+            }
+            for frozenName in vp.frozenLayerNames {
+                if let handle = layerRecordHandleByName[normalizedName(frozenName)] {
+                    writeStr(331, handle, &out)
+                }
+            }
             writeDbl(12, vp.centerPX, &out)
             writeDbl(22, vp.centerPY, &out)
             writeDbl(13, 0, &out)

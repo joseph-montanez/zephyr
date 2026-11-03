@@ -205,18 +205,17 @@ public struct ColorRGBA: Hashable, Sendable, Codable {
         let luminance = 0.2126 * rf + 0.7152 * gf + 0.0722 * bf
 
         if isLightBackground {
+            // Near-white (including ACI white 7) would be invisible on paper
+            // or a light canvas: map it to dark charcoal like AutoCAD does
+            // (white shows black on a white background there too).
+            // Every other color renders exactly as authored so sheets,
+            // light-theme canvases, and paper/PDF output match AutoCAD:
+            // bright entity and layer colors (yellows, oranges, light blues,
+            // light grays, ...) are not darkened on light backgrounds.
             if r > 245 && g > 245 && b > 245 {
                 return ColorRGBA(r: 24, g: 24, b: 24, a: a)
             }
-            guard luminance > 0.62 else { return self }
-
-            let target: Double = 0.42
-            let scale = max(0.0, min(1.0, target / luminance))
-            return ColorRGBA(
-                r: UInt8(max(0, min(255, Int(round(rf * scale * 255.0))))),
-                g: UInt8(max(0, min(255, Int(round(gf * scale * 255.0))))),
-                b: UInt8(max(0, min(255, Int(round(bf * scale * 255.0))))),
-                a: a)
+            return self
         } else {
             guard luminance < 0.18 else { return self }
 

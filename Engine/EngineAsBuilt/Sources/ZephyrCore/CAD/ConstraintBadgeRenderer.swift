@@ -28,7 +28,7 @@ public enum ConstraintBadgeRenderer {
         for handle in handles.sorted(by: { $0.uuidString < $1.uuidString }) {
             guard let entity = document.entity(for: handle),
                   let layer = document.layer(for: entity.layerID),
-                  layer.isVisible,
+                  layer.isEffectivelyVisible,
                   let wbb = entity.worldBoundingBox else { continue }
             let count = document.constraintsAffecting(handle).count
             guard count > 0 else { continue }

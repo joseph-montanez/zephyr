@@ -329,6 +329,27 @@ public enum DXFColorTable {
         return nil
     }
 
+    /// Convert packed DXF transparency (group 440/441) to a canonical
+    /// 0...90 percent layer-transparency value. ByLayer/ByBlock and
+    /// missing values (-1) map to 0 (opaque).
+    public static func transparencyPercent(_ trans: Int32) -> Int {
+        guard trans >= 0 else { return 0 }
+        let raw = UInt32(bitPattern: trans)
+        switch raw & 0xFF00_0000 {
+        case 0x0200_0000:
+            let alpha = Int(raw & 0xFF)
+            let percent = 100 - Int((Double(alpha) * 100.0 / 255.0).rounded())
+            return max(0, min(90, percent))
+        case 0x0100_0000:
+            return 0
+        default:
+            // Legacy Zephyr/foreign files that stored a bare percent.
+            if raw <= 90 { return Int(raw) }
+            let viaOpacity = 100 - Int(transparencyToOpacity(trans) * 100.0 + 0.5)
+            return max(0, min(90, viaOpacity))
+        }
+    }
+
     /// Convert opacity 0.0–1.0 to packed DXF group 440/441 format.
     /// Fully opaque values are omitted by default so entities remain ByLayer.
     public static func opacityToTransparency(

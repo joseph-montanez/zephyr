@@ -482,7 +482,8 @@ final class LispCADHostTests: XCTestCase {
             ["LINE", "CIRCLE", "PLINE", "ARC",
              "COPY", "ROTATE", "MOVE", "ERASE", "SELECT",
              "UNDO", "U", "REDRAW", "REGEN", "INSERT", "-INSERT", "-ATTACH",
-             "RECTANG", "RECTANGLE", "CHPROP", "CHANGE", "-HATCH", "HATCH", "TEXT", "-TEXT", "DTEXT", "AUTOCONTRAST"])
+             "RECTANG", "RECTANGLE", "CHPROP", "CHANGE", "-HATCH", "HATCH", "TEXT", "-TEXT", "DTEXT", "AUTOCONTRAST",
+             "-LAYER", "-LA", "LAYERSTATE", "-LAYERSTATE", "LAYERP"])
         XCTAssertEqual(
             LispScriptedCommands.disposition(for: "_.LINE"), .scripted)
         XCTAssertEqual(

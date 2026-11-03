@@ -6,9 +6,9 @@ import Foundation
 /// presentation (commands, dialogs) lives elsewhere.
 ///
 /// Layer policy: matches respect the on/off visibility model — entities on
-/// invisible layers never match. Frozen/locked layers do not exist in the
-/// model yet (isolation fade stands in), so there is nothing further to
-/// honor; this function is the single place to extend when they land.
+/// non-drawn (off or frozen) layers never match. Locked layers still match
+/// (locked rejects edits, not selection or snapping); this function is
+/// the single place that defines the rule.
 public enum EntityFilter {
 
     // MARK: - SELECTSIMILARMODE bits (AutoCAD values)
@@ -32,7 +32,7 @@ public enum EntityFilter {
     ) -> Bool {
         guard !document.isIsolatedHidden(entity.handle) else { return false }
         guard let layer = document.layer(for: entity.layerID) else { return true }
-        return layer.isVisible
+        return LayerAccess.isPickable(layer)
     }
 
     // MARK: - Wildcard

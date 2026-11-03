@@ -367,7 +367,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SNAPANG",    aliases: [],                category: .settings, syntax: "<degrees>", description: "Set the crosshair and ortho rotation angle"),
         // --- Layer ---
         CommandDescriptor(canonicalName: "LAYER",      aliases: ["LA"],            category: .layer,   syntax: "", description: "Show/hide the layer panel"),
-        CommandDescriptor(canonicalName: "-LAYER",     aliases: ["-LA"],           category: .layer,   syntax: "Make/Set/New/On/Off/Color/Ltype/LWeight <args>", description: "Manage layers from the command line"),
+        CommandDescriptor(canonicalName: "-LAYER",     aliases: ["-LA"],           category: .layer,   syntax: "?/Make/Set/New/Rename/Delete/On/Off/Color/Ltype/LWeight/Transparency/Plot/NoPlot/Description/Reconcile/Lock/Unlock/Freeze/Thaw/VPFreeze/VPThaw/State <args>", description: "Manage layers from the command line"),
         CommandDescriptor(canonicalName: "LAYER NEW",  aliases: ["LA NEW"],        category: .layer,   syntax: "<name>", description: "Create a new layer with an optional name"),
         CommandDescriptor(canonicalName: "LAYER DELETE", aliases: ["LAYER DEL", "LA DELETE", "LA DEL"], category: .layer, syntax: "<name>", description: "Delete a layer by name"),
         CommandDescriptor(canonicalName: "LAYER RENAME", aliases: ["LA RENAME"],   category: .layer,   syntax: "<oldName> <newName>", description: "Rename an existing layer"),
@@ -379,6 +379,17 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "LAYUNISO",   aliases: [],                category: .layer,   syntax: "", description: "Restore layers hidden by the most recent LAYISO"),
         CommandDescriptor(canonicalName: "LAYMCUR",    aliases: ["AI_MOLC"],        category: .layer,   syntax: "", description: "Make the layer of a selected object current"),
         CommandDescriptor(canonicalName: "LAYMCH",     aliases: [],                category: .layer,   syntax: "", description: "Change selected entities to the layer of a picked destination object"),
+        CommandDescriptor(canonicalName: "LAYERSTATE", aliases: ["-LAYERSTATE"],   category: .layer,   syntax: "Save <name> | Restore <name> | Delete <name> | Rename <old> <new> | List | Export <name> <path> | Import <path>", description: "Save, restore, and share named layer settings snapshots"),
+        CommandDescriptor(canonicalName: "LAYERP",     aliases: [],                category: .layer,   syntax: "", description: "Restore the previous layer settings"),
+        CommandDescriptor(canonicalName: "LAYFRZ",     aliases: ["LAYFREEZE"],     category: .layer,   syntax: "<name>", description: "Freeze a layer by name"),
+        CommandDescriptor(canonicalName: "LAYTHW",     aliases: ["LAYTHAW"],       category: .layer,   syntax: "<name>", description: "Thaw a layer by name"),
+        CommandDescriptor(canonicalName: "LAYLCK",     aliases: ["LAYLOCK"],       category: .layer,   syntax: "<name>", description: "Lock a layer by name"),
+        CommandDescriptor(canonicalName: "LAYULK",     aliases: ["LAYUNLOCK"],     category: .layer,   syntax: "<name>", description: "Unlock a layer by name"),
+        CommandDescriptor(canonicalName: "LAYDEL",     aliases: ["LAYDELETE"],     category: .layer,   syntax: "<name>", description: "Delete a layer and its entities by name"),
+        CommandDescriptor(canonicalName: "LAYMRG",     aliases: ["LAYMERGE"],      category: .layer,   syntax: "<source,...> <target>", description: "Merge source layers into a target layer, then delete the sources"),
+        CommandDescriptor(canonicalName: "LAYWALK",    aliases: [],                category: .layer,   syntax: "[<name>]", description: "List layers, or isolate one layer to inspect it"),
+        CommandDescriptor(canonicalName: "COPYTOLAYER", aliases: [],               category: .layer,   syntax: "<name>", description: "Copy selected entities onto another layer"),
+        CommandDescriptor(canonicalName: "VPLAYER",    aliases: [],                category: .layer,   syntax: "Freeze/Thaw/Reset/List <layer> <viewportId>", description: "Freeze or thaw layers in one paper-space viewport"),
         // --- Block ---
         CommandDescriptor(canonicalName: "BLOCK",      aliases: ["B", "BMAKE"],     category: .block,   syntax: "<name>", description: "Create a new block from selected entities"),
         CommandDescriptor(canonicalName: "WBLOCK",     aliases: ["W"],             category: .block,   syntax: "", description: "Write a block or entities to a drawing file"),
@@ -1668,7 +1679,21 @@ public final class CADCommandProcessor {
             print("[CAD] Layer '\(name)' created.")
             clearCommand()
         case "-LAYER", "-LA":
-            print("[CAD] -LAYER Make/Set/New/On/Off/Color/Ltype/LWeight <args>")
+            print("[CAD] -LAYER ?/Make/Set/New/Rename/Delete/On/Off/Color/Ltype/LWeight/Transparency/Plot/NoPlot/Description/Reconcile/Lock/Unlock/Freeze/Thaw/VPFreeze/VPThaw/State <args>")
+            clearCommand()
+        case "LAYERSTATE", "-LAYERSTATE":
+            print("[CAD] LAYERSTATE Save <name> | Restore <name> | Delete <name> | Rename <old> <new> | List | Export <name> <path> | Import <path>")
+            clearCommand()
+        case _ where upper.hasPrefix("LAYERSTATE ") || upper.hasPrefix("-LAYERSTATE "):
+            guard let engine = engine else { clearCommand(); return }
+            runLayerStateCommand(text: text, upper: upper, engine: engine)
+        case "LAYERP":
+            guard let engine = engine else { clearCommand(); return }
+            if LayerTransactionService().restoreLayerPrevious(in: engine.document) {
+                print("[CAD] Restored previous layer settings.")
+            } else {
+                print("[CAD] No previous layer settings to restore.")
+            }
             clearCommand()
         case _ where upper.hasPrefix("-LAYER ") || upper.hasPrefix("-LA "):
             guard let engine = engine else { clearCommand(); return }
@@ -1730,6 +1755,122 @@ public final class CADCommandProcessor {
             engine.document.renameLayer(handle: layer.handle, name: newName)
             print("[CAD] Layer '\(oldName)' renamed to '\(newName)'.")
             clearCommand()
+        case _ where upper == "LAYERP ?" || upper == "LAYERP LIST" || upper == "LAYERP LS":
+            guard let engine = engine else { clearCommand(); return }
+            let depth = LayerTransactionService().layerHistoryDepth(in: engine.document)
+            print("[CAD] Layer history depth: \(depth) (max \(LayerPreviousHistory.maxDepth)).")
+            clearCommand()
+        case _ where upper == "LAYFRZ" || upper.hasPrefix("LAYFRZ ") || upper == "LAYFREEZE" || upper.hasPrefix("LAYFREEZE ")
+            || upper == "LAYTHW" || upper.hasPrefix("LAYTHW ") || upper == "LAYTHAW" || upper.hasPrefix("LAYTHAW ")
+            || upper == "LAYLCK" || upper.hasPrefix("LAYLCK ") || upper == "LAYLOCK" || upper.hasPrefix("LAYLOCK ")
+            || upper == "LAYULK" || upper.hasPrefix("LAYULK ") || upper == "LAYUNLOCK" || upper.hasPrefix("LAYUNLOCK "):
+            guard let engine = engine else { clearCommand(); return }
+            let words = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).map(String.init)
+            let cmd = words[0].uppercased()
+            guard words.count == 2, !words[1].trimmingCharacters(in: .whitespaces).isEmpty else {
+                print("[CAD] Usage: \(cmd) <layer>")
+                clearCommand()
+                return
+            }
+            let flagName = words[1].trimmingCharacters(in: .whitespaces)
+            let flagService = LayerTransactionService()
+            let flagResult: Result<LayerTransactionService.Outcome, LayerEditError>
+            switch cmd {
+            case "LAYFRZ", "LAYFREEZE":
+                flagResult = flagService.setFrozen(in: engine.document, named: flagName, frozen: true)
+            case "LAYTHW", "LAYTHAW":
+                flagResult = flagService.setFrozen(in: engine.document, named: flagName, frozen: false)
+            case "LAYLCK", "LAYLOCK":
+                flagResult = flagService.setLocked(in: engine.document, named: flagName, locked: true)
+            default:
+                flagResult = flagService.setLocked(in: engine.document, named: flagName, locked: false)
+            }
+            switch flagResult {
+            case .success(let outcome):
+                print("[CAD] Layer '\(outcome.layer.name)' updated.")
+            case .failure(let error):
+                print("[CAD] \(error.description)")
+            }
+            clearCommand()
+        case _ where upper == "LAYDEL" || upper.hasPrefix("LAYDEL ") || upper == "LAYDELETE" || upper.hasPrefix("LAYDELETE "):
+            guard let engine = engine else { clearCommand(); return }
+            let words = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).map(String.init)
+            guard words.count == 2, !words[1].trimmingCharacters(in: .whitespaces).isEmpty else {
+                print("[CAD] Usage: LAYDEL <layer>")
+                clearCommand()
+                return
+            }
+            let delName = words[1].trimmingCharacters(in: .whitespaces)
+            switch LayerTransactionService().deleteLayerAndEntities(in: engine.document, named: delName) {
+            case .success(let count):
+                print("[CAD] Layer '\(delName)' and \(count) entit\(count == 1 ? "y" : "ies") deleted.")
+            case .failure(let error):
+                print("[CAD] \(error.description)")
+            }
+            clearCommand()
+        case _ where upper == "LAYMRG" || upper.hasPrefix("LAYMRG ") || upper == "LAYMERGE" || upper.hasPrefix("LAYMERGE "):
+            guard let engine = engine else { clearCommand(); return }
+            let words = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+            guard words.count >= 3 else {
+                print("[CAD] Usage: LAYMRG <source,...> <target>")
+                clearCommand()
+                return
+            }
+            let mrgTarget = words.last!
+            let mrgSources = words.dropFirst().dropLast().flatMap { $0.split(separator: ",").map(String.init) }
+            switch LayerTransactionService().mergeLayers(in: engine.document, from: mrgSources, into: mrgTarget) {
+            case .success(let outcome):
+                print("[CAD] Merged \(outcome.deleted) layer(s) into '\(outcome.target.name)'; \(outcome.moved) entit\(outcome.moved == 1 ? "y" : "ies") moved.")
+            case .failure(let error):
+                print("[CAD] \(error.description)")
+            }
+            clearCommand()
+        case _ where upper == "LAYWALK" || upper.hasPrefix("LAYWALK "):
+            guard let engine = engine else { clearCommand(); return }
+            let tail = String(text.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+            if tail.isEmpty {
+                let counts = LayerSortPolicy.entityCounts(in: engine.document)
+                print("[CAD] Layers (alphabetical):")
+                for layer in engine.document.allLayers.sorted(by: { $0.name < $1.name }) {
+                    let state = layer.isVisible ? "On" : "Off"
+                    let current = engine.document.activeLayerID == layer.handle ? " (current)" : ""
+                    print("[CAD]   \(layer.name)\(current) — \(state), color \(DXFColorTable.rgbaToACI(layer.color)), lt \(layer.lineType), \(counts[layer.handle] ?? 0) ent")
+                }
+            } else {
+                guard let layer = engine.document.findLayer(named: tail) else {
+                    print("[CAD] Layer '\(tail)' not found.")
+                    clearCommand()
+                    return
+                }
+                engine.document.isolateLayers(keeping: [layer.handle])
+                print("[CAD] Walking layer '\(layer.name)'; LAYUNISO restores.")
+            }
+            clearCommand()
+        case _ where upper == "COPYTOLAYER" || upper.hasPrefix("COPYTOLAYER "):
+            guard let engine = engine else { clearCommand(); return }
+            let words = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).map(String.init)
+            guard words.count == 2, !words[1].trimmingCharacters(in: .whitespaces).isEmpty else {
+                print("[CAD] Usage: COPYTOLAYER <layer> (copies the current selection)")
+                clearCommand()
+                return
+            }
+            guard !engine.cadSelection.selectedHandles.isEmpty else {
+                print("[CAD] COPYTOLAYER needs selected entities first.")
+                clearCommand()
+                return
+            }
+            let copyTarget = words[1].trimmingCharacters(in: .whitespaces)
+            switch LayerTransactionService().copyEntitiesToLayer(
+                in: engine.document, handles: engine.cadSelection.selectedHandles, target: copyTarget) {
+            case .success(let count):
+                print("[CAD] Copied \(count) entit\(count == 1 ? "y" : "ies") to layer '\(copyTarget)'.")
+            case .failure(let error):
+                print("[CAD] \(error.description)")
+            }
+            clearCommand()
+        case _ where upper == "VPLAYER" || upper.hasPrefix("VPLAYER "):
+            guard let engine = engine else { clearCommand(); return }
+            runVPlayerCommand(text: text, upper: upper, engine: engine)
         // --- Background color ---
         case _ where upper.hasPrefix("SET-BACKGROUND ") || upper.hasPrefix("SETBG ") || upper.hasPrefix("BACKGROUND "):
             guard let engine = engine else { clearCommand(); return }
@@ -2374,6 +2515,28 @@ public final class CADCommandProcessor {
             } else {
                 print("[CAD] No floating viewport at (\(point.x), \(point.y)).")
             }
+        case "FREEZE", "FROST", "VPFREEZE":
+            guard args.count >= 3, let id = Int(args[2]) else {
+                print("[CAD] Usage: MVIEW FREEZE <layer> <id>")
+                return
+            }
+            if manager.setViewportLayerFrozen(viewportID: id, layerNamed: args[1], frozen: true) {
+                engine.zoomExtents()
+                print("[CAD] Layer '\(args[1])' frozen in viewport \(id).")
+            } else {
+                print("[CAD] Unknown viewport id \(id) or layer '\(args[1])'.")
+            }
+        case "THAW", "VPTAW":
+            guard args.count >= 3, let id = Int(args[2]) else {
+                print("[CAD] Usage: MVIEW THAW <layer> <id>")
+                return
+            }
+            if manager.setViewportLayerFrozen(viewportID: id, layerNamed: args[1], frozen: false) {
+                engine.zoomExtents()
+                print("[CAD] Layer '\(args[1])' thawed in viewport \(id).")
+            } else {
+                print("[CAD] Unknown viewport id \(id) or layer '\(args[1])'.")
+            }
         default:
             // Create: two paper corners "x1,y1 x2,y2".
             guard args.count >= 2,
@@ -2395,7 +2558,7 @@ public final class CADCommandProcessor {
     }
 
     private func printMViewUsage() {
-        print("[CAD] MVIEW [<x1,y1> <x2,y2> | ? | ON <id> | OFF <id> | S <scale> <id> | T <deg> <id> | SELECT <x,y>]")
+        print("[CAD] MVIEW [<x1,y1> <x2,y2> | ? | ON <id> | OFF <id> | S <scale> <id> | T <deg> <id> | SELECT <x,y> | FREEZE <layer> <id> | THAW <layer> <id>]")
     }
 
     private func printViewportList(_ manager: TabManager) {
@@ -2627,12 +2790,202 @@ public final class CADCommandProcessor {
 
     /// Interactive `-LAYER` sub-keywords over the document layer APIs.
     /// Lock/Freeze/Thaw/Unlock wait for the 1C layer model (reported, not silent).
+    private func runLayerStateCommand(text: String, upper: String, engine: PhrostEngine) {
+        let prefixLen = upper.hasPrefix("LAYERSTATE ") ? 11 : 12
+        let args = String(text.dropFirst(prefixLen)).trimmingCharacters(in: .whitespaces)
+        let tokens = args.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let service = LayerTransactionService()
+        let doc = engine.document
+        let usageLine = "[CAD] LAYERSTATE Save <name> | Restore <name> | Delete <name> | Rename <old> <new> | List | Export <name> <path> | Import <path>"
+        guard let verb = tokens.first?.uppercased() else {
+            print(usageLine)
+            clearCommand()
+            return
+        }
+        switch verb {
+        case "SAVE", "S":
+            guard tokens.count >= 2 else {
+                print("[CAD] LAYERSTATE Save <name>")
+                clearCommand()
+                return
+            }
+            switch service.saveLayerState(in: doc, name: tokens[1]) {
+            case .success(let state):
+                print("[CAD] Layer state " + state.name + " saved (" + String(state.entries.count) + " layers).")
+            case .failure(let error):
+                print("[CAD] " + error.description)
+            }
+            clearCommand()
+        case "RESTORE", "R":
+            guard tokens.count >= 2 else {
+                print("[CAD] LAYERSTATE Restore <name>")
+                clearCommand()
+                return
+            }
+            switch service.restoreLayerState(in: doc, named: tokens[1]) {
+            case .success(let report):
+                print("[CAD] Layer state " + tokens[1] + " restored (" + String(report.applied) + " applied, " + String(report.missing) + " missing).")
+            case .failure(let error):
+                print("[CAD] " + error.description)
+            }
+            clearCommand()
+        case "DELETE", "D":
+            guard tokens.count >= 2 else {
+                print("[CAD] LAYERSTATE Delete <name>")
+                clearCommand()
+                return
+            }
+            switch service.deleteLayerState(in: doc, named: tokens[1]) {
+            case .success:
+                print("[CAD] Layer state " + tokens[1] + " deleted.")
+            case .failure(let error):
+                print("[CAD] " + error.description)
+            }
+            clearCommand()
+        case "RENAME":
+            guard tokens.count >= 3 else {
+                print("[CAD] LAYERSTATE Rename <oldName> <newName>")
+                clearCommand()
+                return
+            }
+            switch service.renameLayerState(in: doc, from: tokens[1], to: tokens[2]) {
+            case .success(let state):
+                print("[CAD] Layer state renamed to " + state.name + ".")
+            case .failure(let error):
+                print("[CAD] " + error.description)
+            }
+            clearCommand()
+        case "LIST", "LS":
+            let names = service.layerStateNames(in: doc)
+            if names.isEmpty {
+                print("[CAD] No layer states.")
+            } else {
+                print("[CAD] Layer states: " + names.joined(separator: ", ") + ".")
+            }
+            clearCommand()
+        case "EXPORT", "E":
+            guard tokens.count >= 3 else {
+                print("[CAD] LAYERSTATE Export <name> <path>")
+                clearCommand()
+                return
+            }
+            switch service.exportLayerState(in: doc, named: tokens[1]) {
+            case .success(let text):
+                do {
+                    try text.write(toFile: tokens[2], atomically: true, encoding: .utf8)
+                    print("[CAD] Layer state " + tokens[1] + " exported to " + tokens[2] + ".")
+                } catch {
+                    print("[CAD] Export failed: " + error.localizedDescription)
+                }
+            case .failure(let error):
+                print("[CAD] " + error.description)
+            }
+            clearCommand()
+        case "IMPORT", "I":
+            guard tokens.count >= 2 else {
+                print("[CAD] LAYERSTATE Import <path> [Overwrite]")
+                clearCommand()
+                return
+            }
+            do {
+                let text = try String(contentsOfFile: tokens[1], encoding: .utf8)
+                let overwrite = tokens.count >= 3 && tokens[2].uppercased() == "OVERWRITE"
+                switch service.importLayerState(in: doc, from: text, overwrite: overwrite) {
+                case .success(let state):
+                    print("[CAD] Layer state " + state.name + " imported (" + String(state.entries.count) + " layers).")
+                case .failure(let error):
+                    print("[CAD] " + error.description)
+                }
+            } catch {
+                print("[CAD] Import failed: " + error.localizedDescription)
+            }
+            clearCommand()
+        default:
+            print(usageLine)
+            clearCommand()
+        }
+    }
+
+    /// `VPLAYER` over the active sheet's floating viewports (Phase 5).
+    /// Freeze/Thaw store a per-viewport delta via the tab manager; Reset
+    /// drops every delta for one viewport; List reports frozen layers per
+    /// viewport. Anything outside paper space is refused, never silent.
+    private func runVPlayerCommand(text: String, upper: String, engine: PhrostEngine) {
+        let manager = engine.tabManager
+        let words = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        let usage = "[CAD] VPLAYER Freeze <layer> <viewportId> | Thaw <layer> <viewportId> | Reset <viewportId> | List [viewportId]"
+        guard words.count >= 2 else {
+            print(usage)
+            if let report = manager.viewportFrozenLayerReport() {
+                printVPlayerReport(report, only: nil)
+            } else {
+                print("[CAD] VPLAYER needs an active sheet view. Use PSPACE first.")
+            }
+            clearCommand()
+            return
+        }
+        switch words[1].uppercased() {
+        case "FREEZE", "FROST", "THAW":
+            guard words.count == 4, let id = Int(words[3]) else {
+                print("[CAD] Usage: VPLAYER \(words[1].uppercased()) <layer> <viewportId>")
+                clearCommand()
+                return
+            }
+            let frozen = words[1].uppercased() != "THAW"
+            if manager.setViewportLayerFrozen(viewportID: id, layerNamed: words[2], frozen: frozen) {
+                print("[CAD] Layer '\(words[2])' \(frozen ? "frozen" : "thawed") in viewport \(id).")
+            } else {
+                print("[CAD] Unknown viewport id \(id) or layer '\(words[2])'. Use paper space.")
+            }
+            clearCommand()
+        case "RESET":
+            guard words.count == 3, let id = Int(words[2]) else {
+                print("[CAD] Usage: VPLAYER Reset <viewportId>")
+                clearCommand()
+                return
+            }
+            if manager.resetViewportLayers(viewportID: id) {
+                print("[CAD] Viewport \(id) layer overrides cleared.")
+            } else {
+                print("[CAD] Unknown viewport id \(id). Use paper space.")
+            }
+            clearCommand()
+        case "LIST", "L", "?":
+            guard let report = manager.viewportFrozenLayerReport() else {
+                print("[CAD] VPLAYER needs an active sheet view. Use PSPACE first.")
+                clearCommand()
+                return
+            }
+            let only: Int? = words.count >= 3 ? Int(words[2]) : nil
+            printVPlayerReport(report, only: only)
+            clearCommand()
+        default:
+            print(usage)
+            clearCommand()
+        }
+    }
+
+    private func printVPlayerReport(_ report: [(id: Int, frozenLayers: [String])], only: Int?) {
+        let rows = only.map { id in report.filter { $0.id == id } } ?? report
+        if rows.isEmpty {
+            print("[CAD] No floating viewports\(only.map { " with id \($0)" } ?? "").")
+            return
+        }
+        for row in rows {
+            if row.frozenLayers.isEmpty {
+                print("[CAD] Viewport \(row.id): nothing frozen.")
+            } else {
+                print("[CAD] Viewport \(row.id) frozen: \(row.frozenLayers.joined(separator: ", ")).")
+            }
+        }
+    }
+
     private func runDashLayerCommand(text: String, upper: String, engine: PhrostEngine) {
         let args = String(text.dropFirst(upper.hasPrefix("-LAYER ") ? 7 : 4))
             .trimmingCharacters(in: .whitespaces)
         let tokens = args.split(whereSeparator: \.isWhitespace).map(String.init)
         guard let verb = tokens.first?.uppercased() else {
-            print("[CAD] -LAYER Make/Set/New/On/Off/Color/Ltype/LWeight <args>")
+            print("[CAD] -LAYER ?/Make/Set/New/Rename/Delete/On/Off/Color/Ltype/LWeight/Transparency/Plot/NoPlot/Description/Reconcile/Lock/Unlock/Freeze/Thaw/VPFreeze/VPThaw/State <args>")
             clearCommand()
             return
         }
@@ -2759,11 +3112,147 @@ public final class CADCommandProcessor {
             doc.setLayerLineWeight(layer.handle, lineWeight: weight)
             print("[CAD] Layer '\(layer.name)' lineweight set to \(weight) mm.")
             clearCommand()
+        case "?":
+            let counts = LayerSortPolicy.entityCounts(in: doc)
+            print("[CAD] Layers (alphabetical):")
+            for layer in doc.allLayers.sorted(by: { $0.name < $1.name }) {
+                let state = layer.isVisible ? "On" : "Off"
+                let current = doc.activeLayerID == layer.handle ? " (current)" : ""
+                print("[CAD]   \(layer.name)\(current) — \(state), color \(DXFColorTable.rgbaToACI(layer.color)), lt \(layer.lineType), \(counts[layer.handle] ?? 0) ent")
+            }
+            clearCommand()
+        case "R", "RENAME":
+            guard tokens.count >= 3 else {
+                print("[CAD] -LAYER Rename <oldName> <newName>")
+                clearCommand()
+                return
+            }
+            switch LayerTransactionService().renameLayer(in: doc, from: tokens[1], to: tokens[2]) {
+            case .success(let outcome):
+                print("[CAD] Layer renamed to '\(outcome.layer.name)'.")
+            case .failure(let error):
+                print("[CAD] \(error.description)")
+            }
+            clearCommand()
+        case "DEL", "DELETE":
+            guard let name = needName(1) else { return }
+            switch LayerTransactionService().deleteLayer(in: doc, named: name) {
+            case .success:
+                print("[CAD] Layer '\(name)' deleted.")
+            case .failure(let error):
+                print("[CAD] \(error.description)")
+            }
+            clearCommand()
+        case "P", "PLOT":
+            guard let name = needName(1) else { return }
+            switch LayerTransactionService().setPlottable(in: doc, named: name, plottable: true) {
+            case .success(let outcome):
+                print("[CAD] Layer '\(outcome.layer.name)' will plot.")
+            case .failure(let error):
+                print("[CAD] \(error.description)")
+            }
+            clearCommand()
+        case "NP", "NOPLOT":
+            guard let name = needName(1) else { return }
+            switch LayerTransactionService().setPlottable(in: doc, named: name, plottable: false) {
+            case .success(let outcome):
+                print("[CAD] Layer '\(outcome.layer.name)' set to no-plot.")
+            case .failure(let error):
+                print("[CAD] \(error.description)")
+            }
+            clearCommand()
+        case "T", "TRANS", "TRANSPARENCY":
+            guard tokens.count >= 3, let pct = Int(tokens[1]), (0...90).contains(pct) else {
+                print("[CAD] -LAYER Transparency <0-90> <name>")
+                clearCommand()
+                return
+            }
+            guard let layer = doc.findLayer(named: tokens[2]) else {
+                print("[CAD] Layer '\(tokens[2])' not found.")
+                clearCommand()
+                return
+            }
+            doc.setLayerTransparency(layer.handle, transparency: pct)
+            print("[CAD] Layer '\(layer.name)' transparency set to \(pct)%.")
+            clearCommand()
+        case "DESCR", "DESCRIPTION":
+            guard tokens.count >= 3 else {
+                print("[CAD] -LAYER Description <name> <text>")
+                clearCommand()
+                return
+            }
+            guard let layer = doc.findLayer(named: tokens[1]) else {
+                print("[CAD] Layer '\(tokens[1])' not found.")
+                clearCommand()
+                return
+            }
+            doc.setLayerDescription(layer.handle, description: tokens.dropFirst(2).joined(separator: " "))
+            print("[CAD] Layer '\(layer.name)' description updated.")
+            clearCommand()
+        case "REC", "RECONCILE":
+            guard let name = needName(1) else { return }
+            if name == "*" {
+                let count = LayerTransactionService().reconcileAllLayers(in: doc)
+                print("[CAD] \(count) layer(s) reconciled.")
+            } else {
+                switch LayerTransactionService().setReconciled(in: doc, named: name, reconciled: true) {
+                case .success(let outcome):
+                    print("[CAD] Layer '\(outcome.layer.name)' reconciled.")
+                case .failure(let error):
+                    print("[CAD] \(error.description)")
+                }
+            }
+            clearCommand()
+        case "ST", "STATE":
+            let rest = tokens.dropFirst().joined(separator: " ")
+            runLayerStateCommand(text: "LAYERSTATE " + rest, upper: "LAYERSTATE " + rest.uppercased(), engine: engine)
+        case "VPF", "VPFREEZE":
+            guard tokens.count >= 3 else {
+                print("[CAD] -LAYER VPFreeze <layer> <viewportId> (paper space)")
+                clearCommand()
+                return
+            }
+            if engine.tabManager.setViewportLayerFrozen(viewportID: Int(tokens[2]) ?? -1, layerNamed: tokens[1], frozen: true) {
+                print("[CAD] Layer '\(tokens[1])' frozen in viewport \(tokens[2]).")
+            } else {
+                print("[CAD] Unknown viewport id \(tokens[2]) or layer '\(tokens[1])'. Use paper space.")
+            }
+            clearCommand()
+        case "VPT", "VPTHAW":
+            guard tokens.count >= 3 else {
+                print("[CAD] -LAYER VPThaw <layer> <viewportId> (paper space)")
+                clearCommand()
+                return
+            }
+            if engine.tabManager.setViewportLayerFrozen(viewportID: Int(tokens[2]) ?? -1, layerNamed: tokens[1], frozen: false) {
+                print("[CAD] Layer '\(tokens[1])' thawed in viewport \(tokens[2]).")
+            } else {
+                print("[CAD] Unknown viewport id \(tokens[2]) or layer '\(tokens[1])'. Use paper space.")
+            }
+            clearCommand()
         case "LCK", "ULK", "LOCK", "UNLOCK", "FRZ", "THW", "FREEZE", "THAW":
-            print("[CAD] -LAYER \(verb) needs layer lock/freeze (Phase 1C).")
+            guard let lockName = needName(1) else { return }
+            let lockService = LayerTransactionService()
+            let lockResult: Result<LayerTransactionService.Outcome, LayerEditError>
+            switch verb {
+            case "LCK", "LOCK":
+                lockResult = lockService.setLocked(in: doc, named: lockName, locked: true)
+            case "ULK", "UNLOCK":
+                lockResult = lockService.setLocked(in: doc, named: lockName, locked: false)
+            case "FRZ", "FREEZE":
+                lockResult = lockService.setFrozen(in: doc, named: lockName, frozen: true)
+            default:
+                lockResult = lockService.setFrozen(in: doc, named: lockName, frozen: false)
+            }
+            switch lockResult {
+            case .success(let outcome):
+                print("[CAD] Layer '\(outcome.layer.name)' updated.")
+            case .failure(let error):
+                print("[CAD] \(error.description)")
+            }
             clearCommand()
         default:
-            print("[CAD] -LAYER Make/Set/New/On/Off/Color/Ltype/LWeight <args>")
+            print("[CAD] -LAYER ?/Make/Set/New/Rename/Delete/On/Off/Color/Ltype/LWeight/Transparency/Plot/NoPlot/Description/Reconcile/Lock/Unlock/Freeze/Thaw/VPFreeze/VPThaw/State <args>")
             clearCommand()
         }
     }

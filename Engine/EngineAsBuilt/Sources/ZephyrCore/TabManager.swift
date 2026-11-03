@@ -236,6 +236,25 @@ public struct DocumentTab {
         drawingViews.contains { $0.document.hasUnsavedChanges }
     }
 
+    /// Reconcile layer tables across this tab's drawing views so a layer
+    /// property edit (color, visibility, linetype, ...) made in one view
+    /// also applies in the others. Layers are drawing-global in AutoCAD;
+    /// each view document keeps its own copy, so without this a change in
+    /// Model would never reach Layout1 (stale colors/visibility on sheets,
+    /// in saves, and in publish snapshots).
+    /// Source of truth is the active view's document. Merge is by handle
+    /// (see `CADDocument.adoptLayers`): sibling-only layers are kept.
+    /// No-op while the block editor is active (the active document is a
+    /// temporary block-editing session, not the drawing's layer table).
+    public func reconcileLayersFromActiveView() {
+        guard editingBlockID == nil else { return }
+        guard drawingViews.indices.contains(activeViewIndex) else { return }
+        let source = drawingViews[activeViewIndex].document
+        for (index, view) in drawingViews.enumerated() where index != activeViewIndex {
+            view.document.adoptLayers(from: source)
+        }
+    }
+
     /// Build an immutable snapshot for background save.
     /// Captures all drawing views, image assets, and their current edit revisions.
     public func buildSaveSnapshot(formatVersion: UInt32 = 7,
@@ -787,6 +806,9 @@ public final class TabManager {
 
     public func switchToTab(at index: Int) {
         guard index >= 0, index < tabs.count, index != activeIndex else { return }
+        // Propagate the departing tab's layer edits to its sibling views so
+        // a later return (or save) sees current layer properties everywhere.
+        tabs[activeIndex].reconcileLayersFromActiveView()
         // Save camera + selection state to departing tab
         if let capture = captureCameraState, activeIndex < tabs.count {
             tabs[activeIndex].cameraState = capture()
@@ -811,6 +833,10 @@ public final class TabManager {
     public func switchToView(at index: Int) -> Bool {
         guard activeIndex >= 0, activeIndex < tabs.count,
               index >= 0, index < tabs[activeIndex].drawingViews.count else { return false }
+        // Layer tables are drawing-global: propagate the departing view's
+        // layer edits (color, visibility, ...) to sibling views first so
+        // every layout renders current layer properties.
+        tabs[activeIndex].reconcileLayersFromActiveView()
         if index == tabs[activeIndex].activeViewIndex {
             // Same-view activation still refreshes derived geometry so a
             // scripted PSPACE after a model edit converges without a tab hop.
@@ -854,11 +880,14 @@ public final class TabManager {
             modelEntities: modelEntities,
             cache: cache,
             xrefBlockIDs: xrefBlockIDs)
-        let missingLayers = modelDoc.allLayers.filter { sheetDoc.layer(for: $0.handle) == nil }
+        // Layer properties (color, visibility, ...) are drawing-global:
+        // refresh everything the model changed since import, not just layers
+        // the sheet never saw. Render-only: never dirties the file.
+        sheetDoc.adoptLayers(from: modelDoc)
         let missingBlocks = modelDoc.allBlocks.filter { sheetDoc.block(for: $0.handle) == nil }
         let removed = sheetDoc.replaceViewportProjectedEntities(
             with: projected,
-            additionalLayers: missingLayers,
+            additionalLayers: [],
             additionalBlocks: missingBlocks)
         guard !removed.isEmpty else { return }
         var snapshot = tab.drawingViews[tab.activeViewIndex].selectionState
@@ -898,6 +927,40 @@ public final class TabManager {
 
     /// Viewport definitions for the active sheet, or [] when no sheet view
     /// is active.
+    /// VPLAYER backing: frozen layer names per floating viewport of the
+    /// active sheet. Nil when no sheet view is active. Handles resolve
+    /// through the sheet document so the report uses live layer names.
+    public func viewportFrozenLayerReport() -> [(id: Int, frozenLayers: [String])]? {
+        guard let tab = activeTab else { return nil }
+        let view = tab.drawingViews[tab.activeViewIndex]
+        guard view.kind == .sheet else { return nil }
+        let doc = view.document
+        var report: [(id: Int, frozenLayers: [String])] = []
+        for viewport in sheetViewports(for: doc) {
+            let handles = (doc.viewportLayerOverrides[viewport.stableID] ?? [:])
+                .filter { $0.value.frozen }
+                .compactMap { UUID(uuidString: $0.key) }
+            let names = handles.compactMap { doc.layer(for: $0)?.name }.sorted()
+            report.append((id: viewport.id, frozenLayers: names))
+        }
+        return report
+    }
+
+    /// VPLAYER RESET: drop every layer override for one floating viewport
+    /// of the active sheet. False when no sheet is active or the id is
+    /// unknown.
+    @discardableResult
+    public func resetViewportLayers(viewportID id: Int) -> Bool {
+        guard let tab = activeTab else { return false }
+        let view = tab.drawingViews[tab.activeViewIndex]
+        guard view.kind == .sheet else { return false }
+        guard let viewport = sheetViewports(for: view.document).first(where: { $0.id == id }) else {
+            return false
+        }
+        view.document.clearViewportOverrides(forViewport: viewport.stableID)
+        return true
+    }
+
     public func activeSheetViewports() -> [DXFImporter.SheetViewport] {
         guard let tab = activeTab else { return [] }
         let view = tab.drawingViews[tab.activeViewIndex]
@@ -1280,7 +1343,28 @@ public final class TabManager {
     /// paper corners. Fits current model extents by default. Returns the
     /// new viewport id, or nil when no sheet is active or the rect is
     /// degenerate.
+    /// Freeze (or thaw) a layer in one floating viewport of the active
+    /// sheet (VPFREEZE). The layer is resolved case-insensitively in the
+    /// sheet document; the delta is stored under the viewport's stable key
+    /// so it survives refresh, save, and DXF round-trips. Projections are
+    /// not rebuilt (geometry is cached; visibility resolves at render).
+    /// Returns false when no sheet is active or id/layer is unknown.
     @discardableResult
+    public func setViewportLayerFrozen(
+        viewportID id: Int, layerNamed layerName: String, frozen: Bool
+    ) -> Bool {
+        guard let tab = activeTab else { return false }
+        let view = tab.drawingViews[tab.activeViewIndex]
+        guard view.kind == .sheet else { return false }
+        guard let viewport = sheetViewports(for: view.document).first(where: { $0.id == id }) else {
+            return false
+        }
+        guard let layer = view.document.findLayer(named: layerName) else { return false }
+        view.document.setViewportLayerFrozen(
+            viewportID: viewport.stableID, layer: layer.handle, frozen: frozen)
+        return true
+    }
+
     public func createSheetViewport(
         paperX1: Double, paperY1: Double, paperX2: Double, paperY2: Double
     ) -> Int? {
@@ -1328,11 +1412,19 @@ public final class TabManager {
             viewCenterX: 0, viewCenterY: 0,
             viewTargetX: modelCenterX, viewTargetY: modelCenterY,
             viewHeight: viewHeight, twistAngle: 0,
-            layerName: "MODEL")
+            layerName: "MODEL",
+            stableID: ViewportIdentity.makeStableID())
         viewports.append(viewport)
         viewports.sort { $0.id < $1.id }
         sheetViewportStore[sheetKey(for: view.document)] = viewports
         selectedViewportBySheet[sheetKey(for: view.document)] = nextID
+        let frozenHandles = modelView.document.allLayers
+            .filter { $0.freezeInNewViewports }
+            .map { $0.handle }
+        if !frozenHandles.isEmpty {
+            view.document.setViewportLayersFrozen(
+                viewportID: viewport.stableID, layers: frozenHandles, frozen: true)
+        }
         refreshActiveSheetProjections()
         return nextID
     }
@@ -1386,11 +1478,11 @@ public final class TabManager {
                     localBoundingBox: entity.localBoundingBox,
                     anchorPoints: entity.anchorPoints))
             }
-            let missingLayers = sheetDoc.allLayers.filter { modelDoc.layer(for: $0.handle) == nil }
+            modelDoc.adoptLayers(from: sheetDoc)
             let missingBlocks = sheetDoc.allBlocks.filter { modelDoc.block(for: $0.handle) == nil }
-            if !missingLayers.isEmpty || !missingBlocks.isEmpty {
+            if !missingBlocks.isEmpty {
                 modelDoc.importLayersBlocksEntities(
-                    layers: missingLayers, blocks: missingBlocks, entities: [])
+                    layers: [], blocks: missingBlocks, entities: [])
             }
             modelDoc.addEntities(moved)
             sheetDoc.removeEntities(handles: Set(movers.map(\.handle)))
@@ -1424,11 +1516,11 @@ public final class TabManager {
                     localBoundingBox: entity.localBoundingBox,
                     anchorPoints: entity.anchorPoints))
             }
-            let missingLayers = modelDoc.allLayers.filter { sheetDoc.layer(for: $0.handle) == nil }
+            sheetDoc.adoptLayers(from: modelDoc)
             let missingBlocks = modelDoc.allBlocks.filter { sheetDoc.block(for: $0.handle) == nil }
-            if !missingLayers.isEmpty || !missingBlocks.isEmpty {
+            if !missingBlocks.isEmpty {
                 sheetDoc.importLayersBlocksEntities(
-                    layers: missingLayers, blocks: missingBlocks, entities: [])
+                    layers: [], blocks: missingBlocks, entities: [])
             }
             sheetDoc.addEntities(moved)
             modelDoc.removeEntities(handles: Set(movers.map(\.handle)))
@@ -2000,6 +2092,9 @@ public final class TabManager {
     /// - Throws: `DXFExportError`, `DWGExportError` or `EABError` if writing fails.
     public func saveActiveTabAs(url: URL, dxfVersion: DXFVersion = .defaultExport) throws {
         guard var tab = activeTab else { throw TabError.noActiveTab }
+        // Layer edits made in the active view must reach sibling views before
+        // the multi-view writers (EAB/DXF/DWG) snapshot every document.
+        tab.reconcileLayersFromActiveView()
         if tab.editingBlockID != nil {
             throw TabError.cannotSaveWhileInBlockEditor
         }
@@ -2154,6 +2249,8 @@ public final class TabManager {
         isExport: Bool = false,
         exportOptions: PDFExporter.PDFExportOptions = .default
     ) {
+        // See saveActiveTabAs: reconcile before the background snapshot.
+        tab.reconcileLayersFromActiveView()
         if !isAutosave, !isExport { warnAboutDXFXrefTargets(tab: tab, url: url) }
         let saveID = UUID()
         cancelSave(for: tab.id, reason: .restart)

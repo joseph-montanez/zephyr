@@ -419,10 +419,12 @@ final class LispCADHost: LispHost, @unchecked Sendable {
         return LispEntityAdapter.lispList([
             LispEntityAdapter.dotted(.int(0), .string("LAYER")),
             LispEntityAdapter.dotted(.int(2), .string(layer.name)),
-            LispEntityAdapter.dotted(.int(70), .int(0)),
+            LispEntityAdapter.dotted(.int(70), .int(layer.dxfStateBits)),
             LispEntityAdapter.dotted(.int(62), .int(aci)),
             LispEntityAdapter.dotted(.int(6), .string(layer.lineType)),
             LispEntityAdapter.dotted(.int(370), .int(Int(layer.lineWeight * 100))),
+            LispEntityAdapter.dotted(.int(440), .int(layer.transparency)),
+            LispEntityAdapter.dotted(.int(3), .string(layer.layerDescription)),
         ])
     }
 
@@ -595,6 +597,58 @@ final class LispCADHost: LispHost, @unchecked Sendable {
         document.allLayers.first {
             $0.name.caseInsensitiveCompare(name) == .orderedSame
         }?.isVisible
+    }
+
+    func layerIsFrozen(_ name: String) async -> Bool? {
+        document.allLayers.first {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }?.isFrozen
+    }
+
+    func setLayerFrozen(_ name: String, frozen: Bool) async -> Bool {
+        guard let layer = document.allLayers.first(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) else { return false }
+        if case .failure = LayerTransactionService().setFrozen(
+            in: document, named: layer.name, frozen: frozen) { return false }
+        return true
+    }
+
+    func layerIsLocked(_ name: String) async -> Bool? {
+        document.allLayers.first {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }?.isLocked
+    }
+
+    func setLayerLocked(_ name: String, locked: Bool) async -> Bool {
+        guard let layer = document.allLayers.first(where: {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }) else { return false }
+        if case .failure = LayerTransactionService().setLocked(
+            in: document, named: layer.name, locked: locked) { return false }
+        return true
+    }
+
+    func layerMake(_ name: String) async -> Bool {
+        if case .failure = LayerTransactionService().createLayer(
+            in: document, name: name) { return false }
+        return true
+    }
+
+    func layerDelete(_ name: String) async -> Bool {
+        if case .failure = LayerTransactionService().deleteLayerAndEntities(
+            in: document, named: name) { return false }
+        return true
+    }
+
+    func layerMerge(from sources: [String], into target: String) async -> Bool {
+        if case .failure = LayerTransactionService().mergeLayers(
+            in: document, from: sources, into: target) { return false }
+        return true
+    }
+
+    func layerHistoryDepth() async -> Int {
+        LayerTransactionService().layerHistoryDepth(in: document)
     }
 
     func setLayerIsOn(_ name: String, on: Bool) async -> Bool {

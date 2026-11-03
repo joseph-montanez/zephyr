@@ -64,7 +64,14 @@ struct StatusBarUI {
                 trackingParts.append("ORTHO")
             }
             let trackingStr = trackingParts.isEmpty ? "" : "  ·  " + trackingParts.joined(separator: "  ·  ")
-            statusLeft = StatusBarUIPolicy.leftText(info: info, trackingSuffix: trackingStr)
+            var layerSuffix = ""
+            if let tab = shownTab, !tab.drawingViews.isEmpty {
+                let clamped = max(0, min(shownViewIndex, tab.drawingViews.count - 1))
+                layerSuffix = LayerManagerModel.statusBarSuffix(
+                    in: tab.drawingViews[clamped].document)
+            }
+            statusLeft = StatusBarUIPolicy.leftText(
+                info: info, trackingSuffix: trackingStr + layerSuffix)
         }
 
         let barH = AppLayout.statusBarHeight

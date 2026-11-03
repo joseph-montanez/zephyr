@@ -168,6 +168,14 @@ public protocol LispHost: Sendable {
     func layerIsOn(_ name: String) async -> Bool?
     /// Sets layer on/off; false for unknown layers. Default false.
     func setLayerIsOn(_ name: String, on: Bool) async -> Bool
+    func layerIsFrozen(_ name: String) async -> Bool?
+    func setLayerFrozen(_ name: String, frozen: Bool) async -> Bool
+    func layerIsLocked(_ name: String) async -> Bool?
+    func setLayerLocked(_ name: String, locked: Bool) async -> Bool
+    func layerMake(_ name: String) async -> Bool
+    func layerDelete(_ name: String) async -> Bool
+    func layerMerge(from sources: [String], into target: String) async -> Bool
+    func layerHistoryDepth() async -> Int
 
     // MARK: - File + color dialogs (step 4d underpinnings)
 
@@ -406,6 +414,14 @@ extension LispHost {
     }
 
     public func layerNames() async -> [String] { [] }
+    public func layerIsFrozen(_ name: String) async -> Bool? { nil }
+    public func setLayerFrozen(_ name: String, frozen: Bool) async -> Bool { false }
+    public func layerIsLocked(_ name: String) async -> Bool? { nil }
+    public func setLayerLocked(_ name: String, locked: Bool) async -> Bool { false }
+    public func layerMake(_ name: String) async -> Bool { false }
+    public func layerDelete(_ name: String) async -> Bool { false }
+    public func layerMerge(from sources: [String], into target: String) async -> Bool { false }
+    public func layerHistoryDepth() async -> Int { 0 }
 
     public func layerIsOn(_ name: String) async -> Bool? {
         _ = name

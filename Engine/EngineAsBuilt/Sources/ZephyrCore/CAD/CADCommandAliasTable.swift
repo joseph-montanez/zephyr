@@ -363,6 +363,33 @@ public enum CADCommandAliasTable {
             canonicalName: "LAYMCUR", aliases: ["AI_MOLC"], category: .layer,
             description: "Make the layer of a selected object current"),
         CADCommandAliasEntry(
+            canonicalName: "LAYFRZ", aliases: ["LAYFREEZE"], category: .layer,
+            description: "Freeze a layer by name"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYTHW", aliases: ["LAYTHAW"], category: .layer,
+            description: "Thaw a layer by name"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYLCK", aliases: ["LAYLOCK"], category: .layer,
+            description: "Lock a layer by name"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYULK", aliases: ["LAYUNLOCK"], category: .layer,
+            description: "Unlock a layer by name"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYDEL", aliases: ["LAYDELETE"], category: .layer,
+            description: "Delete a layer and its entities by name"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYMRG", aliases: ["LAYMERGE"], category: .layer,
+            description: "Merge source layers into a target layer, then delete the sources"),
+        CADCommandAliasEntry(
+            canonicalName: "LAYWALK", category: .layer,
+            description: "List layers, or isolate one layer to inspect it"),
+        CADCommandAliasEntry(
+            canonicalName: "COPYTOLAYER", category: .layer,
+            description: "Copy selected entities onto another layer"),
+        CADCommandAliasEntry(
+            canonicalName: "VPLAYER", category: .layer,
+            description: "Freeze or thaw layers in one paper-space viewport"),
+        CADCommandAliasEntry(
             canonicalName: "LAYMCH", category: .layer,
             description: "Change selected entities to the layer of a picked destination object"),
         CADCommandAliasEntry(

@@ -84,6 +84,8 @@ final class LispVarStore: @unchecked Sendable {
         "LUNITS": .int(2),
         "LUPREC": .int(4),
         "LWDISPLAY": .int(0),
+        "TRANSPARENCYDISPLAY": .int(1),
+        "LAYLOCKFADECTL": .int(50),
         "MEASUREMENT": .int(1),
         "MENUECHO": .int(0),
         "MIRRTEXT": .int(1),
@@ -231,6 +233,12 @@ final class LispVarStore: @unchecked Sendable {
             return .int(XrefSysvars.xloadCtl)
         case "XREFNOTIFY":
             return .int(XrefSysvars.xrefNotify)
+        case "LAYLOCKFADECTL":
+            return .int(document.lockedLayerFadePercent)
+        case "TRANSPARENCYDISPLAY":
+            return .int(document.transparencyDisplayEnabled ? 1 : 0)
+        case "LWDISPLAY":
+            return .int(document.lineweightDisplayEnabled ? 1 : 0)
         default:
             return lock.withLock { memory[name] }
         }
@@ -497,6 +505,26 @@ final class LispVarStore: @unchecked Sendable {
                 document.markNeedsRegeneration()
                 XrefSysvars.fadePercent = intValue
             }
+            return nil
+        case "LAYLOCKFADECTL":
+            guard case let .int(i) = value, (0...90).contains(i) else {
+                return "LAYLOCKFADECTL requires 0..90"
+            }
+            document.lockedLayerFadePercent = i
+            document.markNeedsRegeneration()
+            store(name, value)
+            return nil
+        case "TRANSPARENCYDISPLAY", "LWDISPLAY":
+            guard case let .int(i) = value, (0...1).contains(i) else {
+                return "\(name) requires 0 or 1"
+            }
+            if name == "TRANSPARENCYDISPLAY" {
+                document.transparencyDisplayEnabled = (i != 0)
+            } else {
+                document.lineweightDisplayEnabled = (i != 0)
+            }
+            document.markNeedsRegeneration()
+            store(name, value)
             return nil
         case "TEXTSTYLE":
             guard case let .string(style) = value else {

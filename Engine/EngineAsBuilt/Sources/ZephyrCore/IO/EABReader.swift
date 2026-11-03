@@ -119,6 +119,11 @@ public enum EABReader {
             doc.paperSpaceLinetypeScale = components.paperSpaceLinetypeScale
             doc.layoutSettings = components.layoutSettings
             doc.plotSettings = components.plotSettings
+            doc.viewportLayerOverrides = components.viewportOverrides
+            if let layerStates = readLayerStates(from: data) {
+                doc.layerStates = layerStates.states
+                doc.layerFilters = layerStates.filters
+            }
             return [DrawingView(name: "Model", kind: .model, document: doc)]
         }
     }
@@ -151,7 +156,8 @@ public enum EABReader {
         insertionBase: Vector3,
         paperSpaceLinetypeScale: Int,
         layoutSettings: CADLayoutSettings?,
-        plotSettings: CADPlotSettings?
+        plotSettings: CADPlotSettings?,
+        viewportOverrides: ViewportOverrideMap
     ) {
         let data = try Data(contentsOf: url)
         return try readDocument(from: data)
@@ -255,6 +261,11 @@ public enum EABReader {
             doc.paperSpaceLinetypeScale = components.paperSpaceLinetypeScale
             doc.layoutSettings = components.layoutSettings
             doc.plotSettings = components.plotSettings
+            doc.viewportLayerOverrides = components.viewportOverrides
+            if let layerStates = readLayerStates(from: viewData) {
+                doc.layerStates = layerStates.states
+                doc.layerFilters = layerStates.filters
+            }
 
             views.append(DrawingView(name: entry.name, kind: entry.kind,
                                      document: doc, cameraState: entry.cameraState))
@@ -302,6 +313,11 @@ public enum EABReader {
                 doc.paperSpaceLinetypeScale = components.paperSpaceLinetypeScale
                 doc.layoutSettings = components.layoutSettings
                 doc.plotSettings = components.plotSettings
+                doc.viewportLayerOverrides = components.viewportOverrides
+                if let layerStates = readLayerStates(from: viewData) {
+                    doc.layerStates = layerStates.states
+                    doc.layerFilters = layerStates.filters
+                }
                 views.append(DrawingView(name: "Recovered", kind: .model, document: doc,
                                          cameraState: CameraState(offsetX: 0, offsetY: 0, zoom: 1, rotation: 0)))
             } catch {
@@ -340,7 +356,8 @@ public enum EABReader {
         insertionBase: Vector3,
         paperSpaceLinetypeScale: Int,
         layoutSettings: CADLayoutSettings?,
-        plotSettings: CADPlotSettings?
+        plotSettings: CADPlotSettings?,
+        viewportOverrides: ViewportOverrideMap
     ) {
         let header = try parseHeader(from: data)
         let rawTableOffset = header.sectionTableOffset; guard rawTableOffset <= UInt64(Int.max) else { throw EABError.readError("Section table offset exceeds Int.max") }; let entries = try parseSectionTable(from: data, at: Int(rawTableOffset))
@@ -371,6 +388,7 @@ public enum EABReader {
         var imageDefinitions: [CADImageDefinition] = []
         var pdfDefinitions: [CADPdfDefinition] = []
         var groups: [CADGroup] = []
+        var viewportOverrides: ViewportOverrideMap = [:]
 
         for entry in entries {
             let reader = BinaryReader(
@@ -425,6 +443,8 @@ public enum EABReader {
                 let parsedLayout = parseLayoutSettings(reader)
                 layoutSettings = parsedLayout.layout
                 plotSettings = parsedLayout.plot
+            case .viewportOverrides:
+                viewportOverrides = parseViewportOverrides(reader)
             default:
                 break  // skip unknown sections
             }
@@ -442,7 +462,8 @@ public enum EABReader {
                 linetypePatterns, activeLayerID, loadedImageStore,
                 xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
                 globalLineTypeScale, autoContrastTrueColor, insertionBase,
-                paperSpaceLinetypeScale, layoutSettings, plotSettings)
+                paperSpaceLinetypeScale, layoutSettings, plotSettings,
+                viewportOverrides)
     }
 
     private static func parseXrefs(
@@ -501,6 +522,147 @@ public enum EABReader {
             groups.append(CADGroup(name: name, members: members, isSelectable: isSelectable))
         }
         return groups
+    }
+
+    static func parseViewportOverrides(_ r: BinaryReader) -> ViewportOverrideMap {
+        var map: ViewportOverrideMap = [:]
+        let viewportCount = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "viewportOverrides")
+        for _ in 0..<viewportCount {
+            let viewportKey = r.readString()
+            let entryCount = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "viewportOverrides.entries")
+            var deltas: [String: ViewportLayerOverride] = [:]
+            for _ in 0..<entryCount {
+                let layerKey = r.readString()
+                var override = ViewportLayerOverride()
+                override.frozen = r.readUInt8() != 0
+                if r.readUInt8() != 0 {
+                    let colorVal = r.readUInt32()
+                    override.color = ColorRGBA(
+                        r: UInt8((colorVal >> 24) & 0xFF),
+                        g: UInt8((colorVal >> 16) & 0xFF),
+                        b: UInt8((colorVal >> 8) & 0xFF),
+                        a: UInt8(colorVal & 0xFF))
+                }
+                let colorKind = r.readUInt8()
+                let aciValue = Int(r.readInt32())
+                let bookName = r.readString()
+                switch colorKind {
+                case 0 where (1...255).contains(aciValue):
+                    override.colorSource = .aci(aciValue)
+                case 1:
+                    override.colorSource = .trueColor
+                case 2 where !bookName.isEmpty:
+                    override.colorSource = .colorBook(name: bookName)
+                default:
+                    override.colorSource = nil
+                }
+                if r.readUInt8() != 0 { override.lineType = r.readString() }
+                if r.readUInt8() != 0 { override.lineWeight = r.readFloat64() }
+                if r.readUInt8() != 0 {
+                    override.transparency = Layer.clampedTransparency(Int(r.readUInt8()))
+                }
+                if r.readUInt8() != 0 { override.plotStyleName = r.readString() }
+                if !override.isEmpty { deltas[layerKey] = override }
+            }
+            if !viewportKey.isEmpty, !deltas.isEmpty { map[viewportKey] = deltas }
+        }
+        return map
+    }
+
+    /// Parse the additive Phase 4 layerStates section (named states +
+    /// filters). Unknown filter-kind tags fall back to `.all` so newer
+    /// writers stay readable.
+    static func parseLayerStates(_ r: BinaryReader) -> (
+        states: [String: LayerState], filters: [String: LayerFilter]
+    ) {
+        var states: [String: LayerState] = [:]
+        var filters: [String: LayerFilter] = [:]
+        let stateCount = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "layerStates")
+        for _ in 0..<stateCount {
+            let name = r.readString()
+            let stateDescription = r.readString()
+            let mask = LayerStatePropertyMask(rawValue: r.readUInt32())
+            let turnOff = r.readUInt8() != 0
+            let entryCount = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "layerStates.entries")
+            var entries: [String: LayerStateEntry] = [:]
+            for _ in 0..<entryCount {
+                let layerName = r.readString()
+                let isVisible = r.readUInt8() != 0
+                let bits = r.readUInt8()
+                let plottable = r.readUInt8() != 0
+                let colorKind = r.readUInt8()
+                let aci = Int(r.readInt32())
+                let bookName = r.readString()
+                let colorVal = r.readUInt32()
+                let color = ColorRGBA(
+                    r: UInt8((colorVal >> 24) & 0xFF),
+                    g: UInt8((colorVal >> 16) & 0xFF),
+                    b: UInt8((colorVal >> 8) & 0xFF),
+                    a: UInt8(colorVal & 0xFF))
+                let source: LayerColorSource
+                switch colorKind {
+                case 2 where !bookName.isEmpty:
+                    source = .colorBook(name: bookName)
+                case 1:
+                    source = .trueColor
+                default:
+                    source = .aci(max(1, min(255, aci)))
+                }
+                let entry = LayerStateEntry(
+                    layerName: layerName,
+                    isVisible: isVisible,
+                    isFrozen: (bits & 1) != 0,
+                    freezeInNewViewports: (bits & 2) != 0,
+                    isLocked: (bits & 4) != 0,
+                    isPlottable: plottable,
+                    color: color,
+                    colorSource: source,
+                    lineType: r.readString(),
+                    lineWeight: r.readFloat64(),
+                    transparency: Int(r.readUInt8()),
+                    plotStyleName: r.readString(),
+                    layerDescription: r.readString())
+                entries[entry.key] = entry
+            }
+            let state = LayerState(
+                name: name, stateDescription: stateDescription,
+                mask: mask, turnOffLayersNotInState: turnOff, entries: entries)
+            states[state.key] = state
+        }
+        let filterCount = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "layerStates.filters")
+        for _ in 0..<filterCount {
+            let name = r.readString()
+            let kindTag = r.readUInt8()
+            var kind = LayerFilter.Kind.all
+            if kindTag == 1 {
+                kind = .property(LayerPropertyFilter.readFields(from: r))
+            } else if kindTag == 2 {
+                let memberCount = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "layerStates.filterMembers")
+                var members = Set<String>()
+                for _ in 0..<memberCount { members.insert(r.readString()) }
+                kind = .group(members: members)
+            }
+            let inverted = r.readUInt8() != 0
+            let filter = LayerFilter(name: name, kind: kind, inverted: inverted)
+            filters[filter.key] = filter
+        }
+        return (states, filters)
+    }
+
+    /// Read the additive Phase 4 layerStates section, when present.
+    /// Returns nil for files written before the section existed.
+    public static func readLayerStates(from data: Data) -> (
+        states: [String: LayerState], filters: [String: LayerFilter]
+    )? {
+        guard let header = try? parseHeader(from: data),
+              let tableOffset = safeInt(header.sectionTableOffset),
+              let entries = try? parseSectionTable(from: data, at: tableOffset),
+              let section = entries.first(where: { $0.type == .layerStates }),
+              let start = safeInt(section.offset) else { return nil }
+        let reader = BinaryReader(
+            data: data, startOffset: start,
+            usesLongStringSentinel: header.version >= EABVersionLongStrings)
+        return parseLayerStates(reader)
     }
 
     private static func parseLayoutSettings(
@@ -860,7 +1022,8 @@ public enum EABReader {
         insertionBase: Vector3,
         paperSpaceLinetypeScale: Int,
         layoutSettings: CADLayoutSettings?,
-        plotSettings: CADPlotSettings?
+        plotSettings: CADPlotSettings?,
+        viewportOverrides: ViewportOverrideMap
     ) {
         let data = try Data(contentsOf: url)
         let header = try parseHeader(from: data)
@@ -902,6 +1065,7 @@ public enum EABReader {
         var imageDefinitions: [CADImageDefinition] = []
         var pdfDefinitions: [CADPdfDefinition] = []
         var groups: [CADGroup] = []
+        var viewportOverrides: ViewportOverrideMap = [:]
 
         for entry in entries {
             let reader = BinaryReader(
@@ -960,6 +1124,8 @@ public enum EABReader {
                 let parsedLayout = parseLayoutSettings(reader)
                 layoutSettings = parsedLayout.layout
                 plotSettings = parsedLayout.plot
+            case .viewportOverrides:
+                viewportOverrides = parseViewportOverrides(reader)
             default:
                 break
             }
@@ -977,7 +1143,8 @@ public enum EABReader {
                 linetypePatterns, activeLayerID, loadedImageStore,
                 xrefHostFolder, unloadedXrefs, imageDefinitions, pdfDefinitions, groups,
                 globalLineTypeScale, autoContrastTrueColor, insertionBase,
-                paperSpaceLinetypeScale, layoutSettings, plotSettings)
+                paperSpaceLinetypeScale, layoutSettings, plotSettings,
+                viewportOverrides)
     }
 
     // MARK: - Header Parsing
@@ -1060,7 +1227,7 @@ public enum EABReader {
 
     // MARK: - Layer Parsing
 
-    private static func parseLayers(_ r: BinaryReader, version: UInt32) throws -> [Layer] {
+    static func parseLayers(_ r: BinaryReader, version: UInt32) throws -> [Layer] {
         let count = safeCount(r.readUInt32(), limit: maxSafeLayerCount, label: "layers")
         var layers: [Layer] = []
         for _ in 0..<count {
@@ -1073,6 +1240,7 @@ public enum EABReader {
             let gComp = UInt8((colorVal >> 16) & 0xFF)
             let bComp = UInt8((colorVal >> 8) & 0xFF)
             let aComp = UInt8(colorVal & 0xFF)
+            let resolvedColor = ColorRGBA(r: rComp, g: gComp, b: bComp, a: aComp)
             let isVisible = (flags & 0x01) != 0
             // Opacity added in EAB version 3
             let opacity: Double = version >= 3 ? r.readFloat64() : 1.0
@@ -1087,13 +1255,55 @@ public enum EABReader {
                 isPlottable = true
                 plotStyleHandle = nil
             }
+            // Phase-1 parity tail (added in EAB v23). Older files keep
+            // legacy defaults: visible-state only, opacity-derived
+            // transparency, inferred color intent, reconciled.
+            let stateFlags: UInt8
+            let transparency: Int
+            let layerDescription: String
+            let colorSource: LayerColorSource
+            let plotStyleName: String
+            if version >= 23 {
+                stateFlags = r.readUInt8()
+                transparency = Layer.clampedTransparency(Int(r.readUInt8()))
+                layerDescription = r.readString()
+                let colorKind = r.readUInt8()
+                let aciValue = Int(r.readInt32())
+                let bookName = r.readString()
+                switch colorKind {
+                case 0 where (1...255).contains(aciValue):
+                    colorSource = .aci(aciValue)
+                case 2 where !bookName.isEmpty:
+                    colorSource = .colorBook(name: bookName)
+                default:
+                    colorSource = .trueColor
+                }
+                plotStyleName = r.readString()
+            } else {
+                stateFlags = 0x08
+                transparency = Layer.transparencyForOpacity(opacity)
+                layerDescription = ""
+                if DXFColorTable.isACI(resolvedColor) {
+                    colorSource = .aci(Int(DXFColorTable.rgbaToACI(resolvedColor)))
+                } else {
+                    colorSource = .trueColor
+                }
+                plotStyleName = "Normal"
+            }
             layers.append(Layer(handle: handle, name: name, isVisible: isVisible,
+                                isFrozen: (stateFlags & 0x01) != 0,
+                                freezeInNewViewports: (stateFlags & 0x02) != 0,
+                                isLocked: (stateFlags & 0x04) != 0,
+                                layerDescription: layerDescription,
+                                isReconciled: (stateFlags & 0x08) != 0,
+                                transparency: transparency,
                                 lineWeight: lineWeight,
-                                color: ColorRGBA(r: rComp, g: gComp, b: bComp, a: aComp),
+                                color: resolvedColor,
+                                colorSource: colorSource,
                                 lineType: lineType,
                                 isPlottable: isPlottable,
                                 plotStyleHandle: plotStyleHandle,
-                                opacity: opacity))
+                                plotStyleName: plotStyleName))
         }
         return layers
     }

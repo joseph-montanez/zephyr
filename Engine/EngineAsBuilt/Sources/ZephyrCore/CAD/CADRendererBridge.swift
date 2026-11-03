@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 import SwiftSDL
 
 // Large-file design note:
@@ -272,7 +272,8 @@ public final class CADRendererBridge {
         entityGeomWidth: Double,
         entityLayerOpacity: Double,
         entityIsTrueColor: Bool = false,
-        layersByName: [String: Layer]
+        layersByName: [String: Layer],
+        display: LayerDisplayOptions = .default
     ) -> ResolvedPrimitiveStyle {
         let styleLayer: Layer?
         if let name = style?.layerName?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -319,7 +320,11 @@ public final class CADRendererBridge {
             lineWeight = entityLineWeight
         }
 
-        let sourceLayerOpacity = styleLayer?.opacity ?? entityLayerOpacity
+        let rawLayerOpacity = styleLayer?.opacity ?? entityLayerOpacity
+        let styleLockFade = LayerAccess.lockedFadeMultiplier(
+            layer: styleLayer, fadePercent: display.lockFadePercent)
+        let sourceLayerOpacity =
+            (display.transparencyShown ? rawLayerOpacity : 1.0) * styleLockFade
         let opacityMultiplier = max(0.0, min(1.0,
             sourceLayerOpacity * (style?.opacity ?? 1.0)))
         let adjustedColor = ColorRGBA(
@@ -341,11 +346,11 @@ public final class CADRendererBridge {
         return ResolvedPrimitiveStyle(
             color: adjustedColor,
             lineType: lineType,
-            lineWeight: lineWeight,
+            lineWeight: display.effectiveLineWeight(lineWeight),
             lineTypeScale: entityLineTypeScale * (style?.lineTypeScale ?? 1.0),
             geomWidth: style?.geomWidth ?? entityGeomWidth,
             opacityMultiplier: opacityMultiplier,
-            isVisible: styleLayer?.isVisible ?? true,
+            isVisible: styleLayer.map { LayerAccess.isDrawn($0) } ?? true,
             isTrueColor: isTrueColor)
     }
 
@@ -471,10 +476,21 @@ public final class CADRendererBridge {
             return e1.handle.uuidString < e2.handle.uuidString
         }
 
+        // Phase 2 split: frozen layers are excluded from regeneration
+        // entirely; off layers regenerate (geometry resolves, so unhide is
+        // free) but emit no draw output. `display` rides into the chunk
+        // tasks for lock fade and transparency/lineweight toggles.
+        let display = snapshot.layerDisplay
+        let hiddenHandles: Set<UUID> = Set(sortedEntities.lazy.filter({ entity in
+            guard let layer = snapshot.layers[entity.layerID] else { return false }
+            return LayerAccess.isRegenerated(layer) && !LayerAccess.isDrawn(layer)
+        }).map(\.handle))
         for entity in sortedEntities {
-            guard let layer = snapshot.layers[entity.layerID], layer.isVisible else {
+            guard let baseLayer = snapshot.layers[entity.layerID], LayerAccess.isRegenerated(baseLayer) else {
                 continue
             }
+            if LayerAccess.isFrozenInViewport(entity, in: snapshot) { continue }
+            let layer = LayerAccess.effectiveLayer(for: entity, in: snapshot) ?? baseLayer
             guard !snapshot.isolatedHiddenHandles.contains(entity.handle) else {
                 continue
             }
@@ -507,7 +523,11 @@ public final class CADRendererBridge {
                       snapshot.blocks[bid]?.isXref == true else { return 1.0 }
                 return 1.0 - Double(snapshot.xrefFadePercent) / 100.0
             }()
-            let combinedLayerOpacity = layer.opacity * entityOpacity * xrefFadeMultiplier
+            let combinedLayerOpacity = display.effectiveOpacity(
+                layerOpacity: layer.opacity, entityOpacity: entityOpacity)
+                * xrefFadeMultiplier
+                * LayerAccess.lockedFadeMultiplier(
+                    layer: layer, fadePercent: display.lockFadePercent)
             let effectiveColor = ColorRGBA(
                 r: entityColor.r,
                 g: entityColor.g,
@@ -831,6 +851,7 @@ public final class CADRendererBridge {
                     group.addTask {
                         var chunkResults: [EntityResult] = []
                         for v in chunk {
+                            guard !hiddenHandles.contains(v.handle) else { continue }
                             let baseZ = Double(v.index) * zBand
                             var specs: [PrimitiveSpec] = []
                             var currentZ = baseZ
@@ -885,7 +906,8 @@ public final class CADRendererBridge {
                                     entityGeomWidth: v.geomWidth,
                                     entityLayerOpacity: v.layerOpacity,
                                     entityIsTrueColor: v.isTrueColor,
-                                    layersByName: layersByName)
+                                    layersByName: layersByName,
+                                        display: display)
                                 if !drawStyle.isVisible {
                                     currentZ += 0.01
                                     continue
@@ -1133,7 +1155,8 @@ public final class CADRendererBridge {
                                         entityGeomWidth: v.geomWidth,
                                         entityLayerOpacity: v.layerOpacity,
                                         entityIsTrueColor: v.isTrueColor,
-                                        layersByName: layersByName)
+                                        layersByName: layersByName,
+                                            display: display)
                                     if drawStyle.isVisible, let imgSpec = CADPrimitiveGenerator.computeImageSpec(
                                         from: primitive,
                                         transform: v.transform,
@@ -1200,6 +1223,7 @@ public final class CADRendererBridge {
                     group.addTask {
                         var chunkResults: [EntityResult] = []
                         for vt in chunk {
+                            guard !hiddenHandles.contains(vt.handle) else { continue }
                             let baseZ = Double(vt.index) * zBand + 1000000.0
                             let color = (vt.color.r, vt.color.g, vt.color.b, vt.color.a)
                             let textStyle = CADTextStyle.resolve(vt.textStyle, in: snapshot.textStyles)
@@ -1629,6 +1653,8 @@ public final class CADRendererBridge {
               let geometry = document.resolvedGeometry(for: entity)
         else { return }
 
+        // Phase 2: locked (and hidden) layers refuse direct manipulation.
+        guard LayerAccess.isEditable(entity: entity, in: document) else { return }
         let ids = entityPrimitiveMap[handle] ?? []
         let invTransform = entity.transform.inverse()
 

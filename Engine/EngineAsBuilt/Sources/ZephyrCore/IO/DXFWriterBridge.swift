@@ -130,6 +130,7 @@ public enum DXFWriterBridge {
         var insertionBase: Vector3 = .zero
         var plotSettings: CADPlotSettings? = nil
         var pstyleMode: Int = 1
+        var viewportOverrides: ViewportOverrideMap = [:]
     }
 
 
@@ -178,7 +179,8 @@ public enum DXFWriterBridge {
             groups: document.groups,
             insertionBase: document.insertionBase,
             plotSettings: document.plotSettings,
-            pstyleMode: document.pstyleMode)
+            pstyleMode: document.pstyleMode,
+            viewportOverrides: document.viewportLayerOverrides)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion,
                         psltscale: document.paperSpaceLinetypeScale)
     }
@@ -211,7 +213,8 @@ public enum DXFWriterBridge {
                 groups: $0.document.groups,
                 insertionBase: $0.document.insertionBase,
                 plotSettings: $0.document.plotSettings,
-                pstyleMode: $0.document.pstyleMode)
+                pstyleMode: $0.document.pstyleMode,
+                viewportOverrides: $0.document.viewportLayerOverrides)
         }
         try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion, tileMode: tileMode,
                         psltscale: psltscale, namedSetups: namedSetups)
@@ -487,12 +490,24 @@ public enum DXFWriterBridge {
                 guard !key.isEmpty, layerNames.insert(key).inserted else { continue }
                 let entry = DXFLayerEntry()
                 entry.name = layer.name
+                entry.layerDescription = layer.layerDescription
+                entry.flags |= layer.dxfStateBits
                 entry.lineType = layer.lineType.isEmpty ? "CONTINUOUS" : layer.lineType
                 entry.plotFlag = layer.isPlottable
-                entry.color = layer.isVisible
-                    ? DXFColorTable.rgbaToACI(layer.color)
-                    : -abs(DXFColorTable.rgbaToACI(layer.color))
-                entry.color24 = DXFColorTable.rgbaToTrueColor(layer.color) ?? -1
+                if case .aci(let index) = layer.colorSource {
+                    let clamped = Int32(max(1, min(255, index)))
+                    entry.color = layer.isVisible ? clamped : -clamped
+                    entry.color24 = -1
+                } else {
+                    let nearest = DXFColorTable.rgbaToACI(layer.color)
+                    entry.color = layer.isVisible ? nearest : -abs(nearest)
+                    entry.color24 = DXFColorTable.rgbaToTrueColor(layer.color) ?? -1
+                    if case .colorBook(let bookName) = layer.colorSource {
+                        entry.colorBookName = bookName
+                    }
+                }
+                entry.isReconciled = layer.isReconciled
+                entry.plotStyleName = layer.plotStyleName.isEmpty ? "Normal" : layer.plotStyleName
                 entry.lWeight = DXFLineWidth.fromDXF(Int((layer.lineWeight * 100.0).rounded()))
                 entry.transparency = DXFColorTable.opacityToTransparency(layer.opacity)
                 entry.flags |= dependentSymbolFlags(
@@ -608,12 +623,15 @@ public enum DXFWriterBridge {
             }
         }
 
+        var sheetViewportXDataNeeded = false
         var sheetPlans: [Int: SheetExportPlan] = [:]
         if orderedViews.count > 1 {
             for viewIndex in 1..<orderedViews.count {
-                sheetPlans[viewIndex] = sheetExportPlan(
+                let phase3Plan = sheetExportPlan(
                     view: orderedViews[viewIndex],
                     modelEntities: modelView.entities)
+                sheetPlans[viewIndex] = phase3Plan
+                if phase3Plan.viewports.contains(where: { !$0.stableID.isEmpty || !$0.overrideRecords.isEmpty }) { sheetViewportXDataNeeded = true }
             }
         }
 
@@ -623,6 +641,11 @@ public enum DXFWriterBridge {
             tabOrder: 0,
             plotSettings: orderedViews.first?.plotSettings))
 
+        if sheetViewportXDataNeeded {
+            let viewportAppID = DXFAppIdEntry()
+            viewportAppID.name = "ZEPHYR_VP"
+            writer.addAppId(viewportAppID)
+        }
         var ownerBlockNames: [String] = ["*Model_Space"]
         for sheetIndex in 0..<max(0, orderedViews.count - 1) {
             let blockName = sheetIndex == 0 ? "*Paper_Space" : "*Paper_Space\(sheetIndex - 1)"
@@ -1153,6 +1176,7 @@ public enum DXFWriterBridge {
 
         var projectedIndices = markedIndices
         var viewports = exactViewports(from: markedIndices.map { view.entities[$0] })
+        decorateViewportEntitiesForExport(&viewports, view: view)
 
         if projectedIndices.isEmpty,
            let inferred = inferProjectedEntities(
@@ -1218,6 +1242,7 @@ public enum DXFWriterBridge {
             let twist = xdataDouble(xdata, "dxf.viewport.twistDegrees") ?? 0
             let signature = [
                 String(id), String(status),
+                xdataString(xdata, "dxf.viewport.stableID") ?? "",
                 String(format: "%.12g", paperCenterX),
                 String(format: "%.12g", paperCenterY),
                 String(format: "%.12g", paperWidth),
@@ -1244,6 +1269,7 @@ public enum DXFWriterBridge {
             viewport.viewTarget = Vector3(x: viewTargetX, y: viewTargetY, z: 0)
             viewport.viewHeight = max(abs(viewHeight), 1e-9)
             viewport.twistAngle = twist
+            viewport.stableID = xdataString(xdata, "dxf.viewport.stableID") ?? ""
             result.append(viewport)
         }
 
@@ -1253,6 +1279,30 @@ public enum DXFWriterBridge {
         }
     }
 
+    private static func decorateViewportEntitiesForExport(
+        _ viewports: inout [DXFViewportEntity], view: ExportViewData
+    ) {
+        guard !viewports.isEmpty, !view.viewportOverrides.isEmpty else { return }
+        let layerNameByHandle = Dictionary(
+            uniqueKeysWithValues: view.layers.map { ($0.handle.uuidString, $0.name) })
+        for viewport in viewports {
+            let lookupKey = viewport.stableID.isEmpty
+                ? ViewportIdentity.fallbackKey(viewportNumber: viewport.vpID)
+                : viewport.stableID
+            guard let deltas = view.viewportOverrides[lookupKey], !deltas.isEmpty else { continue }
+            if viewport.stableID.isEmpty { viewport.stableID = lookupKey }
+            var frozenNames: [String] = []
+            var records: [String] = []
+            for (layerKey, override) in deltas {
+                guard let name = layerNameByHandle[layerKey] else { continue }
+                if override.frozen { frozenNames.append(name) }
+                if override.isEmpty { continue }
+                records.append(ViewportOverrideRecord.encode(layerName: name, override: override))
+            }
+            viewport.frozenLayerNames = frozenNames.sorted()
+            viewport.overrideRecords = records.sorted()
+        }
+    }
     private static func projectionFromMarkedEntities(
         _ sheetEntities: [CADEntity],
         modelEntities: [CADEntity]

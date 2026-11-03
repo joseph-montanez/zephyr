@@ -40,7 +40,7 @@ public enum CADSelectionHighlightRenderer {
         for handle in handles {
             guard segmentsDrawn < maxSegments else { break }
             guard let entity = document.entity(for: handle),
-                  let layer = document.layer(for: entity.layerID), layer.isVisible,
+                  let layer = document.layer(for: entity.layerID), layer.isEffectivelyVisible,
                   let geom = entity.localGeometry ?? document.resolvedGeometry(for: entity)
             else { continue }
             let isImage = geom.contains(where: { if case .image = $0 { return true }; return false })

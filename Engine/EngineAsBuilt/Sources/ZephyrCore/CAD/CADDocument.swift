@@ -58,6 +58,9 @@ public struct CADDocumentSnapshot: Sendable {
     public let imageAssetNames: Set<String>
     /// Xref fade percent at snapshot time (render-only).
     public let xrefFadePercent: Int
+    /// Render-only layer display switches (lock fade, transparency and
+    /// lineweight display) at snapshot time.
+    public let layerDisplay: LayerDisplayOptions
     /// Referenced media definitions (ATTACH).
     public let imageDefinitions: [String: CADImageDefinition]
     public let pdfDefinitions: [String: CADPdfDefinition]
@@ -73,6 +76,9 @@ public struct CADDocumentSnapshot: Sendable {
     public let isolatedHiddenHandles: Set<UUID>
     /// Named selection groups (GROUP/UNGROUP) at snapshot time.
     public let groups: [String: CADGroup]
+    public let viewportOverrides: ViewportOverrideMap
+    public let layerStates: [String: LayerState]
+    public let layerFilters: [String: LayerFilter]
 
     public init(
         layers: [UUID: Layer],
@@ -100,19 +106,27 @@ public struct CADDocumentSnapshot: Sendable {
         dxfRoundTripPayload: DXFRoundTripPayload? = nil,
         imageAssetNames: Set<String> = [],
         xrefFadePercent: Int = 50,
+        layerDisplay: LayerDisplayOptions = .default,
         imageDefinitions: [String: CADImageDefinition] = [:],
         pdfDefinitions: [String: CADPdfDefinition] = [:],
         availableImageAssetNames: Set<String> = [],
         layoutSettings: CADLayoutSettings? = nil,
         plotSettings: CADPlotSettings? = nil,
         isolatedHiddenHandles: Set<UUID> = [],
-        groups: [String: CADGroup] = [:]
+        groups: [String: CADGroup] = [:],
+        viewportOverrides: ViewportOverrideMap = [:],
+        layerStates: [String: LayerState] = [:],
+        layerFilters: [String: LayerFilter] = [:]
     ) {
         self.groups = groups
+        self.viewportOverrides = viewportOverrides
+        self.layerStates = layerStates
+        self.layerFilters = layerFilters
         self.isolatedHiddenHandles = isolatedHiddenHandles
         self.layoutSettings = layoutSettings
         self.plotSettings = plotSettings
         self.xrefFadePercent = xrefFadePercent
+        self.layerDisplay = layerDisplay
         self.imageDefinitions = imageDefinitions
         self.pdfDefinitions = pdfDefinitions
         self.availableImageAssetNames = availableImageAssetNames
@@ -578,6 +592,30 @@ public final class CADDocument {
     /// Display precision for inquiry output (LUPREC/AUPREC sysvars, live
     /// through LispVarStore like LTSCALE). Session state, not snapshotted:
     /// precision changes are never undoable, matching AutoCAD.
+    /// Locked-layer fade percent (AutoCAD LAYLOCKFADECTL, 0...90, default 50).
+    /// Locked layers still draw, pick, and snap; their pixels dim by this
+    /// amount via the render snapshot. Display-only session state: carried
+    /// into snapshots, never persisted, never undoable.
+    public var lockedLayerFadePercent: Int = 50 {
+        didSet {
+            lockedLayerFadePercent = max(0, min(90, lockedLayerFadePercent))
+            markNeedsRegeneration()
+        }
+    }
+
+    /// Transparency display (AutoCAD TRANSPARENCYDISPLAY). When false, layer
+    /// and entity transparency render opaque. Screen only; plotting honors
+    /// its own transparency flag.
+    public var transparencyDisplayEnabled: Bool = true {
+        didSet { markNeedsRegeneration() }
+    }
+
+    /// Lineweight display (AutoCAD LWDISPLAY). When false, geometry renders
+    /// hairline (0.0 mm). Screen only; plotting honors PrintLineweights.
+    public var lineweightDisplayEnabled: Bool = true {
+        didSet { markNeedsRegeneration() }
+    }
+
     public var lengthPrecision: Int = 4 {
         didSet { lengthPrecision = max(0, min(8, lengthPrecision)) }
     }
@@ -590,6 +628,9 @@ public final class CADDocument {
     /// Named selection groups (GROUP/UNGROUP), keyed by group name.
     /// Model data: snapshotted (undoable), persisted to DXF/EAB.
     public var groups: [String: CADGroup] = [:]
+        /// Per-viewport layer deltas (Phase 3): viewport stable key -> layer-handle string -> override.
+    /// Sheet documents only; snapshotted (undoable), persisted to DXF/EAB. See CADViewportOverrides.
+    public var viewportLayerOverrides: ViewportOverrideMap = [:]
 
     /// PICKSTYLE (0 = none, 1 = group select, 2 = associative hatch
     /// select, 3 = both; default 1 like AutoCAD). Bit 0 drives group
@@ -984,10 +1025,12 @@ public final class CADDocument {
     // MARK: - Layer Operations
 
     public func addLayer(_ layer: Layer) {
+        checkpointLayerPrevious()
         pushUndo()
         layerTable[layer.handle] = layer
         if activeLayerID == nil { activeLayerID = layer.handle }
         markEdited(regenerate: true)
+        if !layer.isReconciled { _ = updateReconcileBaseline() }
     }
 
     public func removeLayer(handle: UUID) {
@@ -995,10 +1038,117 @@ public final class CADDocument {
             print("[Xref] Layer '\(layer.name)' is xref-dependent and cannot be deleted (Detach the xref).")
             return
         }
+        checkpointLayerPrevious()
         pushUndo()
         layerTable.removeValue(forKey: handle)
+        pruneViewportOverridesInPlace(forDeletedLayer: handle)
         if activeLayerID == handle { activeLayerID = layerTable.keys.first }
+
+
         markEdited(regenerate: true)
+    }
+
+    /// Merge several source layers into one target layer (LAYMRG).
+    /// Every entity on a source layer is re-pointed at the target, then
+    /// the source layers are deleted — all in exactly one undo step with
+    /// one LAYERP checkpoint. Callers validate (existence, protected and
+    /// current-layer guards); unknown handles and the target itself are
+    /// skipped. A current layer pointing at a deleted source is re-pointed
+    /// at the target. Returns the entities moved and sources deleted.
+    @discardableResult
+    public func mergeLayers(sourceHandles: [UUID], into targetHandle: UUID) -> (moved: Int, deleted: Int) {
+        documentLock.withLock {
+            guard layerTable[targetHandle] != nil else { return (0, 0) }
+            let sources = sourceHandles.filter { $0 != targetHandle && layerTable[$0] != nil }
+            guard !sources.isEmpty else { return (0, 0) }
+            checkpointLayerPrevious()
+            pushUndo()
+            let sourceSet = Set(sources)
+            var moved = 0
+            for handle in Array(entityRegistry.keys) {
+                guard var entity = entityRegistry[handle],
+                      sourceSet.contains(entity.layerID),
+                      entity.isViewportProjected != true else { continue }
+                entity.layerID = targetHandle
+                entityRegistry[handle] = preparedEntityForStorage(entity)
+                moved += 1
+            }
+            var deleted = 0
+            for source in sources {
+                layerTable.removeValue(forKey: source)
+                pruneViewportOverridesInPlace(forDeletedLayer: source)
+                deleted += 1
+            }
+            if let active = activeLayerID, sourceSet.contains(active) {
+                activeLayerID = targetHandle
+            }
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+            return (moved, deleted)
+        }
+    }
+
+    /// Delete a layer together with every entity drawn on it (LAYDEL).
+    /// Exactly one undo step with one LAYERP checkpoint. The erased
+    /// entities land in the OOPS buffer like a normal erase.
+    /// Returns the entities deleted, or nil for an unknown layer.
+    @discardableResult
+    public func deleteLayerAndEntities(handle: UUID) -> Int? {
+        documentLock.withLock {
+            guard layerTable[handle] != nil else { return nil }
+            checkpointLayerPrevious()
+            pushUndo()
+            var erased: [CADEntity] = []
+            for (key, entity) in Array(entityRegistry) where entity.layerID == handle {
+                if entity.isViewportProjected != true {
+                    erased.append(entity)
+                    entityRegistry.removeValue(forKey: key)
+                }
+            }
+            oopsBuffer = erased
+            layerTable.removeValue(forKey: handle)
+            pruneViewportOverridesInPlace(forDeletedLayer: handle)
+            if activeLayerID == handle { activeLayerID = layerTable.keys.first }
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+            return erased.count
+        }
+    }
+
+    /// Copy entities onto another layer (COPYTOLAYER). Duplicates keep
+    /// their geometry and gain fresh handles on the target layer, in
+    /// exactly one undo step. Viewport-projected copies are skipped.
+    /// Returns the entities copied, or nil for an unknown target layer.
+    @discardableResult
+    public func copyEntitiesToLayer(handles: Set<UUID>, targetLayer: UUID) -> Int? {
+        documentLock.withLock {
+            guard layerTable[targetLayer] != nil else { return nil }
+            var todo: [CADEntity] = []
+            for handle in handles {
+                if let entity = entityRegistry[handle], entity.isViewportProjected != true {
+                    todo.append(entity)
+                }
+            }
+            guard !todo.isEmpty else { return 0 }
+            pushUndo()
+            for entity in todo {
+                let copy = CADEntity(
+                    handle: UUID(),
+                    layerID: targetLayer,
+                    blockID: entity.blockID,
+                    localGeometry: entity.localGeometry,
+                    dimensionMetadata: entity.dimensionMetadata,
+                    leaderData: entity.leaderData,
+                    arrayData: entity.arrayData,
+                    transform: entity.transform,
+                    xdata: entity.xdata,
+                    drawOrder: entity.drawOrder)
+                entityRegistry[copy.handle] = preparedEntityForStorage(copy)
+            }
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+            return todo.count
+        }
     }
 
     public func layer(for handle: UUID) -> Layer? {
@@ -1194,6 +1344,7 @@ public final class CADDocument {
     public var layersView: Dictionary<UUID, Layer>.Values { layerTable.values }
 
     public func setLayerVisible(_ handle: UUID, visible: Bool) {
+        checkpointLayerPrevious()
         pushUndo()
         guard var layer = layerTable[handle] else { return }
         layer.isVisible = visible
@@ -1207,6 +1358,7 @@ public final class CADDocument {
             print("[Xref] Layer '\(layer.name)' is xref-dependent and cannot be renamed.")
             return
         }
+        checkpointLayerPrevious()
         pushUndo()
         guard var layer = layerTable[handle] else { return }
         layer.name = name
@@ -1375,10 +1527,41 @@ public final class CADDocument {
         markEdited(regenerate: true)
     }
 
+    /// Adopt layer records from a sibling view's document (cross-view layer
+    /// coherence). Upserts every source layer by handle -- adopting missing
+    /// ones and refreshing changed properties (color, visibility, linetype,
+    /// lineweight, opacity, ...) -- without touching entities, undo history,
+    /// or the saved/dirty revision. Sibling-only layers are kept: a sheet
+    /// may own paper-only layers the source never had, and an unadopted
+    /// layer is harmless (nothing references it).
+    /// Render-only: marks the document for regeneration when anything
+    /// changed, exactly like viewport-projection refresh.
+    @discardableResult
+    public func adoptLayers(from source: CADDocument) -> Bool {
+        let sourceLayers = source.allLayers
+        var changed = false
+        documentLock.withLock {
+            for layer in sourceLayers where layerTable[layer.handle] != layer {
+                layerTable[layer.handle] = layer
+                changed = true
+            }
+            if layerStates != source.layerStates {
+                layerStates = source.layerStates
+                changed = true
+            }
+            if layerFilters != source.layerFilters {
+                layerFilters = source.layerFilters
+                changed = true
+            }
+        }
+        if changed { markNeedsRegeneration() }
+        return changed
+    }
+
     public func setLayerLineWeight(_ handle: UUID, lineWeight: Double) {
         pushUndo()
         guard var layer = layerTable[handle] else { return }
-        layer.lineWeight = lineWeight
+        layer.lineWeight = Layer.nearestFixedLineWeight(lineWeight)
         layerTable[handle] = layer
         markEdited(regenerate: true)
     }
@@ -1389,54 +1572,34 @@ public final class CADDocument {
     /// LAYISO hides other layers (false) or lock-fades them (true).
     /// Fade stands in for locking until the 1C frozen/locked model lands.
     public var layisoFadeOthers = false
+    public var layerStates: [String: LayerState] = [:]
+    public var layerFilters: [String: LayerFilter] = [:]
+    public var layerPreviousHistory = LayerPreviousHistory()
+    public var reconciledBaseline: Set<UUID> = []
+    public var reconcileNotificationHandler: (([Layer]) -> Void)?
 
     /// Set visibility on many layers in exactly one undo step.
+    /// Canonical implementation lives on `LayerTransactionService`
+    /// (Phase 4); this wrapper keeps the single-document call path.
     public func setLayersVisible(_ handles: [UUID], visible: Bool) {
-        pushUndo()
-        for h in handles {
-            if var layer = layerTable[h] {
-                layer.isVisible = visible
-                layerTable[h] = layer
-            }
-        }
-        markEdited(regenerate: true)
+        LayerTransactionService().setLayersVisible(in: self, handles: handles, visible: visible)
     }
 
     /// Isolate: kept layers are forced visible; every other layer is
     /// hidden (or faded to 0.3 opacity when `layisoFadeOthers`).
+    /// Canonical implementation lives on `LayerTransactionService`
+    /// (Phase 4); this wrapper keeps the single-document call path.
     /// Pushes the prior state for LAYUNISO. Exactly one undo step.
     public func isolateLayers(keeping: Set<UUID>) {
-        pushUndo()
-        var saved: [UUID: Layer] = [:]
-        for h in Array(layerTable.keys) {
-            guard var layer = layerTable[h] else { continue }
-            saved[h] = layer
-            if keeping.contains(h) {
-                // Isolated layers are forced visible (AutoCAD behavior):
-                // a kept layer hidden by an earlier isolation comes back.
-                layer.isVisible = true
-            } else if layisoFadeOthers {
-                layer.opacity = 0.3
-            } else {
-                layer.isVisible = false
-            }
-            layerTable[h] = layer
-        }
-        layerIsolationStack.append(saved)
-        markEdited(regenerate: true)
+        LayerTransactionService().isolateLayers(in: self, keeping: keeping)
     }
 
     /// Restore the most recent isolation. Returns false (and pushes no
-    /// undo) when the stack is empty.
+    /// undo) when the stack is empty. Canonical implementation lives on
+    /// `LayerTransactionService` (Phase 4).
     @discardableResult
     public func unisolateLayers() -> Bool {
-        guard let saved = layerIsolationStack.popLast() else { return false }
-        pushUndo()
-        for (h, layer) in saved where layerTable[h] != nil {
-            layerTable[h] = layer
-        }
-        markEdited(regenerate: true)
-        return true
+        LayerTransactionService().unisolateLayers(in: self)
     }
 
     // MARK: - Per-entity isolation (ISOLATEOBJECTS/HIDEOBJECTS)
@@ -1493,9 +1656,119 @@ public final class CADDocument {
         markEdited(regenerate: true)
     }
 
-    /// Find a layer by name (first match, case-sensitive).
+    /// Store a fully-formed layer record in exactly one undo step.
+    /// `LayerTransactionService` validates first, then stores here.
+    /// Unknown handles are ignored so a stale handle can never corrupt
+    /// the table.
+    public func storeLayer(_ layer: Layer) {
+        checkpointLayerPrevious()
+        pushUndo()
+        guard layerTable[layer.handle] != nil else { return }
+        layerTable[layer.handle] = layer
+        markEdited(regenerate: true)
+    }
+
+    /// Apply a mutation closure to one layer in exactly one undo step.
+    /// Unknown handles are ignored.
+    func mutateLayer(_ handle: UUID, _ change: (inout Layer) -> Void) {
+        checkpointLayerPrevious()
+        pushUndo()
+        guard var layer = layerTable[handle] else { return }
+        change(&layer)
+        layerTable[handle] = layer
+        markEdited(regenerate: true)
+    }
+
+    /// Push the current layer table onto the LAYERP history.
+    /// Called before every layer mutation; render-only propagation
+    /// (`adoptLayers`) and undo/redo (`restore(from:)`) never call it.
+    func checkpointLayerPrevious() {
+        layerPreviousHistory.push(layerTable)
+    }
+
+    /// Replace the whole layer table in place without pushing undo.
+    /// Callers (`LayerTransactionService`) push exactly one undo first,
+    /// so batch restores stay a single undo step.
+    func storeLayerTable(_ table: [UUID: Layer]) {
+        layerTable = table
+        markEdited(regenerate: true)
+    }
+
+    /// Layers of this document passing a filter. Read-only.
+    public func layers(matching filter: LayerFilter) -> [Layer] {
+        allLayers.filter { filter.matches($0) }
+    }
+
+    /// Refresh the reconciled-layer baseline, returning layers that
+    /// became unreconciled since the last call, and firing
+    /// `reconcileNotificationHandler` when that set is non-empty.
+    /// Newly added unreconciled layers (xref attach, import) surface
+    /// here; `addLayer` calls this automatically for such layers.
+    @discardableResult
+    public func updateReconcileBaseline() -> [Layer] {
+        let pending = allLayers.filter {
+            !$0.isReconciled && !reconciledBaseline.contains($0.handle)
+        }
+        reconciledBaseline.formUnion(allLayers.map({ $0.handle }))
+        if !pending.isEmpty { reconcileNotificationHandler?(pending) }
+        return pending
+    }
+
+    /// Freeze/thaw a layer. Freezing the current layer is refused by
+    /// `LayerTransactionService`; this direct setter applies unconditionally.
+    public func setLayerFrozen(_ handle: UUID, frozen: Bool) {
+        mutateLayer(handle) { $0.isFrozen = frozen }
+    }
+
+    /// Lock/unlock a layer (locked layers still draw).
+    public func setLayerLocked(_ handle: UUID, locked: Bool) {
+        mutateLayer(handle) { $0.isLocked = locked }
+    }
+
+    /// Freeze-in-new-viewports flag for a layer.
+    public func setLayerFreezeInNewViewports(_ handle: UUID, freeze: Bool) {
+        mutateLayer(handle) { $0.freezeInNewViewports = freeze }
+    }
+
+    /// Layer description text (DXF group 3).
+    public func setLayerDescription(_ handle: UUID, description: String) {
+        mutateLayer(handle) { $0.layerDescription = description }
+    }
+
+    /// Mark a layer reconciled (true) or pending reconcile (false).
+    public func setLayerReconciled(_ handle: UUID, reconciled: Bool) {
+        mutateLayer(handle) { $0.isReconciled = reconciled }
+    }
+
+    /// Layer transparency percent, clamped to the canonical 0...90 range.
+    public func setLayerTransparency(_ handle: UUID, transparency: Int) {
+        mutateLayer(handle) { $0.transparency = Layer.clampedTransparency(transparency) }
+    }
+
+    /// Named plot style for a layer (e.g. "Normal").
+    public func setLayerPlotStyle(_ handle: UUID, plotStyleName: String) {
+        mutateLayer(handle) { $0.plotStyleName = plotStyleName }
+    }
+
+    /// Layer color plus its specification intent (ACI / RGB / color book).
+    public func setLayerColor(_ handle: UUID, color: ColorRGBA, source: LayerColorSource) {
+        mutateLayer(handle) {
+            $0.color = color
+            $0.colorSource = source
+        }
+    }
+
+    /// Whether a layer plots.
+    public func setLayerPlottable(_ handle: UUID, plottable: Bool) {
+        mutateLayer(handle) { $0.isPlottable = plottable }
+    }
+
+    /// Find a layer by name (first match, case-insensitive, trimmed).
     public func findLayer(named name: String) -> Layer? {
-        layerTable.values.first { $0.name == name }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let exact = layerTable.values.first(where: { $0.name == trimmed }) { return exact }
+        return layerTable.values.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
     }
 
     /// Generate a unique layer name by appending a counter.
@@ -1664,6 +1937,7 @@ public final class CADDocument {
     @discardableResult
     public func detachXref(blockHandle: UUID, pushUndoBefore: Bool = true) -> (instances: Int, layersPurged: [String]) {
         guard let block = blockTable[blockHandle], block.isXref else { return (0, []) }
+        checkpointLayerPrevious()
         if pushUndoBefore { pushUndo() }
         let instanceHandles = entityRegistry.values
             .filter { $0.blockID == blockHandle }.map(\.handle)
@@ -2442,7 +2716,7 @@ public final class CADDocument {
 
         for entity in entityRegistry.values {
             guard let layer = layerTable[entity.layerID] else { continue }
-            if visibleLayersOnly && !layer.isVisible { continue }
+            if visibleLayersOnly && !layer.isEffectivelyVisible { continue }
             if visibleLayersOnly && isolatedHiddenHandles.contains(entity.handle) { continue }
 
             let entityBackgroundScale: Double?
@@ -4265,10 +4539,21 @@ public final class CADDocument {
                 // Preserve host identity handle; adopt source properties.
                 copy = Layer(
                     handle: existing.handle, name: existing.name,
-                    isVisible: layer.isVisible, lineWeight: layer.lineWeight,
+                    isVisible: layer.isVisible, transparency: layer.transparency, lineWeight: layer.lineWeight,
                     color: layer.color, lineType: layer.lineType,
                     isPlottable: layer.isPlottable,
-                    plotStyleHandle: layer.plotStyleHandle, opacity: layer.opacity)
+                    plotStyleHandle: layer.plotStyleHandle)
+                // Phase 1 parity: carry the canonical fields the legacy
+                // reconstruction above does not set (frozen/locked/
+                // freeze-in-new-VP flags, description, reconciled state,
+                // transparency, color intent, plot-style name).
+                copy.isFrozen = layer.isFrozen
+                copy.freezeInNewViewports = layer.freezeInNewViewports
+                copy.isLocked = layer.isLocked
+                copy.layerDescription = layer.layerDescription
+                copy.isReconciled = layer.isReconciled
+                copy.colorSource = layer.colorSource
+                copy.plotStyleName = layer.plotStyleName
                 layerTable[existing.handle] = copy
             }
         }
@@ -4717,13 +5002,20 @@ public final class CADDocument {
             dxfRoundTripPayload: dxfRoundTripPayload ?? dxfRoundTripPayloadFallback,
             imageAssetNames: names,
             xrefFadePercent: xrefFadePercent,
+            layerDisplay: LayerDisplayOptions(
+                lockFadePercent: lockedLayerFadePercent,
+                transparencyShown: transparencyDisplayEnabled,
+                lineweightsShown: lineweightDisplayEnabled),
             imageDefinitions: imageDefinitions,
             pdfDefinitions: pdfDefinitions,
             availableImageAssetNames: Set(imageStore.keys),
             layoutSettings: layoutSettings,
             plotSettings: plotSettings,
             isolatedHiddenHandles: isolatedHiddenHandles,
-            groups: groups
+            groups: groups,
+            viewportOverrides: viewportLayerOverrides,
+            layerStates: layerStates,
+            layerFilters: layerFilters
         )
     }
 
@@ -4776,13 +5068,17 @@ public final class CADDocument {
             dxfRoundTripPayload: base.dxfRoundTripPayload,
             imageAssetNames: base.imageAssetNames,
             xrefFadePercent: base.xrefFadePercent,
+            layerDisplay: base.layerDisplay,
             imageDefinitions: base.imageDefinitions,
             pdfDefinitions: base.pdfDefinitions,
             availableImageAssetNames: available,
             layoutSettings: base.layoutSettings,
             plotSettings: base.plotSettings,
             isolatedHiddenHandles: base.isolatedHiddenHandles,
-            groups: base.groups)
+            groups: base.groups,
+            viewportOverrides: base.viewportOverrides,
+            layerStates: base.layerStates,
+            layerFilters: base.layerFilters)
         }
     }
 
@@ -4835,6 +5131,9 @@ public final class CADDocument {
         globalLineTypeScale = snapshot.globalLineTypeScale
         paperSpaceLinetypeScale = snapshot.paperSpaceLinetypeScale
         pstyleMode = snapshot.pstyleMode
+        lockedLayerFadePercent = snapshot.layerDisplay.lockFadePercent
+        transparencyDisplayEnabled = snapshot.layerDisplay.transparencyShown
+        lineweightDisplayEnabled = snapshot.layerDisplay.lineweightsShown
         autoContrastTrueColor = snapshot.autoContrastTrueColor
         dxfRoundTripPayload = snapshot.dxfRoundTripPayload
         imageDefinitions = snapshot.imageDefinitions
@@ -4842,6 +5141,9 @@ public final class CADDocument {
         layoutSettings = snapshot.layoutSettings
         plotSettings = snapshot.plotSettings
         groups = snapshot.groups
+        viewportLayerOverrides = snapshot.viewportOverrides
+        layerStates = snapshot.layerStates
+        layerFilters = snapshot.layerFilters
         // Prune image assets no longer referenced by any entity after restore
         pruneUnreferencedImageAssets()
         resyncXrefInstanceBounds()

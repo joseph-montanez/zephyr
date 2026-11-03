@@ -85,7 +85,10 @@ public let EABArchiveMagic: UInt32 = 0x41424145  // "EABA" in little-endian
 /// v20-era readers would misrender the unscaled values, so they reject v21.
 /// Version 22 persists block attribute definitions (ATTDEF) and per-insert
 /// attribute values (ATTRIB).
-public let EABVersion: UInt32 = 22
+/// Version 23 appends the layer parity tail (frozen/locked/freeze-in-new-VP
+/// flags, description, reconciled state, 0...90 transparency, color intent,
+/// plot-style name); v22-era readers stop before the tail, so they reject v23.
+public let EABVersion: UInt32 = 23
 /// First version whose strings may use the 0xFFFF + UInt32 long-length form.
 public let EABVersionLongStrings: UInt32 = 18
 
@@ -119,6 +122,10 @@ public enum EABSectionType: UInt32, Sendable {
     /// Drawing custom scale factors for the Scale dropdown (Phase 4 step 27).
     /// Duplicated across views like plotSetups; absent when empty.
     case scaleList = 22
+    case viewportOverrides = 23
+    /// Named layer states + filters (Phase 4). Additive section: older
+    /// readers skip it via the default case, so no version bump.
+    case layerStates = 24
 }
 
 /// Compression mode for a data section.

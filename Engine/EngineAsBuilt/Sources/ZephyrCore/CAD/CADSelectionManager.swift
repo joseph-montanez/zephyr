@@ -164,7 +164,7 @@ public final class CADSelectionManager {
         selectedLeaderContentHandle = nil
         for entity in document.entitiesView {
             guard !entity.isViewportProjected else { continue }
-            guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+            guard let layer = document.layer(for: entity.layerID), LayerAccess.isPickable(layer) else { continue }
             guard !document.isIsolatedHidden(entity.handle) else { continue }
             selectedHandles.insert(entity.handle)
             lastSelectedHandle = entity.handle

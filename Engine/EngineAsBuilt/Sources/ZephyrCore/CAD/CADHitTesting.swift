@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 import SwiftSDL
 
 // =========================================================================
@@ -549,7 +549,7 @@ public enum CADHitTesting {
                 guard let entity = document.entity(for: handle) else { continue }
                 // Derived paper-space projections are render-only.
                 guard !entity.isViewportProjected else { continue }
-                guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+                guard let layer = document.layer(for: entity.layerID), LayerAccess.isPickable(layer) else { continue }
                 guard !document.isIsolatedHidden(entity.handle) else { continue }
                 guard let wbb = entity.worldBoundingBox else { continue }
                 let expanded = wbb.expanded(by: threshold)
@@ -565,7 +565,7 @@ public enum CADHitTesting {
             for entity in document.entitiesView {
                 // Derived paper-space projections are render-only.
                 guard !entity.isViewportProjected else { continue }
-                guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+                guard let layer = document.layer(for: entity.layerID), LayerAccess.isPickable(layer) else { continue }
                 guard !document.isIsolatedHidden(entity.handle) else { continue }
                 guard let wbb = entity.worldBoundingBox else { continue }
                 let expanded = wbb.expanded(by: threshold)

@@ -2026,6 +2026,8 @@ extension DXFReader {
 
     func parseViewport(_ pairs: [(Int, String)]) -> DXFViewportEntity {
         let e = DXFViewportEntity()
+        var activeVPXData: String? = nil
+        let viewportXDataApp = "ZEPHYR_VP"
         applyCommon(pairs, to: e)
         for (c, v) in pairs {
             switch c {
@@ -2043,6 +2045,17 @@ extension DXFReader {
             case 51: e.twistAngle = d(v)
             case 68: e.vpStatus = i(v)
             case 69: e.vpID = i(v)
+            case 331: e.frozenLayerHandles.append(parseHandle(v))
+            case 1001:
+                activeVPXData = decode(v).trimmingCharacters(in: .whitespacesAndNewlines)
+            case 1000:
+                guard activeVPXData?.caseInsensitiveCompare(viewportXDataApp) == .orderedSame else { break }
+                let text = decode(v)
+                if text.hasPrefix("VPSTABLEID:") {
+                    e.stableID = String(text.dropFirst("VPSTABLEID:".count))
+                } else if text.hasPrefix("VPOVR:") {
+                    e.overrideRecords.append(String(text.dropFirst("VPOVR:".count)))
+                }
             default: break
             }
         }
@@ -2361,6 +2374,19 @@ extension DXFReader {
             if c == 0 { pos = idx - 1; break }
             switch c {
             case 2:   entry.name = decode(v)
+            case 3:   entry.layerDescription = decode(v)
+            case 1000:
+                if activeXDataApp?.caseInsensitiveCompare("ZEPHYR_COLORBOOK") == .orderedSame {
+                    entry.colorBookName = decode(v)
+                } else if activeXDataApp?.caseInsensitiveCompare("ZEPHYR_LAYER") == .orderedSame {
+                    let text = decode(v)
+                    if text.hasPrefix("RECONCILED:") {
+                        entry.isReconciled = (String(text.dropFirst("RECONCILED:".count)) != "0")
+                    } else if text.hasPrefix("PLOTSTYLE:") {
+                        let name = String(text.dropFirst("PLOTSTYLE:".count))
+                        entry.plotStyleName = name.isEmpty ? "Normal" : name
+                    }
+                }
             case 5:   entry.handle = parseHandle(v)
             case 6:   entry.lineType = decode(v)
             case 62:  entry.color = i32(v)

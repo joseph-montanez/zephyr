@@ -46,6 +46,7 @@ public struct LispEvaluator: Sendable {
         .merging(GraphicsBuiltins.table) { first, _ in first }
         .merging(DialogBuiltins.table) { first, _ in first }
         .merging(LayerStateBuiltins.table) { first, _ in first }
+        .merging(LayerBuiltins.table) { first, _ in first }
 
     public static func knows(_ name: String) -> Bool {
         builtins[name] != nil

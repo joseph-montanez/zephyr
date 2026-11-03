@@ -37,6 +37,7 @@ enum LispScriptedCommands {
     static let scripted: Set<String> = [
         "LINE", "CIRCLE", "PLINE", "ARC",
         "COPY", "ROTATE", "MOVE", "ERASE", "SELECT",
+        "-LAYER", "-LA", "LAYERSTATE", "-LAYERSTATE", "LAYERP",
         "UNDO", "U", "REDRAW", "REGEN", "INSERT", "-INSERT", "-ATTACH",
         "RECTANG", "RECTANGLE", "CHPROP", "CHANGE", "-HATCH", "HATCH", "TEXT", "-TEXT", "DTEXT", "AUTOCONTRAST",
     ]
@@ -179,6 +180,9 @@ enum LispScriptedCommands {
         case "-ATTACH": try runAttach(&operands, host: host)
         case "UNDO": try await runUndo(&operands, host: host)
         case "U": host.undoOnce()
+        case "-LAYER", "-LA": try runDashLayer(&operands, host: host)
+        case "LAYERSTATE", "-LAYERSTATE": try runLayerStateScripted(&operands, host: host)
+        case "LAYERP": runLayerPreviousScripted(host: host)
         case "REDRAW": host.document.markEdited(regenerate: false)
         case "REGEN": host.document.markEdited(regenerate: true)
         default:
@@ -884,6 +888,182 @@ enum LispScriptedCommands {
                 break
             }
         }
+    }
+
+    /// Scripted `-LAYER` (command-line layer verbs). Each verb mutates
+    /// exactly one layer through `LayerTransactionService` (single undo,
+    /// same guards as the interactive `-LAYER`). Unknown verbs, unknown
+    /// layers, and refused guards throw a clean error.
+    private static func runDashLayer(_ operands: inout [LispValue], host: LispCADHost) throws {
+        let service = LayerTransactionService()
+        let doc = host.document
+        func needLayer(_ verb: String) throws -> String {
+            guard let name = takeStringOperand(&operands),
+                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw LispError.hostError("command: -LAYER \(verb) needs a layer name")
+            }
+            return name
+        }
+        func apply(_ result: Result<LayerTransactionService.Outcome, LayerEditError>, _ verb: String) throws {
+            if case .failure(let error) = result {
+                throw LispError.hostError("command: -LAYER \(verb): \(error.description)")
+            }
+        }
+        guard let kw = takeKeyword(&operands) else {
+            throw LispError.hostError(
+                "command: -LAYER needs an option (Make/Set/New/Rename/Delete/On/Off/Color/Freeze/Thaw/Lock/Unlock/Plot/NoPlot/Transparency/Description/Reconcile/State)")
+        }
+        switch kw {
+        case .enter:
+            return
+        case .word("M"), .word("MAKE"):
+            let name = try needLayer("Make")
+            if case .failure(let error) = service.createLayer(in: doc, name: name) {
+                throw LispError.hostError("command: -LAYER Make: \(error.description)")
+            }
+            if case .failure(let error) = service.setCurrentLayer(in: doc, named: name) {
+                throw LispError.hostError("command: -LAYER Make: \(error.description)")
+            }
+        case .word("S"), .word("SET"):
+            try apply(service.setCurrentLayer(in: doc, named: needLayer("Set")), "Set")
+        case .word("N"), .word("NEW"):
+            let name = try needLayer("New")
+            if case .failure(let error) = service.createLayer(in: doc, name: name) {
+                throw LispError.hostError("command: -LAYER New: \(error.description)")
+            }
+        case .word("R"), .word("RENAME"):
+            let old = try needLayer("Rename")
+            let new = try needLayer("Rename")
+            try apply(service.renameLayer(in: doc, from: old, to: new), "Rename")
+        case .word("DEL"), .word("DELETE"):
+            let name = try needLayer("Delete")
+            if case .failure(let error) = service.deleteLayer(in: doc, named: name) {
+                throw LispError.hostError("command: -LAYER Delete: \(error.description)")
+            }
+        case .word("ON"):
+            try apply(service.setVisible(in: doc, named: needLayer("On"), visible: true), "On")
+        case .word("OFF"):
+            try apply(service.setVisible(in: doc, named: needLayer("Off"), visible: false), "Off")
+        case .word("C"), .word("COLOR"):
+            skipSnaps(&operands)
+            var aci: Int? = nil
+            var rgb: ColorRGBA? = nil
+            if case .int(let i) = operands.first {
+                operands.removeFirst()
+                aci = i
+            } else if let text = takeStringOperand(&operands) {
+                let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if cleaned.contains(",") {
+                    guard let tc = parseTrueColor(cleaned) else {
+                        throw LispError.hostError("command: -LAYER Color needs ACI 1-255 or R,G,B")
+                    }
+                    rgb = tc
+                } else if let i = Int(cleaned) {
+                    aci = i
+                }
+            }
+            let name = try needLayer("Color")
+            if let aci, (1...255).contains(aci) {
+                try apply(service.setColor(
+                    in: doc, named: name,
+                    color: DXFColorTable.aciToRGBA(Int32(aci), color24: -1),
+                    source: .aci(aci)), "Color")
+            } else if let rgb {
+                try apply(service.setColor(
+                    in: doc, named: name, color: rgb, source: .trueColor), "Color")
+            } else {
+                throw LispError.hostError("command: -LAYER Color needs ACI 1-255 or R,G,B")
+            }
+        case .word("FRZ"), .word("FREEZE"):
+            try apply(service.setFrozen(in: doc, named: needLayer("Freeze"), frozen: true), "Freeze")
+        case .word("THW"), .word("THAW"):
+            try apply(service.setFrozen(in: doc, named: needLayer("Thaw"), frozen: false), "Thaw")
+        case .word("LCK"), .word("LOCK"):
+            try apply(service.setLocked(in: doc, named: needLayer("Lock"), locked: true), "Lock")
+        case .word("ULK"), .word("UNLOCK"):
+            try apply(service.setLocked(in: doc, named: needLayer("Unlock"), locked: false), "Unlock")
+        case .word("P"), .word("PLOT"):
+            try apply(service.setPlottable(in: doc, named: needLayer("Plot"), plottable: true), "Plot")
+        case .word("NP"), .word("NOPLOT"):
+            try apply(service.setPlottable(in: doc, named: needLayer("NoPlot"), plottable: false), "NoPlot")
+        case .word("T"), .word("TRANS"), .word("TRANSPARENCY"):
+            let pct = Int(try takeNumberOrNumericString(&operands, command: "-LAYER", what: "transparency 0-90"))
+            let name = try needLayer("Transparency")
+            if case .failure(let error) = service.setTransparency(in: doc, named: name, transparency: pct) {
+                throw LispError.hostError("command: -LAYER Transparency: \(error.description)")
+            }
+        case .word("DESCR"), .word("DESCRIPTION"):
+            let name = try needLayer("Description")
+            let text = takeStringOperand(&operands) ?? ""
+            if case .failure(let error) = service.setDescription(in: doc, named: name, description: text) {
+                throw LispError.hostError("command: -LAYER Description: \(error.description)")
+            }
+        case .word("REC"), .word("RECONCILE"):
+            let name = try needLayer("Reconcile")
+            if name == "*" {
+                _ = service.reconcileAllLayers(in: doc)
+            } else if case .failure(let error) = service.setReconciled(in: doc, named: name, reconciled: true) {
+                throw LispError.hostError("command: -LAYER Reconcile: \(error.description)")
+            }
+        case .word("ST"), .word("STATE"):
+            try runLayerStateScripted(&operands, host: host)
+        default:
+            throw LispError.hostError("command: -LAYER option is not supported from Lisp")
+        }
+    }
+
+    /// Scripted `LAYERSTATE` (and `-LAYER State`): Save/Restore/Delete/
+    /// Rename/List over document layer states, one undo per call.
+    /// Export/Import need the file dialog and stay interactive-only.
+    private static func runLayerStateScripted(_ operands: inout [LispValue], host: LispCADHost) throws {
+        let service = LayerTransactionService()
+        let doc = host.document
+        guard let kw = takeKeyword(&operands) else {
+            throw LispError.hostError("command: LAYERSTATE needs Save/Restore/Delete/Rename/List")
+        }
+        switch kw {
+        case .enter:
+            return
+        case .word("SAVE"), .word("S"):
+            guard let name = takeStringOperand(&operands), !name.isEmpty else {
+                throw LispError.hostError("command: LAYERSTATE Save needs a name")
+            }
+            if case .failure(let error) = service.saveLayerState(in: doc, name: name) {
+                throw LispError.hostError("command: LAYERSTATE Save: \(error.description)")
+            }
+        case .word("RESTORE"), .word("R"):
+            guard let name = takeStringOperand(&operands), !name.isEmpty else {
+                throw LispError.hostError("command: LAYERSTATE Restore needs a name")
+            }
+            if case .failure(let error) = service.restoreLayerState(in: doc, named: name) {
+                throw LispError.hostError("command: LAYERSTATE Restore: \(error.description)")
+            }
+        case .word("DELETE"), .word("D"):
+            guard let name = takeStringOperand(&operands), !name.isEmpty else {
+                throw LispError.hostError("command: LAYERSTATE Delete needs a name")
+            }
+            if case .failure(let error) = service.deleteLayerState(in: doc, named: name) {
+                throw LispError.hostError("command: LAYERSTATE Delete: \(error.description)")
+            }
+        case .word("RENAME"):
+            guard let old = takeStringOperand(&operands), !old.isEmpty,
+                  let new = takeStringOperand(&operands), !new.isEmpty else {
+                throw LispError.hostError("command: LAYERSTATE Rename needs <old> <new>")
+            }
+            if case .failure(let error) = service.renameLayerState(in: doc, from: old, to: new) {
+                throw LispError.hostError("command: LAYERSTATE Rename: \(error.description)")
+            }
+        case .word("LIST"), .word("LS"):
+            return // Scripted calls return no text; states persist on the document.
+        default:
+            throw LispError.hostError("command: LAYERSTATE option is not supported from Lisp (no file import/export)")
+        }
+    }
+
+    /// Scripted `LAYERP`: restore previous layer settings. Empty history
+    /// is a silent no-op, matching ERASE-without-selection.
+    private static func runLayerPreviousScripted(host: LispCADHost) {
+        _ = LayerTransactionService().restoreLayerPrevious(in: host.document)
     }
 
     private static func runAutoContrast(_ operands: inout [LispValue], host: LispCADHost) {

@@ -423,7 +423,11 @@ public enum PDFExporter {
                 let pen: PlotStylePen?
                 if doStyles, let table = plotTable {
                     let aci = Int(DXFColorTable.rgbaToACI(raw))
-                    pen = table.pen(forACI: aci)
+                    pen = LayerAccess.plotPen(
+                        layer: document.layer(for: entity.layerID),
+                        objectACI: aci,
+                        pstyleMode: document.pstyleMode,
+                        table: table)
                 } else {
                     pen = nil
                 }
@@ -919,8 +923,11 @@ public enum PDFExporter {
         items.reserveCapacity(sortedEntities.count)
 
         for entity in sortedEntities {
-            guard let layer = document.layer(for: entity.layerID), layer.isVisible
+            guard let baseLayer = document.layer(for: entity.layerID),
+                  !LayerAccess.isFrozenInViewport(entity, in: document),
+                  LayerAccess.isDrawn(baseLayer), LayerAccess.isPlottable(baseLayer)
             else { continue }
+            let layer = LayerAccess.effectiveLayer(for: entity, in: document) ?? baseLayer
 
             // Entity color: explicit dxf.color override, else layer color.
             // (The old exporter scanned the first colored primitive — wrong

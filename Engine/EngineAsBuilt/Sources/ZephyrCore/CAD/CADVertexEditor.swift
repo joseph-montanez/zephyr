@@ -77,7 +77,10 @@ public final class CADVertexEditor {
     public func finalizeVertexDrag(
         handle: UUID, in gm: GeometryManager, document: CADDocument
     ) {
-        guard let ids = bridge.entityPrimitiveMap[handle],
+        // Phase 2: locked (and hidden) layers refuse direct manipulation.
+        guard let preflight = document.entity(for: handle),
+              LayerAccess.isEditable(entity: preflight, in: document),
+              let ids = bridge.entityPrimitiveMap[handle],
               let entity = document.entity(for: handle),
               let geometry = document.resolvedGeometry(for: entity)
         else { return }

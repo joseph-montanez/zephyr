@@ -613,28 +613,87 @@ public struct Layer: Hashable, Sendable {
     public var lineType: String
     public var isPlottable: Bool
     public var plotStyleHandle: String?
-    /// Layer opacity 0.0 (fully transparent) to 1.0 (fully opaque).
-    /// DXF group code 440. Rendered as an extra multiplier on color.a.
-    public var opacity: Double
+    /// Frozen state (DXF group 70 bit 1). Frozen layers do not draw;
+    /// see `isEffectivelyVisible`.
+    public var isFrozen: Bool
+    /// Freeze in new viewports (DXF group 70 bit 2).
+    public var freezeInNewViewports: Bool
+    /// Locked state (DXF group 70 bit 4). Locked layers draw but reject
+    /// layer-table edits through the transaction service.
+    public var isLocked: Bool
+    /// Layer description (DXF group 3).
+    public var layerDescription: String
+    /// Whether the layer has been reconciled (new xref layers arrive
+    /// unreconciled). EAB v23+; DXF round-trips via ZEPHYR_LAYER XDATA
+    /// (absent means reconciled for older files).
+    public var isReconciled: Bool
+    /// Transparency percent, 0 (opaque) to 90 (AutoCAD cap). DXF 440.
+    public var transparency: Int
+    /// How `color` was specified (ACI index / true color / color book).
+    public var colorSource: LayerColorSource
+    /// Named plot style (e.g. "Normal"). EAB v23+ and DXF ZEPHYR_LAYER XDATA;
+    /// DXF group 390 carries the raw handle; XDATA absent means "Normal".
+    public var plotStyleName: String
 
     public init(handle: UUID = UUID(),
                 name: String,
                 isVisible: Bool = true,
+                isFrozen: Bool = false,
+                freezeInNewViewports: Bool = false,
+                isLocked: Bool = false,
+                layerDescription: String = "",
+                isReconciled: Bool = true,
+                transparency: Int = 0,
                 lineWeight: Double = 0.25,
                 color: ColorRGBA = .white,
+                colorSource: LayerColorSource? = nil,
                 lineType: String = "CONTINUOUS",
                 isPlottable: Bool = true,
                 plotStyleHandle: String? = nil,
-                opacity: Double = 1.0) {
+                plotStyleName: String = "Normal") {
         self.handle = handle
         self.name = name
         self.isVisible = isVisible
-        self.lineWeight = lineWeight
+        self.isFrozen = isFrozen
+        self.freezeInNewViewports = freezeInNewViewports
+        self.isLocked = isLocked
+        self.layerDescription = layerDescription
+        self.isReconciled = isReconciled
+        self.transparency = Layer.clampedTransparency(transparency)
+        self.lineWeight = Layer.nearestFixedLineWeight(lineWeight)
         self.color = color
+        if let colorSource {
+            self.colorSource = colorSource
+        } else if DXFColorTable.isACI(color) {
+            self.colorSource = .aci(Int(DXFColorTable.rgbaToACI(color)))
+        } else {
+            self.colorSource = .trueColor
+        }
         self.lineType = lineType
         self.isPlottable = isPlottable
         self.plotStyleHandle = plotStyleHandle
-        self.opacity = max(0.0, min(1.0, opacity))
+        self.plotStyleName = plotStyleName
+    }
+
+    // MARK: Backward-compatibility aliases
+
+    /// On/off alias for `isVisible`.
+    public var isOn: Bool {
+        get { isVisible }
+        set { isVisible = newValue }
+    }
+
+    /// Convenience negation of `isVisible`.
+    public var isOff: Bool { !isVisible }
+
+    /// Layer opacity 0.0 (fully transparent) to 1.0 (fully opaque),
+    /// derived from `transparency` (DXF group code 440). Rendered as an
+    /// extra multiplier on color.a. Setting clamps onto the canonical
+    /// 0...90 percent scale: opacities below 0.1 saturate at 90%
+    /// transparent (the AutoCAD cap).
+    public var opacity: Double {
+        get { 1.0 - Double(transparency) / 100.0 }
+        set { transparency = Layer.transparencyForOpacity(newValue) }
     }
 }
 
@@ -729,10 +788,19 @@ public enum CADPrimitiveVisibility {
                    uniquingKeysWith: { first, _ in first })
     }
 
+    /// Regeneration membership for one styled primitive: everything except
+    /// frozen style layers. Off style layers regenerate (hidden, no output);
+    /// unknown style layers fall back to visible, as in `isVisible`.
+    public static func isRegenerated(style: CADPrimitiveStyle?, layersByName: [String: Layer]) -> Bool {
+        guard let name = style?.effectiveLayerUppercased,
+              let layer = layersByName[name] else { return true }
+        return LayerAccess.isRegenerated(layer)
+    }
+
     public static func isVisible(style: CADPrimitiveStyle?, layersByName: [String: Layer]) -> Bool {
         guard let name = style?.effectiveLayerUppercased,
               let layer = layersByName[name] else { return true }
-        return layer.isVisible
+        return LayerAccess.isDrawn(layer)
     }
 }
 

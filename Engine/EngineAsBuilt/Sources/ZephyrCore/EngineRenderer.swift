@@ -2324,7 +2324,7 @@ public final class EngineRenderer {
             CADSelectionHighlightRenderer.drawGeometryHighlights(handles: handles, document: doc, cam: transform, vertexEditor: engine.cadBridge.vertexEditor, geometry: ctx.geometry, drawList: drawList, color: selColor, lineWidth: 2.0, maxSegments: 4096, segmentsDrawn: &secondaryHighlightSegments)
             for handle in handles where CADSelectionHighlightRenderer.frameRequired(handle: handle, document: doc) {
                 guard let entity = doc.entity(for: handle),
-                      let layer = doc.layer(for: entity.layerID), layer.isVisible,
+                      let layer = doc.layer(for: entity.layerID), layer.isEffectivelyVisible,
                       let wbb = entity.worldBoundingBox else { continue }
                 let s0 = EngineCameraManager.worldToScreen(worldX: wbb.min.x, worldY: wbb.min.y, cam: transform)
                 let s1 = EngineCameraManager.worldToScreen(worldX: wbb.max.x, worldY: wbb.min.y, cam: transform)
@@ -2369,7 +2369,7 @@ public final class EngineRenderer {
                         simplifyComplexBlocks: engine.simplifyComplexBlocks),
                    !handles.contains(hover),
                    let entity = doc.entity(for: hover),
-                   let layer = doc.layer(for: entity.layerID), layer.isVisible {
+                   let layer = doc.layer(for: entity.layerID), layer.isEffectivelyVisible {
                     let hc = makeImCol32(r: 64, g: 224, b: 208, a: 180)
                     let geomCount = doc.resolvedGeometry(for: entity)?.count ?? 0
                     if engine.simplifyComplexBlocks && geomCount > 50 {
@@ -2679,7 +2679,7 @@ public final class EngineRenderer {
 
         for handle in engine.cadSelection.selectedHandles {
             guard let entity = engine.document.entity(for: handle),
-                  let layer = engine.document.layer(for: entity.layerID), layer.isVisible
+                  let layer = engine.document.layer(for: entity.layerID), layer.isEffectivelyVisible
             else { continue }
 
             let geom = entity.localGeometry ?? engine.document.resolvedGeometry(for: entity)

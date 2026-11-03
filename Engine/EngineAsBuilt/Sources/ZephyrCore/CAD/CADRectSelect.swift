@@ -1,4 +1,4 @@
-import Foundation
+﻿import Foundation
 
 // =========================================================================
 // MARK: - CADRectSelect
@@ -469,7 +469,7 @@ public enum CADRectSelect {
             for handle in handles {
                 guard let entity = document.entity(for: handle) else { continue }
                 guard !entity.isViewportProjected else { continue }
-                guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+                guard let layer = document.layer(for: entity.layerID), LayerAccess.isPickable(layer) else { continue }
                 guard !document.isIsolatedHidden(entity.handle) else { continue }
                 body(entity)
             }
@@ -479,7 +479,7 @@ public enum CADRectSelect {
             }
             for entity in document.entitiesView {
                 guard !entity.isViewportProjected else { continue }
-                guard let layer = document.layer(for: entity.layerID), layer.isVisible else { continue }
+                guard let layer = document.layer(for: entity.layerID), LayerAccess.isPickable(layer) else { continue }
                 guard !document.isIsolatedHidden(entity.handle) else { continue }
                 body(entity)
             }

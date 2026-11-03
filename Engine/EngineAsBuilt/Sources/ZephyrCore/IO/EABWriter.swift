@@ -448,6 +448,26 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
+        // Per-viewport layer deltas (Phase 3). Additive section: older
+        // readers skip it via the default case, so no version bump.
+        if !document.viewportLayerOverrides.isEmpty {
+            let viewportData = serializeViewportOverrides(document: document)
+            entries.append(EABSectionEntry(type: .viewportOverrides, offset: UInt64(w.count),
+                                            size: UInt64(viewportData.count), compression: .none))
+            w.writeBytes(viewportData)
+            w.pad(to: 4)
+        }
+
+        // Named layer states + filters (Phase 4). Additive section: older
+        // readers skip it via the default case, so no version bump.
+        if !document.layerStates.isEmpty || !document.layerFilters.isEmpty {
+            let layerStateData = serializeLayerStates(document: document)
+            entries.append(EABSectionEntry(type: .layerStates, offset: UInt64(w.count),
+                                            size: UInt64(layerStateData.count), compression: .none))
+            w.writeBytes(layerStateData)
+            w.pad(to: 4)
+        }
+
         // Paper + plot settings (Phase 4 paper size, Phase 0 plot fields).
         // Additive section: older readers skip it via the default case.
         // Synthesize plot settings from the paper-only view so paper size
@@ -659,7 +679,7 @@ public enum EABWriter {
             w.writeString(layer.name)
             var flags: UInt8 = 0
             if layer.isVisible { flags |= 0x01 }
-            // bit1=locked, bit2=frozen (unused for now)
+            // state bits live in the v23 tail (see below); bit0 = on/off
             w.writeUInt8(flags)
             w.writeFloat32(Float(layer.lineWeight))
             // color as RGBA32
@@ -677,6 +697,31 @@ public enum EABWriter {
             if let plotStyleHandle = layer.plotStyleHandle {
                 w.writeString(plotStyleHandle)
             }
+            // Phase-1 parity tail (added in EAB v23). Older readers stop
+            // after the plot block above; v23 readers require the tail.
+            var stateFlags: UInt8 = 0
+            if layer.isFrozen { stateFlags |= 0x01 }
+            if layer.freezeInNewViewports { stateFlags |= 0x02 }
+            if layer.isLocked { stateFlags |= 0x04 }
+            if layer.isReconciled { stateFlags |= 0x08 }
+            w.writeUInt8(stateFlags)
+            w.writeUInt8(UInt8(clamping: layer.transparency))
+            w.writeString(layer.layerDescription)
+            switch layer.colorSource {
+            case .aci(let index):
+                w.writeUInt8(0)
+                w.writeInt32(Int32(clamping: index))
+                w.writeString("")
+            case .trueColor:
+                w.writeUInt8(1)
+                w.writeInt32(-1)
+                w.writeString("")
+            case .colorBook(let bookName):
+                w.writeUInt8(2)
+                w.writeInt32(-1)
+                w.writeString(bookName)
+            }
+            w.writeString(layer.plotStyleName)
         }
         return w.build()
     }
@@ -1339,6 +1384,138 @@ public enum EABWriter {
     /// write as empty strings; the reader restores nil for empty.
     /// Plot device/scale/flag fields append the Phase-0 plot settings;
     /// the reader length-guards them so short payloads still load.
+    private static func serializeViewportOverrides(document: CADDocument) -> Data {
+        let w = BinaryWriter()
+        let ordered = document.viewportLayerOverrides.sorted(by: { $0.key < $1.key })
+        w.writeUInt32(UInt32(ordered.count))
+        for (viewportKey, deltas) in ordered {
+            w.writeString(viewportKey)
+            let entries = deltas.sorted(by: { $0.key < $1.key })
+            w.writeUInt32(UInt32(entries.count))
+            for (layerKey, override) in entries {
+                w.writeString(layerKey)
+                w.writeUInt8(override.frozen ? 1 : 0)
+                if let color = override.color {
+                    w.writeUInt8(1)
+                    w.writeUInt32(UInt32(color.r) << 24 | UInt32(color.g) << 16
+                        | UInt32(color.b) << 8 | UInt32(color.a))
+                } else {
+                    w.writeUInt8(0)
+                }
+                switch override.colorSource {
+                case .aci(let index):
+                    w.writeUInt8(0)
+                    w.writeInt32(Int32(clamping: index))
+                    w.writeString("")
+                case .trueColor:
+                    w.writeUInt8(1)
+                    w.writeInt32(-1)
+                    w.writeString("")
+                case .colorBook(let bookName):
+                    w.writeUInt8(2)
+                    w.writeInt32(-1)
+                    w.writeString(bookName)
+                case nil:
+                    w.writeUInt8(255)
+                    w.writeInt32(-1)
+                    w.writeString("")
+                }
+                if let lineType = override.lineType {
+                    w.writeUInt8(1)
+                    w.writeString(lineType)
+                } else {
+                    w.writeUInt8(0)
+                }
+                if let lineWeight = override.lineWeight {
+                    w.writeUInt8(1)
+                    w.writeFloat64(lineWeight)
+                } else {
+                    w.writeUInt8(0)
+                }
+                if let transparency = override.transparency {
+                    w.writeUInt8(1)
+                    w.writeUInt8(UInt8(clamping: transparency))
+                } else {
+                    w.writeUInt8(0)
+                }
+                if let plotStyleName = override.plotStyleName {
+                    w.writeUInt8(1)
+                    w.writeString(plotStyleName)
+                } else {
+                    w.writeUInt8(0)
+                }
+            }
+        }
+        return w.build()
+    }
+
+    /// Named layer states + filters (Phase 4). States sort by key for
+    /// stable bytes; entries sort by key; group members sort ascending.
+    private static func serializeLayerStates(document: CADDocument) -> Data {
+        let w = BinaryWriter()
+        let states = document.layerStates.values.sorted(by: { $0.key < $1.key })
+        w.writeUInt32(UInt32(states.count))
+        for state in states {
+            w.writeString(state.name)
+            w.writeString(state.stateDescription)
+            w.writeUInt32(state.mask.rawValue)
+            w.writeUInt8(state.turnOffLayersNotInState ? 1 : 0)
+            let entries = state.entries.values.sorted(by: { $0.key < $1.key })
+            w.writeUInt32(UInt32(entries.count))
+            for entry in entries {
+                w.writeString(entry.layerName)
+                w.writeUInt8(entry.isVisible ? 1 : 0)
+                var bits = 0
+                if entry.isFrozen { bits |= LayerDXFFlagBits.frozen }
+                if entry.freezeInNewViewports { bits |= LayerDXFFlagBits.freezeInNewViewports }
+                if entry.isLocked { bits |= LayerDXFFlagBits.locked }
+                w.writeUInt8(UInt8(bits))
+                w.writeUInt8(entry.isPlottable ? 1 : 0)
+                switch entry.colorSource {
+                case .aci(let index):
+                    w.writeUInt8(0)
+                    w.writeInt32(Int32(clamping: index))
+                    w.writeString("")
+                case .trueColor:
+                    w.writeUInt8(1)
+                    w.writeInt32(-1)
+                    w.writeString("")
+                case .colorBook(let bookName):
+                    w.writeUInt8(2)
+                    w.writeInt32(-1)
+                    w.writeString(bookName)
+                }
+                let colorVal = UInt32(entry.color.r) << 24 | UInt32(entry.color.g) << 16
+                    | UInt32(entry.color.b) << 8 | UInt32(entry.color.a)
+                w.writeUInt32(colorVal)
+                w.writeString(entry.lineType)
+                w.writeFloat64(entry.lineWeight)
+                w.writeUInt8(UInt8(clamping: entry.transparency))
+                w.writeString(entry.plotStyleName)
+                w.writeString(entry.layerDescription)
+            }
+        }
+        let filters = document.layerFilters.values.sorted(by: { $0.key < $1.key })
+        w.writeUInt32(UInt32(filters.count))
+        for filter in filters {
+            w.writeString(filter.name)
+            switch filter.kind {
+            case .all:
+                w.writeUInt8(0)
+            case .property(let criteria):
+                w.writeUInt8(1)
+                criteria.writeFields(to: w)
+            case .group(let members):
+                w.writeUInt8(2)
+                let ordered = members.sorted()
+                w.writeUInt32(UInt32(ordered.count))
+                for member in ordered { w.writeString(member) }
+            }
+            w.writeUInt8(filter.inverted ? 1 : 0)
+        }
+        return w.build()
+    }
+
     private static func serializeLayoutSettings(_ settings: CADPlotSettings) -> Data {
         let w = BinaryWriter()
         w.writeString(settings.paperName ?? "")
