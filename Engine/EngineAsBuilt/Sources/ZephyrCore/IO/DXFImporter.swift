@@ -2298,6 +2298,15 @@ public enum DXFImporter {
             let color = DXFColorTable.aciToRGBA(entity.color, color24: entity.color24)
             xdata["dxf.color"] = .string(String(
                 format: "#%02X%02X%02X", color.r, color.g, color.b))
+            // Record the color source so later stages can tell explicit
+            // TrueColor apart from ACI indices (AutoCAD parity: only ACI
+            // white inverts on light backgrounds; TrueColor white is raw).
+            if entity.color24 >= 0 {
+                xdata["dxf.color24"] = .int(Int(entity.color24))
+                xdata["dxf.isTrueColor"] = .int(1)
+            } else {
+                xdata["dxf.colorIndex"] = .int(Int(entity.color))
+            }
         }
         if let opacity = DXFColorTable.explicitTransparencyToOpacity(entity.transparency) {
             xdata["dxf.opacity"] = .double(opacity)

@@ -262,7 +262,19 @@ public final class RenderPrimitive: @unchecked Sendable {
     public var sdlColor: SDL_FColor
     public var adjustedColorLight: (UInt8, UInt8, UInt8, UInt8)
     public var adjustedColorDark: (UInt8, UInt8, UInt8, UInt8)
-    public var isTrueColor: Bool = false
+    public var isTrueColor: Bool = false {
+        didSet {
+            // Post-init source flag (PrimitiveSpec.addTo sets this after the
+            // GeometryManager builders construct with the default): recompute
+            // the light palette so known TrueColor white renders raw instead
+            // of inverting. Gradients resolve separately; leave them alone.
+            guard isTrueColor, gradientData == nil else { return }
+            guard color.0 > 245 && color.1 > 245 && color.2 > 245 else { return }
+            let rgba = ColorRGBA(r: color.0, g: color.1, b: color.2, a: color.3)
+            let light = rgba.displayAdjusted(forLightBackground: true, isTrueColor: true)
+            self.adjustedColorLight = (light.r, light.g, light.b, light.a)
+        }
+    }
     public var isScreenSpace: Bool
     public var lineWeight: Double = 0.0
     public var geomWidth: Double = 0.0
@@ -357,8 +369,8 @@ public final class RenderPrimitive: @unchecked Sendable {
             a: Float(color.a) / 255.0
         )
         let rgba = ColorRGBA(r: color.r, g: color.g, b: color.b, a: color.a)
-        let light = rgba.displayAdjusted(forLightBackground: true)
-        let dark = rgba.displayAdjusted(forLightBackground: false)
+        let light = rgba.displayAdjusted(forLightBackground: true, isTrueColor: isTrueColor)
+        let dark = rgba.displayAdjusted(forLightBackground: false, isTrueColor: isTrueColor)
         self.adjustedColorLight = (light.r, light.g, light.b, light.a)
         self.adjustedColorDark = (dark.r, dark.g, dark.b, dark.a)
         self.isScreenSpace = isScreenSpace

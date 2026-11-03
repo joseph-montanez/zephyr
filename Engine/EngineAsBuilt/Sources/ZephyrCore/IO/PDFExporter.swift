@@ -933,13 +933,22 @@ public enum PDFExporter {
             // (The old exporter scanned the first colored primitive — wrong
             // precedence, and wrong for multi-color blocks.)
             let rawColor: ColorRGBA
+            let rawIsTrueColor: Bool
             if let cv = entity.xdata["dxf.color"], case .string(let hex) = cv,
                let c = ColorRGBA(hex: hex) {
                 rawColor = c
+                if entity.xdata["dxf.color24"] != nil || entity.xdata["dxf.isTrueColor"]?.intValue == 1 {
+                    rawIsTrueColor = true
+                } else if entity.xdata["dxf.colorIndex"] != nil {
+                    rawIsTrueColor = false
+                } else {
+                    rawIsTrueColor = !DXFColorTable.isACI(c)
+                }
             } else {
                 rawColor = layer.color
+                rawIsTrueColor = layer.colorSource.isExplicitRGB
             }
-            let entityColor = rawColor.displayAdjusted(forLightBackground: isLightBackground)
+            let entityColor = rawColor.displayAdjusted(forLightBackground: isLightBackground, isTrueColor: rawIsTrueColor)
 
             // Explicit entity lineweight (mm), else layer lineweight.
             let lineWeightMM: Double

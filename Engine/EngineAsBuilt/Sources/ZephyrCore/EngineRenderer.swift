@@ -3944,7 +3944,7 @@ public final class EngineRenderer {
             let color: UInt32
             if let entity = engine.document.entity(for: handle),
                let layer = engine.document.layer(for: entity.layerID) {
-                let rgba = layer.color.displayAdjusted(forLightBackground: isLight)
+                let rgba = layer.color.displayAdjusted(forLightBackground: isLight, isTrueColor: layer.colorSource.isExplicitRGB)
                 color = makeImCol32(r: rgba.r, g: rgba.g, b: rgba.b, a: 255)
             } else {
                 color = makeImCol32(r: 255, g: 255, b: 255, a: 255)

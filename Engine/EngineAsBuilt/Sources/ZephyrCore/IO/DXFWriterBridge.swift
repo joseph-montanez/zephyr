@@ -3021,6 +3021,21 @@ public enum DXFWriterBridge {
     ) {
         if let color = colorFromHex(xdataString(xdata, "dxf.color")) {
             applyColor(color, to: entity)
+            // Preserve the ACI vs TrueColor sourcing so reimport resolves
+            // the same way: an ACI index writes 62 alone (a stale 420 would
+            // flip explicit ACI white to invisible TrueColor white on reopen).
+            if let index = xdataInt(xdata, "dxf.colorIndex") {
+                entity.color = Int32(index)
+                entity.color24 = -1
+            } else if let rgb = xdataInt(xdata, "dxf.color24") {
+                entity.color24 = Int32(rgb)
+            } else if color.r > 245 && color.g > 245 && color.b > 245 {
+                // Keyless near-white (legacy/programmatic): nearest-ACI 62
+                // alone preserves today's rendering on reopen. Manufacturing
+                // a 420 here would flip readable charcoal into invisible
+                // TrueColor white.
+                entity.color24 = -1
+            }
         }
         if let opacity = xdataDouble(xdata, "dxf.opacity") {
             entity.transparency = DXFColorTable.opacityToTransparency(opacity)

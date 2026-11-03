@@ -70,6 +70,17 @@ public enum LayerColorSource: Hashable, Sendable {
         if case .colorBook(let name) = self { return name }
         return nil
     }
+
+    /// True when the color is an explicit RGB specification (TrueColor or
+    /// a named color-book swatch) rather than an ACI index. Explicit
+    /// white renders raw on light backgrounds (AutoCAD parity); only ACI
+    /// white inverts for contrast.
+    public var isExplicitRGB: Bool {
+        switch self {
+        case .trueColor, .colorBook: return true
+        case .aci: return false
+        }
+    }
 }
 
 // =========================================================================

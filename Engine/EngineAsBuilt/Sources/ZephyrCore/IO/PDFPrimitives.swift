@@ -60,12 +60,13 @@ enum PDFPrimitives {
             return layersByName[name]
         }
         func resolvedColor(_ index: Int, _ prim: CADPrimitive) -> ColorRGBA {
-            let base: ColorRGBA
-            if let c = primColor(prim) { base = c }
-            else if let style = primStyles[index], let c = style.color { base = c }
-            else if primStyles[index]?.isColorByBlock == true { base = entityColor }
-            else { base = styleLayer(index)?.color ?? entityColor }
-            return base.displayAdjusted(forLightBackground: isLightBackground)
+            if let c = primColor(prim) { return c.displayAdjusted(forLightBackground: isLightBackground) }
+            if let style = primStyles[index], let c = style.color { return c.displayAdjusted(forLightBackground: isLightBackground) }
+            // entityColor is already final (adjusted upstream in collectItems);
+            // re-adjusting it would invert explicit TrueColor white twice.
+            if primStyles[index]?.isColorByBlock == true { return entityColor }
+            guard let slc = styleLayer(index)?.color else { return entityColor }
+            return slc.displayAdjusted(forLightBackground: isLightBackground)
         }
         func resolvedLineWeightMM(_ index: Int) -> Double {
             let style = primStyles[index]
@@ -217,10 +218,11 @@ enum PDFPrimitives {
         let weightPt = max(lineWeightMM, 0.05) * 72.0 / 25.4
         cb.num(weightPt / pageScale); cb.raw("w\n")
         var currentColor: ColorRGBA? = nil
-        let adjustedColor = defaultColor.displayAdjusted(forLightBackground: isLightBackground)
         for prim in prims {
             if case .text = prim { continue }   // SHX explosion never yields nested text
-            let c = (primColor(prim) ?? adjustedColor).displayAdjusted(forLightBackground: isLightBackground)
+            // defaultColor arrives final (adjusted upstream in collectItems);
+            // only unknown-source primitive colors remap here.
+            let c = primColor(prim)?.displayAdjusted(forLightBackground: isLightBackground) ?? defaultColor
             setColorIfNeeded(c, current: &currentColor, to: cb)
             writePrimitive(prim, effectiveScale: pageScale, to: cb)
         }

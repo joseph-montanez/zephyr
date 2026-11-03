@@ -23,6 +23,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 
 - **PAN press-and-hold (AutoCAD parity)** — `PAN` no longer latches on the first click and pans on hover until `Esc`; it now pans only while the left button is held, releasing stops the pan while staying in the command for another drag, with `Esc`/`Enter` to exit
 
+- **Layout layer colors and AutoCAD color parity** — layout views now pick up layer color edits made in Model (sibling views reconcile layers render-only, without dirtying the sheet), and sheet rendering matches AutoCAD contrast behavior: only ACI 7 inverts on white paper while explicit ACI 1–6/8–255 and TrueColors render raw, so an ACI-31 salmon hatch no longer renders dark and explicit TrueColor white stays paper-white instead of mapping to charcoal; the importer records the ACI index vs 24-bit source (DXF 62 vs 420) and that distinction round-trips through export, PDF output, and the GPU vertex upload
+
 ## October 2026
 
 ### New Features

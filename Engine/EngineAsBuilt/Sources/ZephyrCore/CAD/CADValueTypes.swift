@@ -227,6 +227,19 @@ public struct ColorRGBA: Hashable, Sendable, Codable {
                 a: a)
         }
     }
+
+    /// Source-aware light-background adjustment (AutoCAD parity).
+    /// Only ACI white inverts: pass `isTrueColor: true` when the color is
+    /// known to come from an explicit RGB specification (TrueColor entity
+    /// color or TrueColor/color-book layer color). Explicit white then
+    /// renders raw -- on white paper that means invisible, exactly like
+    /// AutoCAD, which never remaps TrueColor. Unknown-source white keeps
+    /// the legacy invert (ACI 7 default), so layer colors and older
+    /// content keep working.
+    public func displayAdjusted(forLightBackground isLightBackground: Bool, isTrueColor: Bool) -> ColorRGBA {
+        if isLightBackground, isTrueColor, r > 245 && g > 245 && b > 245 { return self }
+        return displayAdjusted(forLightBackground: isLightBackground)
+    }
 }
 
 // =========================================================================

@@ -106,6 +106,7 @@ var linkerSettings: [LinkerSetting] = []
         let safeIncludePath = includePath.replacingOccurrences(of: "\\", with: "/")
         csdl3TtfCSettings.append(.unsafeFlags(["-I", safeIncludePath]))
         swiftSettings.append(.unsafeFlags(["-Xcc", "-I", "-Xcc", "\(safeIncludePath)"]))
+        swiftTargetSettings.append(.unsafeFlags(["-Xcc", "-I", "-Xcc", "\(safeIncludePath)"]))
     }
     if let libPath = sdlLibraryPath {
         let safeLibPath = libPath.replacingOccurrences(of: "\\", with: "/")
@@ -118,6 +119,7 @@ var linkerSettings: [LinkerSetting] = []
         let safeIncludePath = includePath.replacingOccurrences(of: "\\", with: "/")
         csdl3TtfCSettings.append(.unsafeFlags(["-I", safeIncludePath]))
         swiftSettings.append(.unsafeFlags(["-Xcc", "-I", "-Xcc", "\(safeIncludePath)"]))
+        swiftTargetSettings.append(.unsafeFlags(["-Xcc", "-I", "-Xcc", "\(safeIncludePath)"]))
     }
     if let libPath = sdlTtfLibraryPath {
         let safeLibPath = libPath.replacingOccurrences(of: "\\", with: "/")

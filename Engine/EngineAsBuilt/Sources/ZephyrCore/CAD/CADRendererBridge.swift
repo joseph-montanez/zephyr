@@ -335,6 +335,11 @@ public final class CADRendererBridge {
 
         let isTrueColor: Bool = {
             if let expl = Self.explicitColor(of: primitive) {
+                // Entity-declared colors keep their xdata source: explicit
+                // TrueColor renders raw even when its RGB matches an ACI
+                // entry (white == ACI 7). Unknown-source colors still fall
+                // through to RGB classification below.
+                if expl == entityColor, entityIsTrueColor { return true }
                 return !DXFColorTable.isACI(expl)
             }
             if let styleColor = style?.color {
@@ -508,7 +513,10 @@ public final class CADRendererBridge {
                 }
             } else {
                 entityColor = layer.color
-                entityIsTrueColor = false
+                // ByLayer inherits the layer's color source: explicit layer
+                // colors (TrueColor/color-book) count as TrueColor so that
+                // e.g. explicit white layers render raw on light backgrounds.
+                entityIsTrueColor = layer.colorSource.isExplicitRGB
             }
             let entityOpacity: Double
             if let value = entity.xdata["dxf.opacity"], case .double(let opacity) = value {
