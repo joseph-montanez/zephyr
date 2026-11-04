@@ -1,5 +1,6 @@
 import Foundation
 import CSDL3
+import ImGui
 
 // MARK: - PlaceViewCommand
 //
@@ -7,9 +8,10 @@ import CSDL3
 //   PLACEVIEW "<model.dxf>" <view> <scale> [paperX paperY]
 // The view is a named view in the model file (matched case-insensitively);
 // scale is the denominator (50 = 1:50). With a point the placement lands
-// immediately, otherwise the command prompts for a canvas click. The
-// sheet tab must be active; attach, instance, and viewport reuse the
-// shared `TabManager.placeSheetView` flow.
+// immediately, otherwise the command prompts for a canvas click and a
+// paper-frame ghost follows the cursor. The sheet tab must be active;
+// attach, instance, and viewport reuse the shared
+// `TabManager.placeSheetView` flow.
 
 @MainActor
 public final class PlaceViewCommand: FeatureCommand {
@@ -70,6 +72,8 @@ public final class PlaceViewCommand: FeatureCommand {
     private var request: Request?
     private var view: SheetSetSheetViews.NamedView?
     private var phase: Phase = .idle
+    private var mouseWorldX: Double = 0
+    private var mouseWorldY: Double = 0
 
     public init() {}
 
@@ -123,7 +127,10 @@ public final class PlaceViewCommand: FeatureCommand {
     public func handleMouseMotion(
         worldX: Double, worldY: Double,
         engine: PhrostEngine, processor: CADCommandProcessor
-    ) {}
+    ) {
+        mouseWorldX = worldX
+        mouseWorldY = worldY
+    }
 
     public func handleKeyDown(
         scancode: SDL_Scancode,
@@ -135,7 +142,26 @@ public final class PlaceViewCommand: FeatureCommand {
         return .continue
     }
 
-    public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
+    public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {
+        guard phase == .awaitingPoint,
+              let view = view, let request = request else { return }
+        let corners = PlacePreview.rectCorners(
+            centerX: mouseWorldX, centerY: mouseWorldY,
+            width: view.width / request.scaleDenominator,
+            height: view.height / request.scaleDenominator)
+        let drawList = igGetForegroundDrawList_ViewportPtr(nil)
+        let color = makeCol32(255, 217, 51, 230)
+        let screen = corners.map { c in
+            EngineCameraManager.worldToScreen(worldX: c.x, worldY: c.y, cam: cam)
+        }
+        for i in screen.indices {
+            let a = screen[i]
+            let b = screen[(i + 1) % screen.count]
+            ImDrawListAddLine(
+                drawList,
+                ImVec2(x: a.x, y: a.y), ImVec2(x: b.x, y: b.y), color, 1.5)
+        }
+    }
 
     private func place(atX x: Double, y: Double, engine: PhrostEngine) {
         guard let request, let view else { return }

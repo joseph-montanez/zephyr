@@ -144,6 +144,14 @@ public enum CADCommandAliasTable {
             category: .draw,
             description: "Open a sheet set data file"),
         CADCommandAliasEntry(
+            canonicalName: "PLACEVIEW", aliases: [],
+            category: .draw,
+            description: "Place a named model view on the active sheet at an exact scale"),
+        CADCommandAliasEntry(
+            canonicalName: "PLACECALLOUT", aliases: [],
+            category: .draw,
+            description: "Place a callout block for a named model view with sheet and view attributes"),
+        CADCommandAliasEntry(
             canonicalName: "SHEETSET", aliases: ["SSM"],
             category: .draw,
             description: "Show the Sheet Set Manager"),
@@ -155,6 +163,10 @@ public enum CADCommandAliasTable {
             canonicalName: "-PUBLISHSET", aliases: [],
             category: .draw,
             description: "Publish a sheet set to PDF from the command line"),
+        CADCommandAliasEntry(
+            canonicalName: "-TRANSMITSET", aliases: [],
+            category: .draw,
+            description: "Archive a sheet set and its drawings to a folder"),
         CADCommandAliasEntry(
             canonicalName: "-PAGESETUP", aliases: [],
             category: .settings,

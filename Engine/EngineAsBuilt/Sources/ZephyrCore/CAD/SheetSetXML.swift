@@ -98,9 +98,15 @@ public enum SheetSetXML {
         named.append((key: "Desc", lines: propLines(name: "Desc", value: cleanText("Desc", set.description), depth: depth + 1, omitWhenEmpty: true)))
         named.append((key: "Name", lines: propLines(name: "Name", value: cleanText("Title", set.name), depth: depth + 1, omitWhenEmpty: false)))
         named.append((key: "NewSheetLocation", lines: fileRefLines(propname: "NewSheetLocation", depth: depth + 1)))
-        named.append((key: "SheetSelSets", lines: [
-            indent(depth + 1) + "<AcSmSheetSelSets clsid=\"\(clsidSheetSelSets)\" ID=\"\(freshID())\" propname=\"SheetSelSets\" vt=\"13\" />",
-        ]))
+        if let preserved = set.preservedSelSetsXML, !preserved.isEmpty {
+            // Verbatim, unindented: reformatting would silently drop
+            // LT-authored selections whose member grammar is unverified.
+            named.append((key: "SheetSelSets", lines: [preserved]))
+        } else {
+            named.append((key: "SheetSelSets", lines: [
+                indent(depth + 1) + "<AcSmSheetSelSets clsid=\"\(clsidSheetSelSets)\" ID=\"\(freshID())\" propname=\"SheetSelSets\" vt=\"13\" />",
+            ]))
+        }
         var out: [String] = []
         for entry in named.sorted(by: { $0.key.lowercased() < $1.key.lowercased() }) {
             out.append(contentsOf: entry.lines)

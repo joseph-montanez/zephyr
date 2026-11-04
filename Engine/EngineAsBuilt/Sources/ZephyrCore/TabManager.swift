@@ -1499,14 +1499,53 @@ public final class TabManager {
         return (block.handle, viewportID)
     }
 
+    /// Place a callout/label block instance on the active sheet at a paper
+    /// point (Y-up paper coordinates - the same frame PLACEVIEW and MVIEW
+    /// SELECT speak). The block resolves case-insensitively in the sheet
+    /// document with the INSERT *-prefix/internal filter; attributes come
+    /// from `resolveAttributes` over the block's definitions and land
+    /// ATTSYNC-clean (caller values preserved, missing tags defaulted).
+    /// Returns the entity handle.
+    @discardableResult
+    public func placeSheetCallout(
+        blockName: String,
+        paperX: Double, paperY: Double,
+        resolveAttributes: ([CADAttributeDefinition]) -> [String: CADAttributeValue] = { _ in [:] }
+    ) throws -> UUID {
+        guard let tab = activeTab else { throw SheetViewPlaceError.noActiveTab }
+        let view = tab.drawingViews[tab.activeViewIndex]
+        guard view.kind == .sheet else { throw SheetViewPlaceError.noActiveTab }
+        let sheetDoc = view.document
+        guard let block = sheetDoc.allBlocks.first(where: {
+            $0.name.caseInsensitiveCompare(blockName) == .orderedSame
+                && !$0.name.hasPrefix("*")
+                && !$0.isInternalTableDisplayBlock
+        }) else { throw SheetViewPlaceError.unknownBlock(blockName) }
+        let layerID = sheetDoc.activeLayerID
+            ?? sheetDoc.allLayers.first?.handle ?? UUID()
+        var entity = CADEntity(
+            layerID: layerID,
+            blockID: block.handle,
+            transform: DrawingFileInsert.insertionTransform(
+                point: Vector3(x: paperX, y: paperY, z: 0),
+                scaleX: 1, scaleY: 1, rotationDegrees: 0))
+        entity.attributeValues = CADAttributeSync.apply(
+            definitions: block.attributeDefinitions,
+            to: resolveAttributes(block.attributeDefinitions))
+        sheetDoc.addEntity(entity)
+        return entity.handle
+    }
+
     /// Errors for `placeSheetView` (attach errors pass through as-is).
     public enum SheetViewPlaceError: Error, CustomStringConvertible {
         case noActiveTab
         case invalidGeometry
+        case unknownBlock(String)
         public var description: String {
             switch self {
             case .noActiveTab: return "Place on sheet needs an open drawing with a model and a sheet view."
             case .invalidGeometry: return "Place on sheet needs a positive scale and a non-empty view span."
+            case .unknownBlock(let name): return "Block \"" + name + "\" is not defined in the active sheet."
             }
         }
     }

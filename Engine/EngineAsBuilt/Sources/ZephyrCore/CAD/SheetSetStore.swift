@@ -113,6 +113,7 @@ public struct SheetSetStore: Sendable, Equatable {
             dstPath: dstPath)
         set.sheets = children.sheets.map(SheetSetSheet.init(ref:))
         set.subsets = children.subsets
+        set.preservedSelSetsXML = SheetSetDST.selSetsBlock(xml: xml)
         // Set-scope customs round-trip; sheet-scope *defaults* restore as
         // names only (their values live per-sheet until the property
         // editor lands).

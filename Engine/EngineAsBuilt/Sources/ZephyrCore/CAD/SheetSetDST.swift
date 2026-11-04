@@ -242,6 +242,22 @@ public enum SheetSetDST {
         return inner.isEmpty ? xml : inner
     }
 
+    /// The raw `<AcSmSheetSelSets>` element (self-closed or paired), or nil
+    /// when the document has none. Returned byte-exact for opaque
+    /// preservation: the member grammar is unverified without LT (even the
+    /// reference open-source editor round-trips this block untouched), so
+    /// the model never reformats it — open captures it, save emits it back.
+    public static func selSetsBlock(xml: String) -> String? {
+        guard let open = nextOpen(in: xml, from: xml.startIndex, tag: "AcSmSheetSelSets") else { return nil }
+        guard let gt = xml.range(of: ">", range: open.lowerBound..<xml.endIndex) else { return nil }
+        let opener = String(xml[open.lowerBound..<gt.lowerBound])
+        if opener.hasSuffix("/") || opener.hasSuffix("/ ") {
+            return String(xml[open.lowerBound..<gt.upperBound])
+        }
+        guard let close = xml.range(of: "</AcSmSheetSelSets>", range: gt.upperBound..<xml.endIndex) else { return nil }
+        return String(xml[open.lowerBound..<close.upperBound])
+    }
+
     /// One parsed custom-property entry (Flags 1 = set scope, 2 = sheet).
     public struct CustomEntry: Sendable, Equatable {
         public var name: String

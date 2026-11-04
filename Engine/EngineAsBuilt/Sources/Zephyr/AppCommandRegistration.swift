@@ -493,6 +493,11 @@ struct AppCommandRegistration {
             factory: { PlaceViewCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "PLACECALLOUT",
+            aliases: [],
+            factory: { PlaceCalloutCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "AREA",
             aliases: ["AA"],
             factory: { AreaCommand() }

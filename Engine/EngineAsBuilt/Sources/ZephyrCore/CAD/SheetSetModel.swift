@@ -140,6 +140,11 @@ public struct SheetSet: Sendable, Equatable {
     public var sheets: [SheetSetSheet]
     public var subsets: [SheetSetSubset]
     public var selections: [SheetSetSelection]
+    /// Byte-exact `<AcSmSheetSelSets>` element captured at open. Emitted
+    /// back verbatim on save (see `SheetSetDST.selSetsBlock`): the member
+    /// grammar is unverified, so the model never reformats LT selections.
+    /// In-session selections stay session-scoped until that gate passes.
+    public var preservedSelSetsXML: String?
 
     public init(
         name: String,
@@ -159,7 +164,8 @@ public struct SheetSet: Sendable, Equatable {
         customSheetProps: [String] = [],
         sheets: [SheetSetSheet] = [],
         subsets: [SheetSetSubset] = [],
-        selections: [SheetSetSelection] = []
+        selections: [SheetSetSelection] = [],
+        preservedSelSetsXML: String? = nil
     ) {
         self.name = name
         self.description = description
@@ -179,6 +185,7 @@ public struct SheetSet: Sendable, Equatable {
         self.sheets = sheets
         self.subsets = subsets
         self.selections = selections
+        self.preservedSelSetsXML = preservedSelSetsXML
     }
 
     // MARK: - Traversal

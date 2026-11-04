@@ -29,6 +29,8 @@ extension CADCommandProcessor {
             print("[SheetSet] Sheet Set Manager hidden.")
         case "-PUBLISHSET":
             publishSet(arg: arg, engine: engine)
+        case "-TRANSMITSET":
+            transmitSet(arg: arg)
         default:
             print("[SheetSet] Unknown sheet set command.")
         }
@@ -161,6 +163,66 @@ extension CADCommandProcessor {
         }
     }
 
+    /// `-TRANSMITSET`: foreground eTransmit-style archive. Copies the
+    /// `.dst` byte-identical plus the in-scope member drawings into a
+    /// package folder (tree under the `.dst` folder preserved), reporting
+    /// locks, missing files, and copy failures per file without aborting.
+    private func transmitSet(arg: String) {
+        let parsed = Self.parseTransmitSetArgs(arg)
+        if let error = parsed.error {
+            print("[SheetSet] \(error)")
+            clearCommand()
+            return
+        }
+        let xml: String
+        do {
+            xml = try SheetSetDST.decode(try Data(contentsOf: URL(fileURLWithPath: parsed.dstPath)))
+        } catch {
+            print("[SheetSet] Transmit failed: \(error.localizedDescription)")
+            clearCommand()
+            return
+        }
+        let set = sheetSetStore.open(dstPath: parsed.dstPath, xml: xml)
+        let lock = sheetSetStore.lockStatus(dstPath: parsed.dstPath)
+        let plan = SheetSetTransmit.plan(set: set, scope: parsed.scope, dstLocked: lock.locked)
+        if let scopeError = plan.scopeError {
+            print("[SheetSet] \(scopeError) Nothing transmitted.")
+            clearCommand()
+            return
+        }
+        let report: SheetSetTransmit.TransmitReport
+        do {
+            report = try SheetSetTransmit.execute(plan: plan, to: URL(fileURLWithPath: parsed.folder))
+        } catch {
+            print("[SheetSet] Transmit failed: \(error.localizedDescription)")
+            clearCommand()
+            return
+        }
+        if lock.locked {
+            print("[SheetSet] Set lock: \(lock.detail ?? "locked by another session").")
+        }
+        for result in report.results {
+            switch result.outcome {
+            case .copied(let fromLocked):
+                if fromLocked {
+                    let why: String
+                    if case .locked(let detail) = result.file.lock { why = detail } else { why = "locked" }
+                    print("\(result.file.relativePath): copied from locked source (\(why)).")
+                }
+            case .skippedMissing:
+                let who = result.file.sheetLabel.map { " (\($0))" } ?? ""
+                print("\(result.file.relativePath): skipped — source not found\(who).")
+            case .failed(let reason):
+                print("\(result.file.relativePath): FAILED — \(reason).")
+            }
+        }
+        for label in plan.unresolved {
+            print("[SheetSet] Unresolved sheet: \(label).")
+        }
+        print("[SheetSet] Transmitted \(report.copiedCount)/\(report.results.count) file(s) to \(report.packageFolder).")
+        clearCommand()
+    }
+
     /// SSLOCATE/SSMAUTOOPEN: after a drawing opens, locate its set and open it.
     /// Wired via TabManager.onDrawingOpened. NOD `AcSheetSetData` hint
     /// first (DXF/DWT only), MRU index as fallback.
@@ -226,7 +288,7 @@ extension CADCommandProcessor {
     // MARK: - Parsing helpers (testable)
 
     static func sheetSetVerbAndArg(text: String, upper: String) -> (verb: String, arg: String) {
-        for verb in ["NEWSHEETSET", "OPENSHEETSET", "SHEETSETHIDE", "SHEETSET", "-PUBLISHSET"] {
+        for verb in ["NEWSHEETSET", "OPENSHEETSET", "SHEETSETHIDE", "SHEETSET", "-PUBLISHSET", "-TRANSMITSET"] {
             if upper == verb { return (verb, "") }
             if upper.hasPrefix(verb + " ") {
                 let idx = text.index(text.startIndex, offsetBy: verb.count)
@@ -288,6 +350,34 @@ extension CADCommandProcessor {
                 overrideFile: resolved, error: nil)
         }
         return PublishSetOperands(dstPath: dstPath, setup: nil, overrideFile: nil, error: nil)
+    }
+
+    /// Parsed `-TRANSMITSET` operands. `error` carries the user-facing
+    /// message; a non-nil error means nothing may transmit.
+    struct TransmitSetOperands {
+        var dstPath: String
+        var folder: String
+        var scope: SheetSetTransmit.Scope
+        var error: String?
+    }
+
+    /// Operand rule (mirrors `SheetSetTransmit.usage`): `<dst> <folder>`
+    /// then an optional scope; extra tokens join with spaces so subset
+    /// names with spaces work unquoted. A bare name without a scope prefix
+    /// is rejected — guessing subset-vs-sheet would silently mistransmit.
+    static func parseTransmitSetArgs(_ arg: String) -> TransmitSetOperands {
+        let args = splitSheetSetArgs(arg)
+        func fail(_ message: String) -> TransmitSetOperands {
+            TransmitSetOperands(dstPath: args.first ?? "", folder: "", scope: .all, error: message)
+        }
+        guard args.count >= 2, !args[0].isEmpty, !args[1].isEmpty else {
+            return fail(SheetSetTransmit.usage)
+        }
+        let scopeText = args.count > 2 ? args[2...].joined(separator: " ") : "*"
+        guard let scope = SheetSetTransmit.parseScope(scopeText) else {
+            return fail("Unknown scope '\(scopeText)'. \(SheetSetTransmit.usage)")
+        }
+        return TransmitSetOperands(dstPath: args[0], folder: args[1], scope: scope, error: nil)
     }
 
     /// Whitespace split honoring double quotes.

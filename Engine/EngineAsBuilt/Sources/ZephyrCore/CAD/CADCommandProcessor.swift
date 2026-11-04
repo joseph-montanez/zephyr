@@ -426,6 +426,9 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SHEETSET",  aliases: ["SSM"], category: .draw, syntax: "", description: "Show the Sheet Set Manager (command-line tree until the palette lands)"),
         CommandDescriptor(canonicalName: "SHEETSETHIDE", aliases: [], category: .draw, syntax: "", description: "Hide the Sheet Set Manager"),
         CommandDescriptor(canonicalName: "-PUBLISHSET", aliases: [], category: .draw, syntax: "<file.dst> [setup] [override]", description: "Publish a sheet set to PDF from the command line (foreground, CSV log)"),
+        CommandDescriptor(canonicalName: "-TRANSMITSET", aliases: [], category: .draw, syntax: "<file.dst> <folder> [scope]", description: "Archive a sheet set and its drawings to a folder (foreground)"),
+        CommandDescriptor(canonicalName: "PLACEVIEW", aliases: [], category: .draw, syntax: "\"<model.dxf>\" <view> <scale> [paperX paperY]", description: "Place a named model view on the active sheet at an exact scale"),
+        CommandDescriptor(canonicalName: "PLACECALLOUT", aliases: [], category: .draw, syntax: "\"<model.dxf>\" <view> <block> [paperX paperY] [TAG=value ...]", description: "Place a callout block for a named model view with sheet and view attributes"),
         CommandDescriptor(canonicalName: "-PAGESETUP", aliases: [], category: .settings, syntax: "", description: "Assign a page setup from the command line"),
         CommandDescriptor(canonicalName: "-PLOT",      aliases: [], category: .draw, syntax: "", description: "Configure and run a plot from the command line"),
         CommandDescriptor(canonicalName: "PSETUPIN",   aliases: [], category: .settings, syntax: "[file]", description: "Import page setups from another drawing"),
@@ -1086,9 +1089,9 @@ public final class CADCommandProcessor {
             } else {
                 clearCommand()
             }
-        case "NEWSHEETSET", "OPENSHEETSET", "SHEETSET", "SHEETSETHIDE", "-PUBLISHSET":
+        case "NEWSHEETSET", "OPENSHEETSET", "SHEETSET", "SHEETSETHIDE", "-PUBLISHSET", "-TRANSMITSET":
             runSheetSetCommand(text: text, upper: upper, engine: engine)
-        case _ where upper.hasPrefix("NEWSHEETSET ") || upper.hasPrefix("OPENSHEETSET ") || upper.hasPrefix("-PUBLISHSET "):
+        case _ where upper.hasPrefix("NEWSHEETSET ") || upper.hasPrefix("OPENSHEETSET ") || upper.hasPrefix("-PUBLISHSET ") || upper.hasPrefix("-TRANSMITSET "):
             runSheetSetCommand(text: text, upper: upper, engine: engine)
         case "SCALELISTEDIT", "-SCALELISTEDIT":
             guard let engine = engine else { clearCommand(); return }
