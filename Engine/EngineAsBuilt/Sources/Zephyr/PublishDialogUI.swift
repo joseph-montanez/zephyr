@@ -727,7 +727,7 @@ struct PublishDialogUI {
                 window: engine.dialogParentWindow,
                 filters: [NativeFileDialog.Filter(
                     label: "PDF Document", extensions: ["pdf"])],
-                defaultName: "Publish.pdf") { url in
+                defaultName: "Publish.pdf") { url, _ in
                 guard let url else { return }
                 self.targetName = url.path
                 self.runJob(engine: engine)
@@ -938,7 +938,7 @@ struct PublishDialogUI {
             window: engine.dialogParentWindow,
             filters: [NativeFileDialog.Filter(
                 label: "Drawing Set Description", extensions: ["dsd"])],
-            defaultName: "Sheets.dsd") { url in
+            defaultName: "Sheets.dsd") { url, _ in
             guard let url else { return }
             do {
                 try PublishDSD.serialize(spec: spec).write(

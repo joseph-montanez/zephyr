@@ -65,7 +65,7 @@ struct PlotDialogUI {
             NativeFileDialog.showSaveDialog(
                 window: engine.dialogParentWindow,
                 filters: [NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"])],
-                defaultName: "\(layoutName).pdf") { url in
+                defaultName: "\(layoutName).pdf") { url, _ in
                 if let url { destination = url.path }
             }
         }

@@ -2288,7 +2288,7 @@ public final class TabManager {
                 tileMode: tab.drawingViews[tab.activeViewIndex].kind == .sheet ? 0 : 1,
                 psltscale: tab.drawingViews[tab.activeViewIndex].document.paperSpaceLinetypeScale,
                 namedSetups: tab.namedPageSetups)
-            try ODADWGConverter.convertSync(input: tempDXF, output: url, toFormat: "DWG")
+            try ODADWGConverter.convertSync(odaVersion: ODADWGConverter.odaVersion(for: dxfVersion), input: tempDXF, output: url, toFormat: "DWG")
         } else {
             try DXFExporter.export(
                 views: tab.drawingViews, to: url, dxfVersion: dxfVersion, sheetSetHint: saveHint,
@@ -2595,7 +2595,7 @@ public final class TabManager {
                     namedSetups: snapshot.namedPageSetups,
                 )
                 progressHandler?(0.9)
-                try await ODADWGConverter.convert(input: tempDXF, output: targetURL, toFormat: "DWG")
+                try await ODADWGConverter.convert(odaVersion: ODADWGConverter.odaVersion(for: dxfVersion), input: tempDXF, output: targetURL, toFormat: "DWG")
                 progressHandler?(1.0)
             } else {
                 try DXFExporter.export(

@@ -1155,16 +1155,12 @@ internal final class EngineInputHandler {
         let dxfVersion = engine.tabManager.activeTab?.dxfVersion ?? .r2018
         NativeFileDialog.showSaveDialog(
             window: engine.dialogParentWindow,
-            filters: [
-                NativeFileDialog.Filter(label: "DXF Drawing", extensions: ["dxf"]),
-                NativeFileDialog.Filter(label: "Zephyr Drawing", extensions: ["eab"]),
-                NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"]),
-                NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
-            ],
+            filters: NativeFileDialog.drawingSaveFilters,
+
             defaultName: defaultName
-        ) { [weak engine] url in
+        ) { [weak engine] url, filterIndex in
             guard let engine, let url else { return }
-            engine.tabManager.startSaveActiveTabAs(url: url, dxfVersion: dxfVersion)
+            engine.tabManager.startSaveActiveTabAs(url: NativeFileDialog.resolvedSaveURL(url, selectedFilterIndex: filterIndex), dxfVersion: dxfVersion)
         }
     }
 

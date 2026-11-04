@@ -123,7 +123,7 @@ enum ExportPDFDialogUI {
             window: engine.dialogParentWindow,
             filters: [NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"])],
             defaultName: CADCommandProcessor.pdfExportDefaultName(for: displayName)
-        ) { [weak engine] url in
+        ) { [weak engine] url, _ in
             guard let engine, let url else { return } // cancel: popup stays open
             engine.ui.exportPDFDialogActive = false
             let target = CADCommandProcessor.pdfExportTargetURL(from: url)

@@ -3418,16 +3418,12 @@ public final class CADCommandProcessor {
         let dxfVersion = eng.tabManager.activeTab?.dxfVersion ?? .r2018
         NativeFileDialog.showSaveDialog(
             window: eng.dialogParentWindow,
-            filters: [
-                NativeFileDialog.Filter(label: "DXF Drawing", extensions: ["dxf"]),
-                NativeFileDialog.Filter(label: "Zephyr Drawing", extensions: ["eab"]),
-                NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"]),
-                NativeFileDialog.Filter(label: "All Files", extensions: ["*"])
-            ],
+            filters: NativeFileDialog.drawingSaveFilters,
+
             defaultName: defaultName
-        ) { [weak eng] url in
+        ) { [weak eng] url, filterIndex in
             guard let eng, let url else { return }
-            eng.tabManager.startSaveActiveTabAs(url: url, dxfVersion: dxfVersion)
+            eng.tabManager.startSaveActiveTabAs(url: NativeFileDialog.resolvedSaveURL(url, selectedFilterIndex: filterIndex), dxfVersion: dxfVersion)
         }
     }
 
@@ -3455,7 +3451,7 @@ public final class CADCommandProcessor {
                 NativeFileDialog.showSaveDialog(
                     window: engine.dialogParentWindow,
                     filters: [NativeFileDialog.Filter(label: "PDF Document", extensions: ["pdf"])],
-                    defaultName: suggested, completion: completion)
+                    defaultName: suggested) { url, _ in completion(url) }
             },
             paperUpdate: cliInt("PAPERUPDATE", fallback: 0),
             plotOffset: cliInt("PLOTOFFSET", fallback: 0),

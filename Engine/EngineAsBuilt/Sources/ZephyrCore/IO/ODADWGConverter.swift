@@ -180,7 +180,9 @@ public enum ODADWGConverter {
     ///   - input: URL of the source file (.dwg or .dxf)
     ///   - output: URL where the converted file should be placed
     ///   - toFormat: "DXF" or "DWG"
+    ///   - odaVersion: ODA output version (e.g. "ACAD2018"); see `odaVersion(for:)`.
     public static func convert(
+        odaVersion: String = "ACAD2018",
         input: URL,
         output: URL,
         toFormat: String
@@ -217,7 +219,7 @@ public enum ODADWGConverter {
             }
 
             // 3. Run ODAFileConverter
-            let version = "ACAD2018"
+            let version = odaVersion
             let recursive = "0"
             let audit = "1"
 
@@ -263,9 +265,25 @@ public enum ODADWGConverter {
 
     // MARK: - Convert convenience
 
+    /// ODA FileConverter output version for a DXF export version.
+    /// Only versions ODA names directly are mapped; older and unknown
+    /// versions fall back to ACAD2018 (the previous behavior for every save).
+    public static func odaVersion(for dxfVersion: DXFVersion) -> String {
+        switch dxfVersion {
+        case .r2018: return "ACAD2018"
+        case .r2013: return "ACAD2013"
+        case .r2010: return "ACAD2010"
+        case .r2007: return "ACAD2007"
+        case .r2004: return "ACAD2004"
+        case .r2000: return "ACAD2000"
+        case .r14, .r13, .r12, .r10, .unknown: return "ACAD2018"
+        }
+    }
+
     /// Synchronous convenience (for sync TabManager methods).
     /// Wraps the async convert in a Task and blocks. Only use where async is not available.
     public static func convertSync(
+        odaVersion: String = "ACAD2018",
         input: URL,
         output: URL,
         toFormat: String
@@ -275,7 +293,7 @@ public enum ODADWGConverter {
 
         Task { @Sendable [errorBox] in
             do {
-                try await convert(input: input, output: output, toFormat: toFormat)
+                try await convert(odaVersion: odaVersion, input: input, output: output, toFormat: toFormat)
             } catch {
                 errorBox.error = error
             }

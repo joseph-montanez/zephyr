@@ -125,6 +125,36 @@ public enum NativeFileDialog {
         }
     }
 
+    /// Shared Save As filters for drawings. DXF stays first (native format,
+    /// no external tool); DWG saves go through the ODA FileConverter behind
+    /// the existing TabManager `.dwg` branch.
+    public static let drawingSaveFilters: [Filter] = [
+        Filter(label: "DXF Drawing", extensions: ["dxf"]),
+        Filter(label: "DWG Drawing", extensions: ["dwg"]),
+        Filter(label: "Zephyr Drawing", extensions: ["eab"]),
+        Filter(label: "PDF Document", extensions: ["pdf"]),
+        Filter(label: "All Files", extensions: ["*"]),
+    ]
+
+    /// Resolve the URL to save to from the dialog result.
+    ///
+    /// An explicitly typed extension always wins (`plan.dxf` saves DXF even
+    /// under the DWG filter). A bare name gains the selected filter's
+    /// extension; with no usable filter (index -1, out of range, or
+    /// "All Files") the URL is returned unchanged.
+    public static func resolvedSaveURL(
+        _ url: URL,
+        selectedFilterIndex: Int,
+        filters: [Filter] = drawingSaveFilters
+    ) -> URL {
+        if !url.pathExtension.isEmpty { return url }
+        guard filters.indices.contains(selectedFilterIndex) else { return url }
+        guard let ext = filters[selectedFilterIndex].extensions.first(where: { $0 != "*" }) else {
+            return url
+        }
+        return url.appendingPathExtension(ext.lowercased())
+    }
+
     /// Owns a stable, null-terminated C string allocation.
     private final class OwnedCString {
         let pointer: UnsafeMutablePointer<CChar>
@@ -157,7 +187,7 @@ public enum NativeFileDialog {
     /// from the creating thread to the SDL callback thread to the main
     /// thread — at each step exactly one thread owns the reference.
     private final class CallbackContext: @unchecked Sendable {
-        let completion: @MainActor @Sendable ([URL]) -> Void
+        let completion: @MainActor @Sendable ([URL], Int) -> Void
 
         private let filterNames: [OwnedCString]
         private let filterPatterns: [OwnedCString]
@@ -165,7 +195,7 @@ public enum NativeFileDialog {
         private let defaultLocationStorage: OwnedCString?
 
         init(
-            completion: @escaping @MainActor @Sendable ([URL]) -> Void,
+            completion: @escaping @MainActor @Sendable ([URL], Int) -> Void,
             filters: [Filter],
             defaultLocation: String? = nil
         ) {
@@ -237,7 +267,7 @@ public enum NativeFileDialog {
         } ? [] : filters
 
         let context = CallbackContext(
-            completion: completion,
+            completion: { urls, _ in completion(urls) },
             filters: effectiveFilters)
         let userdata = Unmanaged.passRetained(context).toOpaque()
 
@@ -317,16 +347,17 @@ public enum NativeFileDialog {
     ///   - filters: File type filters (label + extensions).
     ///   - defaultName: Default file name shown in the dialog.
     ///   - completion: Called on the main thread with the selected file URL,
-    ///     or `nil` if the user cancelled.
+    ///     or `nil` if the user cancelled, plus the index of the selected
+///     filter (`-1` when the platform reports none).
     public static func showSaveDialog(
         window: OpaquePointer?,
         filters: [Filter],
         defaultName: String? = nil,
-        completion: @escaping @MainActor @Sendable (URL?) -> Void
+        completion: @escaping @MainActor @Sendable (URL?, Int) -> Void
     ) {
         let context = CallbackContext(
-            completion: { urls in
-                completion(urls.first)
+            completion: { urls, filterIndex in
+                completion(urls.first, filterIndex)
             },
             filters: filters,
             defaultLocation: defaultName)
@@ -360,7 +391,7 @@ public enum NativeFileDialog {
     ///
     /// - `filelist`: NULL-terminated array of UTF-8 file paths, or NULL
     ///   if an error occurred, or a single NULL entry if cancelled.
-    private static let nativeDialogCallback: SDL_DialogFileCallback = { userdata, filelist, _filterIndex in
+    private static let nativeDialogCallback: SDL_DialogFileCallback = { userdata, filelist, filterIndex in
         guard let userdata else { return }
         let context = Unmanaged<CallbackContext>.fromOpaque(userdata).takeRetainedValue()
 
@@ -386,7 +417,7 @@ public enum NativeFileDialog {
             if let dialogError {
                 print("[NativeFileDialog] \(dialogError)")
             }
-            context.completion(selectedURLs)
+            context.completion(selectedURLs, Int(filterIndex))
         }
     }
 }
