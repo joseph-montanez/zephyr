@@ -427,4 +427,30 @@ final class LayerParityPhase1Tests: XCTestCase {
         XCTAssertEqual(layer.color, ColorRGBA(r: 0, g: 255, b: 0))
         XCTAssertNotNil(layer.plotStyleHandle, "390 handle preserved")
     }
+
+    func testDXFWhiteLayerColorSourceRoundTrips() throws {
+        // ACI white must export as 62 alone: a redundant 420 makes the
+        // importer classify it as TrueColor white, which renders raw
+        // (invisible) on light backgrounds instead of inverting like
+        // AutoCAD ACI 7. TrueColor white must keep its 420.
+        let doc = CADDocument()
+        doc.importLayersBlocksEntities(
+            layers: [
+                Layer(name: "AciWhite", color: .white, colorSource: .aci(7)),
+                Layer(name: "TrueWhite", color: .white, colorSource: .trueColor),
+            ],
+            blocks: [], entities: [])
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("parity_\(UUID().uuidString).dxf")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+        try DXFWriterBridge.export(document: doc, to: tempURL)
+        let back = CADDocument()
+        try back.importDXF(url: tempURL)
+        let aci = try XCTUnwrap(back.allLayers.first(where: { $0.name == "AciWhite" }))
+        XCTAssertEqual(aci.color, .white)
+        XCTAssertEqual(aci.colorSource, .aci(7), "ACI white must not flip to TrueColor")
+        let trueWhite = try XCTUnwrap(back.allLayers.first(where: { $0.name == "TrueWhite" }))
+        XCTAssertEqual(trueWhite.color, .white)
+        XCTAssertEqual(trueWhite.colorSource, .trueColor, "explicit TrueColor white keeps 420")
+    }
 }
