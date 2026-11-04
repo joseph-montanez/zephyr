@@ -260,6 +260,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "MLEADER",    aliases: ["MLD"], category: .draw, syntax: "", description: "Create an associative multileader"),
         CommandDescriptor(canonicalName: "MEASURE",    aliases: ["ME"], category: .draw, syntax: "", description: "Place points or blocks at measured intervals along an object"),
         CommandDescriptor(canonicalName: "TABLE",      aliases: ["TB", "DATATABLE"], category: .draw, syntax: "", description: "Insert a data table"),
+        CommandDescriptor(canonicalName: "SHEETLISTTABLE", aliases: [], category: .draw, syntax: "", description: "Insert the current sheet set's sheet list table"),
         CommandDescriptor(canonicalName: "CLIP",       aliases: [], category: .modify, syntax: "", description: "Clip blocks, raster images, and PDF underlays"),
         CommandDescriptor(canonicalName: "DIVIDE",     aliases: ["DIV"], category: .draw, syntax: "", description: "Place points or blocks at equal divisions along an object"),
         CommandDescriptor(canonicalName: "MEASUREGEOM", aliases: ["MEASUREGEOMETRY", "MEA", "MG"], category: .draw, syntax: "", description: "Measure geometry: quick measure, distance, area, and angle"),
@@ -287,7 +288,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "FIND", aliases: [], category: .modify, syntax: "", description: "Find and replace text across the drawing"),
         CommandDescriptor(canonicalName: "TEXTALIGN", aliases: ["TA"], category: .modify, syntax: "[Align/Distribute]", description: "Align or distribute text along a baseline"),
         CommandDescriptor(canonicalName: "TXT2MTXT", aliases: [], category: .modify, syntax: "", description: "Merge single-line texts into one mtext"),
-        CommandDescriptor(canonicalName: "FIELD", aliases: [], category: .draw, syntax: "[Date/Filename/Tabname/Area/Length]", description: "Insert a live-updating field value"),
+        CommandDescriptor(canonicalName: "FIELD", aliases: [], category: .draw, syntax: "[Date/Filename/Tabname/Area/Length/Sheet]", description: "Insert a live-updating field value"),
         CommandDescriptor(canonicalName: "SELECTSIMILAR", aliases: [], category: .modify, syntax: "[Settings]", description: "Select objects matching a reference (SELECTSIMILARMODE)"),
         CommandDescriptor(canonicalName: "QSELECT", aliases: [], category: .modify, syntax: "", description: "Select objects by type, property, and operator"),
         CommandDescriptor(canonicalName: "FILTER", aliases: ["FI"], category: .modify, syntax: "", description: "Select objects by combined property criteria"),
@@ -420,6 +421,11 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "PUBLISH",   aliases: [], category: .draw, syntax: "", description: "Batch-publish drawing sheets to PDF"),
         CommandDescriptor(canonicalName: "+PUBLISH",  aliases: [], category: .draw, syntax: "[file.dsd]", description: "Batch-publish, preloading a sheet list file"),
         CommandDescriptor(canonicalName: "-PUBLISH",  aliases: [], category: .draw, syntax: "[file.dsd]", description: "Publish a sheet list file from the command line (foreground, CSV log)"),
+        CommandDescriptor(canonicalName: "NEWSHEETSET", aliases: [], category: .draw, syntax: "<name> [file.dst]", description: "Create a new sheet set data file"),
+        CommandDescriptor(canonicalName: "OPENSHEETSET", aliases: [], category: .draw, syntax: "[file.dst]", description: "Open a sheet set data file with zero DWG opens"),
+        CommandDescriptor(canonicalName: "SHEETSET",  aliases: ["SSM"], category: .draw, syntax: "", description: "Show the Sheet Set Manager (command-line tree until the palette lands)"),
+        CommandDescriptor(canonicalName: "SHEETSETHIDE", aliases: [], category: .draw, syntax: "", description: "Hide the Sheet Set Manager"),
+        CommandDescriptor(canonicalName: "-PUBLISHSET", aliases: [], category: .draw, syntax: "<file.dst> [setup] [override]", description: "Publish a sheet set to PDF from the command line (foreground, CSV log)"),
         CommandDescriptor(canonicalName: "-PAGESETUP", aliases: [], category: .settings, syntax: "", description: "Assign a page setup from the command line"),
         CommandDescriptor(canonicalName: "-PLOT",      aliases: [], category: .draw, syntax: "", description: "Configure and run a plot from the command line"),
         CommandDescriptor(canonicalName: "PSETUPIN",   aliases: [], category: .settings, syntax: "[file]", description: "Import page setups from another drawing"),
@@ -539,6 +545,9 @@ public final class CADCommandProcessor {
     /// Active modal `-PLOT` / `-PAGESETUP` / `-PSETUPIN` CLI session, if any.
     public var plotCliSession: PlotCliSession? = nil
     public var publishCliSession: PublishCliSession? = nil
+
+    /// Open sheet sets + current set + SSLOCATE MRU (see SheetSetStore).
+    public var sheetSetStore = SheetSetStore()
 
     /// Registry of feature command factories, keyed by canonical name and aliases.
     public typealias FeatureCommandFactory = () -> any FeatureCommand
@@ -1077,6 +1086,10 @@ public final class CADCommandProcessor {
             } else {
                 clearCommand()
             }
+        case "NEWSHEETSET", "OPENSHEETSET", "SHEETSET", "SHEETSETHIDE", "-PUBLISHSET":
+            runSheetSetCommand(text: text, upper: upper, engine: engine)
+        case _ where upper.hasPrefix("NEWSHEETSET ") || upper.hasPrefix("OPENSHEETSET ") || upper.hasPrefix("-PUBLISHSET "):
+            runSheetSetCommand(text: text, upper: upper, engine: engine)
         case "SCALELISTEDIT", "-SCALELISTEDIT":
             guard let engine = engine else { clearCommand(); return }
             runScaleListEdit(text: text, upper: upper, engine: engine)
@@ -3531,7 +3544,7 @@ public final class CADCommandProcessor {
     /// Host services for a modal `-PUBLISH` session: open-tab snapshots,
     /// disk metadata reads, and a foreground publish that writes the CSV
     /// log beside the `.dsd` when the run finishes.
-    private func makePublishCliContext(engine: PhrostEngine) -> PublishCliContext {
+    func makePublishCliContext(engine: PhrostEngine) -> PublishCliContext {
         let metas = PublishMetadataInspector.readOpenTabs(from: engine.tabManager)
         var open: [UUID: [String: CADDocumentSnapshot]] = [:]
         for (index, meta) in metas.enumerated() {

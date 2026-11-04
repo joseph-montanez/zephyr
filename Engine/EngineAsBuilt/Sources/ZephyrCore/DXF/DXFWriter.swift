@@ -27,6 +27,21 @@ public struct DXFLayoutDefinition: Sendable {
 }
 
 /// Pure Swift DXF writer. Writes ASCII DXF files with proper section structure.
+/// Sheet-set association stamped on save (`AcSheetSetData` NOD hint).
+/// `dstPath` is stored in the ShSetFileName XRECORD (always written);
+/// the other two ride along only when the caller knows them.
+public struct DXFSheetSetHint: Sendable, Equatable {
+    public var dstPath: String
+    public var dwgName: String
+    public var layoutHandle: String
+
+    public init(dstPath: String, dwgName: String = "", layoutHandle: String = "") {
+        self.dstPath = dstPath
+        self.dwgName = dwgName
+        self.layoutHandle = layoutHandle
+    }
+}
+
 public class DXFWriter {
 
     public enum WriterError: Swift.Error {
@@ -74,6 +89,10 @@ public class DXFWriter {
     public var preservedObjects: [DXFRawRecord] = []
     public var preservedACDSData: [DataTableRawDXFGroup] = []
     public var revisionCloudApproxArcLength: Double?
+    /// Sheet-set association to stamp on save (`AcSheetSetData` NOD hint:
+    /// ShSetFileName + optional SheetDwgName/LayoutHandle XRECORDs). Nil =
+    /// no hint. A surviving preserved hint always wins over this value.
+    public var sheetSetHint: DXFSheetSetHint?
 
     // Handle tracking
     private var nextHandle: UInt32 = 1
@@ -3145,6 +3164,28 @@ public class DXFWriter {
                 }
             }
         }
+        // Sheet-set hint: generate fresh objects only when no preserved
+        // `AcSheetSetData` entry survives (preserved wins — it carries
+        // LT's own handles). Generating supersedes the preserved name so
+        // the stale dictionary and its XRECORDs are skipped, not orphaned.
+        let preservedHintHandle = rawRootEntries.first {
+            normalizedName($0.name) == "ACSHEETSETDATA"
+        }.map { normalizedHandle($0.handle) }
+        let hintRequest = sheetSetHint.map {
+            $0.dstPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        } ?? ""
+        var hintGenerates = false
+        if !hintRequest.isEmpty {
+            let dictRecord = preservedHintHandle.flatMap { preservedObject(withHandle: $0) }
+            let targets = dictRecord.map { dictionaryEntries($0).values.map(normalizedHandle) } ?? []
+            let survives = preservedHintHandle != nil
+                && !preservedHintHandle!.isEmpty
+                && targets.allSatisfy { $0.isEmpty || $0 == "0" || preservedObject(withHandle: $0) != nil }
+            if !survives {
+                generatedRootNames.insert("ACSHEETSETDATA")
+                hintGenerates = true
+            }
+        }
         let skippedRawDictionaryHandles = Set(rawRootEntries.compactMap { entry -> String? in
             generatedRootNames.contains(normalizedName(entry.name)) ? entry.handle : nil
         })
@@ -3290,6 +3331,11 @@ public class DXFWriter {
         }
         if !mleaderStyleDictionaryHandle.isEmpty {
             out += "  3\r\nACAD_MLEADERSTYLE\r\n350\r\n\(mleaderStyleDictionaryHandle)\r\n"
+        }
+        if hintGenerates, let hint = sheetSetHint {
+            var emitting = hint
+            emitting.dstPath = hintRequest
+            writeSheetSetHintObjects(emitting, &out)
         }
         for entry in rawRootEntries
         where !generatedRootNames.contains(normalizedName(entry.name))
@@ -3489,6 +3535,46 @@ public class DXFWriter {
         out += "  0\r\nENDSEC\r\n"
     }
 
+
+    /// Sheet-set association objects: a root `AcSheetSetData` entry plus
+    /// one DICTIONARY and one XRECORD per stored value (ShSetFileName is
+    /// always written; SheetDwgName/LayoutHandle only when provided).
+    /// Handles come from `allocHandle` (above the preserved maximum), so
+    /// they never collide with preserved records.
+    private func writeSheetSetHintObjects(_ hint: DXFSheetSetHint, _ out: inout String) {
+        let dictHandle = allocHandle()
+        let fileHandle = allocHandle()
+        let dwgHandle = hint.dwgName.isEmpty ? nil : allocHandle()
+        let layoutHandle = hint.layoutHandle.isEmpty ? nil : allocHandle()
+        writeStr(3, "AcSheetSetData", &out)
+        writeStr(350, dictHandle, &out)
+        out += "  0\r\nDICTIONARY\r\n  5\r\n\(dictHandle)\r\n"
+        out += "330\r\n\(rootDictionaryHandle)\r\n100\r\nAcDbDictionary\r\n281\r\n1\r\n"
+        writeStr(3, "ShSetFileName", &out)
+        writeStr(350, fileHandle, &out)
+        if let dwgHandle {
+            writeStr(3, "SheetDwgName", &out)
+            writeStr(350, dwgHandle, &out)
+        }
+        if let layoutHandle {
+            writeStr(3, "LayoutHandle", &out)
+            writeStr(350, layoutHandle, &out)
+        }
+        writeSheetSetHintRecord(handle: fileHandle, owner: dictHandle, value: hint.dstPath, &out)
+        if let dwgHandle {
+            writeSheetSetHintRecord(handle: dwgHandle, owner: dictHandle, value: hint.dwgName, &out)
+        }
+        if let layoutHandle {
+            writeSheetSetHintRecord(handle: layoutHandle, owner: dictHandle, value: hint.layoutHandle, &out)
+        }
+    }
+
+    private func writeSheetSetHintRecord(handle: String, owner: String, value: String, _ out: inout String) {
+        out += "  0\r\nXRECORD\r\n  5\r\n\(handle)\r\n"
+        out += "330\r\n\(owner)\r\n100\r\nAcDbXRecord\r\n"
+        writeInt(280, 1, &out)
+        writeStrAllowEmpty(1, value, &out)
+    }
 
     private func writeMLeaderStyleObject(
         _ leader: DXFMLeaderEntity,

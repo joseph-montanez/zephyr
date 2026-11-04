@@ -371,6 +371,9 @@ public final class EngineUIManager {
 
     /// Whether the External References palette is visible ("XREF").
     public var xrefPanelVisible: Bool = false
+    /// Whether the Sheet Set Manager palette is visible ("SHEETSET").
+    /// Persisted in UserSettings like the other palette flags.
+    public var sheetSetManagerActive: Bool = false
     public var xrefRefPathType: Int = 1
     public var xrefSearchPaths: [String] = []
     public var xrefMaxLoaded: Int = 32
@@ -431,6 +434,7 @@ public final class EngineUIManager {
         public var drawPaletteVisible: Bool
         public var blockPanelVisible: Bool
         public var xrefPanelVisible: Bool
+        public var sheetSetManagerActive: Bool
         public var dataTablePanelVisible: Bool
         public var layersPanelVisible: Bool
         public var fileTabsVisible: Bool
@@ -446,6 +450,7 @@ public final class EngineUIManager {
             drawPaletteVisible: drawPaletteVisible,
             blockPanelVisible: blockPanelVisible,
             xrefPanelVisible: xrefPanelVisible,
+            sheetSetManagerActive: sheetSetManagerActive,
             dataTablePanelVisible: dataTablePanelVisible,
             layersPanelVisible: layersPanelVisible,
             fileTabsVisible: fileTabsVisible,
@@ -455,6 +460,7 @@ public final class EngineUIManager {
         drawPaletteVisible = false
         blockPanelVisible = false
         xrefPanelVisible = false
+        sheetSetManagerActive = false
         dataTablePanelVisible = false
         layersPanelVisible = false
         fileTabsVisible = false
@@ -471,6 +477,7 @@ public final class EngineUIManager {
             drawPaletteVisible = saved.drawPaletteVisible
             blockPanelVisible = saved.blockPanelVisible
             xrefPanelVisible = saved.xrefPanelVisible
+            sheetSetManagerActive = saved.sheetSetManagerActive
             dataTablePanelVisible = saved.dataTablePanelVisible
             layersPanelVisible = saved.layersPanelVisible
             fileTabsVisible = saved.fileTabsVisible

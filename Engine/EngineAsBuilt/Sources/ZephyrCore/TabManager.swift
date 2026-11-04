@@ -419,6 +419,20 @@ public final class TabManager {
     /// Callback invoked when a dirty tab needs user confirmation before closing.
     public var onTabCloseConfirmationRequested: ((UUID) -> Void)? = nil
 
+    /// Callback invoked with the file path after a drawing opens in a tab.
+    /// Wired by the engine for SSLOCATE/SSMAUTOOPEN sheet-set association.
+    public var onDrawingOpened: ((String) -> Void)? = nil
+
+    /// Sheet-set hint stamped on DXF/DWG save (`AcSheetSetData` NOD hint).
+    /// Arguments are the target file path and the active layout name.
+    /// Wired by the engine from the open sheet sets; nil = no association.
+    public var sheetSetHintProvider: (@MainActor (String, String?) -> DXFSheetSetHint?)? = nil
+
+    /// Testable seam behind the openTab/openEAB success paths.
+    public func notifyDrawingOpened(path: String) {
+        onDrawingOpened?(path)
+    }
+
     /// Callback invoked to get the viewport's background color for exports.
     public var getBackgroundColor: (() -> ColorRGBA)? = nil
 
@@ -614,6 +628,7 @@ public final class TabManager {
         kickXrefLoads(for: tab)
             let idx = tabs.count - 1
             switchToTab(at: idx)
+            notifyDrawingOpened(path: url.path)
             return idx
         }
         print("[TabManager] Importing DXF...")
@@ -639,6 +654,7 @@ public final class TabManager {
         kickXrefLoads(for: tab)
         let idx = tabs.count - 1
         switchToTab(at: idx)
+        notifyDrawingOpened(path: url.path)
         return idx
     }
 
@@ -1402,11 +1418,117 @@ public final class TabManager {
             modelCenterY = 0
             viewHeight = paperHeight
         }
-        let paperCenterX = (paperX1 + paperX2) / 2.0
-        // Stored paperCenterY is positive-down (see modelToPaperTransform).
-        let paperCenterY = -((paperY1 + paperY2) / 2.0)
+        // Y-up paper center; storage negates Y (see modelToPaperTransform).
+        return insertSheetViewport(
+            paperCenterXUp: (paperX1 + paperX2) / 2.0,
+            paperCenterYUp: (paperY1 + paperY2) / 2.0,
+            paperWidth: paperWidth, paperHeight: paperHeight,
+            modelCenterX: modelCenterX, modelCenterY: modelCenterY,
+            viewHeight: viewHeight)
+    }
+
+    /// Place a named model view on the active sheet at an exact scale
+    /// (place-on-sheet viewport half; xref attach composes separately via
+    /// `XrefManager.attach`). The paper frame sizes itself from the view
+    /// bounds (`paper = model / scale`), centered on `paperCenter`, and
+    /// the viewport shows exactly the named-view span, so the plotted
+    /// scale is precisely 1:`scaleDenominator`. Returns the viewport id.
+    public func placeNamedView(
+        paperCenterXUp: Double, paperCenterYUp: Double,
+        modelCenterX: Double, modelCenterY: Double,
+        modelWidth: Double, modelHeight: Double,
+        scaleDenominator: Double
+    ) -> Int? {
+        guard scaleDenominator > 1e-9,
+              modelWidth > 1e-9, modelHeight > 1e-9 else { return nil }
+        return insertSheetViewport(
+            paperCenterXUp: paperCenterXUp, paperCenterYUp: paperCenterYUp,
+            paperWidth: modelWidth / scaleDenominator,
+            paperHeight: modelHeight / scaleDenominator,
+            modelCenterX: modelCenterX, modelCenterY: modelCenterY,
+            viewHeight: modelHeight)
+    }
+
+    /// One-shot place-on-sheet: attach the model file as an xref (reusing an
+    /// existing definition of the same file), insert one instance at the model
+    /// origin when none exists, and place the named-view span on the active
+    /// sheet at an exact scale. The viewport shows the instance through the
+    /// projection's xref-instance rule. Returns (blockHandle, viewportID).
+    /// The active view must be a sheet; geometry is validated before attaching.
+    @discardableResult
+    public func placeSheetView(
+        modelFileURL: URL,
+        isOverlay: Bool = false,
+        modelCenterX: Double, modelCenterY: Double,
+        modelWidth: Double, modelHeight: Double,
+        paperCenterXUp: Double, paperCenterYUp: Double,
+        scaleDenominator: Double
+    ) throws -> (blockHandle: UUID, viewportID: Int) {
+        guard scaleDenominator > 1e-9,
+              modelWidth > 1e-9, modelHeight > 1e-9 else {
+            throw SheetViewPlaceError.invalidGeometry
+        }
+        guard let tab = activeTab else { throw SheetViewPlaceError.noActiveTab }
+        guard let modelView = tab.drawingViews.first(where: { $0.kind == .model }) else {
+            throw SheetViewPlaceError.noActiveTab
+        }
+        let modelDoc = modelView.document
+        let documents = tab.drawingViews.map(\.document)
+        let hostFolder = tab.fileURL?.deletingLastPathComponent().path
+        let (block, unitScale, _) = try XrefManager.attach(
+            store: tab.xrefStore, documents: documents,
+            activeDocument: modelDoc, fileURL: modelFileURL,
+            isOverlay: isOverlay, pathType: XrefSysvars.refPathType,
+            hostFolder: hostFolder)
+        let instances = XrefPalettePolicy.instanceCounts(documents: documents)[block.handle] ?? 0
+        if instances == 0 {
+            let layerID = modelDoc.activeLayerID
+                ?? modelDoc.allLayers.first?.handle ?? UUID()
+            modelDoc.addEntity(CADEntity(
+                layerID: layerID, blockID: block.handle,
+                transform: DrawingFileInsert.insertionTransform(
+                    point: .zero, scaleX: unitScale, scaleY: unitScale, rotationDegrees: 0)))
+        }
+        guard let viewportID = placeNamedView(
+            paperCenterXUp: paperCenterXUp, paperCenterYUp: paperCenterYUp,
+            modelCenterX: modelCenterX, modelCenterY: modelCenterY,
+            modelWidth: modelWidth, modelHeight: modelHeight,
+            scaleDenominator: scaleDenominator) else {
+            throw SheetViewPlaceError.invalidGeometry
+        }
+        return (block.handle, viewportID)
+    }
+
+    /// Errors for `placeSheetView` (attach errors pass through as-is).
+    public enum SheetViewPlaceError: Error, CustomStringConvertible {
+        case noActiveTab
+        case invalidGeometry
+        public var description: String {
+            switch self {
+            case .noActiveTab: return "Place on sheet needs an open drawing with a model and a sheet view."
+            case .invalidGeometry: return "Place on sheet needs a positive scale and a non-empty view span."
+            }
+        }
+    }
+
+    /// Shared SheetViewport insertion tail (create + place paths).
+    /// Paper center is Y-up; storage is positive-down.
+    private func insertSheetViewport(
+        paperCenterXUp: Double, paperCenterYUp: Double,
+        paperWidth: Double, paperHeight: Double,
+        modelCenterX: Double, modelCenterY: Double,
+        viewHeight: Double
+    ) -> Int? {
+        guard let tab = activeTab else { return nil }
+        let index = tab.activeViewIndex
+        let view = tab.drawingViews[index]
+        guard view.kind == .sheet else { return nil }
+        guard paperWidth > 1e-9, paperHeight > 1e-9, viewHeight > 1e-9 else { return nil }
+        guard let modelView = tab.drawingViews.first(where: { $0.kind == .model }) else { return nil }
+        var viewports = sheetViewports(for: view.document)
+        let nextID = (viewports.map(\.id).max() ?? 1) + 1
         let viewport = DXFImporter.SheetViewport(
-            paperCenterX: paperCenterX, paperCenterY: paperCenterY,
+            paperCenterX: paperCenterXUp, paperCenterY: -paperCenterYUp,
             paperWidth: paperWidth, paperHeight: paperHeight,
             status: nextID, id: nextID,
             viewCenterX: 0, viewCenterY: 0,
@@ -2099,6 +2221,11 @@ public final class TabManager {
             throw TabError.cannotSaveWhileInBlockEditor
         }
         let ext = url.pathExtension.lowercased()
+        // Sheet-set association for DXF/DWG saves (stamped as `AcSheetSetData`).
+        let activeLayoutName: String? = tab.drawingViews.indices.contains(tab.activeViewIndex)
+            ? tab.drawingViews[tab.activeViewIndex].name : nil
+        let saveHint = (ext == "dxf" || ext == "dwg")
+            ? sheetSetHintProvider?(url.path, activeLayoutName) : nil
         if ext == "eab" {
             try EABWriter.write(views: tab.drawingViews, to: url,
                                 namedSetups: tab.namedPageSetups,
@@ -2118,14 +2245,14 @@ public final class TabManager {
             defer { try? FileManager.default.removeItem(at: tempDXF) }
 
             try DXFExporter.export(
-                views: tab.drawingViews, to: tempDXF, dxfVersion: dxfVersion,
+                views: tab.drawingViews, to: tempDXF, dxfVersion: dxfVersion, sheetSetHint: saveHint,
                 tileMode: tab.drawingViews[tab.activeViewIndex].kind == .sheet ? 0 : 1,
                 psltscale: tab.drawingViews[tab.activeViewIndex].document.paperSpaceLinetypeScale,
                 namedSetups: tab.namedPageSetups)
             try ODADWGConverter.convertSync(input: tempDXF, output: url, toFormat: "DWG")
         } else {
             try DXFExporter.export(
-                views: tab.drawingViews, to: url, dxfVersion: dxfVersion,
+                views: tab.drawingViews, to: url, dxfVersion: dxfVersion, sheetSetHint: saveHint,
                 tileMode: tab.drawingViews[tab.activeViewIndex].kind == .sheet ? 0 : 1,
                 psltscale: tab.drawingViews[tab.activeViewIndex].document.paperSpaceLinetypeScale,
                 namedSetups: tab.namedPageSetups)
@@ -2381,6 +2508,16 @@ public final class TabManager {
                 return snapshot.drawingViews[i].docSnapshot.paperSpaceLinetypeScale
             }()
 
+            // Sheet-set association for DXF/DWG saves (see saveActiveTabAs).
+            // The detached save task is non-isolated, so the MainActor
+            // provider hop is explicit here.
+            let snapshotLayoutIndex = (snapshot.activeViewIndex >= 0
+                && snapshot.activeViewIndex < snapshot.drawingViews.count)
+                ? snapshot.activeViewIndex : 0
+            let snapshotLayoutName: String? = snapshot.drawingViews.indices.contains(snapshotLayoutIndex)
+                ? snapshot.drawingViews[snapshotLayoutIndex].viewName : nil
+            let snapshotHint: DXFSheetSetHint? = (ext == "dxf" || ext == "dwg")
+                ? await MainActor.run { sheetSetHintProvider?(targetURL.path, snapshotLayoutName) } : nil
             if ext == "eab" {
                 try EABWriter.write(
                     snapshots: snapshot.drawingViews,
@@ -2412,11 +2549,11 @@ public final class TabManager {
                 try DXFExporter.export(
                     snapshots: snapshot.drawingViews,
                     to: tempDXF,
-                    dxfVersion: dxfVersion,
+                    dxfVersion: dxfVersion, sheetSetHint: snapshotHint,
                     tileMode: snapshotTileMode,
                     psltscale: snapshotPsltscale,
                     progress: progressHandler,
-                    namedSetups: snapshot.namedPageSetups
+                    namedSetups: snapshot.namedPageSetups,
                 )
                 progressHandler?(0.9)
                 try await ODADWGConverter.convert(input: tempDXF, output: targetURL, toFormat: "DWG")
@@ -2425,11 +2562,11 @@ public final class TabManager {
                 try DXFExporter.export(
                     snapshots: snapshot.drawingViews,
                     to: targetURL,
-                    dxfVersion: dxfVersion,
+                    dxfVersion: dxfVersion, sheetSetHint: snapshotHint,
                     tileMode: snapshotTileMode,
                     psltscale: snapshotPsltscale,
                     progress: progressHandler,
-                    namedSetups: snapshot.namedPageSetups
+                    namedSetups: snapshot.namedPageSetups,
                 )
             }
 
@@ -2555,6 +2692,7 @@ public final class TabManager {
         kickXrefLoads(for: tab)
         let newIndex = tabs.count - 1
         switchToTab(at: newIndex)
+        notifyDrawingOpened(path: url.path)
         return newIndex
     }
 
@@ -2572,3 +2710,11 @@ public final class TabManager {
         case cannotSaveWhileInBlockEditor
     }
 }
+
+
+
+
+
+
+
+

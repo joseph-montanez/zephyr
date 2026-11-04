@@ -122,12 +122,17 @@ final class LispVarStore: @unchecked Sendable {
         "XDWGFADECTL": .int(50),
         "XLOADCTL": .int(2),
         "XREFNOTIFY": .int(1),
+        "SSLOCATE": .int(1),
+        "SSMAUTOOPEN": .int(1),
+        "SSMPOLLTIME": .int(60),
+        "SSMSHEETSTATUS": .int(2),
+        "UPDATETHUMBNAIL": .int(1),
     ]
 
     private static let readOnly: Set<String> = [
         "ACADVER", "AREA", "CMDNAMES", "CSPACE", "CTAB", "CVPORT", "DATE", "DWGNAME",
         "DWGPREFIX", "DWGTITLED", "ERRNO", "EXTMAX", "EXTMIN", "LASTANGLE",
-        "LOGINNAME", "MILLISECS", "PERIMETER", "PLATFORM", "PSTYLEMODE", "TILEMODE",
+        "LOGINNAME", "MILLISECS", "PERIMETER", "PLATFORM", "PSTYLEMODE", "SSFOUND", "SSMSTATE", "TILEMODE",
         "UNDOCTL", "VERSION",
     ]
 
@@ -233,6 +238,20 @@ final class LispVarStore: @unchecked Sendable {
             return .int(XrefSysvars.xloadCtl)
         case "XREFNOTIFY":
             return .int(XrefSysvars.xrefNotify)
+        case "SSLOCATE":
+            return .int(SheetSetSysvars.sslocate)
+        case "SSMAUTOOPEN":
+            return .int(SheetSetSysvars.ssmAutoOpen)
+        case "SSMPOLLTIME":
+            return .int(SheetSetSysvars.ssmPollTime)
+        case "SSMSHEETSTATUS":
+            return .int(SheetSetSysvars.ssmSheetStatus)
+        case "UPDATETHUMBNAIL":
+            return .int(SheetSetSysvars.updateThumbnail)
+        case "SSFOUND":
+            return .string(SheetSetSysvars.lastFoundPath)
+        case "SSMSTATE":
+            return .int(SheetSetSysvars.managerOpen ? 1 : 0)
         case "LAYLOCKFADECTL":
             return .int(document.lockedLayerFadePercent)
         case "TRANSPARENCYDISPLAY":
@@ -504,6 +523,32 @@ final class LispVarStore: @unchecked Sendable {
                 document.xrefFadePercent = intValue
                 document.markNeedsRegeneration()
                 XrefSysvars.fadePercent = intValue
+            }
+            return nil
+        case "SSLOCATE", "SSMAUTOOPEN", "SSMPOLLTIME", "SSMSHEETSTATUS", "UPDATETHUMBNAIL":
+            let sheetInt: Int?
+            switch value {
+            case .int(let i): sheetInt = i
+            case .real(let r): sheetInt = Int(r)
+            default: sheetInt = nil
+            }
+            guard let sheetInt else { return "\(name) requires an integer value" }
+            switch name {
+            case "SSLOCATE":
+                guard (0...1).contains(sheetInt) else { return "SSLOCATE requires 0 or 1" }
+                SheetSetSysvars.sslocate = sheetInt
+            case "SSMAUTOOPEN":
+                guard (0...1).contains(sheetInt) else { return "SSMAUTOOPEN requires 0 or 1" }
+                SheetSetSysvars.ssmAutoOpen = sheetInt
+            case "SSMPOLLTIME":
+                guard sheetInt >= 0 else { return "SSMPOLLTIME requires a non-negative interval" }
+                SheetSetSysvars.ssmPollTime = sheetInt
+            case "SSMSHEETSTATUS":
+                guard (0...2).contains(sheetInt) else { return "SSMSHEETSTATUS requires 0, 1, or 2" }
+                SheetSetSysvars.ssmSheetStatus = sheetInt
+            default: // UPDATETHUMBNAIL
+                guard sheetInt >= 0 else { return "UPDATETHUMBNAIL requires a non-negative value" }
+                SheetSetSysvars.updateThumbnail = sheetInt
             }
             return nil
         case "LAYLOCKFADECTL":

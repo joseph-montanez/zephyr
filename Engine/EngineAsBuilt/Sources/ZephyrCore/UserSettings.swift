@@ -43,6 +43,7 @@ public struct UserSettings: Codable, Sendable {
 
     // MARK: - External references (xrefs)
     public var xrefPanelVisible: Bool
+    public var sheetSetManagerActive: Bool
     /// REFPATHTYPE: 0 = full path, 1 = relative (default), 2 = no path.
     public var xrefRefPathType: Int
     public var xrefSearchPaths: [String]
@@ -82,6 +83,7 @@ public struct UserSettings: Codable, Sendable {
         ribbonMode: String = "full",
         activeRibbonTab: String? = nil,
         xrefPanelVisible: Bool = false,
+        sheetSetManagerActive: Bool = false,
         xrefRefPathType: Int = 1,
         xrefSearchPaths: [String] = [],
         xrefMaxLoaded: Int = 32,
@@ -109,6 +111,7 @@ public struct UserSettings: Codable, Sendable {
         self.ribbonMode = ribbonMode
         self.activeRibbonTab = activeRibbonTab
         self.xrefPanelVisible = xrefPanelVisible
+        self.sheetSetManagerActive = sheetSetManagerActive
         self.xrefRefPathType = xrefRefPathType
         self.xrefSearchPaths = xrefSearchPaths
         self.xrefMaxLoaded = xrefMaxLoaded
@@ -170,6 +173,8 @@ public struct UserSettings: Codable, Sendable {
         activeRibbonTab = try box.decodeIfPresent(String.self, forKey: .activeRibbonTab)
         xrefPanelVisible = try box.decodeIfPresent(Bool.self, forKey: .xrefPanelVisible)
             ?? fallback.xrefPanelVisible
+        sheetSetManagerActive = try box.decodeIfPresent(Bool.self, forKey: .sheetSetManagerActive)
+            ?? fallback.sheetSetManagerActive
         xrefRefPathType = try box.decodeIfPresent(Int.self, forKey: .xrefRefPathType)
             ?? fallback.xrefRefPathType
         xrefSearchPaths = try box.decodeIfPresent([String].self, forKey: .xrefSearchPaths)
@@ -220,6 +225,7 @@ public struct UserSettings: Codable, Sendable {
             ribbonMode: ui.ribbonMode.rawValue,
             activeRibbonTab: ui.activeRibbonTab,
             xrefPanelVisible: ui.xrefPanelVisible,
+            sheetSetManagerActive: ui.sheetSetManagerActive,
             xrefRefPathType: ui.xrefRefPathType,
             xrefSearchPaths: ui.xrefSearchPaths,
             xrefMaxLoaded: ui.xrefMaxLoaded,

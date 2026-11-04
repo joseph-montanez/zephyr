@@ -234,6 +234,13 @@ struct AppUI {
             XrefPaletteUI.render(engine: engine)
         }
 
+        // 7d. Sheet Set Manager palette (SHEETSET command).
+        if DocumentPanelUIPolicy.shouldRenderActiveDocumentPanel(
+            isVisible: engine.ui.sheetSetManagerActive,
+            showsActiveTab: showsActiveTab) {
+            SheetSetManagerUI.render(engine: engine)
+        }
+
         // 8. Command line overlay at the bottom (opened by typing any letter key).
         // Gated to the window showing the active tab: the buffer is shared,
         // so rendering in every window duplicates the prompt and splits

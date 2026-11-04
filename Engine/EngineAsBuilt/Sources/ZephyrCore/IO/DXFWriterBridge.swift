@@ -158,7 +158,8 @@ public enum DXFWriterBridge {
     public static func export(
         document: CADDocument,
         to url: URL,
-        dxfVersion: DXFVersion = .defaultExport
+        dxfVersion: DXFVersion = .defaultExport,
+        sheetSetHint: DXFSheetSetHint? = nil
     ) throws {
         let view = ExportViewData(
             name: "Model",
@@ -182,7 +183,7 @@ public enum DXFWriterBridge {
             pstyleMode: document.pstyleMode,
             viewportOverrides: document.viewportLayerOverrides)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion,
-                        psltscale: document.paperSpaceLinetypeScale)
+                        psltscale: document.paperSpaceLinetypeScale, sheetSetHint: sheetSetHint)
     }
 
     public static func export(
@@ -191,7 +192,8 @@ public enum DXFWriterBridge {
         dxfVersion: DXFVersion = .defaultExport,
         tileMode: Int = 1,
         psltscale: Int = 1,
-        namedSetups: [CADNamedPageSetup] = []
+        namedSetups: [CADNamedPageSetup] = [],
+        sheetSetHint: DXFSheetSetHint? = nil
     ) throws {
         let exportViews = views.map {
             ExportViewData(
@@ -217,7 +219,7 @@ public enum DXFWriterBridge {
                 viewportOverrides: $0.document.viewportLayerOverrides)
         }
         try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion, tileMode: tileMode,
-                        psltscale: psltscale, namedSetups: namedSetups)
+                        psltscale: psltscale, namedSetups: namedSetups, sheetSetHint: sheetSetHint)
     }
 
     public static func exportToDXF(
@@ -253,7 +255,8 @@ public enum DXFWriterBridge {
         dxfVersion: DXFVersion = .defaultExport,
         tileMode: Int = 1,
         psltscale: Int = 1,
-        namedSetups: [CADNamedPageSetup] = []
+        namedSetups: [CADNamedPageSetup] = [],
+        sheetSetHint: DXFSheetSetHint? = nil
     ) throws {
         guard !sourceViews.isEmpty else {
             throw DXFWriter.WriterError.invalidEntity("Cannot export a DXF without a drawing view")
@@ -315,6 +318,7 @@ public enum DXFWriterBridge {
             && sourceVersion != dxfVersion
         let writer = DXFWriter()
         writer.version = dxfVersion
+        writer.sheetSetHint = sheetSetHint
         if let payload = roundTripPayload {
             if isCrossVersionExport {
                 writer.preservedClasses = []
@@ -3547,3 +3551,8 @@ extension With where Self: DXFEntity {
         var copy = self; configure(&copy); return copy
     }
 }
+
+
+
+
+

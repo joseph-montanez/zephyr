@@ -483,6 +483,16 @@ struct AppCommandRegistration {
             factory: { DataTableCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "SHEETLISTTABLE",
+            aliases: [],
+            factory: { SheetListTableCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "PLACEVIEW",
+            aliases: [],
+            factory: { PlaceViewCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "AREA",
             aliases: ["AA"],
             factory: { AreaCommand() }
@@ -918,3 +928,7 @@ struct AppCommandRegistration {
         // are registered inside PhrostEngine itself.
     }
 }
+
+
+
+

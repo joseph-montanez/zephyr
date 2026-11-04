@@ -731,6 +731,26 @@ public final class PhrostEngine {
             }
         }
 
+        // SSLOCATE/SSMAUTOOPEN: opening a member drawing auto-opens its set.
+        // The hop is async because the store lives on the command processor.
+        tabManager.onDrawingOpened = { [weak self] path in
+            Task { await self?.commandProcessor.autoOpenSheetSet(for: path) }
+        }
+        // Save-time stamp: a member drawing saved to DXF/DWG carries its
+        // set association (`AcSheetSetData`) so LT sees it on open.
+        tabManager.sheetSetHintProvider = { [weak self] filePath, layoutName in
+            guard let self,
+                  let layout = layoutName, !layout.isEmpty,
+                  let (set, sheet) = self.commandProcessor.sheetSetStore
+                      .sheetContext(documentFile: filePath, layoutName: layout),
+                  !set.dstPath.isEmpty
+            else { return nil }
+            return DXFSheetSetHint(
+                dstPath: set.dstPath,
+                dwgName: URL(fileURLWithPath: filePath).lastPathComponent,
+                layoutHandle: sheet.handle)
+        }
+
         self.renderer = EngineRenderer(engine: self)
         if !self.renderer.initGPUPipelines() {
             print("initGPUPipelines failed.")
@@ -763,6 +783,7 @@ public final class PhrostEngine {
         self.ui.drawPaletteVisible = settings.drawPaletteVisible
         self.ui.blockPanelVisible = settings.blockPanelVisible
         self.ui.xrefPanelVisible = settings.xrefPanelVisible
+        self.ui.sheetSetManagerActive = settings.sheetSetManagerActive
         self.ui.xrefRefPathType = settings.xrefRefPathType
         self.ui.xrefSearchPaths = settings.xrefSearchPaths
         self.ui.xrefMaxLoaded = settings.xrefMaxLoaded

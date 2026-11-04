@@ -223,6 +223,7 @@ public enum DXFTableType: String, Sendable {
     case style        = "STYLE"
     case dimstyle     = "DIMSTYLE"
     case vport        = "VPORT"
+    case view         = "VIEW"
     case blockRecord  = "BLOCK_RECORD"
     case appid        = "APPID"
     case imagedef     = "IMAGEDEF"
@@ -1813,6 +1814,40 @@ public class DXFVportEntry: DXFTableEntry {
         self.snapIsopair = 0
         self.gridBehavior = 7
         super.init(tType: .vport)
+    }
+}
+
+// MARK: - View (named view table record)
+//
+// Read-only metadata for the Sheet Views listing. The writer round-trips
+// VIEW records from preserved raw records, so this entry never feeds the
+// writer; it only exposes name/handle/extent for browsing and future
+// place-on-sheet work.
+
+public class DXFViewEntry: DXFTableEntry {
+    public var center: Vector3       // 10/20
+    public var direction: Vector3    // 11/21/31
+    public var target: Vector3       // 12/22/32
+    public var height: Double        // 40
+    public var width: Double         // 41
+    public var lensLength: Double    // 42
+    public var frontClip: Double     // 43
+    public var backClip: Double      // 44
+    public var twist: Double         // 50
+    public var viewMode: Int         // 71
+
+    public override init() {
+        self.center = .zero
+        self.direction = Vector3(x: 0, y: 0, z: 1)
+        self.target = .zero
+        self.height = 0
+        self.width = 0
+        self.lensLength = 50
+        self.frontClip = 0
+        self.backClip = 0
+        self.twist = 0
+        self.viewMode = 0
+        super.init(tType: .view)
     }
 }
 

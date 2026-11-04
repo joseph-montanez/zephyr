@@ -15,37 +15,41 @@ public enum DXFExporter {
     public static func export(
         document: CADDocument,
         to url: URL,
-        dxfVersion: DXFVersion = .defaultExport
+        dxfVersion: DXFVersion = .defaultExport,
+        sheetSetHint: DXFSheetSetHint? = nil
     ) throws {
-        try DXFWriterBridge.export(document: document, to: url, dxfVersion: dxfVersion)
+        try DXFWriterBridge.export(document: document, to: url, dxfVersion: dxfVersion, sheetSetHint: sheetSetHint)
     }
 
     public static func export(
         views: [DrawingView],
         to url: URL,
         dxfVersion: DXFVersion = .defaultExport,
+        sheetSetHint: DXFSheetSetHint? = nil,
         tileMode: Int = 1,
         psltscale: Int = 1,
         namedSetups: [CADNamedPageSetup] = []
     ) throws {
         try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion, tileMode: tileMode,
-                                   psltscale: psltscale, namedSetups: namedSetups)
+                                   psltscale: psltscale, namedSetups: namedSetups, sheetSetHint: sheetSetHint)
     }
 
     /// Background-save: export from a snapshot with progress and cancellation.
     public static func export(snapshot: CADDocumentSnapshot, to url: URL,
                                dxfVersion: DXFVersion = .defaultExport,
+        sheetSetHint: DXFSheetSetHint? = nil,
                                progress: ((Float) -> Void)? = nil) throws {
         try Task.checkCancellation()
         progress?(0.5)
         let tempDoc = CADDocument()
         tempDoc.restore(from: snapshot)
-        try DXFWriterBridge.export(document: tempDoc, to: url, dxfVersion: dxfVersion)
+        try DXFWriterBridge.export(document: tempDoc, to: url, dxfVersion: dxfVersion, sheetSetHint: sheetSetHint)
         progress?(1.0)
     }
 
     public static func export(snapshots: [SaveDocumentSnapshot], to url: URL,
-                              dxfVersion: DXFVersion = .defaultExport,
+                               dxfVersion: DXFVersion = .defaultExport,
+        sheetSetHint: DXFSheetSetHint? = nil,
                               tileMode: Int = 1,
                               psltscale: Int = 1,
                               progress: ((Float) -> Void)? = nil,
@@ -69,7 +73,7 @@ public enum DXFExporter {
             progress?(0.1 + 0.4 * Float(index + 1) / Float(snapshots.count))
         }
         try DXFWriterBridge.export(views: views, to: url, dxfVersion: dxfVersion, tileMode: tileMode,
-                                   psltscale: psltscale, namedSetups: namedSetups)
+                                   psltscale: psltscale, namedSetups: namedSetups, sheetSetHint: sheetSetHint)
         progress?(1.0)
     }
 
@@ -1678,3 +1682,5 @@ public enum DXFExporter {
 public enum DXFExportError: Error {
     case writeFailed(String)
 }
+
+

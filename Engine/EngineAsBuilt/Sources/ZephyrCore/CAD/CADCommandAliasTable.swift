@@ -84,6 +84,10 @@ public enum CADCommandAliasTable {
             category: .draw,
             description: "Insert a data table"),
         CADCommandAliasEntry(
+            canonicalName: "SHEETLISTTABLE", aliases: [],
+            category: .draw,
+            description: "Insert the current sheet set's sheet list table"),
+        CADCommandAliasEntry(
             canonicalName: "REDRAW", aliases: ["R"], category: .view,
             description: "Refresh the viewport display"),
         CADCommandAliasEntry(
@@ -131,6 +135,26 @@ public enum CADCommandAliasTable {
             canonicalName: "-PUBLISH", aliases: [],
             category: .draw,
             description: "Publish a sheet list file from the command line (foreground, CSV log)"),
+        CADCommandAliasEntry(
+            canonicalName: "NEWSHEETSET", aliases: [],
+            category: .draw,
+            description: "Create a new sheet set"),
+        CADCommandAliasEntry(
+            canonicalName: "OPENSHEETSET", aliases: [],
+            category: .draw,
+            description: "Open a sheet set data file"),
+        CADCommandAliasEntry(
+            canonicalName: "SHEETSET", aliases: ["SSM"],
+            category: .draw,
+            description: "Show the Sheet Set Manager"),
+        CADCommandAliasEntry(
+            canonicalName: "SHEETSETHIDE", aliases: [],
+            category: .draw,
+            description: "Hide the Sheet Set Manager"),
+        CADCommandAliasEntry(
+            canonicalName: "-PUBLISHSET", aliases: [],
+            category: .draw,
+            description: "Publish a sheet set to PDF from the command line"),
         CADCommandAliasEntry(
             canonicalName: "-PAGESETUP", aliases: [],
             category: .settings,

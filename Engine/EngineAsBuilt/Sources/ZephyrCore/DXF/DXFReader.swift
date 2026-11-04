@@ -57,6 +57,9 @@ public class DXFReader {
     public var dimstyles: [DXFDimstyleEntry] = []
     public var textstyles: [DXFStyleEntry] = []
     public var vports: [DXFVportEntry] = []
+    /// Named VIEW table records (Sheet Views listing). Read-only metadata;
+    /// round-trip stays on the preserved raw records.
+    public var views: [DXFViewEntry] = []
     public var appids: [DXFAppIdEntry] = []
     public var blockRecords: [DXFBlockRecordEntry] = []
     public var imagedefs: [DXFImageDefEntry] = []
@@ -511,6 +514,7 @@ public class DXFReader {
                 case "DIMSTYLE":     tryParse { try parseDimstyle(at: pos) }
                 case "STYLE":        tryParse { try parseStyle(at: pos) }
                 case "VPORT":        tryParse { try parseVport(at: pos) }
+                case "VIEW":         tryParse { try parseView(at: pos) }
                 case "APPID":        tryParse { try parseAppId(at: pos) }
                 case "BLOCK_RECORD": tryParse { try parseBlockRecord(at: pos) }
                 case "IMAGEDEF":     tryParse { try parseImageDef(at: pos) }
@@ -2590,6 +2594,38 @@ extension DXFReader {
             }
         }
         vports.append(entry)
+    }
+
+    func parseView(at startIdx: Int) throws {
+        let entry = DXFViewEntry()
+        var idx = startIdx
+        idx += 1
+        while idx < pairs.count {
+            let (c, v) = pairs[idx]; idx += 1
+            if c == 0 { pos = idx - 1; break }
+            switch c {
+            case 2:   entry.name = decode(v)
+            case 5:   if entry.handle == 0 { entry.handle = parseHandle(v) }
+            case 10:  entry.center.x = d(v)
+            case 20:  entry.center.y = d(v)
+            case 11:  entry.direction.x = d(v)
+            case 21:  entry.direction.y = d(v)
+            case 31:  entry.direction.z = d(v)
+            case 12:  entry.target.x = d(v)
+            case 22:  entry.target.y = d(v)
+            case 32:  entry.target.z = d(v)
+            case 40:  entry.height = d(v)
+            case 41:  entry.width = d(v)
+            case 42:  entry.lensLength = d(v)
+            case 43:  entry.frontClip = d(v)
+            case 44:  entry.backClip = d(v)
+            case 50:  entry.twist = d(v)
+            case 70:  entry.flags = i(v)
+            case 71:  entry.viewMode = i(v)
+            default:  break
+            }
+        }
+        views.append(entry)
     }
 
     func parseAppId(at startIdx: Int) throws {
