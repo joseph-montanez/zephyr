@@ -284,6 +284,29 @@ public enum RadialNavCapture {
         wasActive && isActive && !physicalLeftDown
     }
 
+    /// Per-frame reconcile decision: relative mouse mode centers and hides
+    /// the cursor, so it may only be on while a gesture holds it — an active
+    /// radial zone drag or an active middle-button pan. SDL reporting
+    /// relative mode with no claimant means a missed release (lost mouse-up,
+    /// focus change, float-window mismatch) stranded it; forcing it off
+    /// restores a free cursor. Touch pan never claims relative mode.
+    public static func shouldForceClear(
+        sdlReportsRelative: Bool, radialCapturing: Bool, panActive: Bool
+    ) -> Bool {
+        sdlReportsRelative && !radialCapturing && !panActive
+    }
+
+    /// Force relative mouse mode off on every listed window. Used when no
+    /// gesture claims capture, so a stranded mode (which parks the cursor at
+    /// the window center) can never survive past the current frame.
+    public static func releaseAllRelativeMouseModes(
+        windows: [EngineManagedWindow]
+    ) {
+        for window in windows where SDL_GetWindowRelativeMouseMode(window.handle) {
+            _ = SDL_SetWindowRelativeMouseMode(window.handle, false)
+        }
+    }
+
     /// Clamp a nav origin into the current window so the whole nav stays
     /// visible. A remembered spot from a larger window (or a drag) would
     /// otherwise end up off-screen after a resize.

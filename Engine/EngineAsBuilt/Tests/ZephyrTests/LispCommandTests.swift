@@ -114,6 +114,10 @@ final class LispCommandTests: XCTestCase {
             "PSETUPIN", "SCALELISTEDIT", "-SCALELISTEDIT",
             // LAYOUT: bare Enter enters the modal option prompt.
             "LAYOUT",
+            // UCS/PLAN: bare Enter enters the interactive option prompt
+            // (AutoCAD parity: UCS -> Enter -> Z -> Enter -> 45 -> Enter;
+            // PLAN -> Enter -> Enter accepts <Current>).
+            "UCS", "PLAN",
         ]
         let others = CommandDescriptor.allCommands.filter {
             !$0.syntax.isEmpty

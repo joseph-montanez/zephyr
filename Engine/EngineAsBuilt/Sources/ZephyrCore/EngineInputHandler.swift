@@ -291,7 +291,7 @@ internal final class EngineInputHandler {
                 engine.interaction.touchFingersDown = 0
                 engine.interaction.forceHideOSCursor = false
                 // Release relative mouse mode and show the system cursor.
-                _ = SDL_SetWindowRelativeMouseMode(target.handle, false)
+                RadialNavCapture.releaseAllRelativeMouseModes(windows: engine.windowManager.windows)
                 _ = SDL_ShowCursor()
                 engine.interaction.clearWindowGestureIfIdle()
                 break
@@ -389,7 +389,7 @@ internal final class EngineInputHandler {
                     if engine.interaction.panActive {
                         engine.interaction.panActive = false
                         engine.interaction.forceHideOSCursor = false
-                        _ = SDL_SetWindowRelativeMouseMode(target.handle, false)
+                        RadialNavCapture.releaseAllRelativeMouseModes(windows: engine.windowManager.windows)
                     }
                     let upLocal = paneLocal(x: e.button.x, y: e.button.y, isMain: isMain)
                     handleMouseUp(x: upLocal.x, y: upLocal.y)
@@ -397,7 +397,7 @@ internal final class EngineInputHandler {
                 } else if Int(e.button.button) == SDL_BUTTON_MIDDLE {
                     engine.interaction.panActive = false
                     engine.interaction.forceHideOSCursor = false
-                    _ = SDL_SetWindowRelativeMouseMode(target.handle, false)
+                    RadialNavCapture.releaseAllRelativeMouseModes(windows: engine.windowManager.windows)
                     engine.interaction.clearWindowGestureIfIdle()
                 }
 

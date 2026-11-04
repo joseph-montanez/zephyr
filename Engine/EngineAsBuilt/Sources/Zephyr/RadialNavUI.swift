@@ -63,6 +63,21 @@ struct RadialNavUI {
     }
 
     static func render(engine: PhrostEngine, dw: Float, dh: Float) {
+        // Per-frame stray-capture reconcile (runs whether or not the nav is
+        // visible): relative mode centers and hides the cursor, so a mode
+        // with no live claimant — no radial zone drag, no middle-button pan —
+        // is a stranded miss (lost mouse-up, focus change, float-window
+        // mismatch) and is forced off before it can park the cursor.
+        // Claimants are read, never set, here: an active drag keeps its mode.
+        if RadialNavCapture.shouldForceClear(
+            sdlReportsRelative: engine.windowManager.windows.contains(
+                where: { SDL_GetWindowRelativeMouseMode($0.handle) }),
+            radialCapturing: activeWindowHandle != nil,
+            panActive: engine.interaction.panActive)
+        {
+            RadialNavCapture.releaseAllRelativeMouseModes(
+                windows: engine.windowManager.windows)
+        }
         guard engine.ui.radialNavVisible else {
             // Hidden mid-drag (e.g. active window changed): never leave
             // relative mouse mode dangling on the capture window.

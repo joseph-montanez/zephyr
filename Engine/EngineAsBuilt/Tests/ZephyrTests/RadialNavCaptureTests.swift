@@ -76,4 +76,30 @@ final class RadialNavCaptureTests: XCTestCase {
         XCTAssertEqual(p.x, 0)
         XCTAssertEqual(p.y, 0)
     }
+
+    func testStrayRelativeModeIsForcedClear() {
+        // SDL reports relative mode but no gesture claims it: a stranded
+        // miss (lost mouse-up, focus change, float-window mismatch) that
+        // parks the cursor at the window center.
+        XCTAssertTrue(RadialNavCapture.shouldForceClear(
+            sdlReportsRelative: true, radialCapturing: false, panActive: false))
+    }
+
+    func testClaimedRelativeModeIsKept() {
+        // An active radial zone drag or middle-button pan owns the mode.
+        XCTAssertFalse(RadialNavCapture.shouldForceClear(
+            sdlReportsRelative: true, radialCapturing: true, panActive: false))
+        XCTAssertFalse(RadialNavCapture.shouldForceClear(
+            sdlReportsRelative: true, radialCapturing: false, panActive: true))
+        XCTAssertFalse(RadialNavCapture.shouldForceClear(
+            sdlReportsRelative: true, radialCapturing: true, panActive: true))
+    }
+
+    func testRelativeModeOffNeedsNoClear() {
+        // Nothing to reconcile when SDL already reports absolute mode.
+        XCTAssertFalse(RadialNavCapture.shouldForceClear(
+            sdlReportsRelative: false, radialCapturing: false, panActive: false))
+        XCTAssertFalse(RadialNavCapture.shouldForceClear(
+            sdlReportsRelative: false, radialCapturing: true, panActive: true))
+    }
 }

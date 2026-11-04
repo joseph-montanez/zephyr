@@ -36,6 +36,56 @@ final class UCSCommandTests: XCTestCase {
         XCTAssertTrue(match?.descriptor.syntax.contains("Prev") ?? false)
     }
 
+    func testUCSAndPlanBareEnterExecutes() {
+        // Bare UCS/PLAN + Enter must start the interactive prompt flow
+        // (AutoCAD parity) instead of waiting for same-line parameters.
+        let processor = makeProcessor()
+        XCTAssertTrue(
+            processor.matchCommands(input: "UCS").first?.descriptor.bareEnterExecutes ?? false)
+        XCTAssertTrue(
+            processor.matchCommands(input: "PLAN").first?.descriptor.bareEnterExecutes ?? false)
+    }
+
+    func testUCSInteractiveOptionChain() {
+        // The exact submit sequence the command line now sends for the
+        // AutoCAD flow: UCS -> Enter, z -> Enter, 45 -> Enter.
+        let document = makeDocument()
+        let processor = makeProcessor()
+        let command = UCSCommand()
+        command.start(processor: processor)
+        XCTAssertEqual(
+            command.handleCommandText(
+                "Z", document: document, cameraRotation: 0, processor: processor),
+            .continue)
+        XCTAssertEqual(command.phase, .zAngle)
+        XCTAssertEqual(
+            command.handleCommandText(
+                "45", document: document, cameraRotation: 0, processor: processor),
+            .finished)
+        XCTAssertEqual(
+            document.ucsState.definition.angle,
+            2 * Double.pi - Double.pi / 4, accuracy: 1e-12)
+    }
+
+    func testPlanInteractiveOptionChain() {
+        // PLAN -> Enter (prompt) -> Enter (accept <Current>) levels the view.
+        let processor = makeProcessor()
+        let command = PlanCommand()
+        var applied: Double?
+        var zoomed = false
+        XCTAssertEqual(
+            command.handleCommandText(
+                "",
+                ucsAngle: Double.pi / 6,
+                pushViewState: {},
+                applyRotation: { applied = $0 },
+                zoomToExtents: { zoomed = true },
+                processor: processor),
+            .finished)
+        XCTAssertEqual(applied ?? -1, Double.pi / 6, accuracy: 1e-12)
+        XCTAssertTrue(zoomed)
+    }
+
     func testPlanDescriptorOffersCurrentAsDefault() {
         let processor = makeProcessor()
         let match = processor.matchCommands(input: "PLAN").first

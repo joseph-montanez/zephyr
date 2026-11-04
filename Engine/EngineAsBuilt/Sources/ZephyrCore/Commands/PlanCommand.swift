@@ -212,6 +212,9 @@ public final class PlanCommand: FeatureCommand {
         processor.clearCommand()
         return
     }
+    // A keyboard-driven command never inherits a centered cursor: drop any
+    // stray relative capture (missed mouse-up elsewhere) on entry.
+    RadialNavCapture.releaseAllRelativeMouseModes(windows: engine.windowManager.windows)
     let upper = text.uppercased()
     let argument: String
     if upper == "PLAN" {
@@ -231,6 +234,9 @@ public final class PlanCommand: FeatureCommand {
     let command = PlanCommand()
     processor.activeFeatureCommand = command
     command.start(engine: engine, processor: processor)
+    // Bare PLAN stops at the options prompt (AutoCAD flow); the next Enter
+    // arrives as a continuation submit and accepts <Current>. Mirrors UCS.
+    guard !argument.isEmpty else { return }
     let result = command.handleCommandText(argument, engine: engine, processor: processor)
     if result == .finished {
         processor.finishFeatureCommand(engine: engine)

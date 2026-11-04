@@ -490,6 +490,9 @@ public final class UCSCommand: FeatureCommand {
         processor.clearCommand()
         return
     }
+    // A keyboard-driven command never inherits a centered cursor: drop any
+    // stray relative capture (missed mouse-up elsewhere) on entry.
+    RadialNavCapture.releaseAllRelativeMouseModes(windows: engine.windowManager.windows)
     let upper = text.uppercased()
     let argument: String
     if upper == "UCS" {
