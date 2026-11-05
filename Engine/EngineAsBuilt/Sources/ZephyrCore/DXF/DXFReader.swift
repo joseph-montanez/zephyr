@@ -2331,9 +2331,40 @@ extension DXFReader {
             rows.append(DataTableRow(cells: cells))
         }
 
-        let textHeight = cellTextHeights.compactMap { $0 }.first
+        var textHeight = cellTextHeights.compactMap { $0 }.first
             ?? max(0.1, defaultRowHeight * 0.6)
-        let textStyle = cellTextStyles.compactMap { $0 }.first
+        var textStyle = cellTextStyles.compactMap { $0 }.first
+        // Style-less cells (no group 140/7, as in CADdetails title blocks):
+        // inherit the *T display-block MTEXT height/style instead of the
+        // rowHeight * 0.6 fallback with a nil style (which the renderer
+        // would clobber to Standard 2.0).
+        if cellTextHeights.compactMap({ $0 }).isEmpty || textStyle == nil,
+           !blockName.isEmpty,
+           let displayBlock = blocks.first(where: {
+               $0.name.caseInsensitiveCompare(blockName) == .orderedSame
+           }) {
+            var blockHeight: Double?
+            var blockStyle: String?
+            for entity in displayBlock.entities {
+                guard let text = entity as? DXFTextEntity,
+                      text.height > 1e-9 else { continue }
+                if text.eType == .mTEXT {
+                    blockHeight = text.height
+                    if !text.style.isEmpty { blockStyle = text.style }
+                    break
+                }
+                if blockHeight == nil {
+                    blockHeight = text.height
+                    if !text.style.isEmpty { blockStyle = text.style }
+                }
+            }
+            if cellTextHeights.compactMap({ $0 }).isEmpty, let height = blockHeight {
+                textHeight = height
+            }
+            if textStyle == nil, let style = blockStyle {
+                textStyle = style
+            }
+        }
         let rawGroups = pairs.dropFirst().map {
             DataTableRawDXFGroup(code: $0.0, value: $0.1)
         }
