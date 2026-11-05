@@ -107,6 +107,7 @@ public final class WindowRenderContext {
         regenTask = nil
         regenInFlight = nil
         bridge.cancelPending()
+        bridge.invalidateCurveLOD()
         // Do not let the outgoing document's primitives/sprites draw while
         // the incoming document regenerates.
         geometry.clearAll()
@@ -132,6 +133,7 @@ public final class WindowRenderContext {
         regenTask = nil
         regenInFlight = nil
         bridge.cancelPending()
+        bridge.invalidateCurveLOD()
         vbTask?.cancel()
         vbTask = nil
         vbInFlightToken = nil

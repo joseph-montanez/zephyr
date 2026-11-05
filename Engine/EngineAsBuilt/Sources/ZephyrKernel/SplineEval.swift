@@ -87,6 +87,65 @@ public enum SplineEval: Sendable {
         return box
     }
 
+    /// Whether the rational weights are safe for convex-hull reasoning. Missing
+    /// weights are implicitly all positive.
+    public static func hasPositiveWeights(_ spline: Spline2d) -> Bool {
+        guard let weights = spline.weights else { return true }
+        return weights.count == spline.controlPoints.count && weights.allSatisfy { $0 > 0 }
+    }
+
+    /// Conservative bound of the active Bézier-style control polygon at `u`.
+    /// This is the correct hull for broad-phase culling, unlike a chord box.
+    public static func activeControlBounds(_ spline: Spline2d, at u: Double) -> BoundingBox2d? {
+        guard spline.isValid, hasPositiveWeights(spline),
+              let (_, _) = domain(of: spline) else { return nil }
+        let knots = spline.knots
+        let p = spline.degree
+        let n = spline.controlPoints.count - 1
+        let clamped = min(max(u, knots[p]), knots[n])
+        var low = p
+        var high = n
+        if clamped >= knots[n] {
+            low = spline.controlPoints.count - 1
+        } else {
+            while high - low > 1 {
+                let mid = (low + high) / 2
+                if clamped >= knots[mid] { low = mid } else { high = mid }
+            }
+        }
+        let start = max(0, low - p)
+        let end = min(n, low)
+        guard start <= end else { return nil }
+        var box = BoundingBox2d(point: spline.controlPoints[start])
+        for i in (start + 1)...end { box.include(spline.controlPoints[i]) }
+        return box
+    }
+
+    /// Nonzero knot interval containing `u`, in knot units. This keeps Newton-style
+    /// refinement inside one smooth span instead of stepping across a knot whose
+    /// multiplicity can reduce continuity or change the active control points.
+    public static func nonzeroKnotSpanBounds(_ spline: Spline2d, containing u: Double) -> (Double, Double)? {
+        guard spline.isValid, let (u0, u1) = domain(of: spline) else { return nil }
+        let knots = spline.knots
+        let p = spline.degree
+        let spanEpsilon = max(1e-12, (u1 - u0) * 1e-12)
+        // Knot spans run from knots[p] through knots[n], where n is the last
+        // control-point index. Search by index so repeated interior knots are
+        // handled explicitly rather than by numeric proximity alone.
+        for i in p..<(knots.count - p - 1) {
+            let lower = knots[i]
+            let upper = knots[i + 1]
+            guard upper - lower > spanEpsilon else { continue }
+            let clippedLower = max(lower, u0)
+            let clippedUpper = min(upper, u1)
+            guard clippedUpper - clippedLower > spanEpsilon else { continue }
+            if u >= clippedLower - spanEpsilon && u <= clippedUpper + spanEpsilon {
+                return (clippedLower, clippedUpper)
+            }
+        }
+        return nil
+    }
+
     /// Split at knot u via Boehm insertion. Returns (left, right) halves.
     public static func split(_ spline: Spline2d, at u: Double) -> (Spline2d, Spline2d)? {
         guard spline.isValid, let (u0, u1) = domain(of: spline) else { return nil }

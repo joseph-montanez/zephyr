@@ -21,8 +21,7 @@ final class TrimCommandTests: XCTestCase {
             transform: .identity,
             criterion: .click(point: click),
             cuttingSegments: [cuttingEdge],
-            exactLines: [cuttingEdge],
-            zoom: 1.0
+            exactLines: [cuttingEdge]
         )
 
         XCTAssertNil(err)
@@ -53,8 +52,7 @@ final class TrimCommandTests: XCTestCase {
             transform: .identity,
             criterion: .click(point: click),
             cuttingSegments: [edge1, edge2],
-            exactLines: [edge1, edge2],
-            zoom: 1.0
+            exactLines: [edge1, edge2]
         )
 
         XCTAssertNil(err)
@@ -93,8 +91,7 @@ final class TrimCommandTests: XCTestCase {
             transform: .identity,
             criterion: .rect(min: boxMin, max: boxMax, isCrossing: true),
             cuttingSegments: [edge],
-            exactLines: [edge],
-            zoom: 1.0
+            exactLines: [edge]
         )
 
         XCTAssertNil(err)
@@ -126,8 +123,7 @@ final class TrimCommandTests: XCTestCase {
             transform: .identity,
             criterion: .fence(p1: fenceP1, p2: fenceP2),
             cuttingSegments: [edge],
-            exactLines: [edge],
-            zoom: 1.0
+            exactLines: [edge]
         )
 
         XCTAssertNil(err)
@@ -159,8 +155,7 @@ final class TrimCommandTests: XCTestCase {
             transform: .identity,
             criterion: .click(point: click),
             cuttingSegments: [edge],
-            exactLines: [edge],
-            zoom: 1.0
+            exactLines: [edge]
         )
 
         XCTAssertNil(err)
@@ -250,7 +245,6 @@ final class TrimCommandTests: XCTestCase {
             criterion: .click(point: click),
             cuttingSegments: excluded.segments,
             exactLines: excluded.exactLines,
-            zoom: 2.0,
             exactCurves: excluded.exactCurves)
 
         XCTAssertNil(err)
@@ -284,7 +278,6 @@ final class TrimCommandTests: XCTestCase {
             criterion: .click(point: click),
             cuttingSegments: edges.segments,
             exactLines: edges.exactLines,
-            zoom: 2.0,
             exactCurves: edges.exactCurves)
 
         XCTAssertNil(err)
@@ -321,5 +314,58 @@ final class TrimCommandTests: XCTestCase {
             hi = min(1.0, bestU + half)
         }
         XCTAssertLessThan(dist, 1e-6, "trim endpoint must lie on the spline, got dist \(dist)")
+    }
+
+    /// End to end: the stored trim result is analytic, and screen-space
+    /// tessellation of that stored result keeps the exact trim endpoint at
+    /// deep zoom instead of reintroducing chord overshoot.
+    func testReproTrimEndpointSurvivesScreenSpaceTessellation() {
+        let shortenedStart = Vector3(x: -38.05263988729399, y: -195.17628363662365, z: 0)
+        let (doc, spline, _) = makeReproDoc(lineStart: shortenedStart)
+        let edges = TrimGeometryEngine.collectCuttingEdges(document: doc, cuttingHandles: nil)
+            .excluding(spline.handle)
+        let weights = Array(repeating: 1.0, count: Self.reproSplineCPs.count)
+        let click = NURBSEvaluator.evaluateAt(
+            degree: 3, knots: Self.reproKnots, controlPoints: Self.reproSplineCPs,
+            weights: weights, at: 0.1)!
+        let (newGeom, modified, err) = TrimGeometryEngine.trimEntity(
+            entity: spline, document: doc,
+            criterion: .click(point: click),
+            cuttingSegments: edges.segments,
+            exactLines: edges.exactLines,
+            exactCurves: edges.exactCurves)
+        XCTAssertNil(err)
+        XCTAssertTrue(modified)
+        guard case let .spline(controls, knots, degree, keptWeights, _) = newGeom?.first else {
+            XCTFail("Expected kept spline span")
+            return
+        }
+        let keptW = keptWeights ?? Array(repeating: 1.0, count: controls.count)
+        let start = NURBSEvaluator.evaluateAt(
+            degree: degree, knots: knots, controlPoints: controls,
+            weights: keptW, at: knots[degree])!
+        let end = NURBSEvaluator.evaluateAt(
+            degree: degree, knots: knots, controlPoints: controls,
+            weights: keptW, at: knots[controls.count])!
+        let viewport = ScreenTessellationViewport(
+            minX: 100, minY: -170, maxX: 145, maxY: -125)
+        let band = CurveScreenTessellation.zoomBand(for: 1000)
+        let context = CurveScreenTessellationContext(
+            pixelsPerUnit: 1000,
+            band: band,
+            designZoom: CurveScreenTessellation.designZoom(for: band),
+            viewport: viewport)
+        let tessellation = CurveScreenTessellation.tessellateSpline(
+            degree: degree,
+            knots: knots,
+            controlPoints: controls,
+            weights: keptW,
+            context: context)
+        XCTAssertFalse(tessellation.didHitMaximumSegments)
+        XCTAssertGreaterThan(tessellation.points.count, 2)
+        XCTAssertEqual(tessellation.points.first?.x ?? 0, start.x, accuracy: 1e-9)
+        XCTAssertEqual(tessellation.points.first?.y ?? 0, start.y, accuracy: 1e-9)
+        XCTAssertEqual(tessellation.points.last?.x ?? 0, end.x, accuracy: 1e-9)
+        XCTAssertEqual(tessellation.points.last?.y ?? 0, end.y, accuracy: 1e-9)
     }
 }

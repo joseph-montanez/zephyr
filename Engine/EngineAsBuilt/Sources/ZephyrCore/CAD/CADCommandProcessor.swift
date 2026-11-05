@@ -446,7 +446,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "GRID SNAP",       aliases: [],                category: .settings, syntax: "", description: "Toggle snapping to grid intersections on/off"),
         CommandDescriptor(canonicalName: "GRID SPACING",    aliases: [],                category: .settings, syntax: "<value>", description: "Set the base grid spacing in world units"),
         CommandDescriptor(canonicalName: "GRID ORIGIN",     aliases: [],                category: .settings, syntax: "<x> <y>", description: "Set the grid origin in world coordinates"),
-        CommandDescriptor(canonicalName: "SPLINETESS",  aliases: ["SPLINESEGS"],   category: .settings, syntax: "[value]", description: "Set or show spline tessellation quality divisor (lower = smoother, default 5000)"),
+        CommandDescriptor(canonicalName: "SPLINETESS",  aliases: ["SPLINESEGS"],   category: .settings, syntax: "[value]", description: "Set or show the legacy spline fallback density divisor (higher = smoother, default 5000); interactive curves use automatic screen-space tessellation"),
         CommandDescriptor(canonicalName: "SIMPLIFY",        aliases: ["SIMP", "COMPLEX", "COMPLEXBLOCKS"], category: .settings, syntax: "[ON|OFF]", description: "Toggle or set the simplification of complex block references to bounding boxes on/off"),
         CommandDescriptor(canonicalName: "SIMPLIFYPOLY",    aliases: ["SIMPPOLY", "COMPLEXPOLY", "SIMPLIFYPOLYLINES"], category: .settings, syntax: "[ON|OFF]", description: "Toggle or set the simplification of dense polylines on/off"),
         // --- Snap Toggles ---
@@ -2088,7 +2088,7 @@ public final class CADCommandProcessor {
         // --- Spline Tessellation ---
         case "SPLINETESS", "SPLINESEGS":
             guard let engine = engine else { clearCommand(); return }
-            print("[CAD] Spline tessellation divisor: \(engine.splineTessellationDivisor) (lower = smoother, default 5000)")
+            print("[CAD] Legacy spline fallback divisor: \(engine.splineTessellationDivisor) (higher = smoother, default 5000); interactive curves use automatic screen-space tessellation")
             clearCommand()
         case _ where upper.hasPrefix("SPLINETESS ") || upper.hasPrefix("SPLINESEGS "):
             guard let engine = engine else { clearCommand(); return }

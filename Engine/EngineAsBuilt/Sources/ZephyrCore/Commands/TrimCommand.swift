@@ -522,7 +522,6 @@ public final class TrimCommand: FeatureCommand {
             criterion: criterion,
             cuttingSegments: edges.segments,
             exactLines: edges.exactLines,
-            zoom: engine.camera.zoom,
             exactCurves: edges.exactCurves
         )
 
@@ -590,7 +589,6 @@ public final class TrimCommand: FeatureCommand {
                 criterion: criterion,
                 cuttingSegments: edges.segments,
                 exactLines: edges.exactLines,
-                zoom: engine.camera.zoom,
                 exactCurves: edges.exactCurves
             )
 
@@ -672,7 +670,6 @@ public final class TrimCommand: FeatureCommand {
                     criterion: criterion,
                     cuttingSegments: edges.segments,
                     exactLines: edges.exactLines,
-                    zoom: engine.camera.zoom,
                     exactCurves: edges.exactCurves
                 )
 

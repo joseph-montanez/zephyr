@@ -55,13 +55,30 @@ public final class CADRendererBridge {
     /// a superseded tab/edit instead of displaying them.
     private nonisolated(unsafe) var pendingResults: (
         generation: Int,
+        revision: UInt64,
         renderOrigin: CADRenderOrigin,
         autoContrastTrueColor: Bool,
         pointDisplayMode: Int,
         pointDisplaySize: Double,
-        results: [EntityResult]
+        results: [EntityResult],
+        curveLOD: CurveScreenTessellationContext?,
+        curvePlans: [CurveLODEntityPlan],
+        unsupportedCurveEntities: Int
     )? = nil
     private let pendingLock = NSLock()
+
+    struct CurveLODSlot {
+        var plan: CurveLODEntityPlan
+        var ids: [SpriteID]
+        var entityIndex: UInt32
+    }
+    private var curveSlots: [CurveLODSlot] = []
+    private var appliedCurveLOD: CurveScreenTessellationContext?
+    private var appliedRevision: UInt64?
+    private var appliedGeneration: Int?
+    private var curveUnsupportedCount = 0
+    private var curveInFlight: CurveScreenTessellationContext?
+    private var curveTask: Task<Void, Never>?
 
 
     public init() {}
@@ -77,17 +94,20 @@ public final class CADRendererBridge {
     public nonisolated func regenerate(
         fromSnapshot snapshot: CADDocumentSnapshot,
         generation: Int,
+        revision: UInt64 = 0,
         simplifyComplexBlocks: Bool,
         into geometryManager: GeometryManager,
         renderOrigin: CADRenderOrigin = .zero,
-        splineTessellationDivisor: Double = 5000.0
+        splineTessellationDivisor: Double = 5000.0,
+        curveTessellation: CurveScreenTessellationContext? = nil
     ) async {
-        let results = await Self.computeSpecs(
+        let plan = await Self.computeSpecsWithCurvePlan(
             fromSnapshot: snapshot,
             simplifyComplexBlocks: simplifyComplexBlocks,
             renderOrigin: renderOrigin,
-            splineTessellationDivisor: splineTessellationDivisor)
-        print("[CADBridge] computeSpecs (gen \(generation)) returned \(results.count) entity results")
+            splineTessellationDivisor: splineTessellationDivisor,
+            curveTessellation: curveTessellation)
+        print("[CADBridge] computeSpecs (gen \(generation)) returned \(plan.results.count) entity results")
         // Best-effort early-out: if a newer tab/edit cancelled this task, don't publish.
         // The generation guards below + in applyPendingIfNeeded are the authoritative checks.
         if Task.isCancelled { return }
@@ -96,8 +116,9 @@ public final class CADRendererBridge {
             // landed (tasks can finish out of order; the newest generation always wins).
             if let existing = pendingResults, existing.generation >= generation { return }
             pendingResults = (
-                generation, renderOrigin, snapshot.autoContrastTrueColor,
-                snapshot.pointDisplayMode, snapshot.pointDisplaySize, results)
+                generation, revision, renderOrigin, snapshot.autoContrastTrueColor,
+                snapshot.pointDisplayMode, snapshot.pointDisplaySize, plan.results,
+                curveTessellation, plan.curvePlans, plan.unsupportedCurveEntities)
         }
     }
 
@@ -116,7 +137,10 @@ public final class CADRendererBridge {
         splineTessellationDivisor: Double = 5000.0,
         engine: PhrostEngine
     ) -> Bool {
-        let applied = pendingLock.withLock { () -> (CADRenderOrigin, Bool, Int, Double, [EntityResult])? in
+        let applied = pendingLock.withLock { () -> (
+            CADRenderOrigin, Bool, Int, Double, [EntityResult],
+            UInt64, CurveScreenTessellationContext?, [CurveLODEntityPlan], Int
+        )? in
             guard let p = pendingResults else { return nil }
             if p.generation != wantGen {
                 // Stale: drop older generations so they can't linger and be applied later.
@@ -126,17 +150,34 @@ public final class CADRendererBridge {
                 return nil
             }
             pendingResults = nil
-            return (p.renderOrigin, p.autoContrastTrueColor, p.pointDisplayMode, p.pointDisplaySize, p.results)
+            return (
+                p.renderOrigin, p.autoContrastTrueColor, p.pointDisplayMode,
+                p.pointDisplaySize, p.results, p.revision, p.curveLOD,
+                p.curvePlans, p.unsupportedCurveEntities)
         }
-        guard let (renderOrigin, autoContrastTrueColor, pointDisplayMode, pointDisplaySize, results) = applied else { return false }
+        guard let (
+            renderOrigin, autoContrastTrueColor, pointDisplayMode, pointDisplaySize,
+            results, revision, curveLOD, curvePlans, unsupportedCurveEntities
+        ) = applied else { return false }
         geometryManager.renderOrigin = renderOrigin
         geometryManager.autoContrastTrueColor = autoContrastTrueColor
         geometryManager.pointDisplayMode = pointDisplayMode
         geometryManager.pointDisplaySize = pointDisplaySize
-        applySpecs(
+        cancelCurveTask()
+        let handleToEntityIndex = applySpecs(
             results, into: geometryManager, spriteManager: spriteManager,
             imageStore: imageStore, viewportBackground: viewportBackground,
             engine: engine)
+        curveSlots = curvePlans.compactMap { plan in
+            guard let ids = entityPrimitiveMap[plan.handle], !ids.isEmpty,
+                  let entityIndex = handleToEntityIndex[plan.handle] else { return nil }
+            return CurveLODSlot(plan: plan, ids: ids, entityIndex: entityIndex)
+        }
+        appliedCurveLOD = curveLOD
+        appliedRevision = revision
+        appliedGeneration = wantGen
+        curveUnsupportedCount = unsupportedCurveEntities
+        curveInFlight = nil
         print("[CADBridge] applySpecs (gen \(wantGen)) done, geomMgr has \(geometryManager.primitiveCount) primitives")
         return true
     }
@@ -145,6 +186,316 @@ public final class CADRendererBridge {
     /// stale results from a previous document being applied to the new active document.
     public func cancelPending() {
         pendingLock.withLock { pendingResults = nil }
+        cancelCurveTask()
+    }
+
+    /// Drop curve-only LOD state after a document swap or teardown. Full
+    /// regeneration rebuilds it; until then no incremental refresh may run.
+    public func invalidateCurveLOD() {
+        cancelCurveTask()
+        curveSlots.removeAll()
+        appliedCurveLOD = nil
+        appliedRevision = nil
+        appliedGeneration = nil
+        curveUnsupportedCount = 0
+        curveInFlight = nil
+    }
+
+    private func cancelCurveTask() {
+        curveTask?.cancel()
+        curveTask = nil
+        curveInFlight = nil
+    }
+
+    /// Cancel an in-flight curve-only refresh without dropping the applied
+    /// full-build state. Full regeneration calls this before replacing every
+    /// spec; document swaps use `invalidateCurveLOD` instead.
+    func cancelCurveRefresh() {
+        cancelCurveTask()
+    }
+
+    enum CurveLODRefresh {
+        case none
+        case launched
+        case requiresFullRegen
+    }
+
+    /// Build this frame's LOD key, preserving the previously applied or
+    /// in-flight band for hysteresis. Viewport padding is supplied by the
+    /// caller so small pans stay inside the previously tessellated region.
+    func desiredCurveLOD(
+        pixelsPerUnit: Double,
+        viewport: ScreenTessellationViewport
+    ) -> CurveScreenTessellationContext? {
+        CurveScreenTessellationContext.forPixelsPerUnit(
+            pixelsPerUnit,
+            currentBand: curveInFlight?.band ?? appliedCurveLOD?.band,
+            viewport: viewport)
+    }
+
+    /// Decide whether the applied curve tessellation is still valid for a new
+    /// LOD key. Full-document work owns revision changes; this path only
+    /// refreshes zoom-band and viewport-region staleness for the same revision.
+    func refreshCurveLODIfNeeded(
+        generation: Int,
+        revision: UInt64,
+        context desired: CurveScreenTessellationContext?,
+        into geometryManager: GeometryManager,
+        viewportBackground: (UInt8, UInt8, UInt8, UInt8)
+    ) -> CurveLODRefresh {
+        guard let desired,
+              let appliedRevision,
+              let appliedGeneration,
+              let applied = appliedCurveLOD,
+              appliedRevision == revision,
+              appliedGeneration == generation else { return .none }
+        if applied == desired { return .none }
+        if curveTask != nil { return .launched }
+        if curveUnsupportedCount > 0 { return .requiresFullRegen }
+        guard !curveSlots.isEmpty else {
+            appliedCurveLOD = desired
+            return .none
+        }
+        if desired.band == applied.band,
+           let appliedViewport = applied.viewport,
+           let desiredViewport = desired.viewport,
+           appliedViewport.contains(desiredViewport) {
+            return .none
+        }
+        curveTask?.cancel()
+        curveInFlight = desired
+        let plans = curveSlots.map(\.plan)
+        curveTask = Task { [weak self] in
+            let updates = await Self.computeCurveLODUpdates(
+                plans: plans, context: desired)
+            guard !Task.isCancelled else { return }
+            self?.publishCurveLODUpdates(
+                updates,
+                generation: generation,
+                revision: revision,
+                context: desired,
+                into: geometryManager,
+                viewportBackground: viewportBackground)
+        }
+        return .launched
+    }
+
+    private func publishCurveLODUpdates(
+        _ updates: [CurveLODUpdate],
+        generation: Int,
+        revision: UInt64,
+        context: CurveScreenTessellationContext,
+        into geometryManager: GeometryManager,
+        viewportBackground: (UInt8, UInt8, UInt8, UInt8)
+    ) {
+        defer {
+            if curveInFlight == context { curveInFlight = nil }
+            curveTask = nil
+        }
+        guard appliedRevision == revision, appliedGeneration == generation else { return }
+        let appliedCount = Self.applyCurveLODUpdates(
+            updates,
+            slots: &curveSlots,
+            into: geometryManager,
+            entityPrimitiveMap: &entityPrimitiveMap,
+            viewportBackground: viewportBackground)
+        guard appliedCount > 0 else { return }
+        appliedCurveLOD = context
+    }
+
+    struct CurveLODUpdate: Sendable {
+        let handle: UUID
+        let orderIndex: Int
+        let specs: [PrimitiveSpec]
+        let diagnostics: CurveTessellationDiagnostics
+    }
+
+    nonisolated static func computeCurveLODUpdates(
+        plans: [CurveLODEntityPlan],
+        context: CurveScreenTessellationContext
+    ) async -> [CurveLODUpdate] {
+        // Count curve-bearing primitives (not plans) so the shared refresh
+        // budget matches the full-regen path, which divides the same total
+        // over the drawing's curve-bearing primitive count. Counting plans
+        // here would hand each curve a larger cap than full regen at the
+        // same band and do strictly more tessellation work than it replaces.
+        let curvePrimitiveTotal = plans.reduce(0) { partial, plan in
+            partial + plan.primitives.reduce(0) { inner, item in
+                inner + (CADPrimitiveGenerator.isCurveBearing(item.primitive) ? 1 : 0)
+            }
+        }
+        let perPrimitive = context.budgetedMaximumSegments(
+            curveCount: max(1, curvePrimitiveTotal))
+        let planContext = CurveScreenTessellationContext(
+            pixelsPerUnit: context.pixelsPerUnit,
+            band: context.band,
+            designZoom: context.designZoom,
+            viewport: context.viewport,
+            maximumSegments: perPrimitive,
+            maximumDepth: context.maximumDepth,
+            totalMaximumSegments: context.totalMaximumSegments)
+        let orderedPlans = plans.sorted(by: { $0.orderIndex < $1.orderIndex })
+        var updates: [CurveLODUpdate] = []
+        updates.reserveCapacity(orderedPlans.count)
+        if !orderedPlans.isEmpty {
+            // Chunk curve-bearing entities by primitive weight across a task
+            // group, mirroring the full-regen path: a serial loop here makes
+            // band-crossing settle single-threaded while full regen fans out,
+            // so on curve-heavy drawings the "cheap" path costs more.
+            let numProcessors = ProcessInfo.processInfo.activeProcessorCount
+            let numChunks = max(1, min(orderedPlans.count, numProcessors * 2))
+            let totalWeight = orderedPlans.reduce(0) {
+                $0 + max(1, $1.primitives.count)
+            }
+            let targetWeight = max(1, (totalWeight + numChunks - 1) / numChunks)
+            var chunkRanges: [Range<Int>] = []
+            var rangeStart = 0
+            var rangeWeight = 0
+            for (i, plan) in orderedPlans.enumerated() {
+                rangeWeight += max(1, plan.primitives.count)
+                if rangeWeight >= targetWeight, i + 1 < orderedPlans.count,
+                   chunkRanges.count + 1 < numChunks {
+                    chunkRanges.append(rangeStart..<(i + 1))
+                    rangeStart = i + 1
+                    rangeWeight = 0
+                }
+            }
+            if rangeStart < orderedPlans.count {
+                chunkRanges.append(rangeStart..<orderedPlans.count)
+            }
+            updates = await withTaskGroup(of: [CurveLODUpdate].self) { group in
+                for range in chunkRanges {
+                    let chunk = Array(orderedPlans[range])
+                    let chunkContext = planContext
+                    group.addTask {
+                        var chunkUpdates: [CurveLODUpdate] = []
+                        chunkUpdates.reserveCapacity(chunk.count)
+                        for plan in chunk {
+                            if let update = Self.makeCurveLODUpdate(
+                                for: plan, context: chunkContext)
+                            {
+                                chunkUpdates.append(update)
+                            }
+                        }
+                        return chunkUpdates
+                    }
+                }
+                var combined: [CurveLODUpdate] = []
+                combined.reserveCapacity(orderedPlans.count)
+                for await chunkUpdates in group {
+                    combined.append(contentsOf: chunkUpdates)
+                }
+                // Deterministic order regardless of chunk finish order.
+                return combined.sorted(by: { $0.orderIndex < $1.orderIndex })
+            }
+        }
+        let clamped = updates.reduce(0) { $0 + $1.diagnostics.clampedCurves }
+        if clamped > 0 {
+            print("[CADBridge] curve LOD refresh clamped \(clamped) curves")
+        }
+        return updates
+    }
+
+    /// Regenerate one curve-bearing entity's specs at a new LOD context.
+    /// Pure compute (no geometry writes), safe to run on a task-group worker.
+    private nonisolated static func makeCurveLODUpdate(
+        for plan: CurveLODEntityPlan,
+        context planContext: CurveScreenTessellationContext
+    ) -> CurveLODUpdate? {
+        var specs: [PrimitiveSpec] = []
+        var diagnostics = CurveTessellationDiagnostics()
+        for item in plan.primitives {
+            let generated = CADPrimitiveGenerator.computePrimitiveSpecs(
+                from: item.primitive,
+                transform: plan.transform,
+                color: item.color,
+                z: item.z,
+                lineType: item.lineType,
+                lineWeight: item.lineWeight,
+                lineTypeScale: item.lineTypeScale,
+                geomWidth: item.geomWidth,
+                textWidthFactor: item.textWidthFactor,
+                textObliqueAngle: item.textObliqueAngle,
+                textStyleFonts: plan.textStyleFonts,
+                linetypePatterns: plan.linetypePatterns,
+                opacityMultiplier: item.opacityMultiplier,
+                penStrokeBrushSettings: item.brush,
+                penStrokeStabilizationSettings: item.stabilization,
+                penStrokeUnitScaleFromMM: plan.unitScaleFromMM,
+                renderOrigin: plan.renderOrigin,
+                splineTessellationDivisor: 5000.0,
+                curveTessellation: planContext,
+                diagnostics: &diagnostics,
+                isTrueColor: item.isTrueColor)
+            specs.append(contentsOf: generated)
+        }
+        if let clipWorld = plan.clipPolygonWorld, clipWorld.count >= 3 {
+            let renderPolygon = clipWorld.map {
+                SDL_FPoint(
+                    x: plan.renderOrigin.localX($0.x),
+                    y: plan.renderOrigin.localY($0.y))
+            }
+            specs = CADRenderClipper.clip(
+                specs: specs,
+                polygon: renderPolygon,
+                inverted: plan.clipInverted)
+            if plan.showClipFrame, let first = renderPolygon.first {
+                specs.append(PrimitiveSpec(
+                    type: .lines,
+                    points: renderPolygon + [first],
+                    rects: [],
+                    corners: [],
+                    z: plan.baseZ + 1_500_000.0,
+                    color: (plan.color.r, plan.color.g, plan.color.b, plan.color.a),
+                    lineWeight: 0.0,
+                    geomWidth: 0.0))
+            }
+        }
+        guard !specs.isEmpty else { return nil }
+        return CurveLODUpdate(
+            handle: plan.handle,
+            orderIndex: plan.orderIndex,
+            specs: specs,
+            diagnostics: diagnostics)
+    }
+
+    /// Replace whole-entity spec ranges for curve-bearing entities. Draw order
+    /// is preserved because the handle's map entry is replaced in place; z and
+    /// entity indices are reused from the full build rather than reallocated.
+    static func applyCurveLODUpdates(
+        _ updates: [CurveLODUpdate],
+        slots: inout [CurveLODSlot],
+        into geometryManager: GeometryManager,
+        entityPrimitiveMap: inout [UUID: [SpriteID]],
+        viewportBackground: (UInt8, UInt8, UInt8, UInt8)
+    ) -> Int {
+        var slotIndexesByHandle: [UUID: Int] = [:]
+        slotIndexesByHandle.reserveCapacity(slots.count)
+        for (index, slot) in slots.enumerated() {
+            slotIndexesByHandle[slot.plan.handle] = index
+        }
+        var applied = 0
+        for update in updates.sorted(by: { $0.orderIndex < $1.orderIndex }) {
+            guard let slotIndex = slotIndexesByHandle[update.handle] else { continue }
+            for id in slots[slotIndex].ids {
+                geometryManager.removePrimitive(id: id)
+            }
+            var newIDs: [SpriteID] = []
+            newIDs.reserveCapacity(update.specs.count)
+            for spec in update.specs {
+                let id = spec.addTo(
+                    geometryManager,
+                    viewportBackground: viewportBackground)
+                if let prim = geometryManager.getPrimitive(id: id) {
+                    prim.entityIndex = slots[slotIndex].entityIndex
+                }
+                newIDs.append(id)
+            }
+            slots[slotIndex].ids = newIDs
+            entityPrimitiveMap[update.handle] = newIDs
+            applied += 1
+        }
+        return applied
     }
 
     private struct ResolvedPrimitiveStyle: Sendable {
@@ -157,6 +508,41 @@ public final class CADRendererBridge {
         /// False when the primitive's own style layer is hidden.
         let isVisible: Bool
         let isTrueColor: Bool
+    }
+
+    /// Everything needed to retessellate one curve-bearing entity without
+    /// retaining the document snapshot. Stored geometry stays analytic; only
+    /// the generated screen-space specs are replaced on zoom-band changes.
+    struct CurveLODPrimitive: Sendable {
+        let primitive: CADPrimitive
+        let color: (UInt8, UInt8, UInt8, UInt8)
+        let lineType: String
+        let lineWeight: Double
+        let lineTypeScale: Double
+        let geomWidth: Double
+        let textWidthFactor: Double
+        let textObliqueAngle: Double
+        let opacityMultiplier: Double
+        let isTrueColor: Bool
+        let brush: PenStrokeBrushSettings?
+        let stabilization: PenStrokeStabilizationSettings?
+        let z: Double
+    }
+
+    struct CurveLODEntityPlan: Sendable {
+        let handle: UUID
+        let orderIndex: Int
+        let transform: Transform3D
+        let renderOrigin: CADRenderOrigin
+        let textStyleFonts: [String: String]
+        let linetypePatterns: [String: [Double]]
+        let unitScaleFromMM: Double
+        let baseZ: Double
+        let color: ColorRGBA
+        let clipPolygonWorld: [Vector3]?
+        let clipInverted: Bool
+        let showClipFrame: Bool
+        let primitives: [CurveLODPrimitive]
     }
 
     private nonisolated static func explicitColor(of primitive: CADPrimitive) -> ColorRGBA? {
@@ -434,8 +820,29 @@ public final class CADRendererBridge {
         fromSnapshot snapshot: CADDocumentSnapshot,
         simplifyComplexBlocks: Bool,
         renderOrigin: CADRenderOrigin = .zero,
-        splineTessellationDivisor: Double = 5000.0
+        splineTessellationDivisor: Double = 5000.0,
+        curveTessellation: CurveScreenTessellationContext? = nil
     ) async -> [EntityResult] {
+        let plan = await computeSpecsWithCurvePlan(
+            fromSnapshot: snapshot,
+            simplifyComplexBlocks: simplifyComplexBlocks,
+            renderOrigin: renderOrigin,
+            splineTessellationDivisor: splineTessellationDivisor,
+            curveTessellation: curveTessellation)
+        return plan.results
+    }
+
+    nonisolated static func computeSpecsWithCurvePlan(
+        fromSnapshot snapshot: CADDocumentSnapshot,
+        simplifyComplexBlocks: Bool,
+        renderOrigin: CADRenderOrigin = .zero,
+        splineTessellationDivisor: Double = 5000.0,
+        curveTessellation: CurveScreenTessellationContext? = nil
+    ) async -> (
+        results: [EntityResult],
+        curvePlans: [CurveLODEntityPlan],
+        unsupportedCurveEntities: Int
+    ) {
         var visible:
             [(
                 index: Int, handle: UUID,
@@ -829,7 +1236,30 @@ public final class CADRendererBridge {
         var maxSpecs = 0
         var maxSpecHandle: UUID? = nil
 
-        return await withTaskGroup(of: [EntityResult].self) { group in
+        let curveBudgetContext: CurveScreenTessellationContext? = {
+            guard let lod = curveTessellation else { return nil }
+            let curvePrimitiveCount = visible.reduce(0) { partial, entity in
+                partial + entity.geometry.filter {
+                    CADPrimitiveGenerator.isCurveBearing($0)
+                }.count
+            }
+            guard curvePrimitiveCount > 0 else { return lod }
+            return CurveScreenTessellationContext(
+                pixelsPerUnit: lod.pixelsPerUnit,
+                band: lod.band,
+                designZoom: lod.designZoom,
+                viewport: lod.viewport,
+                maximumSegments: lod.budgetedMaximumSegments(curveCount: curvePrimitiveCount),
+                maximumDepth: lod.maximumDepth,
+                totalMaximumSegments: lod.totalMaximumSegments)
+        }()
+
+        return await withTaskGroup(of: (
+            results: [EntityResult],
+            curvePlans: [CurveLODEntityPlan],
+            unsupported: Int,
+            diagnostics: CurveTessellationDiagnostics
+        ).self) { group in
             // Chunk visible entities, balanced by primitive count so a
             // single huge block/xref doesn't share its core with a pile
             // of small entities while other cores idle. (One entity is
@@ -858,6 +1288,9 @@ public final class CADRendererBridge {
                     
                     group.addTask {
                         var chunkResults: [EntityResult] = []
+                        var chunkCurvePlans: [CurveLODEntityPlan] = []
+                        var chunkUnsupportedCurves = 0
+                        var chunkDiagnostics = CurveTessellationDiagnostics()
                         for v in chunk {
                             guard !hiddenHandles.contains(v.handle) else { continue }
                             let baseZ = Double(v.index) * zBand
@@ -896,6 +1329,14 @@ public final class CADRendererBridge {
                             }
 
                             var textSprites: [TextSpriteSpec] = []
+                            var lodPrimitives: [CurveLODPrimitive] = []
+                            var lodHasCurve = false
+                            let lodSupported = v.geometry.allSatisfy { primitive in
+                                if case .table = primitive { return false }
+                                if case .image = primitive { return false }
+                                if case .text = primitive { return false }
+                                return true
+                            }
 
                             for item in orderedGeometry {
                                 let primitive = item.primitive
@@ -1098,6 +1539,27 @@ public final class CADRendererBridge {
                                     }
                                 }
 
+                                if curveBudgetContext != nil,
+                                   CADPrimitiveGenerator.isCurveBearing(primitiveForRender) {
+                                    lodHasCurve = true
+                                }
+                                if curveBudgetContext != nil, lodSupported {
+                                    lodPrimitives.append(CurveLODPrimitive(
+                                        primitive: primitiveForRender,
+                                        color: (drawStyle.color.r, drawStyle.color.g,
+                                                drawStyle.color.b, drawStyle.color.a),
+                                        lineType: drawStyle.lineType,
+                                        lineWeight: drawStyle.lineWeight,
+                                        lineTypeScale: drawStyle.lineTypeScale,
+                                        geomWidth: drawStyle.geomWidth,
+                                        textWidthFactor: primitiveTextWidthFactor,
+                                        textObliqueAngle: primitiveTextObliqueAngle,
+                                        opacityMultiplier: drawStyle.opacityMultiplier,
+                                        isTrueColor: drawStyle.isTrueColor,
+                                        brush: v.penStrokeBrushSettings,
+                                        stabilization: v.penStrokeStabilizationSettings,
+                                        z: primZ))
+                                }
                                 let s = CADPrimitiveGenerator.computePrimitiveSpecs(
                                     from: primitiveForRender,
                                     transform: v.transform,
@@ -1118,6 +1580,8 @@ public final class CADRendererBridge {
                                     penStrokeUnitScaleFromMM: snapshot.unit.scaleFromMM,
                                     renderOrigin: renderOrigin,
                                     splineTessellationDivisor: splineTessellationDivisor,
+                                    curveTessellation: curveBudgetContext,
+                                    diagnostics: &chunkDiagnostics,
                                     isTrueColor: drawStyle.isTrueColor)
                                 if s.count > 10000 {
                                     let typeStr: String
@@ -1209,11 +1673,36 @@ public final class CADRendererBridge {
                                 }
                             }
 
+                            if curveBudgetContext != nil, lodHasCurve {
+                                if lodSupported, !lodPrimitives.isEmpty {
+                                    chunkCurvePlans.append(CurveLODEntityPlan(
+                                        handle: v.handle,
+                                        orderIndex: v.index,
+                                        transform: v.transform,
+                                        renderOrigin: renderOrigin,
+                                        textStyleFonts: snapshot.textStyleFonts,
+                                        linetypePatterns: snapshot.linetypePatterns,
+                                        unitScaleFromMM: snapshot.unit.scaleFromMM,
+                                        baseZ: baseZ,
+                                        color: v.color,
+                                        clipPolygonWorld: clipPolygonWorld,
+                                        clipInverted: clipInverted,
+                                        showClipFrame: v.showClipFrame,
+                                        primitives: lodPrimitives))
+                                } else {
+                                    chunkUnsupportedCurves += 1
+                                }
+                            }
+
                             chunkResults.append((
                                 v.handle, specs, textSprites, imageSpecs,
                                 clipPolygonWorld, clipInverted))
                         }
-                        return chunkResults
+                        return (
+                            results: chunkResults,
+                            curvePlans: chunkCurvePlans,
+                            unsupported: chunkUnsupportedCurves,
+                            diagnostics: chunkDiagnostics)
                     }
                 }
             }
@@ -1386,14 +1875,21 @@ public final class CADRendererBridge {
                             }
                             chunkResults.append((vt.handle, specs, textSprites, [ImageSpec](), nil, false))
                         }
-                        return chunkResults
+                        return (
+                            results: chunkResults,
+                            curvePlans: [],
+                            unsupported: 0,
+                            diagnostics: CurveTessellationDiagnostics())
                     }
                 }
             }
             
             var collected: [EntityResult] = []
-            for await chunkResults in group {
-                for result in chunkResults {
+            var curvePlans: [CurveLODEntityPlan] = []
+            var unsupportedCurveEntities = 0
+            var lodDiagnostics = CurveTessellationDiagnostics()
+            for await chunkOutput in group {
+                for result in chunkOutput.results {
                     totalSpecs += result.specs.count
                     totalSprites += result.textSprites.count
                     if result.specs.count > maxSpecs {
@@ -1402,6 +1898,23 @@ public final class CADRendererBridge {
                     }
                     collected.append(result)
                 }
+                curvePlans.append(contentsOf: chunkOutput.curvePlans)
+                unsupportedCurveEntities += chunkOutput.unsupported
+                lodDiagnostics.merge(chunkOutput.diagnostics)
+            }
+            var deduplicatedPlans: [CurveLODEntityPlan] = []
+            deduplicatedPlans.reserveCapacity(curvePlans.count)
+            var seenPlanHandles = Set<UUID>()
+            for plan in curvePlans.sorted(by: { $0.orderIndex < $1.orderIndex }) {
+                if seenPlanHandles.insert(plan.handle).inserted {
+                    deduplicatedPlans.append(plan)
+                } else {
+                    unsupportedCurveEntities += 1
+                }
+            }
+            curvePlans = deduplicatedPlans
+            if lodDiagnostics.clampedCurves > 0 {
+                print("[CADBridge] curve LOD budget clamped \(lodDiagnostics.clampedCurves)/\(lodDiagnostics.curves) curves (requested \(lodDiagnostics.requestedSegments), emitted \(lodDiagnostics.emittedSegments))")
             }
             // Diagnostic: primitive counts
             let textEntityCount = visibleText.count
@@ -1443,7 +1956,10 @@ public final class CADRendererBridge {
                 }
                 print("[CADBridge]   max specs from single entity = \(maxSpecs) (handle=\(handle.uuidString.prefix(8))...)")
             }
-            return collected
+            return (
+                results: collected,
+                curvePlans: curvePlans,
+                unsupportedCurveEntities: unsupportedCurveEntities)
         }
     }
 
@@ -1459,7 +1975,7 @@ public final class CADRendererBridge {
         viewportBackground: (UInt8, UInt8, UInt8, UInt8),
         splineTessellationDivisor: Double = 5000.0,
         engine: PhrostEngine
-    ) {
+    ) -> [UUID: UInt32] {
         // Clear old primitives atomically
         geometryManager.clearAll()
         for (_, oldSprites) in entitySpriteMap {
@@ -1614,6 +2130,7 @@ public final class CADRendererBridge {
 
         // Build spatial grid for large datasets
         geometryManager.buildSpatialGridIfNeeded()
+        return newHandleToEntityIndex
     }
 
 
