@@ -1428,7 +1428,10 @@ public enum CADPrimitiveGenerator {
         return out
     }
 
-    private static func splitConnectedHatchBoundary(_ boundary: [Vector3]) -> (outer: [Vector3], holes: [[Vector3]]) {
+    /// Splits a connected hatch boundary (outer loop bridged to island holes)
+    /// into its outer loop and holes. Shared with the selection-highlight
+    /// boundary extraction (see `CADSelectionDisplayPolicy`).
+    static func splitConnectedHatchBoundary(_ boundary: [Vector3]) -> (outer: [Vector3], holes: [[Vector3]]) {
         var points = normalizedLoop(boundary)
         var holes: [[Vector3]] = []
 

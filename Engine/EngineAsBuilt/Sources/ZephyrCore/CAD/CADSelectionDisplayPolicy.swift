@@ -82,6 +82,59 @@ public enum CADSelectionDisplayPolicy {
         return .geometry
     }
 
+    // MARK: - Hatch boundary highlight
+
+    /// Boundary outline loops (outer + holes, model space, closed) for
+    /// pattern-hatch primitives. Selecting a hatch highlights only its
+    /// boundary outline in the selection color — the pattern lines keep
+    /// their own colors (AutoCAD shows grips on the boundary, not a
+    /// re-tinted fill). Returns [] when the geometry has no `.hatch` /
+    /// `.hatchPath` content. Loops shorter than 2 points are dropped;
+    /// closed loops repeat their first point at the end.
+    public static func hatchBoundaryLoops(in geometry: [CADPrimitive]) -> [[Vector3]] {
+        var loops: [[Vector3]] = []
+        for primitive in geometry {
+            switch primitive {
+            case .hatchPath(let boundary, let holes, _, _, _, _, _):
+                if let outer = closedLoop(boundary.tessellatedPoints()) {
+                    loops.append(outer)
+                }
+                for hole in holes {
+                    if let loop = closedLoop(hole.tessellatedPoints()) {
+                        loops.append(loop)
+                    }
+                }
+            case .hatch(let boundary, _, _, _, _, _):
+                let split = CADPrimitiveGenerator.splitConnectedHatchBoundary(boundary)
+                if let outer = closedLoop(split.outer) {
+                    loops.append(outer)
+                }
+                for hole in split.holes {
+                    if let loop = closedLoop(hole) {
+                        loops.append(loop)
+                    }
+                }
+            default:
+                break
+            }
+        }
+        return loops
+    }
+
+    /// A drawable closed loop, or nil when the points cannot form one.
+    private static func closedLoop(_ points: [Vector3]) -> [Vector3]? {
+        guard points.count >= 2 else { return nil }
+        guard points.count >= 3,
+              let first = points.first,
+              let last = points.last
+        else { return points }
+        let dx = first.x - last.x
+        let dy = first.y - last.y
+        let dz = first.z - last.z
+        if dx * dx + dy * dy + dz * dz < 1e-12 { return points }
+        return points + [first]
+    }
+
     // MARK: - GROUPDISPLAYMODE
 
     /// The single frame for one group: union of all member bounds.

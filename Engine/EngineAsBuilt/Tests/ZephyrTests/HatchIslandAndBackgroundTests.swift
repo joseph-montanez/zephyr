@@ -1,4 +1,5 @@
 import XCTest
+import ImGui
 @testable import ZephyrCore
 
 final class HatchIslandAndBackgroundTests: XCTestCase {
@@ -260,6 +261,133 @@ final class HatchIslandAndBackgroundTests: XCTestCase {
         XCTAssertEqual(cmd2.currentPatternName, "ANSI31")
         XCTAssertNil(cmd2.currentBackgroundColor)
         XCTAssertEqual(cmd2.currentIslandStyle, 1)
+    }
+
+    func testHatchPatternColorUpdatePersistsThroughDocumentAndUndo() {
+        let doc = CADDocument()
+        let layerID = doc.allLayers.first?.handle ?? UUID()
+        let outer = CADPolyline(points: [
+            Vector3(x: 0, y: 0, z: 0), Vector3(x: 10, y: 0, z: 0),
+            Vector3(x: 10, y: 10, z: 0), Vector3(x: 0, y: 10, z: 0),
+        ], isClosed: true)
+        let red = ColorRGBA(r: 255, g: 90, b: 90, a: 255)
+        let blue = ColorRGBA(r: 60, g: 140, b: 255, a: 255)
+        let entity = CADEntity(layerID: layerID, localGeometry: [
+            .hatchPath(boundary: outer, holes: [], pattern: "ANSI31",
+                       scale: 1.0, angle: 0.0, color: red, backgroundColor: nil),
+        ])
+        doc.addEntity(entity)
+        // Simulate what the hatch UI does after a preset swatch click:
+        // rebuild the hatch primitive with the newly selected color.
+        var updated = entity
+        updated.localGeometry = [
+            .hatchPath(boundary: outer, holes: [], pattern: "ANSI31",
+                       scale: 1.0, angle: 0.0, color: blue, backgroundColor: nil),
+        ]
+        doc.updateEntity(updated)
+        guard let stored = doc.entity(for: entity.handle)?.localGeometry?.first,
+              case .hatchPath(_, _, _, _, _, let storedColor, _) = stored else {
+            XCTFail("expected stored hatchPath primitive")
+            return
+        }
+        XCTAssertEqual(storedColor, blue)
+        doc.undo()
+        guard let restored = doc.entity(for: entity.handle)?.localGeometry?.first,
+              case .hatchPath(_, _, _, _, _, let restoredColor, _) = restored else {
+            XCTFail("expected restored hatchPath primitive")
+            return
+        }
+        XCTAssertEqual(restoredColor, red)
+    }
+
+    @MainActor
+    func testHatchSwatchRowButtonPatternRegistersClicks() {
+        let ctx = ImGuiCreateContext(nil)!
+        defer { ImGuiDestroyContext(ctx) }
+        let io = ImGuiGetIO()!
+        io.pointee.DisplaySize = ImVec2(x: 1920, y: 1080)
+        io.pointee.DeltaTime = 1.0 / 60.0
+        _ = ImFontAtlas_AddFontDefault(io.pointee.Fonts, nil)
+        igImFontAtlasBuildMain(io.pointee.Fonts)
+
+        var selected: ColorRGBA? = nil
+        let red = ColorRGBA(r: 255, g: 90, b: 90, a: 255)
+        let blue = ColorRGBA(r: 60, g: 140, b: 255, a: 255)
+        let presets = [red, blue]
+        var clickedIndex: Int? = nil
+
+        func runFrame() {
+            ImGuiNewFrame()
+            XCTAssertTrue(igBegin("##HatchCardProbe", nil, 0))
+            let size = ImVec2(x: 24, y: 24)
+            for (i, col) in presets.enumerated() {
+                if i > 0 { ImGuiSameLine(0, 4) }
+                let colU32 = makeCol32(col.r, col.g, col.b, 255)
+                ImGuiPushStyleColor(Int32(ImGuiCol_Button.rawValue), colU32)
+                ImGuiPushStyleColor(Int32(ImGuiCol_ButtonHovered.rawValue), colU32)
+                ImGuiPushStyleColor(Int32(ImGuiCol_ButtonActive.rawValue), colU32)
+                if igButton("##c1_\(i)", size) {
+                    selected = col
+                    clickedIndex = i
+                }
+                ImGuiPopStyleColor(3)
+            }
+            ImGuiEnd()
+            ImGuiRender()
+        }
+
+        // Baseline frame so the window and items get rects.
+        runFrame()
+        XCTAssertNil(selected)
+
+        // Click the center of the second swatch: find its rect first.
+        ImGuiNewFrame()
+        XCTAssertTrue(igBegin("##HatchCardProbe", nil, 0))
+        let size = ImVec2(x: 24, y: 24)
+        for (i, col) in presets.enumerated() {
+            if i > 0 { ImGuiSameLine(0, 4) }
+            let colU32 = makeCol32(col.r, col.g, col.b, 255)
+            ImGuiPushStyleColor(Int32(ImGuiCol_Button.rawValue), colU32)
+            ImGuiPushStyleColor(Int32(ImGuiCol_ButtonHovered.rawValue), colU32)
+            ImGuiPushStyleColor(Int32(ImGuiCol_ButtonActive.rawValue), colU32)
+            _ = igButton("##c1_\(i)", size)
+            ImGuiPopStyleColor(3)
+            if i == 1 {
+                let rMin = igGetItemRectMin()
+                let rMax = igGetItemRectMax()
+                io.pointee.MousePos = ImVec2(x: (rMin.x + rMax.x) * 0.5, y: (rMin.y + rMax.y) * 0.5)
+            }
+        }
+        ImGuiEnd()
+        ImGuiRender()
+
+        // Press and release on the second swatch.
+        io.pointee.MouseDown.0 = true
+        runFrame()
+        io.pointee.MouseDown.0 = false
+        runFrame()
+
+        XCTAssertEqual(clickedIndex, 1)
+        XCTAssertEqual(selected, blue)
+    }
+
+    func testHatchPatternColorSelectionRegistersAsSettingsChange() {
+        var settings = HatchRibbonUI.Settings(
+            fillType: 0,
+            patternName: "ANSI31",
+            scale: 1.0,
+            angle: 0.0,
+            primaryColor: nil,
+            backgroundColor: nil,
+            secondaryColor: nil,
+            selectionMode: 0,
+            showModeSection: true
+        )
+        let oldSettings = settings
+        // Simulate clicking a preset swatch in the "Pattern color" row.
+        settings.primaryColor = ColorRGBA(r: 255, g: 90, b: 90, a: 255)
+        XCTAssertNotEqual(settings, oldSettings)
+        XCTAssertEqual(settings.primaryColor, ColorRGBA(r: 255, g: 90, b: 90, a: 255))
     }
 
     @MainActor

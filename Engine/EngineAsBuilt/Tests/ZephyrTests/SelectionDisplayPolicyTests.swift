@@ -1,3 +1,4 @@
+import ImGui
 import XCTest
 @testable import ZephyrCore
 
@@ -161,5 +162,124 @@ final class SelectionDisplayPolicyTests: XCTestCase {
             handle: complexInstance.handle, document: doc))
         XCTAssertFalse(CADSelectionHighlightRenderer.frameRequired(
             handle: UUID(), document: doc))
+    }
+
+    func testHatchBoundaryLoopsForModernHatch() {
+        let outer = CADPolyline(
+            points: [
+                Vector3(x: 0, y: 0, z: 0), Vector3(x: 10, y: 0, z: 0),
+                Vector3(x: 10, y: 10, z: 0), Vector3(x: 0, y: 10, z: 0),
+            ],
+            isClosed: true)
+        let hole = CADPolyline(
+            points: [
+                Vector3(x: 2, y: 2, z: 0), Vector3(x: 4, y: 2, z: 0),
+                Vector3(x: 4, y: 4, z: 0), Vector3(x: 2, y: 4, z: 0),
+            ],
+            isClosed: true)
+        let loops = CADSelectionDisplayPolicy.hatchBoundaryLoops(in: [
+            .hatchPath(boundary: outer, holes: [hole], pattern: "ANSI31",
+                       scale: 1.0, angle: 0.0, color: nil, backgroundColor: nil),
+        ])
+        XCTAssertEqual(loops.count, 2)
+        // Closed loops repeat the first point at the end.
+        XCTAssertEqual(loops[0].count, 5)
+        XCTAssertEqual(loops[0].first, loops[0].last)
+        XCTAssertEqual(loops[1].count, 5)
+    }
+
+    func testHatchBoundaryLoopsForLegacyHatch() {
+        // Connected boundary: outer square with a bridge out to a hole
+        // square and back; the split must recover outer + hole.
+        let outer: [Vector3] = [
+            Vector3(x: 0, y: 0, z: 0), Vector3(x: 10, y: 0, z: 0),
+            Vector3(x: 10, y: 10, z: 0), Vector3(x: 0, y: 10, z: 0),
+        ]
+        let hole: [Vector3] = [
+            Vector3(x: 2, y: 2, z: 0), Vector3(x: 4, y: 2, z: 0),
+            Vector3(x: 4, y: 4, z: 0), Vector3(x: 2, y: 4, z: 0),
+        ]
+        // Bridge out and back at outer[0], mirroring connectHoles output:
+        // outer[0], hole..., hole[0], outer[0], outer[1...].
+        var connected = [outer[0]]
+        connected.append(contentsOf: hole)
+        connected.append(hole[0])
+        connected.append(outer[0])
+        connected.append(contentsOf: outer[1...])
+        let loops = CADSelectionDisplayPolicy.hatchBoundaryLoops(in: [
+            .hatch(boundary: connected, pattern: "ANSI31",
+                   scale: 1.0, angle: 0.0, color: nil, backgroundColor: nil),
+        ])
+        XCTAssertEqual(loops.count, 2)
+        XCTAssertTrue(loops.allSatisfy { $0.count >= 3 })
+    }
+
+    func testHatchBoundaryLoopsIgnoresNonHatch() {
+        XCTAssertTrue(CADSelectionDisplayPolicy.hatchBoundaryLoops(in: []).isEmpty)
+        XCTAssertTrue(CADSelectionDisplayPolicy.hatchBoundaryLoops(in: [
+            .line(start: .zero, end: Vector3(x: 1, y: 0, z: 0)),
+            .fillComplexPolygon(
+                outer: [
+                    Vector3(x: 0, y: 0, z: 0), Vector3(x: 1, y: 0, z: 0),
+                    Vector3(x: 1, y: 1, z: 0),
+                ],
+                holes: [], color: nil),
+        ]).isEmpty)
+    }
+
+    func testDrawHatchBoundaryHighlightHandlesHatchOnly() {
+        let doc = CADDocument()
+        let layer = Layer(name: "0")
+        let outer = CADPolyline(
+            points: [
+                Vector3(x: 0, y: 0, z: 0), Vector3(x: 10, y: 0, z: 0),
+                Vector3(x: 10, y: 10, z: 0), Vector3(x: 0, y: 10, z: 0),
+            ],
+            isClosed: true)
+        let hatch = CADEntity(
+            layerID: layer.handle,
+            localGeometry: [.hatchPath(
+                boundary: outer, holes: [], pattern: "ANSI31",
+                scale: 1.0, angle: 0.0, color: nil, backgroundColor: nil)],
+            transform: .identity)
+        let line = CADEntity(
+            layerID: layer.handle,
+            localGeometry: [.line(
+                start: .zero, end: Vector3(x: 1, y: 0, z: 0))],
+            transform: .identity)
+        doc.importLayersBlocksEntities(
+            layers: [layer], blocks: [], entities: [hatch, line])
+        let cam = CameraTransform(
+            camX: 5, camY: 5, camZoom: 1, camSin: 0, camCos: 1,
+            screenCenterX: 400, screenCenterY: 300)
+
+        let ctx = ImGuiCreateContext(nil)!
+        defer { ImGuiDestroyContext(ctx) }
+        let io = ImGuiGetIO()!
+        io.pointee.DisplaySize = ImVec2(x: 800, y: 600)
+        io.pointee.DeltaTime = 1.0 / 60.0
+        _ = ImFontAtlas_AddFontDefault(io.pointee.Fonts, nil)
+        igImFontAtlasBuildMain(io.pointee.Fonts)
+        ImGuiNewFrame()
+        XCTAssertTrue(igBegin("ProbeHatchHighlight", nil, 0))
+        let drawList = igGetWindowDrawList()
+
+        var drawn = 0
+        XCTAssertTrue(CADSelectionHighlightRenderer.drawHatchBoundaryHighlight(
+            handle: hatch.handle, document: doc, cam: cam,
+            renderOrigin: .zero, drawList: drawList, color: 0xFFD700FF,
+            lineWidth: 2.0, maxSegments: 4096, segmentsDrawn: &drawn))
+        // Closed square outline draws 4 segments.
+        XCTAssertEqual(drawn, 4)
+
+        var lineDrawn = 0
+        XCTAssertFalse(CADSelectionHighlightRenderer.drawHatchBoundaryHighlight(
+            handle: line.handle, document: doc, cam: cam,
+            renderOrigin: .zero, drawList: drawList, color: 0xFFD700FF,
+            lineWidth: 2.0, maxSegments: 4096, segmentsDrawn: &lineDrawn))
+        XCTAssertEqual(lineDrawn, 0)
+
+        ImGuiEnd()
+        ImGuiRender()
     }
 }

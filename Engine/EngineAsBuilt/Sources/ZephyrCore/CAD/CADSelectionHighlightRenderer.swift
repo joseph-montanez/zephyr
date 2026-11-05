@@ -49,6 +49,17 @@ public enum CADSelectionHighlightRenderer {
                 isBlockReference: entity.blockID != nil,
                 primitiveCount: geom.count) == .geometry
             else { continue }
+            if drawHatchBoundaryHighlight(
+                handle: handle,
+                document: document,
+                cam: cam,
+                renderOrigin: geometry.renderOrigin,
+                drawList: drawList,
+                color: color,
+                lineWidth: lineWidth,
+                maxSegments: maxSegments - segmentsDrawn,
+                segmentsDrawn: &segmentsDrawn
+            ) { continue } // Hatch boundary already highlighted above.
             segmentsDrawn += vertexEditor.forEachWorldSegment(
                 handle: handle, in: geometry,
                 maxSegments: maxSegments - segmentsDrawn
@@ -58,6 +69,55 @@ public enum CADSelectionHighlightRenderer {
                 ImDrawListAddLine(drawList, ImVec2(x: s0.x, y: s0.y), ImVec2(x: s1.x, y: s1.y), color, lineWidth)
             }
         }
+    }
+
+    /// Draws a hatch entity's boundary outline loops (outer + holes) in the
+    /// highlight color instead of re-tinting every tessellated pattern line.
+    /// The pattern keeps its own colors; only the boundary glows, matching
+    /// the grips AutoCAD shows on the boundary. Returns true when the entity
+    /// is a loose hatch with drawable boundary loops (the caller then skips
+    /// its per-segment walk); false for anything else. Respects `maxSegments`
+    /// via `segmentsDrawn` like the segment walk does.
+    @discardableResult
+    public static func drawHatchBoundaryHighlight(
+        handle: UUID,
+        document: CADDocument,
+        cam: CameraTransform,
+        renderOrigin: CADRenderOrigin,
+        drawList: UnsafeMutablePointer<ImDrawList>?,
+        color: UInt32,
+        lineWidth: Float,
+        maxSegments: Int,
+        segmentsDrawn: inout Int
+    ) -> Bool {
+        guard let entity = document.entity(for: handle),
+              entity.blockID == nil,
+              let layer = document.layer(for: entity.layerID),
+              layer.isEffectivelyVisible,
+              let geometry = document.resolvedGeometry(for: entity)
+        else { return false }
+        let loops = CADSelectionDisplayPolicy.hatchBoundaryLoops(in: geometry)
+        guard !loops.isEmpty else { return false }
+        let transform = entity.transform
+        for loop in loops {
+            guard loop.count >= 2 else { continue }
+            var previous: ImVec2? = nil
+            for point in loop {
+                let world = transform.transformPoint(point)
+                let screen = EngineCameraManager.worldToScreen(
+                    worldX: world.x + renderOrigin.x,
+                    worldY: world.y + renderOrigin.y,
+                    cam: cam)
+                let current = ImVec2(x: screen.x, y: screen.y)
+                if let start = previous {
+                    guard segmentsDrawn < maxSegments else { return true }
+                    ImDrawListAddLine(drawList, start, current, color, lineWidth)
+                    segmentsDrawn += 1
+                }
+                previous = current
+            }
+        }
+        return true
     }
 
     /// Whether the entity still needs a bounding-frame highlight after

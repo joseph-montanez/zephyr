@@ -2461,12 +2461,25 @@ public final class EngineRenderer {
                             ImDrawListAddLine(drawList, ImVec2(x: s3.x, y: s3.y), ImVec2(x: s0.x, y: s0.y), hc, 2.0)
                         }
                     } else {
-                        _ = engine.cadBridge.vertexEditor.forEachWorldSegment(
-                            handle: hover, in: ctx.geometry, maxSegments: 4096
-                        ) { x1, y1, x2, y2 in
-                            let s0 = EngineCameraManager.worldToScreen(worldX: x1, worldY: y1, cam: transform)
-                            let s1 = EngineCameraManager.worldToScreen(worldX: x2, worldY: y2, cam: transform)
-                            ImDrawListAddLine(drawList, ImVec2(x: s0.x, y: s0.y), ImVec2(x: s1.x, y: s1.y), hc, 2.0)
+                        var secondaryHoverDrawn = 0
+                        if !CADSelectionHighlightRenderer.drawHatchBoundaryHighlight(
+                            handle: hover,
+                            document: doc,
+                            cam: transform,
+                            renderOrigin: ctx.geometry.renderOrigin,
+                            drawList: drawList,
+                            color: hc,
+                            lineWidth: 2.0,
+                            maxSegments: 4096,
+                            segmentsDrawn: &secondaryHoverDrawn
+                        ) {
+                            _ = engine.cadBridge.vertexEditor.forEachWorldSegment(
+                                handle: hover, in: ctx.geometry, maxSegments: 4096
+                            ) { x1, y1, x2, y2 in
+                                let s0 = EngineCameraManager.worldToScreen(worldX: x1, worldY: y1, cam: transform)
+                                let s1 = EngineCameraManager.worldToScreen(worldX: x2, worldY: y2, cam: transform)
+                                ImDrawListAddLine(drawList, ImVec2(x: s0.x, y: s0.y), ImVec2(x: s1.x, y: s1.y), hc, 2.0)
+                            }
                         }
                     }
                 }
@@ -2781,6 +2794,19 @@ public final class EngineRenderer {
                     ImDrawListAddLine(drawList, ImVec2(x: s2.x, y: s2.y), ImVec2(x: s3.x, y: s3.y), selColor, lineWidth)
                     ImDrawListAddLine(drawList, ImVec2(x: s3.x, y: s3.y), ImVec2(x: s0.x, y: s0.y), selColor, lineWidth)
                     _foregroundVertexEstimate += 8
+                } else if CADSelectionHighlightRenderer.drawHatchBoundaryHighlight(
+                    handle: handle,
+                    document: engine.document,
+                    cam: cam,
+                    renderOrigin: engine.geometryManager.renderOrigin,
+                    drawList: drawList,
+                    color: selColor,
+                    lineWidth: lineWidth,
+                    maxSegments: maxSegments - segmentsDrawn,
+                    segmentsDrawn: &segmentsDrawn
+                ) {
+                    // Hatch boundary already highlighted above; skip the segment walk.
+                    _foregroundVertexEstimate += segmentsDrawn * 2
                 } else {
                     // For simple block entities, redraw each geometry segment so the
                     // selection highlight matches the geometry shape (same as hover).
@@ -2876,16 +2902,31 @@ public final class EngineRenderer {
         let maxSegments = min(4096, remainingVertices / 8)
         guard maxSegments > 0 else { return }
 
-        let segmentsDrawn = engine.cadBridge.vertexEditor.forEachWorldSegment(
+        var hoverSegmentsDrawn = 0
+        if !CADSelectionHighlightRenderer.drawHatchBoundaryHighlight(
             handle: hoverHandle,
-            in: engine.geometryManager,
-            maxSegments: maxSegments
-        ) { x1, y1, x2, y2 in
-            let s0 = EngineCameraManager.worldToScreen(worldX: x1, worldY: y1, cam: cam)
-            let s1 = EngineCameraManager.worldToScreen(worldX: x2, worldY: y2, cam: cam)
-            ImDrawListAddLine(drawList, ImVec2(x: s0.x, y: s0.y), ImVec2(x: s1.x, y: s1.y), hc, lineWidth)
+            document: engine.document,
+            cam: cam,
+            renderOrigin: engine.geometryManager.renderOrigin,
+            drawList: drawList,
+            color: hc,
+            lineWidth: lineWidth,
+            maxSegments: maxSegments,
+            segmentsDrawn: &hoverSegmentsDrawn
+        ) {
+            let segmentsDrawn = engine.cadBridge.vertexEditor.forEachWorldSegment(
+                handle: hoverHandle,
+                in: engine.geometryManager,
+                maxSegments: maxSegments
+            ) { x1, y1, x2, y2 in
+                let s0 = EngineCameraManager.worldToScreen(worldX: x1, worldY: y1, cam: cam)
+                let s1 = EngineCameraManager.worldToScreen(worldX: x2, worldY: y2, cam: cam)
+                ImDrawListAddLine(drawList, ImVec2(x: s0.x, y: s0.y), ImVec2(x: s1.x, y: s1.y), hc, lineWidth)
+            }
+            _foregroundVertexEstimate += segmentsDrawn * 8
+        } else {
+            _foregroundVertexEstimate += hoverSegmentsDrawn * 8
         }
-        _foregroundVertexEstimate += segmentsDrawn * 8
     }
 
     /// Renders a live preview of what the selection will look like after
@@ -2955,6 +2996,19 @@ public final class EngineRenderer {
                 return
             }
 
+            if CADSelectionHighlightRenderer.drawHatchBoundaryHighlight(
+                handle: handle,
+                document: engine.document,
+                cam: cam,
+                renderOrigin: engine.geometryManager.renderOrigin,
+                drawList: drawList,
+                color: color,
+                lineWidth: lineWidth,
+                maxSegments: maxSegments - segmentsDrawn,
+                segmentsDrawn: &segmentsDrawn
+            ) {
+                return
+            }
             engine.cadBridge.vertexEditor.forEachWorldSegment(handle: handle, in: engine.geometryManager) { x1, y1, x2, y2 in
                 guard segmentsDrawn < maxSegments else { return }
                 let s0 = EngineCameraManager.worldToScreen(worldX: x1, worldY: y1, cam: cam)
