@@ -79,7 +79,7 @@ enum PDFPrimitives {
                 document: document, settings: settings,
                 plotTable: table, screeningOn: ink.screeningOn)
         }
-        func resolvedMappedTextColor(_ index: Int, _ prim: CADPrimitive) -> ColorRGBA {
+        func resolvedMappedColor(_ index: Int, _ prim: CADPrimitive) -> ColorRGBA {
             if let c = primColor(prim) {
                 return mappedTextColor(
                     trueColor: c,
@@ -160,7 +160,18 @@ enum PDFPrimitives {
 
             var currentColor: ColorRGBA? = nil
             for (index, prim) in fills + strokes {
-                setColorIfNeeded(resolvedColor(index, prim), current: &currentColor, to: cb)
+                // Vector strokes and fills follow the plot pen like text.
+                // Raster images keep their tint and gradients keep their
+                // authored blend (plot styles target vector ink, and only
+                // the first gradient stop is visible to the resolver).
+                let color: ColorRGBA
+                switch prim {
+                case .image, .gradient:
+                    color = resolvedColor(index, prim)
+                default:
+                    color = resolvedMappedColor(index, prim)
+                }
+                setColorIfNeeded(color, current: &currentColor, to: cb)
                 setWeightIfNeeded(resolvedLineWeightMM(index))
                 writePrimitive(prim, effectiveScale: pageScale * entScale, to: cb)
             }
@@ -178,7 +189,7 @@ enum PDFPrimitives {
                 continue
             }
             writeTextPrimitive(prim, transform: t, document: document,
-                               entityColor: resolvedMappedTextColor(index, prim),
+                               entityColor: resolvedMappedColor(index, prim),
                                lineWeightMM: resolvedLineWeightMM(index),
                                pageScale: pageScale, isLightBackground: isLightBackground, to: cb,
                                primitiveXData: document.primitiveXData(for: entity)[index],
@@ -197,7 +208,7 @@ enum PDFPrimitives {
             }
             let visuals = DataTableTessellator.generateVisualPrimitives(
                 data: data, origin: origin, transform: t)
-            writeWorldVisuals(visuals, defaultColor: resolvedMappedTextColor(index, prim),
+            writeWorldVisuals(visuals, defaultColor: resolvedMappedColor(index, prim),
                               lineWeightMM: resolvedLineWeightMM(index),
                               pageScale: pageScale, isLightBackground: isLightBackground,
                               document: document, to: cb,

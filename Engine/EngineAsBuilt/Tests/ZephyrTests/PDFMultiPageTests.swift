@@ -216,11 +216,15 @@ final class PDFMultiPageTests: XCTestCase {
         let layerID = doc.allLayers.first!.handle
         let block = CADBlock(
             name: "DIMTEXT\(UUID().uuidString.prefix(6))",
-            geometry: [.text(
-                position: .zero, text: "33'-2\"",
-                height: 2.5, rotation: 0, style: nil,
-                alignH: 1, alignV: 2, mtextWidth: nil,
-                color: .red)])
+            geometry: [
+                .line(start: .zero, end: Vector3(x: 100, y: 0, z: 0), color: .red),
+                .line(start: Vector3(x: 0, y: 0, z: 0), end: Vector3(x: 0, y: 10, z: 0), color: .red),
+                .text(
+                    position: .zero, text: "33'-2\"",
+                    height: 2.5, rotation: 0, style: nil,
+                    alignH: 1, alignV: 2, mtextWidth: nil,
+                    color: .red),
+            ])
         doc.addBlock(block)
         var entity = CADEntity(layerID: layerID)
         entity.blockID = block.handle
@@ -243,9 +247,9 @@ final class PDFMultiPageTests: XCTestCase {
                                               plotContext: context, catalog: catalog)
         let content = String(decoding: page.contentData, as: UTF8.self)
         XCTAssertTrue(content.contains("0 0 0 RG") || content.contains("0 0 0 rg"),
-                      "monochrome pen must emit black dimension text, got: \(content.prefix(500))")
+                      "monochrome pen must emit black dimension ink, got: \(content.prefix(500))")
         XCTAssertFalse(content.contains("1 0 0 RG") || content.contains("1 0 0 rg"),
-                       "monochrome pen must not emit red dimension text")
+                       "monochrome pen must not emit red dimension vectors or text")
     }
 
     // MARK: - Unchanged single-page behavior
