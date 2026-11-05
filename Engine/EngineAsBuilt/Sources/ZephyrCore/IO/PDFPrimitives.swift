@@ -47,7 +47,8 @@ enum PDFPrimitives {
                             pageScale: Double, isLightBackground: Bool = false,
                             to cb: PDFContentBuilder,
                             options: PDFExporter.PDFExportOptions = .default,
-                            catalog: PDFTextEmitter.PDFFontCatalog? = nil) {
+                            catalog: PDFTextEmitter.PDFFontCatalog? = nil,
+                            plotInk: PDFExporter.PlotInk? = nil) {
         guard let geometry = entity.resolvedGeometry(in: document), !geometry.isEmpty
         else { return }
 
@@ -67,6 +68,34 @@ enum PDFPrimitives {
             if primStyles[index]?.isColorByBlock == true { return entityColor }
             guard let slc = styleLayer(index)?.color else { return entityColor }
             return slc.displayAdjusted(forLightBackground: isLightBackground)
+        }
+        func mappedTextColor(trueColor: ColorRGBA, display: ColorRGBA) -> ColorRGBA {
+            guard let ink = plotInk, let settings = ink.settings, let table = ink.table else {
+                return display
+            }
+            return PDFExporter.resolveTextPlotColor(
+                display: display,
+                source: PDFExporter.TextPlotSource(rawColor: trueColor, layerID: entity.layerID),
+                document: document, settings: settings,
+                plotTable: table, screeningOn: ink.screeningOn)
+        }
+        func resolvedMappedTextColor(_ index: Int, _ prim: CADPrimitive) -> ColorRGBA {
+            if let c = primColor(prim) {
+                return mappedTextColor(
+                    trueColor: c,
+                    display: c.displayAdjusted(forLightBackground: isLightBackground))
+            }
+            if let style = primStyles[index], let c = style.color {
+                return mappedTextColor(
+                    trueColor: c,
+                    display: c.displayAdjusted(forLightBackground: isLightBackground))
+            }
+            // ByBlock / unset: entityColor is already plot-mapped upstream.
+            if primStyles[index]?.isColorByBlock == true { return entityColor }
+            guard let slc = styleLayer(index)?.color else { return entityColor }
+            return mappedTextColor(
+                trueColor: slc,
+                display: slc.displayAdjusted(forLightBackground: isLightBackground))
         }
         func resolvedLineWeightMM(_ index: Int) -> Double {
             let style = primStyles[index]
@@ -149,7 +178,7 @@ enum PDFPrimitives {
                 continue
             }
             writeTextPrimitive(prim, transform: t, document: document,
-                               entityColor: resolvedColor(index, prim),
+                               entityColor: resolvedMappedTextColor(index, prim),
                                lineWeightMM: resolvedLineWeightMM(index),
                                pageScale: pageScale, isLightBackground: isLightBackground, to: cb,
                                primitiveXData: document.primitiveXData(for: entity)[index],
@@ -168,11 +197,12 @@ enum PDFPrimitives {
             }
             let visuals = DataTableTessellator.generateVisualPrimitives(
                 data: data, origin: origin, transform: t)
-            writeWorldVisuals(visuals, defaultColor: resolvedColor(index, prim),
+            writeWorldVisuals(visuals, defaultColor: resolvedMappedTextColor(index, prim),
                               lineWeightMM: resolvedLineWeightMM(index),
                               pageScale: pageScale, isLightBackground: isLightBackground,
                               document: document, to: cb,
-                              options: options, catalog: catalog)
+                              options: options, catalog: catalog,
+                              plotInk: plotInk, plotEntity: entity)
         }
     }
 
@@ -184,7 +214,9 @@ enum PDFPrimitives {
                                  isLightBackground: Bool = false,
                                  document: CADDocument, to cb: PDFContentBuilder,
                                  options: PDFExporter.PDFExportOptions = .default,
-                                 catalog: PDFTextEmitter.PDFFontCatalog? = nil) {
+                                 catalog: PDFTextEmitter.PDFFontCatalog? = nil,
+                                 plotInk: PDFExporter.PlotInk? = nil,
+                                 plotEntity: CADEntity? = nil) {
         guard !prims.isEmpty else { return }
         var paths: [CADPrimitive] = []
         var texts: [CADPrimitive] = []
@@ -193,14 +225,32 @@ enum PDFPrimitives {
             else if case .table = prim { continue } // no nested tables
             else { paths.append(prim) }
         }
+        func mappedNested(trueColor: ColorRGBA) -> ColorRGBA {
+            guard let ink = plotInk, let settings = ink.settings,
+                  let table = ink.table, let entity = plotEntity else {
+                return trueColor.displayAdjusted(forLightBackground: isLightBackground)
+            }
+            return PDFExporter.resolveTextPlotColor(
+                display: trueColor.displayAdjusted(forLightBackground: isLightBackground),
+                source: PDFExporter.TextPlotSource(rawColor: trueColor, layerID: entity.layerID),
+                document: document, settings: settings,
+                plotTable: table, screeningOn: ink.screeningOn)
+        }
         if !paths.isEmpty {
             writeWorldPrimitives(paths, defaultColor: defaultColor,
                                  lineWeightMM: lineWeightMM, pageScale: pageScale,
-                                 isLightBackground: isLightBackground, to: cb)
+                                 isLightBackground: isLightBackground, to: cb,
+                                 plotInk: plotInk, plotEntity: plotEntity, document: document)
         }
         for prim in texts {
+            let final: ColorRGBA
+            if case .text(_, _, _, _, _, _, _, _, let color) = prim, let c = color {
+                final = mappedNested(trueColor: c)
+            } else {
+                final = defaultColor
+            }
             writeTextPrimitive(prim, transform: .identity, document: document,
-                               entityColor: defaultColor,
+                               entityColor: final,
                                lineWeightMM: lineWeightMM,
                                pageScale: pageScale, isLightBackground: isLightBackground, to: cb,
                                options: options, catalog: catalog)
@@ -212,7 +262,10 @@ enum PDFPrimitives {
     static func writeWorldPrimitives(_ prims: [CADPrimitive], defaultColor: ColorRGBA,
                                      lineWeightMM: Double, pageScale: Double,
                                      isLightBackground: Bool = false,
-                                     to cb: PDFContentBuilder) {
+                                     to cb: PDFContentBuilder,
+                                     plotInk: PDFExporter.PlotInk? = nil,
+                                     plotEntity: CADEntity? = nil,
+                                     document: CADDocument? = nil) {
         guard !prims.isEmpty else { return }
         cb.raw("q\n")
         let weightPt = max(lineWeightMM, 0.05) * 72.0 / 25.4
@@ -222,7 +275,21 @@ enum PDFPrimitives {
             if case .text = prim { continue }   // SHX explosion never yields nested text
             // defaultColor arrives final (adjusted upstream in collectItems);
             // only unknown-source primitive colors remap here.
-            let c = primColor(prim)?.displayAdjusted(forLightBackground: isLightBackground) ?? defaultColor
+            let c: ColorRGBA
+            if let pc = primColor(prim) {
+                if let ink = plotInk, let settings = ink.settings,
+                   let table = ink.table, let entity = plotEntity, let doc = document {
+                    c = PDFExporter.resolveTextPlotColor(
+                        display: pc.displayAdjusted(forLightBackground: isLightBackground),
+                        source: PDFExporter.TextPlotSource(rawColor: pc, layerID: entity.layerID),
+                        document: doc, settings: settings,
+                        plotTable: table, screeningOn: ink.screeningOn)
+                } else {
+                    c = pc.displayAdjusted(forLightBackground: isLightBackground)
+                }
+            } else {
+                c = defaultColor
+            }
             setColorIfNeeded(c, current: &currentColor, to: cb)
             writePrimitive(prim, effectiveScale: pageScale, to: cb)
         }
@@ -248,7 +315,7 @@ enum PDFPrimitives {
                                            options: PDFExporter.PDFExportOptions = .default,
                                            catalog: PDFTextEmitter.PDFFontCatalog? = nil) {
         guard case .text(let pos, let text, let height, let rotation, let style,
-                         let alignH, let alignV, let mtextWidth, let color) = prim
+                         let alignH, let alignV, let mtextWidth, _) = prim
         else { return }
         guard !text.isEmpty else { return }
 
@@ -264,7 +331,10 @@ enum PDFPrimitives {
         let finalHeight = height * heightScale
         let finalMaxWidth = mtextWidth.map { $0 * widthScale }
 
-        let resolvedColor = (color ?? entityColor)
+        // Callers pre-resolve precedence + plot mapping into entityColor;
+        // prim color is already accounted for upstream. Display-adjust here
+        // is idempotent for mapped ink (black stays black).
+        let resolvedColor = entityColor
             .displayAdjusted(forLightBackground: isLightBackground)
 
         // ---- TTF route (block-nested MTEXT, table cells, attributes) ----

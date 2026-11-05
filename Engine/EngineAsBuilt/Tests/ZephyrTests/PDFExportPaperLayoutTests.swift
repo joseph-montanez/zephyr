@@ -82,10 +82,10 @@ final class PDFExportPaperLayoutTests: XCTestCase {
             let color: ColorRGBA
             switch item {
             case .geometry(_, let c, _): color = c
-            case .textStrokes(_, let c): color = c
-            case .embeddedText(let e): color = e.color
+            case .textStrokes(_, let c, _): color = c
+            case .embeddedText(let e, _): color = e.color
             case .hiddenText: continue
-            case .textFallback(_, _, _, _, let c): color = c
+            case .textFallback(_, _, _, _, let c, _): color = c
             }
             // displayAdjusted converts pure white (255,255,255) to (24,24,24)
             if color.r == 24 && color.g == 24 && color.b == 24 {

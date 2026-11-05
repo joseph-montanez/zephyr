@@ -131,6 +131,123 @@ final class PDFMultiPageTests: XCTestCase {
         XCTAssertTrue(pdfText(data).contains("/Count 1"))
     }
 
+    func testMonochromePlotStyleMapsTextToBlack() throws {
+        let doc = makeDoc(color: .red)
+        let layerID = doc.allLayers.first!.handle
+        var xdata: [String: XDataValue] = [:]
+        xdata["dxf.text"] = .string("KOMPAN")
+        xdata["dxf.textHeight"] = .double(10.0)
+        doc.addEntity(CADEntity(
+            layerID: layerID,
+            localGeometry: [],
+            transform: .identity,
+            xdata: xdata))
+        var settings = a3Settings()
+        settings.plotFlags |= 32 // PlotPlotStyles
+        settings.styleSheet = "monochrome.ctb"
+        let loader: ((String) -> PlotStyleTable?) = { name in
+            guard name == "monochrome.ctb" else { return nil }
+            return try? PlotStyleTable.parse(
+                url: URL(fileURLWithPath: "Plot Styles/monochrome.ctb"))
+        }
+        let table = try XCTUnwrap(loader("monochrome.ctb"))
+        let items = PDFExporter.collectItems(document: doc, isLightBackground: true)
+        XCTAssertFalse(items.isEmpty)
+        let styled = PDFExporter.applyPlotStyles(
+            items: items, document: doc, settings: settings, plotTable: table)
+        var sawText = false
+        for item in styled {
+            switch item {
+            case .textStrokes(_, let color, _):
+                sawText = true
+                XCTAssertEqual(color, .black, "monochrome pen must map red text strokes to black")
+            case .embeddedText(let embedded, _):
+                sawText = true
+                XCTAssertEqual(embedded.color, .black, "monochrome pen must map red live text to black")
+            case .textFallback(_, _, _, _, let color, _):
+                sawText = true
+                XCTAssertEqual(color, .black, "monochrome pen must map red fallback text to black")
+            default:
+                break
+            }
+        }
+        XCTAssertTrue(sawText, "expected at least one text item")
+    }
+
+    func testMonochromePlotStyleMapsTableTextToBlack() throws {
+        let doc = makeDoc(color: .black)
+        let layerID = doc.allLayers.first!.handle
+        let column = DataTableColumn(name: "Note")
+        let data = DataTableData(
+            columns: [column],
+            rows: [DataTableRow(cells: [DataTableCell(columnID: column.id, value: .string("PIRATE"))])],
+            title: "TITLE",
+            textColor: .red,
+            gridColor: .red)
+        doc.addEntity(CADEntity(
+            layerID: layerID,
+            localGeometry: [.table(data: data, origin: .zero, color: nil)],
+            transform: .identity))
+        var settings = a3Settings()
+        settings.plotFlags |= 32 // PlotPlotStyles
+        settings.styleSheet = "monochrome.ctb"
+        let loader: ((String) -> PlotStyleTable?) = { name in
+            guard name == "monochrome.ctb" else { return nil }
+            return try? PlotStyleTable.parse(
+                url: URL(fileURLWithPath: "Plot Styles/monochrome.ctb"))
+        }
+        let context = PDFExporter.PlotContext(plotTableLoader: loader)
+        let catalog = PDFTextEmitter.PDFFontCatalog()
+        let tempDoc = CADDocument()
+        tempDoc.restore(from: doc.snapshot())
+        tempDoc.plotSettings = settings
+        tempDoc.layoutSettings = settings.layoutSettings
+        let page = try PDFExporter.renderPage(document: tempDoc, backgroundColor: .white,
+                                              plotContext: context, catalog: catalog)
+        let content = String(decoding: page.contentData, as: UTF8.self)
+        XCTAssertTrue(content.contains("0 0 0 RG") || content.contains("0 0 0 rg"),
+                      "monochrome pen must emit black table ink, got: \(content.prefix(500))")
+        XCTAssertFalse(content.contains("1 0 0 RG") || content.contains("1 0 0 rg"),
+                       "monochrome pen must not emit red table ink")
+    }
+
+    func testMonochromePlotStyleMapsDimensionTextToBlack() throws {
+        let doc = makeDoc(color: .black)
+        let layerID = doc.allLayers.first!.handle
+        let block = CADBlock(
+            name: "DIMTEXT\(UUID().uuidString.prefix(6))",
+            geometry: [.text(
+                position: .zero, text: "33'-2\"",
+                height: 2.5, rotation: 0, style: nil,
+                alignH: 1, alignV: 2, mtextWidth: nil,
+                color: .red)])
+        doc.addBlock(block)
+        var entity = CADEntity(layerID: layerID)
+        entity.blockID = block.handle
+        doc.addEntity(entity)
+        var settings = a3Settings()
+        settings.plotFlags |= 32 // PlotPlotStyles
+        settings.styleSheet = "monochrome.ctb"
+        let loader: ((String) -> PlotStyleTable?) = { name in
+            guard name == "monochrome.ctb" else { return nil }
+            return try? PlotStyleTable.parse(
+                url: URL(fileURLWithPath: "Plot Styles/monochrome.ctb"))
+        }
+        let context = PDFExporter.PlotContext(plotTableLoader: loader)
+        let catalog = PDFTextEmitter.PDFFontCatalog()
+        let tempDoc = CADDocument()
+        tempDoc.restore(from: doc.snapshot())
+        tempDoc.plotSettings = settings
+        tempDoc.layoutSettings = settings.layoutSettings
+        let page = try PDFExporter.renderPage(document: tempDoc, backgroundColor: .white,
+                                              plotContext: context, catalog: catalog)
+        let content = String(decoding: page.contentData, as: UTF8.self)
+        XCTAssertTrue(content.contains("0 0 0 RG") || content.contains("0 0 0 rg"),
+                      "monochrome pen must emit black dimension text, got: \(content.prefix(500))")
+        XCTAssertFalse(content.contains("1 0 0 RG") || content.contains("1 0 0 rg"),
+                       "monochrome pen must not emit red dimension text")
+    }
+
     // MARK: - Unchanged single-page behavior
 
     func testSinglePageWrapperMatchesMultiPage() throws {

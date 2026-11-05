@@ -50,6 +50,25 @@ public enum PDFExporter {
     // MARK: Render items (pre-pass output)
     // ---------------------------------------------------------------------
 
+    /// Plot source for standalone text: true color + layer for CTB/STB
+    /// lookup. Stored alongside the display-adjusted color so plot mapping
+    /// uses true colors (like geometry) while object-color tables preserve
+    /// visibility.
+    struct TextPlotSource: Sendable, Equatable {
+        var rawColor: ColorRGBA
+        var layerID: UUID
+    }
+
+    /// Plot ink for nested content (dimensions, tables, block text).
+    /// Carried from `renderPage` into `writeContent`/`PDFPrimitives` so
+    /// explicit nested colors map through the same CTB/STB path as
+    /// standalone text. Nil settings/table means no mapping.
+    struct PlotInk: Sendable, Equatable {
+        var settings: CADPlotSettings?
+        var table: PlotStyleTable?
+        var screeningOn: Bool
+    }
+
     /// A drawable unit in screen-parity order.
     enum RenderItem {
         /// Geometry entity (lines, arcs, blocks, hatches, …) drawn under its
@@ -57,10 +76,10 @@ public enum PDFExporter {
         case geometry(entity: CADEntity, color: ColorRGBA, lineWeightMM: Double)
         /// Standalone TEXT/MTEXT entity pre-exploded to world-space SHX
         /// stroke primitives (renderer parity).
-        case textStrokes(prims: [CADPrimitive], color: ColorRGBA)
+        case textStrokes(prims: [CADPrimitive], color: ColorRGBA, plotSource: TextPlotSource)
         /// Live TrueType text: laid out with TTF advances, emitted against
         /// embedded or referenced CID fonts.
-        case embeddedText(PDFTextEmitter.EmbeddedItem)
+        case embeddedText(item: PDFTextEmitter.EmbeddedItem, plotSource: TextPlotSource)
         /// Invisible searchable text over SHX strokes (EPDFSHX equivalent).
         case hiddenText(text: String, position: Vector3, rotation: Double,
                         height: Double)
@@ -68,7 +87,7 @@ public enum PDFExporter {
         /// loaded — emitted as a Standard-14 Helvetica text object.
         /// Last resort only; SHX and TTF paths are preferred.
         case textFallback(text: String, position: Vector3, rotation: Double,
-                          height: Double, color: ColorRGBA)
+                          height: Double, color: ColorRGBA, plotSource: TextPlotSource)
     }
 
     // ---------------------------------------------------------------------
@@ -450,17 +469,87 @@ public enum PDFExporter {
                     entity: entity,
                     color: ColorRGBA(r: rgb.0, g: rgb.1, b: rgb.2, a: color.a),
                     lineWeightMM: resolved.lineweightMM ?? lwBase)
-            case .textStrokes(let prims, let color):
-                if !screeningOn { return item }
-                // Text strokes use the default color; screening applies
-                // uniformly when the setup enables transparency.
-                return .textStrokes(prims: prims, color: color)
-            case .embeddedText, .hiddenText, .textFallback:
-                // Live text keeps its resolved color (screening blends only
-                // plot-mapped geometry pens, as with SHX text strokes).
+            case .textStrokes(let prims, let color, let source):
+                let mapped = Self.resolveTextPlotColor(
+                    display: color, source: source, document: document,
+                    settings: settings, plotTable: plotTable,
+                    screeningOn: screeningOn)
+                return .textStrokes(prims: prims, color: mapped, plotSource: source)
+            case .embeddedText(let embedded, let source):
+                let mapped = Self.resolveTextPlotColor(
+                    display: embedded.color, source: source, document: document,
+                    settings: settings, plotTable: plotTable,
+                    screeningOn: screeningOn)
+                var updated = embedded
+                updated.color = mapped
+                return .embeddedText(item: updated, plotSource: source)
+            case .hiddenText:
                 return item
+            case .textFallback(let text, let position, let rotation, let height, let color, let source):
+                let mapped = Self.resolveTextPlotColor(
+                    display: color, source: source, document: document,
+                    settings: settings, plotTable: plotTable,
+                    screeningOn: screeningOn)
+                return .textFallback(
+                    text: text, position: position, rotation: rotation,
+                    height: height, color: mapped, plotSource: source)
             }
         }
+    }
+
+    /// Resolve a standalone-text color through the plot-style table
+    /// (AutoCAD parity: monochrome maps text to black like geometry).
+    /// Object-color pens preserve the display color so white stays visible
+    /// as charcoal; explicit overrides and grayscale use true colors.
+    static func resolveTextPlotColor(
+        display: ColorRGBA,
+        source: TextPlotSource,
+        document: CADDocument,
+        settings: CADPlotSettings,
+        plotTable: PlotStyleTable?,
+        screeningOn: Bool
+    ) -> ColorRGBA {
+        guard settings.plotFlags & 32 != 0, let table = plotTable else {
+            return display
+        }
+        let raw = source.rawColor
+        let layer = document.layer(for: source.layerID)
+        let aci = Int(DXFColorTable.rgbaToACI(raw))
+        guard let pen = LayerAccess.plotPen(
+            layer: layer, objectACI: aci,
+            pstyleMode: document.pstyleMode, table: table) else {
+            return display
+        }
+        let baseRGB: (UInt8, UInt8, UInt8)
+        let screening: Double
+        switch pen.colorPolicy {
+        case 5, 0:
+            if pen.colorARGB != nil {
+                let resolved = PlotPenApplication.resolve(
+                    objectACI: nil,
+                    objectRGB: (raw.r, raw.g, raw.b), pen: pen,
+                    objectLineweightMM: 0)
+                baseRGB = (resolved.r, resolved.g, resolved.b)
+                screening = resolved.screening01
+            } else {
+                baseRGB = (display.r, display.g, display.b)
+                screening = Double(pen.screeningPercent) / 100.0
+            }
+        case 3:
+            baseRGB = PlotPenApplication.grayscale(r: raw.r, g: raw.g, b: raw.b)
+            screening = Double(pen.screeningPercent) / 100.0
+        default:
+            baseRGB = (display.r, display.g, display.b)
+            screening = Double(pen.screeningPercent) / 100.0
+        }
+        var rgb = baseRGB
+        if screeningOn, screening < 1 {
+            let t = screening
+            rgb = (UInt8((Double(rgb.0) * t + 255 * (1 - t)).rounded()),
+                   UInt8((Double(rgb.1) * t + 255 * (1 - t)).rounded()),
+                   UInt8((Double(rgb.2) * t + 255 * (1 - t)).rounded()))
+        }
+        return ColorRGBA(r: rgb.0, g: rgb.1, b: rgb.2, a: display.a)
     }
 
     /// DrawViewportsFirst (bit 512): viewport-projected content plots first
@@ -621,17 +710,17 @@ public enum PDFExporter {
                 if let bb = entity.worldBoundingBox {
                     grow(bb.min.x, bb.min.y); grow(bb.max.x, bb.max.y)
                 }
-            case .textStrokes(let prims, _):
+            case .textStrokes(let prims, _, _):
                 if let bb = primsBounds(prims) {
                     grow(bb.minX, bb.minY); grow(bb.maxX, bb.maxY)
                 }
-            case .embeddedText(let embedded):
+            case .embeddedText(let embedded, _):
                 if let bb = embedded.bounds() {
                     grow(bb.minX, bb.minY); grow(bb.maxX, bb.maxY)
                 }
             case .hiddenText:
                 break // invisible: no page-fit contribution
-            case .textFallback(let text, let position, _, let height, _):
+            case .textFallback(let text, let position, _, let height, _, _):
                 // Rough extent: baseline-left origin, ~0.6·h average advance.
                 let w = Double(text.count) * height * 0.6
                 grow(position.x, position.y - height)
@@ -650,6 +739,7 @@ public enum PDFExporter {
         var plotClipPage: (x: Double, y: Double, w: Double, h: Double)? = nil
         var plotTX: Double? = nil
         var plotTY: Double? = nil
+        var plotInk = PlotInk(settings: nil, table: nil, screeningOn: false)
 
         // Plot mode: exact paper size, scale, offset, and printable clip
         // from the layout's settings. Legacy auto-fit otherwise.
@@ -673,6 +763,13 @@ public enum PDFExporter {
                 items: items, document: document, settings: ps,
                 plotTable: plotTable,
                 transparencyOverride: plotContext.transparencyOverride)
+            let inkScreening: Bool
+            switch plotContext.transparencyOverride {
+            case 0: inkScreening = false
+            case 2: inkScreening = true
+            default: inkScreening = ps.plotTransparency
+            }
+            plotInk = PlotInk(settings: ps, table: plotTable, screeningOn: inkScreening)
             pageW = frame.pageW
             pageH = frame.pageH
             margin = 0.0
@@ -726,7 +823,7 @@ public enum PDFExporter {
                      pageW: pageW, pageH: pageH, isLightBackground: isLightBackground, to: content,
                      plotTX: plotTX, plotTY: plotTY, plotScale: plotTX == nil ? nil : scale,
                      clipWorld: plotClip, clipPageRect: plotClipPage,
-                     options: options, catalog: catalog)
+                     options: options, catalog: catalog, plotInk: plotInk)
         let contentData = content.build()
         return RenderedPage(pageW: pageW, pageH: pageH, contentData: contentData,
                             measureC: measC, unitLabel: unitLabel)
@@ -1125,7 +1222,8 @@ public enum PDFExporter {
                                 laid, rotation: worldRotation,
                                 widthFactor: effectiveWidthFactor,
                                 obliqueDegrees: effectiveOblique),
-                            color: entityColor))
+                            color: entityColor,
+                            plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID)))
                     } else {
                         let displayName: String
                         if let runFont = formatted?.paragraphs.first?.runs.first?.fontName,
@@ -1134,12 +1232,14 @@ public enum PDFExporter {
                         } else {
                             displayName = ttfBaseReference
                         }
-                        items.append(.embeddedText(PDFTextEmitter.EmbeddedItem(
-                            laid: laid, displayName: displayName,
-                            rotation: worldRotation,
-                            widthFactor: effectiveWidthFactor,
-                            obliqueDegrees: effectiveOblique,
-                            color: entityColor)))
+                        items.append(.embeddedText(
+                            item: PDFTextEmitter.EmbeddedItem(
+                                laid: laid, displayName: displayName,
+                                rotation: worldRotation,
+                                widthFactor: effectiveWidthFactor,
+                                obliqueDegrees: effectiveOblique,
+                                color: entityColor),
+                            plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID)))
                     }
                     continue
                 }
@@ -1200,7 +1300,9 @@ public enum PDFExporter {
                             obliqueAngle: effectiveOblique,
                             maxWidth: worldWidth)
                     }
-                    items.append(.textStrokes(prims: prims, color: entityColor))
+                    items.append(.textStrokes(
+                        prims: prims, color: entityColor,
+                        plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID)))
                     if options.includeHiddenTextForSHX {
                         items.append(.hiddenText(
                             text: displayText,
@@ -1214,7 +1316,8 @@ public enum PDFExporter {
                         position: origin,
                         rotation: worldRotation,
                         height: worldHeight,
-                        color: entityColor))
+                        color: entityColor,
+                        plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID)))
                 }
                 continue   // NEVER fall through to geometry — the .text primitive
                            // in localGeometry duplicates position/rotation.
@@ -1264,7 +1367,8 @@ public enum PDFExporter {
         clipWorld: (Double, Double, Double, Double)? = nil,
         clipPageRect: (x: Double, y: Double, w: Double, h: Double)? = nil,
         options: PDFExportOptions = .default,
-        catalog: PDFTextEmitter.PDFFontCatalog? = nil
+        catalog: PDFTextEmitter.PDFFontCatalog? = nil,
+        plotInk: PlotInk = PlotInk(settings: nil, table: nil, screeningOn: false)
     ) {
         // Y-FLIPPING page CTM: engine Y-down → PDF Y-up.
         //   device.x =  scale * world.x + tx
@@ -1307,12 +1411,13 @@ public enum PDFExporter {
                 PDFPrimitives.writeEntity(entity, in: document, entityColor: color,
                                           lineWeightMM: lineWeightMM, pageScale: scale,
                                           isLightBackground: isLightBackground, to: cb,
-                                          options: options, catalog: catalog)
-            case .textStrokes(let prims, let color):
+                                          options: options, catalog: catalog,
+                                          plotInk: plotInk)
+            case .textStrokes(let prims, let color, _):
                 PDFPrimitives.writeWorldPrimitives(prims, defaultColor: color,
                                                    lineWeightMM: 0.25, pageScale: scale,
                                                    isLightBackground: isLightBackground, to: cb)
-            case .embeddedText(let embedded):
+            case .embeddedText(let embedded, _):
                 PDFTextEmitter.emit(
                     embedded.laid, displayName: embedded.displayName,
                     rotation: embedded.rotation, widthFactor: embedded.widthFactor,
@@ -1322,7 +1427,7 @@ public enum PDFExporter {
             case .hiddenText(let text, let position, let rotation, let height):
                 PDFTextEmitter.emitHiddenText(
                     text, position: position, rotation: rotation, height: height, to: cb)
-            case .textFallback(let text, let position, let rotation, let height, let color):
+            case .textFallback(let text, let position, let rotation, let height, let color, _):
                 cb.raw("q\n")
                 PDFPrimitives.setColor(color.displayAdjusted(forLightBackground: isLightBackground), to: cb)
                 PDFPrimitives.writeFallbackText(text, position: position, rotation: rotation,

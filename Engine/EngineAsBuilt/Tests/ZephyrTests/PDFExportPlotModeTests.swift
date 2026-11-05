@@ -218,7 +218,7 @@ final class PDFExportPlotModeTests: XCTestCase {
         // (EPDFSHX = 1 equivalent): strokes + one hidden-text item.
         XCTAssertEqual(items.count, 2)
         switch items[0] {
-        case .textStrokes(let prims, _):
+        case .textStrokes(let prims, _, _):
             guard let bounds = PDFExporter.primsBounds(prims) else {
                 XCTFail("Missing text strokes bounds")
                 return
@@ -226,7 +226,7 @@ final class PDFExportPlotModeTests: XCTestCase {
             let height = bounds.maxY - bounds.minY
             // Text height should be ~17.5 * 0.0056618 = 0.099, NOT raw 17.5
             XCTAssertLessThan(height, 0.5, "Text height must be scaled by transform")
-        case .textFallback(_, _, _, let h, _):
+        case .textFallback(_, _, _, let h, _, _):
             XCTAssertLessThan(h, 0.5, "Fallback text height must be scaled by transform")
         default:
             XCTFail("Expected text strokes or fallback")
