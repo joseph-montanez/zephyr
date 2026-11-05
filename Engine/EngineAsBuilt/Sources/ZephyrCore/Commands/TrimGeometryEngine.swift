@@ -353,7 +353,6 @@ public enum TrimGeometryEngine {
         criterion: TrimCriterion,
         cuttingSegments: [(Vector3, Vector3)],
         exactLines: [(Vector3, Vector3)],
-        zoom: Double,
         exactCurves: [Curve2d] = []
     ) -> (newGeometry: [CADPrimitive]?, modified: Bool, errorMsg: String?) {
         guard let localGeom = entity.localGeometry, !localGeom.isEmpty else {
@@ -388,7 +387,6 @@ public enum TrimGeometryEngine {
                 criterion: criterion,
                 cuttingSegments: cuttingSegments,
                 exactLines: exactLines,
-                zoom: zoom,
                 exactCurves: exactCurves
             )
 
@@ -418,7 +416,6 @@ public enum TrimGeometryEngine {
                     criterion: criterion,
                     cuttingSegments: cuttingSegments,
                     exactLines: exactLines,
-                    zoom: zoom,
                     exactCurves: exactCurves
                 )
 
@@ -447,7 +444,6 @@ public enum TrimGeometryEngine {
         criterion: TrimCriterion,
         cuttingSegments: [(Vector3, Vector3)],
         exactLines: [(Vector3, Vector3)],
-        zoom: Double,
         exactCurves: [Curve2d] = []
     ) -> (result: [CADPrimitive]?, modified: Bool, errorMsg: String?) {
         switch primitive {
@@ -476,7 +472,7 @@ public enum TrimGeometryEngine {
             return trimSpline(
                 controlPoints: controlPoints, knots: knots, degree: degree, weights: weights, color: color,
                 transform: transform, criterion: criterion, cuttingSegments: cuttingSegments,
-                exactLines: exactLines, zoom: zoom, exactCurves: exactCurves
+                exactLines: exactLines, exactCurves: exactCurves
             )
 
         case .polyline(let path, let color):
@@ -850,7 +846,6 @@ public enum TrimGeometryEngine {
         criterion: TrimCriterion,
         cuttingSegments: [(Vector3, Vector3)],
         exactLines: [(Vector3, Vector3)],
-        zoom: Double,
         exactCurves: [Curve2d] = []
     ) -> (result: [CADPrimitive]?, modified: Bool, errorMsg: String?) {
         let invTransform = transform.inverse()
@@ -859,8 +854,21 @@ public enum TrimGeometryEngine {
         let minT = knots[p]
         let maxT = knots[controlPoints.count]
         let parameterDuplicateTolerance = max(1e-6, (maxT - minT) * 1e-7)
-        let scale = max(abs(transform.scale.x), abs(transform.scale.y), 1e-9)
-        let localTolerance = max(1e-7, (4.0 / zoom) / scale)
+        // Zoom-independent geometric fallback tolerance. Exact kernel hits do
+        // not use this; it only extends legacy sampled cutters and tests
+        // endpoint contact for malformed splines.
+        var localMin = controlPoints[0]
+        var localMax = controlPoints[0]
+        for point in controlPoints.dropFirst() {
+            localMin.x = min(localMin.x, point.x)
+            localMin.y = min(localMin.y, point.y)
+            localMin.z = min(localMin.z, point.z)
+            localMax.x = max(localMax.x, point.x)
+            localMax.y = max(localMax.y, point.y)
+            localMax.z = max(localMax.z, point.z)
+        }
+        let localDiagonal = (localMax - localMin).magnitude
+        let localTolerance = max(KernelTolerance.linear, localDiagonal * 1e-9)
         let localToleranceSq = localTolerance * localTolerance
 
         let localExactLineEdges: [(Vector3, Vector3)] = exactLines.map {

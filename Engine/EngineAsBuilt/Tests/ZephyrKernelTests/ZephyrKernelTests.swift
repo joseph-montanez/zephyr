@@ -189,6 +189,34 @@ final class ZephyrKernelTests: XCTestCase {
         }
     }
 
+    func testSplineSplineHitPolishesToCurve() {
+        // Golden crossing from Tools/oracles/spline_exact.py: the cubic crosses
+        // y = -148 on its right branch at this x.
+        let cubic = Spline2d(
+            controlPoints: [
+                Point2d(x: -593, y: 77),
+                Point2d(x: -485, y: -422),
+                Point2d(x: 74.03219943040847, y: -422),
+                Point2d(x: 256, y: 78),
+            ],
+            knots: [0, 0, 0, 0, 1, 1, 1, 1],
+            degree: 3)
+        let horizontal = Spline2d(
+            controlPoints: [
+                Point2d(x: -657, y: -148),
+                Point2d(x: 306.02544099312354, y: -148),
+            ],
+            knots: [0, 0, 1, 1],
+            degree: 1)
+        let hits = Intersector2D.intersect(.spline(cubic), .spline(horizontal))
+        XCTAssertEqual(hits.count, 2)
+        guard let right = hits.filter({ $0.point.x > 0 }).max(by: { $0.point.x < $1.point.x }) else {
+            return XCTFail("missing the right-branch spline-spline hit")
+        }
+        XCTAssertEqual(right.point.x, 121.69301292060802, accuracy: 1e-9)
+        XCTAssertEqual(right.point.y, -148, accuracy: 1e-9)
+    }
+
     // MARK: - Projection / fillet / offset
 
     func testClosestPointArc() {

@@ -712,7 +712,6 @@ case .askProject:
             criterion: criterion,
             cuttingSegments: edges.segments,
             exactLines: edges.exactLines,
-            zoom: engine.camera.zoom,
             exactCurves: edges.exactCurves
         )
 
@@ -825,7 +824,6 @@ case .askProject:
                 criterion: criterion,
                 cuttingSegments: edges.segments,
                 exactLines: edges.exactLines,
-                zoom: engine.camera.zoom,
                 exactCurves: edges.exactCurves
             )
 
@@ -907,7 +905,6 @@ case .askProject:
                     criterion: criterion,
                     cuttingSegments: edges.segments,
                     exactLines: edges.exactLines,
-                    zoom: engine.camera.zoom,
                     exactCurves: edges.exactCurves
                 )
 

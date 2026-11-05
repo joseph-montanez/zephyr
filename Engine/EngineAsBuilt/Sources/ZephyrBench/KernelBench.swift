@@ -229,7 +229,7 @@ extension Cases {
                 let res = TrimGeometryEngine.trimPrimitive(
                     primitive: splinePrim, transform: .identity,
                     criterion: .click(point: click),
-                    cuttingSegments: cutters, exactLines: cutters, zoom: 1.0)
+                    cuttingSegments: cutters, exactLines: cutters)
                 var sig = "unmodified"
                 if res.modified, let prims = res.result {
                     var total = 0.0
@@ -253,7 +253,7 @@ extension Cases {
         let midRes = TrimGeometryEngine.trimPrimitive(
             primitive: splinePrim, transform: .identity,
             criterion: .click(point: midClick),
-            cuttingSegments: [cutA], exactLines: [cutA], zoom: 1.0)
+            cuttingSegments: [cutA], exactLines: [cutA])
         guard midRes.modified, let mp = midRes.result, mp.count == 2 else {
             fatalError("trim probe FAILED: mid click should split spline in two")
         }
@@ -374,7 +374,7 @@ extension Cases {
                     let res = TrimGeometryEngine.trimPrimitive(
                         primitive: worldPrim, transform: .identity,
                         criterion: .click(point: click),
-                        cuttingSegments: [cut], exactLines: [cut], zoom: 1.0)
+                        cuttingSegments: [cut], exactLines: [cut])
                     var sig: String
                     if res.modified, let prims = res.result {
                         sig = prims.map { p in
@@ -403,7 +403,7 @@ extension Cases {
                         let res = TrimGeometryEngine.trimPrimitive(
                             primitive: worldPrim, transform: .identity,
                             criterion: .click(point: qp),
-                            cuttingSegments: [cut], exactLines: [cut], zoom: 1.0)
+                            cuttingSegments: [cut], exactLines: [cut])
                         var sig = "unmodified"
                         if res.modified, let prims = res.result {
                             sig = prims.map { p -> String in
@@ -434,7 +434,7 @@ extension Cases {
                         let res = TrimGeometryEngine.trimPrimitive(
                             primitive: lp, transform: le.transform,
                             criterion: .click(point: mid),
-                            cuttingSegments: [], exactLines: [], zoom: 1.0,
+                            cuttingSegments: [], exactLines: [],
                             exactCurves: [exactCutter])
                         // Direct fidelity check: re-intersect and compare the
                         // trim output endpoint params against the kernel's own
@@ -487,7 +487,7 @@ extension Cases {
                     let res = TrimGeometryEngine.trimPrimitive(
                         primitive: worldPrim, transform: .identity,
                         criterion: .click(point: qp),
-                        cuttingSegments: rawSegs, exactLines: rawSegs, zoom: 1.0)
+                        cuttingSegments: rawSegs, exactLines: rawSegs)
                     var sig = "unmodified"
                     if res.modified, let prims = res.result {
                         sig = prims.map { p -> String in

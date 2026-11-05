@@ -72,6 +72,7 @@ public final class EngineRenderer {
             ctx.regenTask = nil
             ctx.regenInFlight = nil
             ctx.bridge.cancelPending()
+            ctx.bridge.invalidateCurveLOD()
             ctx.regenGeneration &+= 1
             ctx.appliedGeneration = -1
             ctx.builtRevision = nil
@@ -292,13 +293,38 @@ public final class EngineRenderer {
     /// into a destroyed context. `ctxID` nil addresses the primary context;
     /// non-nil IDs resolve through the tab-keyed secondary contexts first,
     /// then the leaf-keyed dual-view pane contexts.
+    /// Screen-space curve inputs for one view. Pixels-per-unit drives the
+    /// sticky zoom band; the padded viewport lets curve tessellation stay
+    /// valid while panning inside the over-scanned region.
+    internal func curveLODInputs(
+        camera: EngineCameraManager,
+        viewportWidth: Int32,
+        viewportHeight: Int32,
+        pixelScale: Double
+    ) -> (pixelsPerUnit: Double, paddedViewport: ScreenTessellationViewport) {
+        let pixelsPerUnit = max(1e-12, camera.zoom * pixelScale)
+        let viewport = camera.worldViewportRect(
+            windowWidth: viewportWidth, windowHeight: viewportHeight)
+        let marginX = (viewport.maxX - viewport.minX) * cadCullMargin
+        let marginY = (viewport.maxY - viewport.minY) * cadCullMargin
+        return (
+            pixelsPerUnit,
+            ScreenTessellationViewport(
+                minX: viewport.minX - marginX,
+                minY: viewport.minY - marginY,
+                maxX: viewport.maxX + marginX,
+                maxY: viewport.maxY + marginY))
+    }
+
     private func runContextRegen(
         ctxID: UUID?,
         snapshot: CADDocumentSnapshot,
         generation: Int,
+        revision: UInt64,
         simplify: Bool,
         renderOrigin: CADRenderOrigin,
-        tessDiv: Double
+        tessDiv: Double,
+        curveLOD: CurveScreenTessellationContext?
     ) async {
         let ctx: WindowRenderContext
         if let ctxID {
@@ -310,10 +336,12 @@ public final class EngineRenderer {
         await ctx.bridge.regenerate(
             fromSnapshot: snapshot,
             generation: generation,
+            revision: revision,
             simplifyComplexBlocks: simplify,
             into: ctx.geometry,
             renderOrigin: renderOrigin,
-            splineTessellationDivisor: tessDiv
+            splineTessellationDivisor: tessDiv,
+            curveTessellation: curveLOD
         )
     }
 
@@ -327,6 +355,8 @@ public final class EngineRenderer {
         doc: CADDocument,
         simplifyComplexBlocks: Bool,
         splineTessellationDivisor: Double,
+        pixelsPerUnit: Double,
+        paddedViewport: ScreenTessellationViewport,
         background: SDL_FColor,
         isPrimary: Bool
     ) -> Bool {
@@ -352,6 +382,9 @@ public final class EngineRenderer {
             ctx.regenGeneration &+= 1
         }
         let wantGen = ctx.regenGeneration
+        let desiredCurveLOD = ctx.bridge.desiredCurveLOD(
+            pixelsPerUnit: pixelsPerUnit,
+            viewport: paddedViewport)
 
         // Launch (or relaunch) a background regeneration for the current generation
         // when the displayed geometry is stale and no task is already computing it.
@@ -362,6 +395,7 @@ public final class EngineRenderer {
             }
             print("[Loop] regen needed for generation \(wantGen), launching task")
             ctx.regenTask?.cancel()
+            ctx.bridge.cancelCurveRefresh()
             let (docSnapshot, origin) = doc.documentLock.withLock {
                 (doc.renderSnapshot(), renderOrigin(for: doc))
             }
@@ -369,11 +403,13 @@ public final class EngineRenderer {
             ctx.pendingRevision = doc.renderRevision
             let simplify = simplifyComplexBlocks
             let tessDiv = splineTessellationDivisor
+            let revision = doc.renderRevision
             ctx.regenTask = Task.detached { [weak self] in
                 guard let self else { return }
                 await self.runContextRegen(
                     ctxID: ctxID, snapshot: docSnapshot, generation: wantGen,
-                    simplify: simplify, renderOrigin: origin, tessDiv: tessDiv)
+                    revision: revision, simplify: simplify, renderOrigin: origin,
+                    tessDiv: tessDiv, curveLOD: desiredCurveLOD)
             }
         }
 
@@ -399,6 +435,21 @@ public final class EngineRenderer {
                     }
                 }
             }
+        }
+
+        // Zoom-band or viewport-region staleness refreshes only curve-bearing
+        // entities. Stored analytic geometry is untouched; generated specs are
+        // replaced in place with the same z values and entity indices.
+        switch ctx.bridge.refreshCurveLODIfNeeded(
+            generation: wantGen,
+            revision: doc.renderRevision,
+            context: desiredCurveLOD,
+            into: ctx.geometry,
+            viewportBackground: bgTuple(background)) {
+        case .none, .launched:
+            break
+        case .requiresFullRegen:
+            ctx.regenGeneration &+= 1
         }
         return pendingApplied
     }
@@ -553,10 +604,16 @@ public final class EngineRenderer {
             let activeTab = engine.tabManager.activeTab
             let actx = activeTab.map { tabCtx(for: $0.id) } ?? primaryCtx
             if let activeTab { supersedeCtxIfViewChanged(actx, tab: activeTab) }
+            let activeLOD = curveLODInputs(
+                camera: engine.camera,
+                viewportWidth: engine.windowWidth, viewportHeight: engine.windowHeight,
+                pixelScale: Double(lineWidthPixelScale))
             let pendingApplied = ensureContextRegenerated(
                 ctxID: activeTab?.id, ctx: actx, doc: activeDoc,
                 simplifyComplexBlocks: inBlockEditor ? false : engine.simplifyComplexBlocks,
                 splineTessellationDivisor: engine.splineTessellationDivisor,
+                pixelsPerUnit: activeLOD.pixelsPerUnit,
+                paddedViewport: activeLOD.paddedViewport,
                 background: engine.ui.backgroundColor,
                 isPrimary: true)
 
@@ -827,10 +884,16 @@ public final class EngineRenderer {
         let activeTab = engine.tabManager.activeTab
         let actx = activeTab.map { tabCtx(for: $0.id) } ?? primaryCtx
         if let activeTab { supersedeCtxIfViewChanged(actx, tab: activeTab) }
+        let splitPrimaryLOD = curveLODInputs(
+            camera: engine.camera,
+            viewportWidth: primaryW, viewportHeight: primaryH,
+            pixelScale: Double(lineWidthPixelScale))
         let pendingApplied = ensureContextRegenerated(
             ctxID: activeTab?.id, ctx: actx, doc: activeDoc,
             simplifyComplexBlocks: inBlockEditor ? false : engine.simplifyComplexBlocks,
             splineTessellationDivisor: engine.splineTessellationDivisor,
+            pixelsPerUnit: splitPrimaryLOD.pixelsPerUnit,
+            paddedViewport: splitPrimaryLOD.paddedViewport,
             background: engine.ui.backgroundColor,
             isPrimary: true)
         routeContextVertexBuild(
@@ -873,6 +936,10 @@ public final class EngineRenderer {
                 paneCtxs[leaf.id] = ctx
             }
             ctx.camera.applyState(entry?.state ?? view.cameraState)
+            let leafLOD = curveLODInputs(
+                camera: ctx.camera,
+                viewportWidth: Int32(leaf.rect.w), viewportHeight: Int32(leaf.rect.h),
+                pixelScale: Double(lineWidthPixelScale))
             // A context retargeted to another tab or drawing view must not
             // keep the previous document's geometry: edit revisions can
             // coincide across view documents, so supersede explicitly
@@ -884,6 +951,7 @@ public final class EngineRenderer {
                 ctx.regenTask = nil
                 ctx.regenInFlight = nil
                 ctx.bridge.cancelPending()
+                ctx.bridge.invalidateCurveLOD()
                 ctx.regenGeneration &+= 1
                 ctx.appliedGeneration = -1
                 ctx.builtRevision = nil
@@ -894,6 +962,8 @@ public final class EngineRenderer {
                 ctxID: leaf.id, ctx: ctx, doc: view.document,
                 simplifyComplexBlocks: tab.editingBlockID != nil ? false : engine.simplifyComplexBlocks,
                 splineTessellationDivisor: engine.splineTessellationDivisor,
+                pixelsPerUnit: leafLOD.pixelsPerUnit,
+                paddedViewport: leafLOD.paddedViewport,
                 background: bg, isPrimary: false)
             routeContextVertexBuild(
                 ctx: ctx, camera: ctx.camera,
@@ -2131,6 +2201,7 @@ public final class EngineRenderer {
                 c.regenTask = nil
                 c.regenInFlight = nil
                 c.bridge.cancelPending()
+                c.bridge.invalidateCurveLOD()
                 c.regenGeneration &+= 1
                 c.appliedGeneration = -1
                 c.builtRevision = nil
@@ -2138,10 +2209,16 @@ public final class EngineRenderer {
                 c.invalidateBuiltState(device: engine.gpuDevice)
             }
             let doc = tab.document
+            let secondaryLOD = curveLODInputs(
+                camera: c.camera,
+                viewportWidth: dims.w, viewportHeight: dims.h,
+                pixelScale: Double(max(1.0, max(dims.sx, dims.sy))))
             let pendingApplied = ensureContextRegenerated(
                 ctxID: tab.id, ctx: c, doc: doc,
                 simplifyComplexBlocks: tab.editingBlockID != nil ? false : engine.simplifyComplexBlocks,
                 splineTessellationDivisor: engine.splineTessellationDivisor,
+                pixelsPerUnit: secondaryLOD.pixelsPerUnit,
+                paddedViewport: secondaryLOD.paddedViewport,
                 background: bg, isPrimary: false)
             routeContextVertexBuild(
                 ctx: c, camera: c.camera,

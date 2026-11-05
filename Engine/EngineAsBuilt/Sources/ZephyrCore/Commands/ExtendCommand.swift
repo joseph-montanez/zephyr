@@ -869,7 +869,6 @@ public final class ExtendCommand: FeatureCommand {
             criterion: .click(point: rawClick),
             cuttingSegments: edges.segments,
             exactLines: edges.exactLines,
-            zoom: engine.camera.zoom,
             exactCurves: edges.exactCurves
         )
 

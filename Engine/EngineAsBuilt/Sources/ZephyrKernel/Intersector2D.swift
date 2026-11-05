@@ -54,6 +54,413 @@ public enum Intersector2D: Sendable {
         return Point2d(x: 0.5 * (ca.x + cb.x), y: 0.5 * (ca.y + cb.y))
     }
 
+    // MARK: - Shifted seed-consistent refinement
+
+    /// Translate a curve exactly by moving its positional data. Directions and
+    /// knot vectors are unchanged. Callers keep the same curve parameters, so
+    /// only points move into a local frame.
+    static func translatedCurve(_ curve: Curve2d, by origin: Point2d) -> Curve2d {
+        let shift = Vec2d(x: -origin.x, y: -origin.y)
+        func shifted(_ point: Point2d) -> Point2d { point.translated(by: shift) }
+        switch curve {
+        case .line(let seg):
+            return .line(LineSeg2d(start: shifted(seg.start), end: shifted(seg.end)))
+        case .ray(let r):
+            return .ray(Ray2d(origin: shifted(r.origin), direction: r.direction))
+        case .xline(let x):
+            return .xline(XLine2d(origin: shifted(x.origin), direction: x.direction))
+        case .arc(let a):
+            return .arc(Arc2d(center: shifted(a.center), radius: a.radius,
+                              startAngle: a.startAngle, sweep: a.sweep))
+        case .circle(let c):
+            return .circle(Circle2d(center: shifted(c.center), radius: c.radius))
+        case .ellipse(let e):
+            return .ellipse(Ellipse2d(center: shifted(e.center), majorAxis: e.majorAxis,
+                                      minorRatio: e.minorRatio, startAngle: e.startAngle,
+                                      sweep: e.sweep))
+        case .spline(let s):
+            return .spline(Spline2d(controlPoints: s.controlPoints.map(shifted),
+                                    knots: s.knots, degree: s.degree, weights: s.weights))
+        case .polySegment(let seg):
+            switch seg.geometry {
+            case .line(let l):
+                return .line(LineSeg2d(start: shifted(l.start), end: shifted(l.end)))
+            case .arc(let a):
+                return .arc(Arc2d(center: shifted(a.center), radius: a.radius,
+                                  startAngle: a.startAngle, sweep: a.sweep))
+            }
+        }
+    }
+
+    /// Exact bounding box for an arc sector. Endpoints plus every cardinal point
+    /// inside the directed sweep are sufficient; chord boxes are not used for
+    /// culling because a chord box can miss a sector that arches past it.
+    static func exactArcSectorBounds(_ arc: Arc2d, from t0: Double, to t1: Double) -> BoundingBox2d {
+        let theta0 = arc.startAngle + arc.sweep * t0
+        let theta1 = arc.startAngle + arc.sweep * t1
+        func point(_ theta: Double) -> Point2d {
+            Point2d(x: arc.center.x + arc.radius * cos(theta),
+                    y: arc.center.y + arc.radius * sin(theta))
+        }
+        var box = BoundingBox2d(min: point(theta0), max: point(theta0))
+        box.include(point(theta1))
+        func contains(_ theta: Double) -> Bool {
+            if abs(arc.sweep) <= KernelTolerance.parametric { return theta == theta0 }
+            let twoPi = 2.0 * .pi
+            if arc.sweep > 0 {
+                var delta = (theta - theta0).truncatingRemainder(dividingBy: twoPi)
+                if delta < 0 { delta += twoPi }
+                return delta <= arc.sweep + 1e-9
+            } else {
+                var delta = (theta0 - theta).truncatingRemainder(dividingBy: twoPi)
+                if delta < 0 { delta += twoPi }
+                return delta <= -arc.sweep + 1e-9
+            }
+        }
+        for quadrant in 0..<4 {
+            let candidate = Double(quadrant) * .pi / 2.0
+            // Shift the cardinal direction by whole revolutions so the containment
+            // test sees the copy adjacent to this sector.
+            let twoPi = 2.0 * .pi
+            let center = 0.5 * (theta0 + theta1)
+            let shifted = candidate + twoPi * round((center - candidate) / twoPi)
+            if contains(shifted) { box.include(point(shifted)) }
+        }
+        return box
+    }
+
+    /// Exact bounding box for an ellipse sector. Endpoints plus every axis-aligned
+    /// extremum inside the directed sweep are sufficient; 64-sample approximations
+    /// are not used here because broad-phase boxes must never under-bound.
+    static func exactEllipseSectorBounds(_ ellipse: Ellipse2d, from t0: Double, to t1: Double) -> BoundingBox2d {
+        let theta0 = ellipse.startAngle + ellipse.sweep * t0
+        let theta1 = ellipse.startAngle + ellipse.sweep * t1
+        func point(_ theta: Double) -> Point2d {
+            let c = cos(theta), s = sin(theta)
+            let minor = ellipse.minorAxis
+            return Point2d(
+                x: ellipse.center.x + ellipse.majorAxis.x * c + minor.x * s,
+                y: ellipse.center.y + ellipse.majorAxis.y * c + minor.y * s)
+        }
+        var box = BoundingBox2d(min: point(theta0), max: point(theta0))
+        box.include(point(theta1))
+        func contains(_ theta: Double) -> Bool {
+            if abs(ellipse.sweep) <= KernelTolerance.parametric { return theta == theta0 }
+            let twoPi = 2.0 * .pi
+            if ellipse.sweep > 0 {
+                var delta = (theta - theta0).truncatingRemainder(dividingBy: twoPi)
+                if delta < 0 { delta += twoPi }
+                return delta <= ellipse.sweep + 1e-9
+            } else {
+                var delta = (theta0 - theta).truncatingRemainder(dividingBy: twoPi)
+                if delta < 0 { delta += twoPi }
+                return delta <= -ellipse.sweep + 1e-9
+            }
+        }
+        let minor = ellipse.minorAxis
+        for amplitudes in [(ellipse.majorAxis.x, minor.x), (ellipse.majorAxis.y, minor.y)] {
+            guard hypot(amplitudes.0, amplitudes.1) > KernelTolerance.linear else { continue }
+            let base = atan2(amplitudes.1, amplitudes.0)
+            let center = 0.5 * (theta0 + theta1)
+            let middle = Int(round((center - base) / .pi))
+            for k in (middle - 2)...(middle + 2) {
+                let candidate = base + Double(k) * .pi
+                if contains(candidate) { box.include(point(candidate)) }
+            }
+        }
+        return box
+    }
+
+    /// Conservative broad-phase bounds. Splines use their control hull and
+    /// ellipses use the exact sector box, so viewport and overlap tests cannot
+    /// miss because of tessellation or sampling density.
+    static func conservativeBounds(_ curve: Curve2d) -> BoundingBox2d? {
+        switch curve {
+        case .arc(let a):
+            return exactArcSectorBounds(a, from: 0, to: 1)
+        case .circle(let c):
+            return BoundingBox2d(
+                min: Point2d(x: c.center.x - c.radius, y: c.center.y - c.radius),
+                max: Point2d(x: c.center.x + c.radius, y: c.center.y + c.radius))
+        case .ellipse(let e):
+            return exactEllipseSectorBounds(e, from: 0, to: 1)
+        default:
+            return CurveEval.boundingBox(curve)
+        }
+    }
+
+    /// Broad origin at the center of the curves' conservative overlap when one
+    /// exists. For large world coordinates this keeps both operands small during
+    /// the coarse chord stage; disjoint operands keep the midpoint behavior.
+    static func broadSeedOrigin(_ a: Curve2d, _ b: Curve2d) -> Point2d {
+        guard let boxA = conservativeBounds(a), let boxB = conservativeBounds(b) else {
+            return referenceOrigin(a, b)
+        }
+        let lower = Point2d(x: max(boxA.min.x, boxB.min.x), y: max(boxA.min.y, boxB.min.y))
+        let upper = Point2d(x: min(boxA.max.x, boxB.max.x), y: min(boxA.max.y, boxB.max.y))
+        guard lower.x <= upper.x && lower.y <= upper.y else { return referenceOrigin(a, b) }
+        return Point2d(x: 0.5 * (lower.x + upper.x), y: 0.5 * (lower.y + upper.y))
+    }
+
+    /// Conservative bound for one spline parameter interval. Seeds are generated
+    /// from chords, but culling is done on active control polygons so a span
+    /// that arches past its chord cannot be false-rejected before refinement.
+    static func splineIntervalConservativeBounds(
+        _ spline: Spline2d, from t0: Double, to t1: Double
+    ) -> BoundingBox2d? {
+        guard let (u0, u1) = SplineEval.domain(of: spline), u1 > u0,
+              SplineEval.hasPositiveWeights(spline) else { return nil }
+        let lower = min(t0, t1)
+        let upper = max(t0, t1)
+        var box: BoundingBox2d?
+        for knotT in [lower, upper, 0.5 * (lower + upper)] {
+            let u = u0 + (u1 - u0) * knotT
+            guard let span = SplineEval.activeControlBounds(spline, at: u) else { return nil }
+            if var current = box {
+                current.include(span.min)
+                current.include(span.max)
+                box = current
+            } else {
+                box = span
+            }
+        }
+        return box
+    }
+
+    /// Conservative bound for one analytic parameter interval. Circular and
+    /// elliptical sectors use exact sector boxes instead of chord boxes.
+    static func analyticIntervalConservativeBounds(
+        _ curve: Curve2d, from t0: Double, to t1: Double
+    ) -> BoundingBox2d? {
+        switch curve {
+        case .line(let seg):
+            var box = BoundingBox2d(min: seg.start, max: seg.end)
+            box.include(CurveEval.pointAt(.line(seg), t: t0))
+            box.include(CurveEval.pointAt(.line(seg), t: t1))
+            return box
+        case .arc(let arc):
+            return exactArcSectorBounds(arc, from: t0, to: t1)
+        case .ellipse(let e):
+            return exactEllipseSectorBounds(e, from: t0, to: t1)
+        default:
+            return nil
+        }
+    }
+
+    /// Global-parameter interval searched around one chord seed. Splines stay
+    /// inside the nonzero knot span containing the seed; bounded analytic
+    /// curves stay inside their chord segment (and their curve domain unless
+    /// the caller explicitly extends them).
+    static func activeSeedInterval(
+        for curve: Curve2d,
+        seedT: Double,
+        chunk: (Double, Double)?,
+        extend: Bool
+    ) -> (Double, Double)? {
+        switch curve {
+        case .spline(let s):
+            guard let (u0, u1) = SplineEval.domain(of: s), u1 > u0,
+                  let knot = SplineEval.nonzeroKnotSpanBounds(s, containing: u0 + (u1 - u0) * seedT) else {
+                return nil
+            }
+            var lower = chunk?.0 ?? 0.0
+            var upper = chunk?.1 ?? 1.0
+            lower = max(lower, (knot.0 - u0) / (u1 - u0))
+            upper = min(upper, (knot.1 - u0) / (u1 - u0))
+            if !extend {
+                lower = max(lower, 0.0)
+                upper = min(upper, 1.0)
+            }
+            guard upper - lower > KernelTolerance.parametric else { return nil }
+            return (lower, upper)
+        case .line, .arc, .circle, .ellipse:
+            if extend { return (-.infinity, .infinity) }
+            var lower = chunk?.0 ?? 0.0
+            var upper = chunk?.1 ?? 1.0
+            lower = max(lower, 0.0)
+            upper = min(upper, 1.0)
+            guard upper - lower > KernelTolerance.parametric else { return nil }
+            return (lower, upper)
+        case .ray:
+            if extend { return (-.infinity, .infinity) }
+            guard let chunk, chunk.1 > chunk.0 else { return nil }
+            return (max(chunk.0, 0.0), chunk.1)
+        case .xline:
+            return (-.infinity, .infinity)
+        case .polySegment(let seg):
+            switch seg.geometry {
+            case .line(let l):
+                return activeSeedInterval(for: .line(l), seedT: seedT, chunk: chunk, extend: extend)
+            case .arc(let a):
+                return activeSeedInterval(for: .arc(a), seedT: seedT, chunk: chunk, extend: extend)
+            }
+        }
+    }
+
+    /// Local Newton field for one chord seed. Both operands are translated by
+    /// the seed point and normalized by the active-interval size, so residual
+    /// evaluation is independent of world offset and entity extent.
+    struct NormalizedSeedField {
+        let curveA: Curve2d
+        let curveB: Curve2d
+        let origin: Point2d
+        let scale: Double
+    }
+
+    static func normalizedSeedField(
+        curveA: Curve2d,
+        intervalA: (Double, Double),
+        seedTA: Double,
+        curveB: Curve2d,
+        intervalB: (Double, Double),
+        seedTB: Double,
+        seedPoint: Point2d
+    ) -> NormalizedSeedField? {
+        let localA = translatedCurve(curveA, by: seedPoint)
+        let localB = translatedCurve(curveB, by: seedPoint)
+        func representativeExtent(_ curve: Curve2d, seedT: Double, bounds: (Double, Double)) -> Double? {
+            if bounds.0.isFinite && bounds.1.isFinite {
+                let extent = CurveEval.pointAt(curve, t: bounds.1).distance(to: CurveEval.pointAt(curve, t: bounds.0))
+                return extent.isFinite ? extent : nil
+            }
+            // Unbounded extended targets still need a finite scale. Sample the
+            // seed neighborhood rather than an infinite interval.
+            let neighborhood = 1e-3
+            let extent = CurveEval.pointAt(curve, t: seedT + neighborhood)
+                .distance(to: CurveEval.pointAt(curve, t: seedT - neighborhood))
+            return extent.isFinite ? extent : nil
+        }
+        guard let extentA = representativeExtent(localA, seedT: seedTA, bounds: intervalA),
+              let extentB = representativeExtent(localB, seedT: seedTB, bounds: intervalB) else { return nil }
+        return NormalizedSeedField(curveA: localA, curveB: localB, origin: seedPoint,
+                                   scale: max(1.0, extentA, extentB))
+    }
+
+    static func normalizedSeedPoint(_ field: NormalizedSeedField, curveIsA: Bool, t: Double) -> Vec2d {
+        let point = CurveEval.pointAt(curveIsA ? field.curveA : field.curveB, t: t)
+        return Vec2d(x: (point.x - field.origin.x) / field.scale,
+                     y: (point.y - field.origin.y) / field.scale)
+    }
+
+    static func normalizedSeedDerivative(
+        _ field: NormalizedSeedField,
+        curveIsA: Bool,
+        t: Double,
+        bounds: (Double, Double)
+    ) -> Vec2d? {
+        // Central difference in seed-normalized coordinates. The active extent
+        // normalization keeps this accurate for both tiny and huge operands.
+        let h = 1e-5
+        let lower = bounds.0.isFinite ? max(bounds.0, t - h) : t - h
+        let upper = bounds.1.isFinite ? min(bounds.1, t + h) : t + h
+        guard upper > lower else { return nil }
+        let delta = normalizedSeedPoint(field, curveIsA: curveIsA, t: upper) -
+            normalizedSeedPoint(field, curveIsA: curveIsA, t: lower)
+        return delta * (1.0 / (upper - lower))
+    }
+
+    /// Coupled Gauss-Newton polish for one chord seed. Acceptance is on the
+    /// seed-frame spatial residual, never on parameter motion, and singular or
+    /// shallow-angle configurations fall back to damped Cauchy steps.
+    static func polishSeedHit(
+        curveA: Curve2d,
+        intervalA: (Double, Double),
+        seedTA: Double,
+        curveB: Curve2d,
+        intervalB: (Double, Double),
+        seedTB: Double,
+        seedPoint: Point2d,
+        tolerance: Double
+    ) -> (tA: Double, tB: Double, residual: Double)? {
+        guard let field = normalizedSeedField(curveA: curveA, intervalA: intervalA, seedTA: seedTA,
+                                              curveB: curveB, intervalB: intervalB, seedTB: seedTB,
+                                              seedPoint: seedPoint) else { return nil }
+        let normalizedTolerance = tolerance / field.scale
+        var tA = min(max(seedTA, intervalA.0.isFinite ? intervalA.0 : seedTA),
+                     intervalA.1.isFinite ? intervalA.1 : seedTA)
+        var tB = min(max(seedTB, intervalB.0.isFinite ? intervalB.0 : seedTB),
+                     intervalB.1.isFinite ? intervalB.1 : seedTB)
+        for _ in 0..<64 {
+            let pA = normalizedSeedPoint(field, curveIsA: true, t: tA)
+            let pB = normalizedSeedPoint(field, curveIsA: false, t: tB)
+            let residualVector = pA - pB
+            let residual = residualVector.length
+            if residual <= normalizedTolerance {
+                return (tA, tB, residual * field.scale)
+            }
+            guard let jA = normalizedSeedDerivative(field, curveIsA: true, t: tA, bounds: intervalA),
+                  let jB = normalizedSeedDerivative(field, curveIsA: false, t: tB, bounds: intervalB),
+                  jA.length.isFinite, jB.length.isFinite else { return nil }
+            let j2 = Vec2d(x: -jB.x, y: -jB.y)
+            let determinant = jA.x * j2.y - jA.y * j2.x
+            let sine = abs(determinant) / max(jA.length * jB.length, Double.leastNonzeroMagnitude)
+            var step: Vec2d?
+            if sine > 1e-6 {
+                let rhs = Vec2d(x: -residualVector.x, y: -residualVector.y)
+                step = Vec2d(
+                    x: (rhs.x * j2.y - rhs.y * j2.x) / determinant,
+                    y: (jA.x * rhs.y - jA.y * rhs.x) / determinant)
+            } else {
+                // Damped Cauchy step for singular/tangent configurations.
+                let gradient = Vec2d(x: jA.dot(residualVector), y: j2.dot(residualVector))
+                let gradientNormSquared = gradient.lengthSquared
+                guard gradientNormSquared > 0 else { return nil }
+                let curvature = jA.lengthSquared * gradient.x * gradient.x +
+                    2.0 * jA.dot(j2) * gradient.x * gradient.y +
+                    j2.lengthSquared * gradient.y * gradient.y
+                guard curvature > 0 else { return nil }
+                let alpha = gradientNormSquared / curvature
+                step = Vec2d(x: -gradient.x * alpha, y: -gradient.y * alpha)
+            }
+            func search(_ proposed: Vec2d, fromA: Double, fromB: Double, residual: Double) -> (Double, Double)? {
+                guard proposed.x.isFinite, proposed.y.isFinite else { return nil }
+                var scaled = proposed
+                let maxStep = 0.5 * max(
+                    intervalA.1.isFinite && intervalA.0.isFinite ? intervalA.1 - intervalA.0 : 1.0,
+                    intervalB.1.isFinite && intervalB.0.isFinite ? intervalB.1 - intervalB.0 : 1.0,
+                    1e-9)
+                let stepLength = scaled.length
+                if stepLength > maxStep { scaled = scaled * (maxStep / stepLength) }
+                var alpha = 1.0
+                for _ in 0..<32 {
+                    var nextA = fromA + scaled.x * alpha
+                    var nextB = fromB + scaled.y * alpha
+                    if intervalA.0.isFinite { nextA = max(nextA, intervalA.0) }
+                    if intervalA.1.isFinite { nextA = min(nextA, intervalA.1) }
+                    if intervalB.0.isFinite { nextB = max(nextB, intervalB.0) }
+                    if intervalB.1.isFinite { nextB = min(nextB, intervalB.1) }
+                    let nextAPoint = normalizedSeedPoint(field, curveIsA: true, t: nextA)
+                    let nextBPoint = normalizedSeedPoint(field, curveIsA: false, t: nextB)
+                    let nextResidual = (nextAPoint - nextBPoint).length
+                    if nextResidual < residual * (1.0 - 1e-4 * alpha) { return (nextA, nextB) }
+                    alpha *= 0.5
+                    if alpha < 1e-8 { break }
+                }
+                return nil
+            }
+            var accepted: (Double, Double)?
+            if let newton = step { accepted = search(newton, fromA: tA, fromB: tB, residual: residual) }
+            if accepted == nil {
+                let gradient = Vec2d(x: jA.dot(residualVector), y: j2.dot(residualVector))
+                let gradientNormSquared = gradient.lengthSquared
+                if gradientNormSquared > 0 {
+                    let curvature = jA.lengthSquared * gradient.x * gradient.x +
+                        2.0 * jA.dot(j2) * gradient.x * gradient.y +
+                        j2.lengthSquared * gradient.y * gradient.y
+                    if curvature > 0 {
+                        let alpha = gradientNormSquared / curvature
+                        accepted = search(Vec2d(x: -gradient.x * alpha, y: -gradient.y * alpha),
+                                          fromA: tA, fromB: tB, residual: residual)
+                    }
+                }
+            }
+            guard let (nextA, nextB) = accepted else { return nil }
+            tA = nextA
+            tB = nextB
+        }
+        return nil
+    }
+
     // MARK: - Entry point
 
     /// Unified intersection of any two curves.
@@ -179,33 +586,34 @@ public enum Intersector2D: Sendable {
                 .map { CurveIntersection2d(point: $0.point, paramA: $0.paramB, paramB: $0.paramA) }
 
         case (.line(let line), .spline(let s)):
-            return intersectLineSpline(line: line, extendLine: extendA, spline: s, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectLineSpline(line: line, extendLine: extendA, spline: s, refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
         case (.spline(let s), .line(let line)):
-            return intersectLineSpline(line: line, extendLine: extendB, spline: s, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectLineSpline(line: line, extendLine: extendB, spline: s, refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
                 .map { CurveIntersection2d(point: $0.point, paramA: $0.paramB, paramB: $0.paramA) }
         case (.ray(let r), .spline(let s)):
-            return intersectRaySpline(ray: r, extendRay: extendA, spline: s, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectRaySpline(ray: r, extendRay: extendA, spline: s, refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
         case (.spline(let s), .ray(let r)):
-            return intersectRaySpline(ray: r, extendRay: extendB, spline: s, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectRaySpline(ray: r, extendRay: extendB, spline: s, refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
                 .map { CurveIntersection2d(point: $0.point, paramA: $0.paramB, paramB: $0.paramA) }
         case (.xline(let x), .spline(let s)):
-            return intersectRaySpline(ray: Ray2d(origin: x.origin, direction: x.direction), extendRay: true, spline: s, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectRaySpline(ray: Ray2d(origin: x.origin, direction: x.direction), extendRay: true, spline: s, refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
                 .map { CurveIntersection2d(point: $0.point, paramA: $0.paramB, paramB: $0.paramA) }
         case (.spline, .xline):
             return intersect(curveB, curveA, extendA: extendB, extendB: extendA, tolerance: tolerance)
                 .map { CurveIntersection2d(point: $0.point, paramA: $0.paramB, paramB: $0.paramA) }
         case (.arc(let arc), .spline(let s)):
-            return intersectAnalyticSpline(analytic: .arc(arc), extendAnalytic: extendA, spline: s, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectAnalyticSpline(analytic: .arc(arc), extendAnalytic: extendA, spline: s, refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
         case (.spline(let s), .arc(let arc)):
-            return intersectAnalyticSpline(analytic: .arc(arc), extendAnalytic: extendB, spline: s, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectAnalyticSpline(analytic: .arc(arc), extendAnalytic: extendB, spline: s, refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
                 .map { CurveIntersection2d(point: $0.point, paramA: $0.paramB, paramB: $0.paramA) }
         case (.ellipse(let e), .spline(let s)):
-            return intersectAnalyticSpline(analytic: .ellipse(e), extendAnalytic: extendA, spline: s, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectAnalyticSpline(analytic: .ellipse(e), extendAnalytic: extendA, spline: s, refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
         case (.spline(let s), .ellipse(let e)):
-            return intersectAnalyticSpline(analytic: .ellipse(e), extendAnalytic: extendB, spline: s, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectAnalyticSpline(analytic: .ellipse(e), extendAnalytic: extendB, spline: s, refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
                 .map { CurveIntersection2d(point: $0.point, paramA: $0.paramB, paramB: $0.paramA) }
         case (.spline(let sA), .spline(let sB)):
-            return intersectSplineSpline(sA, sB, refOrigin: referenceOrigin(curveA, curveB), tolerance: tolerance)
+            return intersectSplineSpline(sA, sB, extendA: extendA, extendB: extendB,
+                                         refOrigin: broadSeedOrigin(curveA, curveB), tolerance: tolerance)
 
         default:
             return []
@@ -586,69 +994,62 @@ public enum Intersector2D: Sendable {
     static func intersectLineSpline(
         line: LineSeg2d, extendLine: Bool, spline s: Spline2d, refOrigin: Point2d, tolerance: Double
     ) -> [CurveIntersection2d] {
-        _ = refOrigin
-        guard s.isValid, let (u0, u1) = SplineEval.domain(of: s) else { return [] }
-        // Broad phase: control bounds vs line bbox.
-        if let cb = SplineEval.controlBounds(s) {
-            let lb = BoundingBox2d(min: line.start, max: line.end).expanded(by: tolerance)
-            if !cb.intersects(lb) { return [] }
+        guard s.isValid, let (u0, u1) = SplineEval.domain(of: s), u1 > u0 else { return [] }
+        let lineDelta = line.end - line.start
+        let lineLength = lineDelta.length
+        guard lineLength > tolerance else { return [] }
+        // Coarse local frame. Chord sampling and the conservative span checks
+        // below use it; the final polish translates every seed separately.
+        let localLine = translatedCurve(.line(line), by: refOrigin)
+        let localSpline = translatedCurve(.spline(s), by: refOrigin)
+        guard case let .line(lineLocal) = localLine,
+              case let .spline(splineLocal) = localSpline else { return [] }
+        if let controlBox = SplineEval.controlBounds(splineLocal) {
+            let lineBox = BoundingBox2d(min: lineLocal.start, max: lineLocal.end)
+            if !extendLine && !controlBox.expanded(by: tolerance).intersects(lineBox.expanded(by: tolerance)) {
+                return []
+            }
         }
-        // Flatten once (chord error ~1e-6 relative), then bbox-gate each
-        // chord segment against the line bbox: a true crossing always lies
-        // in an overlapping segment, so gating cannot miss.
-        let segs = splineSegments(s)
+        let segs = splineSegments(splineLocal)
         guard !segs.isEmpty else { return [] }
-        let lineBox = BoundingBox2d(min: line.start, max: line.end)
+        let lineBox = BoundingBox2d(min: lineLocal.start, max: lineLocal.end)
         var out: [CurveIntersection2d] = []
         out.reserveCapacity(4)
         for (i, chord) in segs.enumerated() {
-            if !BoundingBox2d(min: chord.start, max: chord.end).expanded(by: tolerance).intersects(lineBox) {
+            let chunk = (Double(i) / Double(segs.count), Double(i + 1) / Double(segs.count))
+            let chunkBox = splineIntervalConservativeBounds(splineLocal, from: chunk.0, to: chunk.1)
+                ?? BoundingBox2d(min: chord.start, max: chord.end)
+            if !extendLine && !chunkBox.expanded(by: tolerance).intersects(lineBox.expanded(by: tolerance)) {
                 continue
             }
-            // Solve against the infinite line here (endpoint effects are
-            // decided by the refined true point below, not the chord).
-            let hits = intersectLineLine(line, chord, extendA: true, extendB: true, tolerance: tolerance)
+            // Chord intersections are seeds only. Endpoint validity comes from
+            // the polished spline interval, not this chord box.
+            let hits = intersectLineLine(lineLocal, chord, extendA: true, extendB: true, tolerance: tolerance)
             for h in hits {
-                let tSpline = (Double(i) + h.paramB) / Double(segs.count)
-                // Newton refinement of signed distance to the infinite line,
-                // seeded at the chord hit (same root-finding as the legacy
-                // sampler, converging to 1e-12 instead of sample resolution).
-                let uGuess = u0 + (u1 - u0) * tSpline
-                let span = (u1 - u0) / Double(segs.count)
-                let dir = line.end - line.start
-                let nLen = dir.length
-                guard nLen > tolerance else { continue }
-                let normal = dir.perpCCW * (1.0 / nLen)
-                func signedDist(_ uu: Double) -> Double? {
-                    guard let p = SplineEval.evaluate(s, at: uu) else { return nil }
-                    return (p - line.start).dot(normal)
+                let seedSpline = (Double(i) + h.paramB) / Double(segs.count)
+                guard let intervalLine = activeSeedInterval(
+                    for: .line(lineLocal), seedT: h.paramA,
+                    chunk: extendLine ? nil : (0.0, 1.0), extend: extendLine),
+                      let intervalSpline = activeSeedInterval(
+                        for: .spline(s), seedT: seedSpline, chunk: chunk, extend: false) else {
+                    continue
                 }
-                var u = uGuess
-                let hStep = max(1e-10, 1e-6 * (u1 - u0))
-                let uLo = max(u0, uGuess - span), uHi = min(u1, uGuess + span)
-                for _ in 0..<20 {
-                    guard let dist = signedDist(u) else { break }
-                    if abs(dist) < 1e-12 { break }
-                    let up = min(uHi, u + hStep), um = max(uLo, u - hStep)
-                    guard up > um else { break }
-                    guard let dp = signedDist(up), let dm = signedDist(um) else { break }
-                    let deriv = (dp - dm) / (up - um)
-                    guard abs(deriv) > 1e-12 else { break }
-                    var step = -dist / deriv
-                    step = min(0.5 * (u1 - u0), max(-0.5 * (u1 - u0), step))
-                    u = min(uHi, max(uLo, u + step))
-                }
-                guard let pBest = SplineEval.evaluate(s, at: u),
-                      let dist = signedDist(u), abs(dist) <= 1e-9 else { continue }
-                let tBest = (u - u0) / (u1 - u0)
-                let tL = CurveEval.paramAtPoint(.line(line), point: pBest)
+                let seedGlobal = Point2d(x: h.point.x + refOrigin.x, y: h.point.y + refOrigin.y)
+                guard let polished = polishSeedHit(
+                    curveA: .line(line), intervalA: intervalLine, seedTA: h.paramA,
+                    curveB: .spline(s), intervalB: intervalSpline, seedTB: seedSpline,
+                    seedPoint: seedGlobal, tolerance: tolerance),
+                      polished.residual <= tolerance else { continue }
                 if !extendLine {
-                    let len = max(line.length, tolerance)
-                    if tL < -tolerance / len || tL > 1.0 + tolerance / len { continue }
+                    let parameterTolerance = tolerance / max(lineLength, tolerance)
+                    guard polished.tA >= -parameterTolerance && polished.tA <= 1.0 + parameterTolerance else {
+                        continue
+                    }
                 }
-                out.append(CurveIntersection2d(point: pBest,
-                                               paramA: extendLine ? tL : min(max(tL, 0.0), 1.0),
-                                               paramB: tBest))
+                let tLine = extendLine ? polished.tA : min(max(polished.tA, 0.0), 1.0)
+                let tSpline = min(max(polished.tB, 0.0), 1.0)
+                let point = CurveEval.pointAt(.line(line), t: tLine)
+                out.append(CurveIntersection2d(point: point, paramA: tLine, paramB: tSpline))
             }
         }
         return dedupe(out, tolerance: tolerance)
@@ -671,55 +1072,113 @@ public enum Intersector2D: Sendable {
     }
 
     /// Analytic curve (arc/ellipse) vs spline: subdivide spline to segments,
-    /// test each against the analytic curve.
+    /// test each against the exact analytic curve, then polish the survivors.
+    /// Outputs are always ordered analytic-first and spline-second.
     static func intersectAnalyticSpline(
         analytic: Curve2d, extendAnalytic: Bool, spline s: Spline2d, refOrigin: Point2d, tolerance: Double
     ) -> [CurveIntersection2d] {
         guard s.isValid, SplineEval.domain(of: s) != nil else { return [] }
-        if let cb = SplineEval.controlBounds(s),
-           let ab = CurveEval.boundingBox(analytic)?.expanded(by: tolerance),
-           !cb.intersects(ab) { return [] }
-        let segs = subdividedSegments(of: .spline(s))
+        let localAnalytic = translatedCurve(analytic, by: refOrigin)
+        let localSpline = translatedCurve(.spline(s), by: refOrigin)
+        guard case let .spline(splineLocal) = localSpline else { return [] }
+        if let controlBox = SplineEval.controlBounds(splineLocal),
+           let analyticBox = conservativeBounds(localAnalytic)?.expanded(by: tolerance),
+           !extendAnalytic,
+           !controlBox.expanded(by: tolerance).intersects(analyticBox) { return [] }
+        let segs = splineSegments(splineLocal)
+        let analyticChunks = subdividedSegments(of: localAnalytic)
+        guard !segs.isEmpty else { return [] }
+        let analyticCount = max(analyticChunks.count, 1)
         var out: [CurveIntersection2d] = []
-        for (i, seg) in segs.enumerated() {
-            let hits = intersect(.line(seg), analytic, extendA: true, extendB: extendAnalytic, tolerance: tolerance)
+        for (i, chord) in segs.enumerated() {
+            let splineChunk = (Double(i) / Double(segs.count), Double(i + 1) / Double(segs.count))
+            let splineBox = splineIntervalConservativeBounds(splineLocal, from: splineChunk.0, to: splineChunk.1)
+                ?? BoundingBox2d(min: chord.start, max: chord.end)
+            if !extendAnalytic {
+                guard let analyticBox = conservativeBounds(localAnalytic),
+                      splineBox.expanded(by: tolerance).intersects(analyticBox.expanded(by: tolerance)) else {
+                    continue
+                }
+            }
+            let hits = intersect(.line(chord), localAnalytic, extendA: true, extendB: extendAnalytic, tolerance: tolerance)
             for h in hits {
-                let uS = (Double(i) + h.paramA) / Double(segs.count)
-                let tS = min(max(uS, 0.0), 1.0)
-                out.append(CurveIntersection2d(point: h.point, paramA: tS, paramB: h.paramB))
+                let seedSpline = (Double(i) + h.paramA) / Double(segs.count)
+                let chunkIndex = min(max(Int(floor(h.paramB * Double(analyticCount))), 0), analyticCount - 1)
+                let analyticChunk = (Double(chunkIndex) / Double(analyticCount),
+                                     Double(chunkIndex + 1) / Double(analyticCount))
+                guard let intervalAnalytic = activeSeedInterval(
+                    for: localAnalytic, seedT: h.paramB,
+                    chunk: extendAnalytic ? nil : analyticChunk, extend: extendAnalytic),
+                      let intervalSpline = activeSeedInterval(
+                        for: .spline(s), seedT: seedSpline, chunk: splineChunk, extend: false) else {
+                    continue
+                }
+                let seedGlobal = Point2d(x: h.point.x + refOrigin.x, y: h.point.y + refOrigin.y)
+                guard let polished = polishSeedHit(
+                    curveA: analytic, intervalA: intervalAnalytic, seedTA: h.paramB,
+                    curveB: .spline(s), intervalB: intervalSpline, seedTB: seedSpline,
+                    seedPoint: seedGlobal, tolerance: tolerance),
+                      polished.residual <= tolerance else { continue }
+                let point = CurveEval.pointAt(analytic, t: polished.tA)
+                out.append(CurveIntersection2d(point: point, paramA: polished.tA, paramB: polished.tB))
             }
         }
         return dedupe(out, tolerance: tolerance)
     }
 
     static func intersectSplineSpline(
-        _ sA: Spline2d, _ sB: Spline2d, refOrigin: Point2d, tolerance: Double
+        _ sA: Spline2d, _ sB: Spline2d, extendA: Bool, extendB: Bool, refOrigin: Point2d, tolerance: Double
     ) -> [CurveIntersection2d] {
-        _ = refOrigin
         guard sA.isValid, sB.isValid else { return [] }
-        guard let (ua0, ua1) = SplineEval.domain(of: sA),
-              let (ub0, ub1) = SplineEval.domain(of: sB) else { return [] }
-        if let a = SplineEval.controlBounds(sA), let b = SplineEval.controlBounds(sB),
-           !a.expanded(by: tolerance).intersects(b.expanded(by: tolerance)) { return [] }
-        // Flatten both once; bbox-gate the segment pairs.
-        let segsA = splineSegments(sA)
-        let segsB = splineSegments(sB)
+        let localA = translatedCurve(.spline(sA), by: refOrigin)
+        let localB = translatedCurve(.spline(sB), by: refOrigin)
+        guard case let .spline(splineA) = localA, case let .spline(splineB) = localB else { return [] }
+        if let boxA = SplineEval.controlBounds(splineA), let boxB = SplineEval.controlBounds(splineB),
+           !boxA.expanded(by: tolerance).intersects(boxB.expanded(by: tolerance)) { return [] }
+        // Flatten both once in the coarse frame; span-hull culling keeps the
+        // seed search conservative while the final polish is exact.
+        let segsA = splineSegments(splineA)
+        let segsB = splineSegments(splineB)
         guard !segsA.isEmpty, !segsB.isEmpty else { return [] }
-        let boxesB = segsB.map { BoundingBox2d(min: $0.start, max: $0.end).expanded(by: tolerance) }
+        var boxesB: [BoundingBox2d] = []
+        boxesB.reserveCapacity(segsB.count)
+        for (j, chordB) in segsB.enumerated() {
+            let chunk = (Double(j) / Double(segsB.count), Double(j + 1) / Double(segsB.count))
+            boxesB.append(splineIntervalConservativeBounds(splineB, from: chunk.0, to: chunk.1)
+                ?? BoundingBox2d(min: chordB.start, max: chordB.end))
+        }
         var out: [CurveIntersection2d] = []
         for (i, segA) in segsA.enumerated() {
-            let boxA = BoundingBox2d(min: segA.start, max: segA.end).expanded(by: tolerance)
+            let chunkA = (Double(i) / Double(segsA.count), Double(i + 1) / Double(segsA.count))
+            let boxA = splineIntervalConservativeBounds(splineA, from: chunkA.0, to: chunkA.1)
+                ?? BoundingBox2d(min: segA.start, max: segA.end)
             for (j, segB) in segsB.enumerated() {
-                if !boxA.intersects(boxesB[j]) { continue }
-                let hits = intersectLineLine(segA, segB, extendA: true, extendB: true, tolerance: tolerance)
+                if !boxA.expanded(by: tolerance).intersects(boxesB[j].expanded(by: tolerance)) { continue }
+                // Bounded chords generate seeds only from true chord crossings.
+                // Extending every one of the N x M chord pairs produced false
+                // seeds and made per-seed Newton polish pathological.
+                let hits = intersectLineLine(segA, segB, extendA: extendA, extendB: extendB, tolerance: tolerance)
                 for h in hits {
-                    out.append(CurveIntersection2d(point: h.point,
-                                                   paramA: min(max((Double(i) + h.paramA) / Double(segsA.count), 0.0), 1.0),
-                                                   paramB: min(max((Double(j) + h.paramB) / Double(segsB.count), 0.0), 1.0)))
+                    let seedA = (Double(i) + h.paramA) / Double(segsA.count)
+                    let seedB = (Double(j) + h.paramB) / Double(segsB.count)
+                    let chunkB = (Double(j) / Double(segsB.count), Double(j + 1) / Double(segsB.count))
+                    guard let intervalA = activeSeedInterval(
+                        for: .spline(sA), seedT: seedA, chunk: chunkA, extend: extendA),
+                          let intervalB = activeSeedInterval(
+                            for: .spline(sB), seedT: seedB, chunk: chunkB, extend: extendB) else {
+                        continue
+                    }
+                    let seedGlobal = Point2d(x: h.point.x + refOrigin.x, y: h.point.y + refOrigin.y)
+                    guard let polished = polishSeedHit(
+                        curveA: .spline(sA), intervalA: intervalA, seedTA: seedA,
+                        curveB: .spline(sB), intervalB: intervalB, seedTB: seedB,
+                        seedPoint: seedGlobal, tolerance: tolerance),
+                          polished.residual <= tolerance else { continue }
+                    let point = CurveEval.pointAt(.spline(sA), t: polished.tA)
+                    out.append(CurveIntersection2d(point: point, paramA: polished.tA, paramB: polished.tB))
                 }
             }
         }
-        _ = (ua0, ua1, ub0, ub1)
         return dedupe(out, tolerance: tolerance)
     }
 
