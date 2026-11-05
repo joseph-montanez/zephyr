@@ -519,4 +519,191 @@ final class PDFExportTextTests: XCTestCase {
             tjCount, 3,
             "each MTEXT paragraph must be emitted separately, not collapsed into one Tj; got: \(output)")
     }
+
+    // MARK: - Drive Roller parts table (style-less ACAD_TABLE cells)
+
+    /// Builds the Parts List shape the importer produces for the Drive
+    /// Roller sheet: no per-cell text style (textStyleName == nil), height
+    /// 2.0, zero margins, and a title cell carrying MTEXT font codes.
+    private func makePartsTableData() -> DataTableData {
+        let widths = [
+            13.98433376636399, 12.52954273978344, 30.02738343262331,
+            28.88188638252109, 44.46893753162891,
+        ]
+        let columns = widths.enumerated().map { index, width in
+            DataTableColumn(name: "C\(index + 1)", width: width)
+        }
+        func row(_ values: [String]) -> DataTableRow {
+            DataTableRow(cells: values.enumerated().map { index, value in
+                DataTableCell(
+                    columnID: columns[index].id,
+                    value: value.isEmpty ? .empty : .string(value),
+                    cachedDisplayText: value.isEmpty ? nil : value,
+                    horizontalAlignment: .left,
+                    verticalAlignment: .middle)
+            })
+        }
+        return DataTableData(
+            columns: columns,
+            rows: [
+                row(["{\\fArial|b1|i0|c0|p0;Parts List}", "", "", "", ""]),
+                row(["Item", "Qty", "Part Number", "Description", "Comments"]),
+                row(["13", "1", "VW252-02-0202", "Upper End SS Shaft",
+                     "See Drg#VW252-02-0203-2"]),
+            ],
+            rowHeights: [4.3322342304807, 4.3322342304807, 4.3322342304807],
+            defaultRowHeight: 4.3322342304807,
+            defaultColumnWidth: 13.0,
+            headerRowCount: 0,
+            cellMargin: 0,
+            textHeight: 2.0,
+            textStyleName: nil)
+    }
+
+    private func addPartsTable(to doc: CADDocument, layerID: UUID) {
+        doc.addEntity(CADEntity(
+            layerID: layerID,
+            localGeometry: [.table(
+                data: makePartsTableData(), origin: .zero, color: nil)],
+            transform: .identity))
+    }
+
+    /// Style-less cells (the importer's ACAD_TABLE mapping when no group 7
+    /// style is present) must take the live TTF route when the drawing's
+    /// Standard style is Arial — exactly like the screen renderer, which
+    /// resolves a nil style to Standard. Today the PDF falls back to
+    /// simplex.shx and explodes the raw codes into SHX strokes.
+    func testStylelessTableCellsTakeLiveTextRoute() throws {
+        let (doc, layerID) = makeDoc()
+        doc.textStyles["Standard"] = CADTextStyle(name: "Standard", fontFile: "arial.ttf")
+        addPartsTable(to: doc, layerID: layerID)
+
+        // NOTE: table visuals stream straight to the content builder inside
+        // writeEntity — they never surface as RenderItems — so the route is
+        // proven from the emitted content: live TTF text emits searchable
+        // Tj runs with no hidden-text render-mode (3 Tr) and no SHX strokes
+        // carrying the raw codes.
+        let output = emittedContent(for: doc)
+        XCTAssertFalse(
+            output.contains("3 Tr"),
+            "no hidden SHX text expected for Arial cells; got: \(output)")
+        XCTAssertFalse(
+            output.contains("fArial|b1"),
+            "no raw format codes expected on the live route; got: \(output)")
+        let tjCount = output.components(separatedBy: "Tj").count - 1
+        XCTAssertEqual(
+            tjCount, 11,
+            "all 11 non-empty cells must emit exactly one live line each; got: \(output)")
+    }
+
+    /// Even on the live route, no MTEXT formatting code may reach the
+    /// content stream, and tight cells must not wrap.
+    func testStylelessTableCellsStripFormatCodes() throws {
+        let (doc, layerID) = makeDoc()
+        doc.textStyles["Standard"] = CADTextStyle(name: "Standard", fontFile: "arial.ttf")
+        addPartsTable(to: doc, layerID: layerID)
+
+        let output = emittedContent(for: doc)
+        XCTAssertFalse(
+            output.contains("fArial|b1"),
+            "format codes must never reach the PDF content; got: \(output)")
+        XCTAssertFalse(
+            output.contains("|p0;"),
+            "parameter codes must never reach the PDF content; got: \(output)")
+        let tjCount = output.components(separatedBy: "Tj").count - 1
+        XCTAssertEqual(
+            tjCount, 11,
+            "every non-empty cell must fit on exactly one live line; got: \(output)")
+    }
+
+    /// Safety net: when the style genuinely is SHX-backed, the SHX stroke
+    /// route and its hidden/searchable text must still only carry the
+    /// stripped plain text — never the raw codes.
+    func testSHXTableCellsNeverEmitRawCodes() throws {
+        let (doc, layerID) = makeDoc()
+        doc.textStyles["Standard"] = CADTextStyle(name: "Standard", fontFile: "txt")
+        addPartsTable(to: doc, layerID: layerID)
+
+        let output = emittedContent(for: doc)
+        XCTAssertFalse(
+            output.contains("fArial"),
+            "SHX and hidden text must be code-free; got: \(output)")
+        XCTAssertTrue(
+            output.contains("(Parts List)"),
+            "hidden text must carry the stripped title; got: \(output)")
+    }
+
+    /// End to end over the real sheet when the DWG is present (same gating
+    /// style as the SS-11 test): convert with ODA, import, export the
+    /// paper-space sheet, and check the Parts List reads as drawn.
+    func testDriveRollerPartsListExportsClean() throws {
+        let dwg = "C:/Users/xingo/Downloads/Drive Roller Assembly Sample.dwg"
+        guard FileManager.default.fileExists(atPath: dwg) else {
+            throw XCTSkip("Drive Roller fixture \(dwg) not present")
+        }
+        guard ODADWGConverter.locateConverter() != nil else {
+            throw XCTSkip("ODA FileConverter not installed")
+        }
+        let tmpDXF = FileManager.default.temporaryDirectory
+            .appendingPathComponent("driveroller_\(UUID().uuidString).dxf")
+        defer { try? FileManager.default.removeItem(at: tmpDXF) }
+        try ODADWGConverter.convertSync(
+            input: URL(fileURLWithPath: dwg), output: tmpDXF, toFormat: "DXF")
+        let imported = try DXFImporter.importDXFViews(filePath: tmpDXF.path)
+        let sheet = try XCTUnwrap(
+            imported.views.first(where: { view in
+                view.entities.contains { entity in
+                    (entity.localGeometry ?? []).contains { prim in
+                        guard case .table(let data, _, _) = prim else { return false }
+                        return data.rows.flatMap(\.cells).contains { cell in
+                            if case .string(let value) = cell.value {
+                                return value.contains("Parts List")
+                            }
+                            return false
+                        }
+                    }
+                }
+            }),
+            "a paper-space view must carry the Parts List table")
+
+        let doc = CADDocument()
+        doc.importLayersBlocksEntities(
+            layers: imported.layers, blocks: imported.blocks, entities: sheet.entities)
+        for (name, style) in imported.textStyles {
+            doc.textStyles[name] = style
+        }
+        doc.plotSettings = sheet.plotSettings
+        doc.layoutSettings = sheet.layoutSettings
+
+        let pdfData = try PDFExporter.generatePDF(document: doc, backgroundColor: .white)
+        let tmpURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("driveroller_\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: tmpURL) }
+        try pdfData.write(to: tmpURL)
+        let probeURL = FileManager.default.temporaryDirectory.appendingPathComponent("driveroller_parts.pdf")
+        try? pdfData.write(to: probeURL)
+        print("DRIVEROLLER-PROBE-PDF: \(probeURL.path)")
+        guard let page = PDFiumBridge.extractVectorPage(path: tmpURL.path, pageIndex: 0) else {
+            throw XCTSkip("pdfium unavailable in this environment")
+        }
+        let texts = page.textEntities.flatMap { $0 }.compactMap { prim -> String? in
+            if case .text(_, let text, _, _, _, _, _, _, _) = prim { return text }
+            return nil
+        }
+        func trimmed(_ values: [String]) -> [String] {
+            values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        XCTAssertTrue(
+            trimmed(texts).contains("Parts List"),
+            "title must extract code-free and whole, got \(texts)")
+        XCTAssertTrue(
+            trimmed(texts).contains("Upper End SS Shaft"),
+            "tight cells must extract whole, got \(texts)")
+        XCTAssertFalse(
+            texts.contains(where: { $0.contains("fArial") || $0.contains("|b1|") }),
+            "no MTEXT format codes may extract: \(texts)")
+        XCTAssertFalse(
+            texts.contains(where: { $0 == "Shaft" }),
+            "no wrapped fragment may extract on its own: \(texts)")
+    }
 }

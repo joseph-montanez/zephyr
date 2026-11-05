@@ -280,16 +280,20 @@ enum PDFPrimitives {
         } else {
             formatted = nil
         }
-        let styleRef: String? = {
+        // Renderer parity with the screen (CADRendererBridge `.text`
+        // case): a nil or unknown style resolves to the drawing Standard
+        // style, never the simplex.shx filename fallback that would force
+        // SHX strokes for style-less primitives such as ACAD_TABLE cells.
+        let resolvedTextStyle = CADTextStyle.resolve(style, in: document.textStyles)
+        let styleRef: String = {
             if let formatted, !formatted.defaultFont.isEmpty { return formatted.defaultFont }
-            return style
+            if let style, !style.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return style }
+            return resolvedTextStyle.name
         }()
         // Renderer parity with the screen (see PDFExporter.collectItems):
         // SHX-backed styles explode to strokes; only an all-TTF formatted
         // run set — or a style with no SHX face at all — takes live text.
-        let primitiveStyleFont = CADFontManager.resolveTextStyleFont(
-            styleName: style,
-            textStyleFonts: document.textStyleFonts)
+        let primitiveStyleFont = resolvedTextStyle.fontFile
         let exactPrimitiveSHXFont = CADFontManager.getOrLoadSHXFont(
             filename: primitiveStyleFont, allowFallback: false)
         let primitiveFormattedTTFPath = formatted.flatMap {
@@ -298,9 +302,9 @@ enum PDFPrimitives {
         }
         let rendererPrimitiveTTFPath = primitiveFormattedTTFPath
             ?? (exactPrimitiveSHXFont == nil ? CADFontManager.getTTFEquivalent(filename: primitiveStyleFont) : nil)
-        if let styleRef, rendererPrimitiveTTFPath != nil,
+        if rendererPrimitiveTTFPath != nil,
            let baseFace = PDFTextEmitter.resolveBaseFace(
-               formatted: formatted, styleName: style,
+               formatted: formatted, styleName: styleRef,
                textStyleFonts: document.textStyleFonts) {
             // Optional width/oblique/line-spacing overrides from xdata.
             // Renderer parity: MTEXT reference widths are NOT width
@@ -365,9 +369,7 @@ enum PDFPrimitives {
             return
         }
 
-        let fontFile = CADFontManager.resolveTextStyleFont(
-            styleName: style,
-            textStyleFonts: document.textStyleFonts)
+        let fontFile = primitiveStyleFont
 
         if let font = CADFontManager.getOrLoadSHXFont(filename: fontFile) {
             let glyphPrims = font.renderText(
@@ -383,7 +385,7 @@ enum PDFPrimitives {
                                  isLightBackground: false, to: cb)
             if options.includeHiddenTextForSHX {
                 PDFTextEmitter.emitHiddenText(
-                    formatted?.toPlainText() ?? text,
+                    Self.strippedPlainText(text, formatted: formatted),
                     position: origin, rotation: finalRotation,
                     height: finalHeight, to: cb)
             }
@@ -394,6 +396,15 @@ enum PDFPrimitives {
                               height: finalHeight, to: cb)
             cb.raw("Q\n")
         }
+    }
+
+    /// Plain display text for routes that cannot interpret MTEXT codes
+    /// (hidden/searchable text): parse only when the string actually
+    /// carries control sequences, otherwise return it untouched.
+    private static func strippedPlainText(_ text: String, formatted: FormattedText?) -> String {
+        if let formatted { return formatted.toPlainText() }
+        guard text.contains("\\") || text.contains("{") || text.contains("}") || text.contains("%%") else { return text }
+        return MTEXTFormatter.parse(text).toPlainText()
     }
 
     /// Standard-14 Helvetica fallback (no SHX font available).
