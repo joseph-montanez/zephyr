@@ -603,6 +603,56 @@ public final class CADRendererBridge {
         }
     }
 
+    /// Table expansion shared by the render loop: `.table` primitives become
+    /// tessellated visuals, and generated cell text carries an explicit-height
+    /// marker so the style fixed-height rule treats it like MTEXT nominal
+    /// heights instead of clobbering it with the resolved style height.
+    nonisolated static func expandedGeometryWithTableTextOverrides(
+        geometry: [CADPrimitive],
+        primitiveStyles: [Int: CADPrimitiveStyle],
+        primitiveXData: [Int: [String: XDataValue]]
+    ) -> (
+        geometry: [(index: Int, primitive: CADPrimitive)],
+        styles: [Int: CADPrimitiveStyle],
+        xdata: [Int: [String: XDataValue]]
+    ) {
+        var styles = primitiveStyles
+        var xdata = primitiveXData
+        var nextSyntheticIndex = max(
+            geometry.count,
+            (styles.keys.max() ?? -1) + 1,
+            (xdata.keys.max() ?? -1) + 1)
+        let expanded: [(index: Int, primitive: CADPrimitive)] =
+            geometry.enumerated().flatMap { item -> [(index: Int, primitive: CADPrimitive)] in
+                if case .table(let data, let origin, let tableColor) = item.element {
+                    var out: [(index: Int, primitive: CADPrimitive)] = []
+                    for visual in DataTableTessellator.generateVisualPrimitives(
+                        data: data,
+                        origin: origin
+                    ) {
+                        let colored = inheritingColor(tableColor, into: visual)
+                        if case .text = colored {
+                            let synthetic = nextSyntheticIndex
+                            nextSyntheticIndex += 1
+                            if let style = primitiveStyles[item.offset] {
+                                styles[synthetic] = style
+                            }
+                            var markers = primitiveXData[item.offset] ?? [:]
+                            markers["dxf.textHeightOverride"] = .int(1)
+                            markers["dxf.textEntityType"] = .string("MTEXT")
+                            xdata[synthetic] = markers
+                            out.append((index: synthetic, primitive: colored))
+                        } else {
+                            out.append((index: item.offset, primitive: colored))
+                        }
+                    }
+                    return out
+                }
+                return [(index: item.offset, primitive: item.element)]
+            }
+        return (expanded, styles, xdata)
+    }
+
     /// Placeholder geometry for an xref whose content is not loaded:
     /// a 10×10 frame with diagonals, labelled with the block name.
     /// Also gives hit-testing/grips something bounded to work with.
@@ -1300,24 +1350,16 @@ public final class CADRendererBridge {
                             // Expand tables before ordering so their generated text passes through
                             // the same SHX/TTF rendering path as ordinary text primitives.
                             // CADPrimitiveGenerator can only emit geometry specs, so leaving a table
-                            // nested there drops TTF-backed cell text.
-                            let indexedGeometry: [(index: Int, primitive: CADPrimitive)] =
-                                v.geometry.enumerated().flatMap { item in
-                                    if case .table(let data, let origin, let tableColor) = item.element {
-                                        return DataTableTessellator.generateVisualPrimitives(
-                                            data: data,
-                                            origin: origin
-                                        ).map { visual in
-                                            (
-                                                index: item.offset,
-                                                primitive: Self.inheritingColor(
-                                                    tableColor,
-                                                    into: visual)
-                                            )
-                                        }
-                                    }
-                                    return [(index: item.offset, primitive: item.element)]
-                                }
+                            // nested there drops TTF-backed cell text. Cell text carries an
+                            // explicit-height marker (see the helper) so the style
+                            // fixed-height rule treats it like MTEXT nominal heights.
+                            let tableExpansion = Self.expandedGeometryWithTableTextOverrides(
+                                geometry: v.geometry,
+                                primitiveStyles: v.primitiveStyles,
+                                primitiveXData: v.primitiveXData)
+                            let indexedGeometry = tableExpansion.geometry
+                            let expandedPrimitiveStyles = tableExpansion.styles
+                            let expandedPrimitiveXData = tableExpansion.xdata
 
                             let orderedGeometry: [(index: Int, primitive: CADPrimitive)]
                             if indexedGeometry.count <= 1 {
@@ -1340,8 +1382,8 @@ public final class CADRendererBridge {
 
                             for item in orderedGeometry {
                                 let primitive = item.primitive
-                                let primitiveStyle = v.primitiveStyles[item.index]
-                                let primitiveXData = v.primitiveXData[item.index] ?? [:]
+                                let primitiveStyle = expandedPrimitiveStyles[item.index]
+                                let primitiveXData = expandedPrimitiveXData[item.index] ?? [:]
                                 if Self.isNonconstantAttributeDefinition(primitiveXData) {
                                     continue
                                 }
