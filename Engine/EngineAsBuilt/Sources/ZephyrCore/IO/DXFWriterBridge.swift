@@ -3377,7 +3377,11 @@ public enum DXFWriterBridge {
         let zAxis = transformedVector(Vector3(x: 0, y: 0, z: 1), by: transform)
         insert.basePoint = toDXF(origin)
         insert.xScale = max(xAxis.magnitude, 1e-12)
-        insert.yScale = max(yAxis.magnitude, 1e-12)
+        // Preserve mirror handedness across DXF round-trips: decompose a
+        // mirrored insert with a negative Y scale (rotation stays with the
+        // X axis) so reimport rebuilds the orientation-reversing transform.
+        let mirrorSign = transform.reversesOrientation2D ? -1.0 : 1.0
+        insert.yScale = mirrorSign * max(yAxis.magnitude, 1e-12)
         insert.zScale = max(zAxis.magnitude, 1e-12)
         insert.angle = -atan2(xAxis.y, xAxis.x)
         return insert

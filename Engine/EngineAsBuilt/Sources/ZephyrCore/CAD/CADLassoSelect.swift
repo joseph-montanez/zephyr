@@ -15,7 +15,11 @@
 // =========================================================================
 
 /// Freeform lasso selection tests. See file header.
-@MainActor
+///
+/// UNISOLATED by design (like `CADRectSelect`): stateless geometric
+/// queries over explicit parameters. The scripted `(command "STRETCH" ...)`
+/// runner evaluates crossing polygons off the main actor and reuses
+/// `handlesInPolygon` directly instead of duplicating its semantics.
 public enum CADLassoSelect {
 
     // MARK: - Public API

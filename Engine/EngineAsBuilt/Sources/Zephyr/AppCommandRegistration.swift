@@ -53,6 +53,11 @@ struct AppCommandRegistration {
             factory: { TrimCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "EXTEND",
+            aliases: ["EX"],
+            factory: { ExtendCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "FILLET",
             aliases: ["F"],
             factory: { FilletCommand() }
@@ -804,6 +809,26 @@ struct AppCommandRegistration {
             name: "REVERSE",
             aliases: [],
             factory: { ReverseCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MIRROR",
+            aliases: ["MI"],
+            factory: { MirrorCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "STRETCH",
+            aliases: ["S"],
+            factory: { StretchCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "BREAK",
+            aliases: ["BR"],
+            factory: { BreakCommand(mode: .breakSpan) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "BREAKATPOINT",
+            aliases: [],
+            factory: { BreakCommand(mode: .breakAtPoint) }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "RENAME",

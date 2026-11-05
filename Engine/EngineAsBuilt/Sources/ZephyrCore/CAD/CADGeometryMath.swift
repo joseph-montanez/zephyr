@@ -709,4 +709,66 @@ public enum CADGeometryMath {
         }
         return out
     }
+
+    // MARK: - Mirror (MIRROR command support)
+
+    /// Reflection across the XY line through `p1` → `p2`, or nil when the
+    /// points coincide (no mirror line). The result reverses 2D orientation
+    /// (`reversesOrientation2D`), so mirrored entities compose it into their
+    /// transform via `multiplying(by:)` exactly like `alignEntities` does.
+    public static func mirrorTransform(p1: Vector3, p2: Vector3) -> Transform3D? {
+        let dx = p2.x - p1.x
+        let dy = p2.y - p1.y
+        guard hypot(dx, dy) > 1e-9 else { return nil }
+        let theta = atan2(dy, dx)
+        let toOrigin = Transform3D.translated(
+            by: Vector3(x: -p1.x, y: -p1.y, z: 0))
+        let toLineFrame = Transform3D.rotated(by: -theta)
+        let flipAcrossLine = Transform3D.scaled(
+            by: Vector3(x: 1, y: -1, z: 1))
+        let fromLineFrame = Transform3D.rotated(by: theta)
+        let toAnchor = Transform3D.translated(
+            by: Vector3(x: p1.x, y: p1.y, z: 0))
+        return toAnchor.multiplying(by: fromLineFrame.multiplying(by:
+            flipAcrossLine.multiplying(by: toLineFrame.multiplying(by: toOrigin))))
+    }
+
+    /// World-space direction of a local text angle through a transform,
+    /// matching the renderer's text measurement (`origin` → transformed
+    /// `origin + direction`).
+    public static func worldDirection(
+        ofLocalAngle angle: Double,
+        at localPoint: Vector3,
+        under transform: Transform3D
+    ) -> Vector3 {
+        let origin = transform.transformPoint(localPoint)
+        let tip = transform.transformPoint(Vector3(
+            x: localPoint.x + cos(angle),
+            y: localPoint.y + sin(angle),
+            z: localPoint.z))
+        return Vector3(x: tip.x - origin.x, y: tip.y - origin.y, z: 0)
+    }
+
+    /// Local rotation that keeps a text's pre-mirror world direction after
+    /// its entity transform gained a mirror (MIRRTEXT = 0 readability
+    /// fix-up: insertion mirrors through the transform, rotation is
+    /// recomputed so the rendered text stays readable). Returns nil when the
+    /// direction degenerates, in which case the caller keeps the old rotation.
+    public static func readableRotation(
+        worldDirection: Vector3,
+        under newTransform: Transform3D,
+        at localPoint: Vector3
+    ) -> Double? {
+        guard hypot(worldDirection.x, worldDirection.y) > 1e-12 else { return nil }
+        let origin = newTransform.transformPoint(localPoint)
+        let inverse = newTransform.inverse()
+        let a = inverse.transformPoint(origin)
+        let b = inverse.transformPoint(Vector3(
+            x: origin.x + worldDirection.x,
+            y: origin.y + worldDirection.y,
+            z: origin.z))
+        let local = Vector3(x: b.x - a.x, y: b.y - a.y, z: 0)
+        guard hypot(local.x, local.y) > 1e-12 else { return nil }
+        return atan2(local.y, local.x)
+    }
 }

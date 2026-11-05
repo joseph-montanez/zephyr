@@ -3772,6 +3772,363 @@ public final class CADDocument {
         refreshPathArrays(dependingOn: targets)
     }
 
+    // MARK: - MIRROR Command Support
+
+    /// Outcome counts for one MIRROR apply pass.
+    public struct MirrorOutcome: Sendable {
+        /// Entities whose transform gained the mirror (edited in place or
+        /// duplicated, depending on `eraseSource`).
+        public var mirrored: Int = 0
+        /// Editable entities skipped because their layer is locked.
+        public var lockedSkipped: Int = 0
+        /// Entities skipped as viewport-projected render copies.
+        public var projectedSkipped: Int = 0
+        /// Handles of the mirrored duplicates (copy path only; empty for erase).
+        public var newHandles: [UUID] = []
+    }
+
+    /// Mirror a set of entities across an XY mirror line in one undo step.
+    ///
+    /// Each editable entity's transform is composed with the reflection via
+    /// `multiplying(by:)` (`entity.transform = mirror * entity.transform`),
+    /// exactly like `alignEntities`. With `eraseSource` the sources are
+    /// transformed in place; otherwise `duplicateEntities` copies are
+    /// reflected and added (named block definitions stay shared, anonymous
+    /// `*` blocks are cloned). Viewport-projected entities are skipped and
+    /// locked-layer entities are refused with a count, neither touching the
+    /// document. Pushes exactly one undo entry when anything mirrors.
+    ///
+    /// - Parameters:
+    ///   - handles: Entity handles to mirror.
+    ///   - mirror: Reflection built by `CADGeometryMath.mirrorTransform`.
+    ///   - eraseSource: `true` mirrors in place, `false` keeps sources.
+    ///   - mirrText: The `MIRRTEXT` value (0 = keep text/attributes readable,
+    ///     nonzero = true mirror including text and attributes).
+    public func mirrorEntities(
+        handles: Set<UUID>,
+        mirror: Transform3D,
+        eraseSource: Bool,
+        mirrText: Int
+    ) -> MirrorOutcome {
+        var outcome = MirrorOutcome()
+        var editable: [UUID] = []
+        editable.reserveCapacity(handles.count)
+        for handle in handles {
+            guard let entity = entityRegistry[handle] else { continue }
+            if entity.isViewportProjected {
+                outcome.projectedSkipped += 1
+                continue
+            }
+            if let layer = layer(for: entity.layerID), layer.isLocked {
+                outcome.lockedSkipped += 1
+                continue
+            }
+            editable.append(handle)
+        }
+        guard !editable.isEmpty else { return outcome }
+        pushUndo()
+        let keepReadable = mirrText == 0
+        if eraseSource {
+            for handle in editable {
+                guard var entity = entityRegistry[handle] else { continue }
+                let definitions = entity.blockID.flatMap { blockTable[$0]?.attributeDefinitions }
+                Self.applyMirrorReflection(
+                    to: &entity, mirror: mirror,
+                    keepReadable: keepReadable, definitions: definitions)
+                entityRegistry[handle] = preparedEntityForStorage(entity)
+            }
+            refreshPathArrays(dependingOn: Set(editable))
+            outcome.mirrored = editable.count
+        } else {
+            let (copies, _, clonedBlocks) = duplicateEntities(handles: Set(editable))
+            for block in clonedBlocks { blockTable[block.handle] = block }
+            var newEntities: [CADEntity] = []
+            newEntities.reserveCapacity(copies.count)
+            for var copy in copies {
+                let definitions = copy.blockID.flatMap { blockTable[$0]?.attributeDefinitions }
+                Self.applyMirrorReflection(
+                    to: &copy, mirror: mirror,
+                    keepReadable: keepReadable, definitions: definitions)
+                newEntities.append(copy)
+            }
+            for entity in newEntities {
+                entityRegistry[entity.handle] = preparedEntityForStorage(entity)
+            }
+            refreshPathArrays(dependingOn: Set(newEntities.map(\.handle)))
+            outcome.mirrored = newEntities.count
+            outcome.newHandles = newEntities.map(\.handle)
+        }
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return outcome
+    }
+
+    /// Compose the mirror into the entity transform, then (MIRRTEXT = 0)
+    /// recompute local text/attribute rotations so the rendered text keeps
+    /// its pre-mirror world direction (readable). Text inside block
+    /// definitions is block graphics and mirrors fully, like AutoCAD.
+    private static func applyMirrorReflection(
+        to entity: inout CADEntity,
+        mirror: Transform3D,
+        keepReadable: Bool,
+        definitions: [CADAttributeDefinition]?
+    ) {
+        let oldTransform = entity.transform
+        let newTransform = mirror.multiplying(by: oldTransform)
+        entity.transform = newTransform
+        guard keepReadable else { return }
+        if let prims = entity.localGeometry {
+            entity.localGeometry = prims.map { prim in
+                guard case .text(
+                    let pos, let text, let height, let rotation, let style,
+                    let alignH, let alignV, let mtextWidth, let color
+                ) = prim else { return prim }
+                let world = CADGeometryMath.worldDirection(
+                    ofLocalAngle: rotation, at: pos, under: oldTransform)
+                let readable = CADGeometryMath.readableRotation(
+                    worldDirection: world, under: newTransform, at: pos) ?? rotation
+                return .text(
+                    position: pos, text: text, height: height, rotation: readable,
+                    style: style, alignH: alignH, alignV: alignV,
+                    mtextWidth: mtextWidth, color: color)
+            }
+        }
+        if let definitions, !definitions.isEmpty {
+            var values = entity.attributeValues
+            for definition in definitions {
+                let current = values[definition.key]?.rotation ?? definition.rotation
+                let world = CADGeometryMath.worldDirection(
+                    ofLocalAngle: current, at: definition.position, under: oldTransform)
+                let readable = CADGeometryMath.readableRotation(
+                    worldDirection: world, under: newTransform,
+                    at: definition.position) ?? current
+                if var existing = values[definition.key] {
+                    existing.rotation = readable
+                    values[definition.key] = existing
+                } else {
+                    values[definition.key] = CADAttributeValue(
+                        value: definition.defaultValue, rotation: readable)
+                }
+            }
+            entity.attributeValues = values
+        }
+    }
+
+    // MARK: - STRETCH Command Support
+
+    /// Outcome counts for one STRETCH apply pass.
+    public struct StretchOutcome: Sendable {
+        /// Entities whose local geometry was partially stretched.
+        public var stretched: Int = 0
+        /// Entities moved whole (individually picked or fully enclosed).
+        public var movedWhole: Int = 0
+        /// Editable entities left unchanged (no defining point enclosed).
+        public var unchanged: Int = 0
+        /// Editable entities skipped because their layer is locked.
+        public var lockedSkipped: Int = 0
+        /// Entities skipped as viewport-projected render copies.
+        public var projectedSkipped: Int = 0
+        /// Handles changed by this pass (stretched + moved whole).
+        public var changedHandles: [UUID] = []
+    }
+
+    /// Stretch a set of entities by a world-space displacement in one undo step.
+    ///
+    /// Each entity is classified by `StretchGeometryEngine` against the
+    /// captured crossing `regions`: individually picked handles (in
+    /// `moveWhole`) and fully enclosed entities shift whole via their
+    /// transform; partially enclosed stretchable geometry is rewritten
+    /// locally (world-tested, inverse-mapped); whole-only types outside
+    /// their base point stay put. Pushes exactly one undo entry when
+    /// anything changes; a zero displacement (or an all-unchanged set) is a
+    /// no-op that pushes nothing.
+    ///
+    /// - Parameters:
+    ///   - handles: Entity handles to stretch.
+    ///   - regions: Captured crossing regions (rects/polygons, world space).
+    ///   - moveWhole: Handles that move whole regardless of containment
+    ///     (individually picked entities).
+    ///   - delta: World-space displacement.
+    public func stretchEntities(
+        handles: Set<UUID>,
+        regions: [StretchRegion],
+        moveWhole: Set<UUID>,
+        by delta: Vector3
+    ) -> StretchOutcome {
+        var outcome = StretchOutcome()
+        guard delta.magnitude > 1e-12 else { return outcome }
+        var editable: [UUID] = []
+        editable.reserveCapacity(handles.count)
+        for handle in handles {
+            guard let entity = entityRegistry[handle] else { continue }
+            if entity.isViewportProjected {
+                outcome.projectedSkipped += 1
+                continue
+            }
+            if let layer = layer(for: entity.layerID), layer.isLocked {
+                outcome.lockedSkipped += 1
+                continue
+            }
+            editable.append(handle)
+        }
+        guard !editable.isEmpty else { return outcome }
+        let preSnapshot = snapshot()
+        var movedHandles: [UUID] = []
+        var stretchedGeometry: [(UUID, [CADPrimitive])] = []
+        for handle in editable {
+            guard let entity = entityRegistry[handle] else { continue }
+            switch StretchGeometryEngine.stretch(
+                entity: entity, regions: regions,
+                moveWhole: moveWhole.contains(handle), by: delta) {
+            case .unchanged:
+                outcome.unchanged += 1
+            case .moveWhole:
+                movedHandles.append(handle)
+            case .stretched(let geometry):
+                stretchedGeometry.append((handle, geometry))
+            }
+        }
+        guard !movedHandles.isEmpty || !stretchedGeometry.isEmpty else {
+            return outcome
+        }
+        pushUndo(preSnapshot)
+        for handle in movedHandles {
+            guard var entity = entityRegistry[handle] else { continue }
+            var transform = entity.transform
+            transform.position += delta
+            entity.transform = transform
+            entityRegistry[handle] = preparedEntityForStorage(entity)
+        }
+        for (handle, geometry) in stretchedGeometry {
+            guard var entity = entityRegistry[handle] else { continue }
+            entity.localGeometry = geometry
+            entityRegistry[handle] = preparedEntityForStorage(entity)
+        }
+        let changed = Set(movedHandles + stretchedGeometry.map(\.0))
+        refreshPathArrays(dependingOn: changed)
+        outcome.stretched = stretchedGeometry.count
+        outcome.movedWhole = movedHandles.count
+        outcome.changedHandles = Array(changed)
+        markEdited(regenerate: true)
+        invalidateEntityGrid()
+        return outcome
+    }
+
+    // MARK: - BREAK / BREAKATPOINT Command Support
+
+    /// Outcome counts for one BREAK / BREAKATPOINT apply pass.
+    public struct BreakOutcome: Sendable {
+        /// Entities whose geometry was split (1 when anything changed).
+        public var broken: Int = 0
+        /// Entities deleted because the span covered the whole object.
+        public var removed: Int = 0
+        /// Entities skipped because their layer is locked.
+        public var lockedSkipped: Int = 0
+        /// Entities skipped as viewport-projected render copies.
+        public var projectedSkipped: Int = 0
+        /// Handles changed by this pass (original + new second pieces).
+        public var changedHandles: [UUID] = []
+        /// Handles of newly created second pieces.
+        public var newHandles: [UUID] = []
+        /// True when the entity kind cannot be broken (fail-closed signal
+        /// for scripted callers; interactive callers show `message`).
+        public var rejected: Bool = false
+        /// User-facing message (rejection reason or result summary).
+        public var message: String?
+    }
+
+    /// Break one entity between two world points in a single undo step.
+    ///
+    /// The first point is projected onto the object; the span between the
+    /// two (clamped) params is erased. The head piece keeps the original
+    /// handle, layer, transform, draw order, and xdata (linetype/lineweight
+    /// survive); the tail piece becomes a new entity copying those props.
+    /// Equal points (BREAKATPOINT, or typed `@`) split with no gap.
+    /// Unsupported kinds fail closed with a message and push no undo.
+    ///
+    /// - Parameters:
+    ///   - handle: Entity to break.
+    ///   - firstWorld: First break point (pick; projected onto the object).
+    ///   - secondWorld: Second break point (a point beyond an end removes
+    ///     that end).
+    public func breakEntity(
+        handle: UUID,
+        firstWorld: Vector3,
+        secondWorld: Vector3
+    ) -> BreakOutcome {
+        var outcome = BreakOutcome()
+        guard let entity = entityRegistry[handle] else {
+            outcome.message = "The object no longer exists."
+            return outcome
+        }
+        if entity.isViewportProjected {
+            outcome.projectedSkipped = 1
+            outcome.message = "Viewport copies cannot be broken."
+            return outcome
+        }
+        if let layer = layer(for: entity.layerID), layer.isLocked {
+            outcome.lockedSkipped = 1
+            outcome.message = "The object is on a locked layer."
+            return outcome
+        }
+        switch BreakGeometryEngine.split(
+            entity: entity,
+            firstWorld: firstWorld,
+            secondWorld: secondWorld)
+        {
+        case .reject(let message):
+            outcome.rejected = true
+            outcome.message = message
+        case .unchanged:
+            outcome.message = "Nothing broken."
+        case .removeObject:
+            removeEntities(handles: [handle])
+            outcome.removed = 1
+            outcome.changedHandles = [handle]
+            outcome.message = "Erased the object."
+        case .singlePiece(let prims):
+            let preSnapshot = snapshot()
+            guard var updated = entityRegistry[handle] else {
+                outcome.message = "The object no longer exists."
+                return outcome
+            }
+            updated.localGeometry = prims
+            entityRegistry[handle] = preparedEntityForStorage(updated)
+            refreshPathArrays(dependingOn: Set([handle]))
+            pushUndo(preSnapshot)
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+            outcome.broken = 1
+            outcome.changedHandles = [handle]
+            outcome.message = "Broke the object."
+        case .twoPieces(let first, let second):
+            let preSnapshot = snapshot()
+            guard var updated = entityRegistry[handle] else {
+                outcome.message = "The object no longer exists."
+                return outcome
+            }
+            updated.localGeometry = first
+            entityRegistry[handle] = preparedEntityForStorage(updated)
+            let secondEntity = CADEntity(
+                layerID: updated.layerID,
+                localGeometry: second,
+                transform: updated.transform,
+                xdata: updated.xdata,
+                drawOrder: updated.drawOrder)
+            entityRegistry[secondEntity.handle] =
+                preparedEntityForStorage(secondEntity)
+            refreshPathArrays(dependingOn: Set([handle, secondEntity.handle]))
+            pushUndo(preSnapshot)
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+            outcome.broken = 1
+            outcome.changedHandles = [handle, secondEntity.handle]
+            outcome.newHandles = [secondEntity.handle]
+            outcome.message = "Broke the object into two pieces."
+        }
+        return outcome
+    }
+
     // MARK: - ALIGN Command Support
 
     /// Apply a combined similarity transform (translate + rotate + optionally scale)

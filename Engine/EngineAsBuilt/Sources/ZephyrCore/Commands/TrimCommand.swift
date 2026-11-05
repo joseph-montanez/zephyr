@@ -3,8 +3,29 @@ import CSDL3
 import ImGui
 import SwiftSDL
 import ZephyrKernel
+import ZephyrLisp
 
 // =========================================================================
+// MARK: - TrimSettings (TRIMEXTENDMODE sysvar backing)
+
+/// Backing store for the `TRIMEXTENDMODE` sysvar (0 = Standard, 1 = Quick).
+///
+/// Single source of truth for the TRIM mode, shared by
+/// `TrimCommand.preferredMode` and the Lisp `getvar`/`setvar` bridge.
+/// Nonisolated (lock-guarded) so the sysvar store can reach it off the main
+/// actor; mirrors the `OffsetSettings` sharing pattern.
+public enum TrimSettings: Sendable {
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var storedMode: Int = 0
+
+    /// 0 = Standard (classic cutting-edge selection, AutoCAD default),
+    /// 1 = Quick (all visible objects act as cutting edges).
+    public static var trimExtendMode: Int {
+        get { lock.withLock { storedMode } }
+        set { lock.withLock { storedMode = (newValue == 0) ? 0 : 1 } }
+    }
+}
+
 // MARK: - TrimCommand
 // =========================================================================
 
@@ -42,12 +63,81 @@ public final class TrimCommand: FeatureCommand {
         case eraseSelecting
         /// Interactive box selection for eRase mode.
         case eraseBoxSelecting(startWorld: Vector3, startScreen: SDL_FPoint)
+        /// Explicit projection entry [None/UCS/View] (shared EXTEND handshake).
+        case askProject
+        /// Explicit implied-edge entry [Extend/No extend] (shared EXTEND handshake).
+        case askEdge
     }
 
     // MARK: - Static Configuration
 
     /// User's preferred TRIM mode across sessions. Defaults to `.standard` (classic AutoCAD).
-    public static var preferredMode: TrimMode = .standard
+    /// Backed by `TrimSettings.trimExtendMode` (`TRIMEXTENDMODE` sysvar): the single source of truth.
+    public static var preferredMode: TrimMode {
+        get { TrimSettings.trimExtendMode == 0 ? .standard : .quick }
+        set { TrimSettings.trimExtendMode = (newValue == .standard) ? 0 : 1 }
+    }
+
+    // MARK: - Projection / Edge (shared EXTEND handshake)
+
+    /// Reads PROJMODE (0 = None, 1 = UCS, 2 = View); anything else reads as UCS.
+    /// All intersections already resolve in the UCS XY plane in 2D parity,
+    /// so projection is recorded, not computed.
+    public static func readProjectionMode(processor: CADCommandProcessor) -> Int {
+        if case .int(let value) = processor.systemVariable("PROJMODE"),
+           (0...2).contains(value) {
+            return value
+        }
+        return 1
+    }
+
+    /// Reads EDGEMODE (0 = No extend, 1 = Extend); anything else reads as No extend.
+    public static func readEdgeMode(processor: CADCommandProcessor) -> Int {
+        if case .int(let value) = processor.systemVariable("EDGEMODE"),
+           (0...1).contains(value) {
+            return value
+        }
+        return 0
+    }
+
+    /// Display name for a PROJMODE value.
+    public static func projectionModeName(_ mode: Int) -> String {
+        switch mode {
+        case 0: return "None"
+        case 2: return "View"
+        default: return "UCS"
+        }
+    }
+
+    /// Display name for an EDGEMODE value.
+    public static func edgeModeName(_ mode: Int) -> String {
+        mode == 1 ? "Extend" : "No extend"
+    }
+
+    /// "Current settings: Projection=UCS, Edge=No extend" (AutoCAD EXTEND idiom).
+    public static func currentSettingsLine(processor: CADCommandProcessor) -> String {
+        "Current settings: Projection=\(projectionModeName(readProjectionMode(processor: processor))), Edge=\(edgeModeName(readEdgeMode(processor: processor)))"
+    }
+
+    /// Ask prompt for the Project option with the current value as default.
+    public static func askProjectPrompt(processor: CADCommandProcessor) -> String {
+        "Enter projection option [None/UCS/View] <\(projectionModeName(readProjectionMode(processor: processor)))>:"
+    }
+
+    /// Ask prompt for the Edge option with the current value as default.
+    public static func askEdgePrompt(processor: CADCommandProcessor) -> String {
+        "Enter implied edge mode [Extend/No extend] <\(edgeModeName(readEdgeMode(processor: processor)))>:"
+    }
+
+    /// Records PROJMODE (validated 0/1/2 by the caller).
+    public static func setProjectionMode(_ mode: Int, engine: PhrostEngine, processor: CADCommandProcessor) {
+        _ = processor.lispVars.set("PROJMODE", .int(mode), document: engine.document)
+    }
+
+    /// Records EDGEMODE (validated 0/1 by the caller).
+    public static func setEdgeMode(_ mode: Int, engine: PhrostEngine, processor: CADCommandProcessor) {
+        _ = processor.lispVars.set("EDGEMODE", .int(mode), document: engine.document)
+    }
 
     // MARK: - Instance State
 
@@ -110,7 +200,7 @@ public final class TrimCommand: FeatureCommand {
             engine.cadSelection.clearSelection()
             recompileCuttingSegments(in: engine.document)
             step = .selectTrimTarget
-            processor.commandPrompt = "Cutting edge(s) selected (\(selectedCuttingHandles.count)). Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+            processor.commandPrompt = "Cutting edge(s) selected (\(selectedCuttingHandles.count)). Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
         } else if currentMode == .standard {
             selectedCuttingHandles.removeAll()
             step = .selectCuttingEdges
@@ -119,7 +209,7 @@ public final class TrimCommand: FeatureCommand {
             selectedCuttingHandles.removeAll()
             recompileCuttingSegments(in: engine.document)
             step = .selectTrimTarget
-            processor.commandPrompt = "Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+            processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
         }
     }
 
@@ -207,10 +297,20 @@ public final class TrimCommand: FeatureCommand {
                 threshold: 12.0 / engine.camera.zoom,
                 simplifyComplexBlocks: false
             ) {
+                // Shift-pick extends through the extend solvers with the
+                // same boundary set (EXTEND handshake mirror).
+                if engine.io?.pointee.KeyShift ?? false {
+                    let extended = performSingleExtend(
+                        on: hitHandle, rawClick: rawClick, engine: engine, processor: processor)
+                    if extended {
+                        processor.commandPrompt = "Extended. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                    }
+                    return .handled
+                }
                 // Single-click trim on entity
                 let success = performSingleTrim(on: hitHandle, rawClick: rawClick, engine: engine, processor: processor)
                 if success {
-                    processor.commandPrompt = "Trimmed. Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                    processor.commandPrompt = "Trimmed. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
                 }
                 return .handled
             } else {
@@ -236,9 +336,9 @@ public final class TrimCommand: FeatureCommand {
 
             step = .selectTrimTarget
             if trimmedCount > 0 {
-                processor.commandPrompt = "\(trimmedCount) object(s) trimmed. Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                processor.commandPrompt = "\(trimmedCount) object(s) trimmed. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
             } else {
-                processor.commandPrompt = "No valid trim intersections found. Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                processor.commandPrompt = "No valid trim intersections found. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
             }
             return .handled
 
@@ -297,6 +397,14 @@ public final class TrimCommand: FeatureCommand {
             }
             step = .eraseSelecting
             return .handled
+
+        case .askProject:
+            processor.commandPrompt = Self.askProjectPrompt(processor: processor)
+            return .handled
+
+        case .askEdge:
+            processor.commandPrompt = Self.askEdgePrompt(processor: processor)
+            return .handled
         }
     }
 
@@ -324,9 +432,9 @@ public final class TrimCommand: FeatureCommand {
                 step = .selectCuttingEdges
                 processor.commandPrompt = "Select cutting edges ... Select objects or <select all>:"
                 return .handled
-            case .targetBoxSelecting, .fenceSelecting, .eraseSelecting, .eraseBoxSelecting:
+            case .targetBoxSelecting, .fenceSelecting, .eraseSelecting, .eraseBoxSelecting, .askProject, .askEdge:
                 step = .selectTrimTarget
-                processor.commandPrompt = "Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
                 return .handled
             case .selectCuttingEdges, .selectTrimTarget:
                 active = false
@@ -340,23 +448,34 @@ public final class TrimCommand: FeatureCommand {
                 recompileCuttingSegments(in: engine.document)
                 step = .selectTrimTarget
                 if selectedCuttingHandles.isEmpty {
-                    processor.commandPrompt = "All objects selected as cutting edges. Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                    processor.commandPrompt = "All objects selected as cutting edges. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
                 } else {
-                    processor.commandPrompt = "\(selectedCuttingHandles.count) cutting edge(s) selected. Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                    processor.commandPrompt = "\(selectedCuttingHandles.count) cutting edge(s) selected. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
                 }
                 return .handled
 
             case .fenceSelecting(let points):
                 if points.count >= 2 {
                     let count = performFenceTrim(points: points, engine: engine, processor: processor)
-                    processor.commandPrompt = "\(count) object(s) trimmed by fence. Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                    processor.commandPrompt = "\(count) object(s) trimmed by fence. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
                 }
                 step = .selectTrimTarget
                 return .handled
 
             case .eraseSelecting:
                 step = .selectTrimTarget
-                processor.commandPrompt = "Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+
+case .askProject:
+                Self.setProjectionMode(1, engine: engine, processor: processor)
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+
+            case .askEdge:
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
                 return .handled
 
             case .selectTrimTarget:
@@ -386,7 +505,12 @@ public final class TrimCommand: FeatureCommand {
             currentMode = (currentMode == .standard) ? .quick : .standard
             Self.preferredMode = currentMode
             recompileCuttingSegments(in: engine.document)
-            processor.commandPrompt = "TRIM mode set to \(currentMode.rawValue.uppercased()). Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+            processor.commandPrompt = "TRIM mode set to \(currentMode.rawValue.uppercased()). Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+            return .handled
+
+        case SDL_SCANCODE_P where isWaitingForTarget:
+            step = .askProject
+            processor.commandPrompt = Self.askProjectPrompt(processor: processor)
             return .handled
 
         case SDL_SCANCODE_R where isWaitingForTarget:
@@ -422,7 +546,7 @@ public final class TrimCommand: FeatureCommand {
                 selectedCuttingHandles.removeAll()
                 recompileCuttingSegments(in: engine.document)
                 step = .selectTrimTarget
-                processor.commandPrompt = "All objects selected as cutting edges. Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                processor.commandPrompt = "All objects selected as cutting edges. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
                 return .handled
             } else if upper == "M" || upper == "MODE" {
                 currentMode = (currentMode == .standard) ? .quick : .standard
@@ -452,7 +576,17 @@ public final class TrimCommand: FeatureCommand {
                 currentMode = (currentMode == .standard) ? .quick : .standard
                 Self.preferredMode = currentMode
                 recompileCuttingSegments(in: engine.document)
-                processor.commandPrompt = "TRIM mode set to \(currentMode.rawValue.uppercased()). Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+                processor.commandPrompt = "TRIM mode set to \(currentMode.rawValue.uppercased()). Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+
+            case "P", "PROJECT":
+                step = .askProject
+                processor.commandPrompt = Self.askProjectPrompt(processor: processor)
+                return .handled
+
+            case "EDGE":
+                step = .askEdge
+                processor.commandPrompt = Self.askEdgePrompt(processor: processor)
                 return .handled
 
             case "R", "ERASE":
@@ -465,6 +599,60 @@ public final class TrimCommand: FeatureCommand {
 
             default:
                 break
+            }
+
+case .askProject:
+            switch upper {
+            case "":
+                Self.setProjectionMode(1, engine: engine, processor: processor)
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            case "N", "NONE":
+                Self.setProjectionMode(0, engine: engine, processor: processor)
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            case "U", "UCS":
+                Self.setProjectionMode(1, engine: engine, processor: processor)
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            case "V", "VIEW":
+                Self.setProjectionMode(2, engine: engine, processor: processor)
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            case "UNDO":
+                return performUndo(engine: engine, processor: processor)
+            default:
+                processor.commandPrompt =
+                    "Invalid projection option. \(Self.askProjectPrompt(processor: processor))"
+                return .handled
+            }
+
+        case .askEdge:
+            switch upper {
+            case "":
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            case "E", "EXTEND":
+                Self.setEdgeMode(1, engine: engine, processor: processor)
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            case "N", "NO", "NO EXTEND", "NOEXTEND":
+                Self.setEdgeMode(0, engine: engine, processor: processor)
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            case "U", "UNDO":
+                return performUndo(engine: engine, processor: processor)
+            default:
+                processor.commandPrompt =
+                    "Invalid edge mode. \(Self.askEdgePrompt(processor: processor))"
+                return .handled
             }
 
         default:
@@ -488,6 +676,8 @@ public final class TrimCommand: FeatureCommand {
                 .init(value: "E", title: "Cutting edges", aliases: ["CUTTING", "EDGES"], description: "Change cutting edges"),
                 .init(value: "M", title: "Mode", aliases: ["MODE"], description: "Toggle Quick vs Standard"),
                 .init(value: "R", title: "eRase", aliases: ["ERASE"], description: "Delete entities directly"),
+                .init(value: "P", title: "Project", aliases: ["PROJECT"], description: "Projection option (None/UCS/View)"),
+                .init(value: "EDGE", title: "Edge", aliases: [], description: "Implied edge mode (Extend/No extend)"),
                 .init(value: "U", title: "Undo", aliases: ["UNDO"], description: "Revert last trim operation")
             ]
         default:
@@ -551,6 +741,51 @@ public final class TrimCommand: FeatureCommand {
         engine.tabManager.markActiveDirty()
 
         // If the trimmed entity was a cutting edge, refresh cached cutting edges
+        if selectedCuttingHandles.contains(hitHandle) || selectedCuttingHandles.isEmpty {
+            recompileCuttingSegments(in: doc)
+        }
+
+        return true
+    }
+
+    /// Extends one object through the extend solvers with this command's
+    /// compiled cutting edges as boundaries (Shift-pick handshake).
+    private func performSingleExtend(
+        on hitHandle: UUID,
+        rawClick: Vector3,
+        engine: PhrostEngine,
+        processor: CADCommandProcessor
+    ) -> Bool {
+        let doc = engine.document
+        guard let entity = doc.entity(for: hitHandle) else { return false }
+        guard entity.blockID == nil else {
+            processor.commandPrompt = "Cannot extend block references. Explode them first."
+            return false
+        }
+
+        let preSnapshot = doc.snapshot()
+        let edges = cachedCuttingEdges.excluding(hitHandle)
+        let (newGeom, modified, errorMsg) = TrimGeometryEngine.extendEntity(
+            entity: entity, pickWorld: rawClick, boundaries: edges,
+            edgeMode: Self.readEdgeMode(processor: processor))
+
+        if let errorMsg {
+            processor.commandPrompt = errorMsg
+            return false
+        }
+
+        guard modified, let geom = newGeom else {
+            processor.commandPrompt = "No boundary found to extend to. Geometry was left unchanged."
+            return false
+        }
+
+        doc.pushUndo(preSnapshot)
+        operationsInSession += 1
+        doc.updateEntityGeometryLive(for: hitHandle, geometry: geom)
+        doc.invalidateEntityGrid()
+        doc.markEdited(regenerate: true)
+        engine.tabManager.markActiveDirty()
+
         if selectedCuttingHandles.contains(hitHandle) || selectedCuttingHandles.isEmpty {
             recompileCuttingSegments(in: doc)
         }
@@ -717,7 +952,7 @@ public final class TrimCommand: FeatureCommand {
         engine.document.undo()
         operationsInSession -= 1
         recompileCuttingSegments(in: engine.document)
-        processor.commandPrompt = "Undo trim. Select object to trim or [Fence/Crossing/Cutting edges/Mode/eRase/Undo]:"
+        processor.commandPrompt = "Undo trim. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
         return .handled
     }
 

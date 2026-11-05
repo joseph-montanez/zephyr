@@ -58,6 +58,7 @@ final class LispVarStore: @unchecked Sendable {
         "DWGNAME": .string("Drawing1.dxf"),
         "DWGPREFIX": .string(""),
         "DWGTITLED": .int(0),
+        "EDGEMODE": .int(0),
         "ERRNO": .int(0),
         "EXPERT": .int(0),
         "EXTMAX": LispEntityAdapter.lispList([.real(1e12), .real(1e12), .real(0)]),
@@ -88,7 +89,7 @@ final class LispVarStore: @unchecked Sendable {
         "LAYLOCKFADECTL": .int(50),
         "MEASUREMENT": .int(1),
         "MENUECHO": .int(0),
-        "MIRRTEXT": .int(1),
+        "MIRRTEXT": .int(0),
         "NOMUTT": .int(0),
         "OFFSETDIST": .real(-1),
         "OFFSETGAPTYPE": .int(0),
@@ -108,6 +109,7 @@ final class LispVarStore: @unchecked Sendable {
         "PLOTOFFSET": .int(0),
         "PLOTROTMODE": .int(1),
         "PLOTTRANSPARENCYOVERRIDE": .int(1),
+        "PROJMODE": .int(1),
         "PSLTSCALE": .int(1),
         "QTEXTMODE": .int(0),
         "REGENMODE": .int(1),
@@ -116,6 +118,7 @@ final class LispVarStore: @unchecked Sendable {
         "SNAPMODE": .int(0),
         "SPLINESEGS": .int(8),
         "TEXTSTYLE": .string("Standard"),
+        "TRIMEXTENDMODE": .int(0),
         "BINDTYPE": .int(0),
         "REFPATHTYPE": .int(1),
         "VISRETAIN": .int(1),
@@ -197,6 +200,9 @@ final class LispVarStore: @unchecked Sendable {
             return .real(OffsetSettings.lastDistance ?? -1)
         case "OFFSETGAPTYPE":
             return .int(OffsetSettings.gapType.rawValue)
+        case "TRIMEXTENDMODE":
+            // Live: shared with TrimCommand.preferredMode (0 = Standard, 1 = Quick).
+            return .int(TrimSettings.trimExtendMode)
         case "LASTPOINT":
             if let p = document.lastPoint {
                 return LispEntityAdapter.pointValue(p)
@@ -493,6 +499,24 @@ final class LispVarStore: @unchecked Sendable {
                 return "OFFSETGAPTYPE requires an integer 0..2"
             }
             OffsetSettings.gapType = gapType
+            return nil
+        case "EDGEMODE", "MIRRTEXT":
+            guard case let .int(intVal) = value, (0...1).contains(intVal) else {
+                return "\(name) requires 0 or 1"
+            }
+            store(name, .int(intVal))
+            return nil
+        case "PROJMODE":
+            guard case let .int(intVal) = value, (0...2).contains(intVal) else {
+                return "PROJMODE requires 0, 1, or 2"
+            }
+            store(name, .int(intVal))
+            return nil
+        case "TRIMEXTENDMODE":
+            guard case let .int(intVal) = value, (0...1).contains(intVal) else {
+                return "TRIMEXTENDMODE requires 0 (Standard) or 1 (Quick)"
+            }
+            TrimSettings.trimExtendMode = intVal
             return nil
         case "BINDTYPE", "REFPATHTYPE", "VISRETAIN", "XREFNOTIFY", "XLOADCTL", "XDWGFADECTL":
             let intValue: Int?

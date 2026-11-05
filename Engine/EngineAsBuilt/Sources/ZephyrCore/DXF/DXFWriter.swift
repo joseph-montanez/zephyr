@@ -749,7 +749,7 @@ public class DXFWriter {
         writeHdrInt("$REGENMODE", 1, 70, &out)
         writeHdrInt("$FILLMODE", 1, 70, &out)
         writeHdrInt("$QTEXTMODE", 0, 70, &out)
-        writeHdrInt("$MIRRTEXT", 0, 70, &out)
+        writeHdrInt("$MIRRTEXT", Self.storedHeaderInt(headerVars, "$MIRRTEXT"), 70, &out)
         writeHdrDbl("$LTSCALE", 1.0, 40, &out)
         writeHdrInt("$ATTMODE", 1, 70, &out)
         writeHdrDbl("$TEXTSIZE", 2.5, 40, &out)
@@ -871,6 +871,16 @@ public class DXFWriter {
         out += String(format: "%3d\r\n", code)
         let enc = textCodec.fromUtf8(val)
         out += enc + "\r\n"
+    }
+
+    /// Stored integer header value (tolerates Int32, as the reader's
+    /// headerVars may hold either width), defaulting to 0 (readable text,
+    /// matching the `MIRRTEXT` sysvar default). Keeps `$MIRRTEXT`
+    /// round-trips faithful instead of hardcoding the header.
+    private static func storedHeaderInt(_ headerVars: [String: Any], _ name: String) -> Int {
+        if let v = headerVars[name] as? Int { return v }
+        if let v = headerVars[name] as? Int32 { return Int(v) }
+        return 0
     }
 
     private func writeHdrInt(_ name: String, _ defaultVal: Int, _ code: Int, _ out: inout String) {

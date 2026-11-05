@@ -480,7 +480,7 @@ final class LispCADHostTests: XCTestCase {
         XCTAssertEqual(
             LispScriptedCommands.scripted,
             ["LINE", "CIRCLE", "PLINE", "ARC",
-             "COPY", "ROTATE", "MOVE", "ERASE", "SELECT",
+             "COPY", "ROTATE", "MOVE", "ERASE", "MIRROR", "STRETCH", "BREAK", "BREAKATPOINT", "EXTEND", "SELECT",
              "UNDO", "U", "REDRAW", "REGEN", "INSERT", "-INSERT", "-ATTACH",
              "RECTANG", "RECTANGLE", "CHPROP", "CHANGE", "-HATCH", "HATCH", "TEXT", "-TEXT", "DTEXT", "AUTOCONTRAST",
              "-LAYER", "-LA", "LAYERSTATE", "-LAYERSTATE", "LAYERP"])

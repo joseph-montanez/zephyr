@@ -101,8 +101,19 @@ public enum CADCommandAliasTable {
             description: "Scale selected entities from a base point"),
         CADCommandAliasEntry(
             canonicalName: "STRETCH", aliases: ["S"], category: .modify,
-            description: "Stretch vertices inside a crossing window",
-            isReservedStub: true),
+            description: "Stretch vertices inside a crossing window"),
+        CADCommandAliasEntry(
+            canonicalName: "MIRROR", aliases: ["MI"], category: .modify,
+            description: "Mirror selected entities across a mirror line"),
+        CADCommandAliasEntry(
+            canonicalName: "BREAK", aliases: ["BR"], category: .modify,
+            description: "Erase the span between two break points on an object"),
+        CADCommandAliasEntry(
+            canonicalName: "BREAKATPOINT", aliases: [], category: .modify,
+            description: "Split an object at one point with no gap"),
+        CADCommandAliasEntry(
+            canonicalName: "EXTEND", aliases: ["EX"], category: .modify,
+            description: "Extend open objects to meet boundary edges"),
         CADCommandAliasEntry(
             canonicalName: "DIMSTYLE", aliases: ["D", "DST"],
             category: .settings,

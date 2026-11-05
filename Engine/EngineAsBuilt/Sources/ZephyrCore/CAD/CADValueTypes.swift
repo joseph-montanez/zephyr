@@ -379,6 +379,16 @@ public struct Transform3D: Hashable, Sendable {
         }
     }
 
+    /// True when the XY 2x2 linear block reverses orientation (negative
+    /// determinant): the map includes a mirror. Read from the raw elements
+    /// because `scale` returns magnitudes, which lose reflection handedness
+    /// (a mirrored matrix reports positive scales). Rotation-invariant, so
+    /// it also catches mirrors composed with rotation (e.g. an x/y swap),
+    /// where per-axis sign checks stay positive.
+    public var reversesOrientation2D: Bool {
+        (at(0, 0) * at(1, 1) - at(0, 1) * at(1, 0)) < 0
+    }
+
     /// Z-Axis Planar Rotation (Radians).
     public var rotation: Double {
         get { atan2(at(1, 0), at(0, 0)) }

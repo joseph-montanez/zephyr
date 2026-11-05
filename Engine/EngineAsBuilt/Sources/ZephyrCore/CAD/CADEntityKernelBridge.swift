@@ -48,11 +48,9 @@ public extension Transform3D {
         return true
     }
 
-    /// Mirror (orientation-reversing) similarities negate bulge handedness.
-    var reversesOrientation2D: Bool {
-        // Determinant sign of the XY 2x2 block.
-        (at(0, 0) * at(1, 1) - at(0, 1) * at(1, 0)) < 0
-    }
+    // Mirror (orientation-reversing) similarities negate bulge handedness:
+    // canonical determinant check is Transform3D.reversesOrientation2D
+    // (CADValueTypes), kept in one place so every mirror path agrees.
 }
 
 // MARK: - CADPolyline <-> [PolySegment2d]
@@ -187,10 +185,12 @@ public extension CADPrimitive {
                           direction: Vector3(x: x.direction.x, y: x.direction.y, z: 0),
                           color: color)
         case .arc(let arc):
-            // DXF arcs are CCW: emit normalized positive sweep.
+            // DXF arcs are CCW: emit normalized positive sweep. A mirrored
+            // (CW) arc covers the same point set CCW from its end angle
+            // with the negated sweep -- not the complement arc.
             var sweep = arc.sweep.truncatingRemainder(dividingBy: 2.0 * .pi)
             var start = arc.startAngle
-            if sweep < 0 { sweep += 2.0 * .pi; start = arc.endAngle }
+            if sweep < 0 { start = arc.endAngle; sweep = -sweep }
             let z = lineZ(of: source)
             return .arc(center: Vector3(arc.center, z: z), radius: arc.radius,
                         startAngle: start, endAngle: start + sweep, color: color)
@@ -209,7 +209,7 @@ public extension CADPrimitive {
             case .arc(let a):
                 var sweep = a.sweep.truncatingRemainder(dividingBy: 2.0 * .pi)
                 var start = a.startAngle
-                if sweep < 0 { sweep += 2.0 * .pi; start = a.endAngle }
+                if sweep < 0 { start = a.endAngle; sweep = -sweep }
                 let z = lineZ(of: source)
                 return .arc(center: Vector3(a.center, z: z), radius: a.radius,
                             startAngle: start, endAngle: start + sweep, color: color)

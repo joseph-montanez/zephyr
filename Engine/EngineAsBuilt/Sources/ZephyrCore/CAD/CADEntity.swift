@@ -496,7 +496,7 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
     }
 
     public func transformed(by transform: Transform3D) -> CADPolyline {
-        let reversesOrientation = transform.scale.x * transform.scale.y < 0
+        let reversesOrientation = transform.reversesOrientation2D
         let widthScale = (abs(transform.scale.x) + abs(transform.scale.y)) * 0.5
         var result = self
         // Written element-wise rather than through `MutableRef`: that type is macOS 27+, and this is on

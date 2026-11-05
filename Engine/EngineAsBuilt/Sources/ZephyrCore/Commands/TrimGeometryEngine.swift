@@ -27,7 +27,7 @@ public enum TrimGeometryEngine {
     // MARK: - Geometry Decomposition
 
     /// Explodes a primitive into a list of world-space line segments using the given transform.
-    public static func explode(primitive: CADPrimitive, t: Transform3D) -> [(Vector3, Vector3)] {
+    nonisolated public static func explode(primitive: CADPrimitive, t: Transform3D) -> [(Vector3, Vector3)] {
         func curvedSegmentCount(radius: Double, span: Double = 2.0 * .pi) -> Int {
             guard radius > 1e-12, span > 0 else { return 2 }
             let relativeChordError = 1e-7
@@ -169,7 +169,7 @@ public enum TrimGeometryEngine {
     }
 
     /// Normalizes angle to [0, 2pi).
-    public static func normAngle(_ v: Double) -> Double {
+    nonisolated public static func normAngle(_ v: Double) -> Double {
         let twoPi = 2.0 * Double.pi
         var r = v.truncatingRemainder(dividingBy: twoPi)
         if r < 0 { r += twoPi }
@@ -185,7 +185,7 @@ public enum TrimGeometryEngine {
     /// Quick/select-all mode includes the trim target itself in the cutter
     /// set; `excluding(_:)` removes a target's own edges so a curve can
     /// never cut itself (its exploded chords intersect it everywhere).
-    public struct TrimCuttingEdges: Sendable {
+    nonisolated public struct TrimCuttingEdges: Sendable {
         public var segments: [(Vector3, Vector3)]
         public var exactLines: [(Vector3, Vector3)]
         public var exactCurves: [Curve2d]
@@ -224,7 +224,7 @@ public enum TrimGeometryEngine {
         }
     }
 
-    public static func collectCuttingSegments(
+    nonisolated public static func collectCuttingSegments(
         document: CADDocument,
         cuttingHandles: Set<UUID>?,
         excludedHandle: UUID? = nil
@@ -234,7 +234,7 @@ public enum TrimGeometryEngine {
         return (edges.segments, edges.exactLines, edges.exactCurves)
     }
 
-    public static func collectCuttingEdges(
+    nonisolated public static func collectCuttingEdges(
         document: CADDocument,
         cuttingHandles: Set<UUID>?,
         excludedHandle: UUID? = nil
@@ -1437,5 +1437,813 @@ public enum TrimGeometryEngine {
         } else {
             return (newPrims, true, nil)
         }
+    }
+
+// MARK: - Extend Solvers (PR4 EXTEND)
+    //
+    // Pure geometric solvers that lengthen one open target along its natural
+    // path to the nearest boundary edge: lines run straight, arcs and bulged
+    // polyline end-segments continue along their parent circle, and splines
+    // extend by moving the picked end control point onto the boundary hit
+    // (the end-tangent ray must land cleanly, otherwise a cannot-extend
+    // message is returned). Closed targets report no end; rays, construction
+    // lines, and design-content kinds (text/hatch/image/table) are invalid.
+    //
+    // The end extended is the one nearest the pick. Boundary hits are found
+    // with the kernel `Intersector2D` extend flags: EDGEMODE=0 intersects the
+    // target's natural path against boundary geometry as built
+    // (`extendB: false`); EDGEMODE=1 lets boundaries extend along their own
+    // natural path (`extendB: true`).
+    //
+    // All entry points are nonisolated (pure value math over parameters the
+    // caller passes in) so the scripted `(command "EXTEND" ...)` path — which
+    // never hops to the main actor — shares them verbatim with the
+    // interactive command. Boundary compilation reuses
+    // `collectCuttingEdges` / `TrimCuttingEdges.excluding` verbatim; the
+    // target's own edges are always excluded by the caller so a curve can
+    // never extend to itself.
+    //
+    // Projection (PROJMODE None/UCS/View) needs no math here: in 2D parity
+    // every intersection already resolves in the UCS XY plane (z carried),
+    // so the option only records the sysvar.
+
+    /// Which open end of a target extends (the one nearest the pick).
+    nonisolated public enum ExtendEnd: Sendable {
+        case start
+        case end
+    }
+
+    /// Message for targets that are closed loops with no end to extend.
+    nonisolated public static var extendClosedMessage: String {
+        "The object is closed and has no end to extend."
+    }
+
+    /// Message for targets whose kind can never extend.
+    nonisolated public static func extendInvalidMessage(for primitive: CADPrimitive) -> String {
+        switch primitive {
+        case .text:
+            return "Text cannot be extended."
+        case .hatch, .hatchPath:
+            return "Hatches cannot be extended."
+        case .image:
+            return "Images cannot be extended."
+        case .table:
+            return "Tables cannot be extended."
+        case .point:
+            return "Points cannot be extended."
+        case .penStroke:
+            return "Pen strokes cannot be extended."
+        case .ray:
+            return "Rays cannot be extended."
+        case .xline:
+            return "Construction lines cannot be extended."
+        default:
+            return "That object cannot be extended."
+        }
+    }
+
+    /// Extends one entity's nearest primitive to the pick along its natural
+    /// path to the nearest boundary. Returns the full replacement geometry
+    /// (spliced, like `trimEntity`), whether anything changed, and a message
+    /// for invalid targets. Plain misses (no boundary in reach) return
+    /// `(nil, false, nil)` so callers can stay in the command with their own
+    /// prompt; only invalid kinds and clean-miss splines carry `errorMsg`.
+    nonisolated public static func extendEntity(
+        entity: CADEntity,
+        pickWorld: Vector3,
+        boundaries: TrimCuttingEdges,
+        edgeMode: Int
+    ) -> (newGeometry: [CADPrimitive]?, modified: Bool, errorMsg: String?) {
+        guard let localGeom = entity.localGeometry, !localGeom.isEmpty else {
+            return (nil, false, "The object has no geometry to extend.")
+        }
+        let transform = entity.transform
+        var bestIndex: Int? = nil
+        var bestDistSq = Double.infinity
+        for (i, prim) in localGeom.enumerated() {
+            if let d = extendDistanceSqToPrimitive(prim, transform: transform, point: pickWorld),
+               d < bestDistSq {
+                bestDistSq = d
+                bestIndex = i
+            }
+        }
+        guard let primIndex = bestIndex else {
+            return (nil, false, extendInvalidMessage(for: localGeom[0]))
+        }
+        let (newPrims, modified, errorMsg) = extendPrimitive(
+            primitive: localGeom[primIndex], transform: transform,
+            pickWorld: pickWorld, boundaries: boundaries, edgeMode: edgeMode)
+        if let errorMsg {
+            return (nil, false, errorMsg)
+        }
+        guard modified, let replacements = newPrims else {
+            return (nil, false, nil)
+        }
+        var updated = localGeom
+        updated.remove(at: primIndex)
+        updated.insert(contentsOf: replacements, at: primIndex)
+        return (updated, true, nil)
+    }
+
+    /// Extends one primitive (the caller picks the nearest one) to the
+    /// nearest boundary along its natural path for the end nearest the pick.
+    nonisolated public static func extendPrimitive(
+        primitive: CADPrimitive,
+        transform: Transform3D,
+        pickWorld: Vector3,
+        boundaries: TrimCuttingEdges,
+        edgeMode: Int
+    ) -> (result: [CADPrimitive]?, modified: Bool, errorMsg: String?) {
+        let allowBoundaryExtension = (edgeMode == 1)
+        switch primitive {
+        case .line(let ls, let le, let color):
+            return extendLineEnd(
+                ls: ls, le: le, color: color, transform: transform,
+                pickWorld: pickWorld, boundaries: boundaries,
+                allowBoundaryExtension: allowBoundaryExtension)
+        case .arc(let center, let radius, let startAngle, let endAngle, let color):
+            return extendArcEnd(
+                center: center, radius: radius, startAngle: startAngle, endAngle: endAngle,
+                color: color, transform: transform, pickWorld: pickWorld,
+                boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+        case .polyline(let path, let color):
+            guard !path.isClosed else {
+                return (nil, false, extendClosedMessage)
+            }
+            return extendPolylineEnd(
+                path: path, color: color, transform: transform, pickWorld: pickWorld,
+                boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+        case .spline(let controlPoints, let knots, let degree, let weights, let color):
+            return extendSplineEnd(
+                controlPoints: controlPoints, knots: knots, degree: degree, weights: weights,
+                color: color, transform: transform, pickWorld: pickWorld,
+                boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+        case .circle, .ellipse, .polygon, .rect, .fillRect,
+             .fillPolygon, .fillComplexPolygon, .gradient:
+            return (nil, false, extendClosedMessage)
+        default:
+            return (nil, false, extendInvalidMessage(for: primitive))
+        }
+    }
+    /// Squared world-space distance from a point to a primitive (nearest-end
+    /// selection for extend). Nil for kinds that can never extend. Sampling
+    /// (arcs, bulges, ellipses) and local-space NURBS search (splines) keep
+    /// this off the main actor; the heuristic only picks a primitive, the
+    /// solvers below decide exact hits.
+    nonisolated public static func extendDistanceSqToPrimitive(
+        _ prim: CADPrimitive, transform: Transform3D, point: Vector3
+    ) -> Double? {
+        switch prim {
+        case .line(let ls, let le, _):
+            return pointSegDistSq(
+                point, transform.transformPoint(ls), transform.transformPoint(le))
+        case .arc(let center, let radius, let startAngle, let endAngle, _):
+            var span = endAngle - startAngle
+            if span <= 0 { span += 2.0 * .pi }
+            let wc = transform.transformPoint(center)
+            let s = transform.scale
+            let wr = radius * 0.5 * (abs(s.x) + abs(s.y))
+            var best = Double.infinity
+            let n = 24
+            for i in 0...n {
+                let a = startAngle + span * Double(i) / Double(n)
+                let p = Vector3(
+                    x: wc.x + cos(a) * wr, y: wc.y + sin(a) * wr, z: wc.z)
+                let d = (p.x - point.x) * (p.x - point.x) + (p.y - point.y) * (p.y - point.y)
+                if d < best { best = d }
+            }
+            return best
+        case .circle(let center, let radius, _):
+            let wc = transform.transformPoint(center)
+            let s = transform.scale
+            let wr = radius * 0.5 * (abs(s.x) + abs(s.y))
+            let d = hypot(point.x - wc.x, point.y - wc.y) - wr
+            return d * d
+        case .polyline(let path, _):
+            let verts = path.vertices
+            guard verts.count >= 2 else { return nil }
+            var best = Double.infinity
+            for i in 0..<path.segmentCount {
+                let v0 = verts[i]
+                let v1 = verts[path.endVertexIndex(forSegment: i)]
+                if abs(v0.bulge) > 1e-12, let arc = path.arcParameters(forSegment: i) {
+                    for k in 0...16 {
+                        let t = Double(k) / 16.0
+                        let a = arc.startAngle + arc.sweep * t
+                        let lp = Vector3(
+                            x: arc.center.x + cos(a) * arc.radius,
+                            y: arc.center.y + sin(a) * arc.radius, z: v0.position.z)
+                        let wp = transform.transformPoint(lp)
+                        let d = (wp.x - point.x) * (wp.x - point.x) + (wp.y - point.y) * (wp.y - point.y)
+                        if d < best { best = d }
+                    }
+                } else {
+                    let d = pointSegDistSq(
+                        point, transform.transformPoint(v0.position),
+                        transform.transformPoint(v1.position))
+                    if d < best { best = d }
+                }
+            }
+            return best
+        case .spline(let controlPoints, let knots, let degree, let weights, _):
+            let w = weights ?? Array(repeating: 1.0, count: controlPoints.count)
+            let inv = transform.inverse()
+            let local = inv.transformPoint(point)
+            let t = NURBSEvaluator.findClosestParameter(
+                degree: degree, knots: knots, controlPoints: controlPoints, weights: w,
+                to: local, segments: 64)
+            guard let p = NURBSEvaluator.evaluateAt(
+                degree: degree, knots: knots, controlPoints: controlPoints, weights: w, at: t)
+            else { return nil }
+            let s = transform.scale
+            let k = 0.5 * (abs(s.x) + abs(s.y))
+            let dx = (p.x - local.x) * k, dy = (p.y - local.y) * k
+            return dx * dx + dy * dy
+        case .ellipse(let center, let majorAxis, let minorRatio, _):
+            let wc = transform.transformPoint(center)
+            let tip = transform.transformPoint(center + majorAxis)
+            let ux = tip.x - wc.x, uy = tip.y - wc.y
+            let majorLen = hypot(ux, uy)
+            let minorLen = majorLen * minorRatio
+            guard majorLen > 1e-12 else { return nil }
+            let rot = atan2(uy, ux)
+            var best = Double.infinity
+            for i in 0..<32 {
+                let a = 2.0 * Double.pi * Double(i) / 32.0
+                let ex = majorLen * cos(a), ey = minorLen * sin(a)
+                let px = wc.x + ex * cos(rot) - ey * sin(rot)
+                let py = wc.y + ex * sin(rot) + ey * cos(rot)
+                let d = (px - point.x) * (px - point.x) + (py - point.y) * (py - point.y)
+                if d < best { best = d }
+            }
+            return best
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Extend Line Solver
+
+    nonisolated static func extendLineEnd(
+        ls: Vector3, le: Vector3, color: ColorRGBA?,
+        transform: Transform3D,
+        pickWorld: Vector3,
+        boundaries: TrimCuttingEdges,
+        allowBoundaryExtension: Bool
+    ) -> (result: [CADPrimitive]?, modified: Bool, errorMsg: String?) {
+        let ws = transform.transformPoint(ls)
+        let we = transform.transformPoint(le)
+        var ux = we.x - ws.x, uy = we.y - ws.y
+        let segLen = hypot(ux, uy)
+        guard segLen > 1e-12 else {
+            return (nil, false, "The line has no length to extend.")
+        }
+        ux /= segLen; uy /= segLen
+        let dStart = (pickWorld.x - ws.x) * (pickWorld.x - ws.x)
+            + (pickWorld.y - ws.y) * (pickWorld.y - ws.y)
+        let dEnd = (pickWorld.x - we.x) * (pickWorld.x - we.x)
+            + (pickWorld.y - we.y) * (pickWorld.y - we.y)
+        let extendingEnd: ExtendEnd = (dEnd <= dStart) ? .end : .start
+        let origin = (extendingEnd == .end) ? we : ws
+        let dirX = (extendingEnd == .end) ? ux : -ux
+        let dirY = (extendingEnd == .end) ? uy : -uy
+        guard let hit = nearestRayBoundaryHit(
+            origin: origin, directionX: dirX, directionY: dirY,
+            boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+        else {
+            return (nil, false, nil)
+        }
+        let hLocal = transform.inverse().transformPoint(hit)
+        if extendingEnd == .end {
+            let moved = Vector3(x: hLocal.x, y: hLocal.y, z: le.z)
+            return ([.line(start: ls, end: moved, color: color)], true, nil)
+        } else {
+            let moved = Vector3(x: hLocal.x, y: hLocal.y, z: ls.z)
+            return ([.line(start: moved, end: le, color: color)], true, nil)
+        }
+    }
+
+    // MARK: - Extend Arc Solver
+
+    nonisolated static func extendArcEnd(
+        center: Vector3, radius: Double, startAngle: Double, endAngle: Double, color: ColorRGBA?,
+        transform: Transform3D,
+        pickWorld: Vector3,
+        boundaries: TrimCuttingEdges,
+        allowBoundaryExtension: Bool
+    ) -> (result: [CADPrimitive]?, modified: Bool, errorMsg: String?) {
+        guard radius > 1e-12 else {
+            return (nil, false, "The arc has no radius to extend.")
+        }
+        var span = endAngle - startAngle
+        while span <= 0 { span += 2.0 * .pi }
+        while span > 2.0 * .pi { span -= 2.0 * .pi }
+        guard span < 2.0 * .pi - 1e-9 else {
+            return (nil, false, extendClosedMessage)
+        }
+        guard transform.isSimilarity2D else {
+            return (nil, false, "The arc cannot be extended under its transform.")
+        }
+        let mirror = transform.reversesOrientation2D
+        let s = transform.scale
+        let wr = radius * 0.5 * (abs(s.x) + abs(s.y))
+        guard wr > 1e-12 else {
+            return (nil, false, "The arc has no radius to extend.")
+        }
+        let wc = transform.transformPoint(center)
+        let startPt = transform.transformPoint(Vector3(
+            x: center.x + radius * cos(startAngle),
+            y: center.y + radius * sin(startAngle), z: center.z))
+        let wStart = atan2(startPt.y - wc.y, startPt.x - wc.x)
+        let worldSweep = mirror ? -span : span
+        let wEnd = wStart + worldSweep
+        let wStartPt = Vector3(
+            x: wc.x + cos(wStart) * wr, y: wc.y + sin(wStart) * wr, z: wc.z)
+        let wEndPt = Vector3(
+            x: wc.x + cos(wEnd) * wr, y: wc.y + sin(wEnd) * wr, z: wc.z)
+        let dStart = (pickWorld.x - wStartPt.x) * (pickWorld.x - wStartPt.x)
+            + (pickWorld.y - wStartPt.y) * (pickWorld.y - wStartPt.y)
+        let dEnd = (pickWorld.x - wEndPt.x) * (pickWorld.x - wEndPt.x)
+            + (pickWorld.y - wEndPt.y) * (pickWorld.y - wEndPt.y)
+        let extendingEnd: ExtendEnd = (dEnd <= dStart) ? .end : .start
+        // Extension runs away from the span: forward from the end, backward
+        // from the start.
+        let refAngle: Double
+        let forwardSign: Double
+        if extendingEnd == .end {
+            refAngle = wEnd
+            forwardSign = (worldSweep >= 0) ? 1.0 : -1.0
+        } else {
+            refAngle = wStart
+            forwardSign = (worldSweep >= 0) ? -1.0 : 1.0
+        }
+        guard let hit = nearestCircleBoundaryHit(
+            centerX: wc.x, centerY: wc.y, radius: wr, endZ: wc.z,
+            refAngle: refAngle, forwardSign: forwardSign,
+            boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+        else {
+            return (nil, false, nil)
+        }
+        let hLocal = transform.inverse().transformPoint(hit.point)
+        let aLocal = atan2(hLocal.y - center.y, hLocal.x - center.x)
+        if extendingEnd == .end {
+            let newSweep = normAngle(aLocal - startAngle)
+            guard newSweep > 1e-9 && newSweep < 2.0 * .pi - 1e-9 else {
+                return (nil, false, nil)
+            }
+            return ([.arc(
+                center: center, radius: radius,
+                startAngle: startAngle, endAngle: startAngle + newSweep,
+                color: color)], true, nil)
+        } else {
+            let backSweep = normAngle(startAngle - aLocal)
+            guard backSweep > 1e-9 && backSweep < 2.0 * .pi - 1e-9 else {
+                return (nil, false, nil)
+            }
+            return ([.arc(
+                center: center, radius: radius,
+                startAngle: startAngle - backSweep, endAngle: endAngle,
+                color: color)], true, nil)
+        }
+    }
+    // MARK: - Extend Open-Polyline Solver
+
+    nonisolated static func extendPolylineEnd(
+        path: CADPolyline, color: ColorRGBA?,
+        transform: Transform3D,
+        pickWorld: Vector3,
+        boundaries: TrimCuttingEdges,
+        allowBoundaryExtension: Bool
+    ) -> (result: [CADPrimitive]?, modified: Bool, errorMsg: String?) {
+        let verts = path.vertices
+        guard verts.count >= 2 else {
+            return (nil, false, "The polyline has no segments to extend.")
+        }
+        func world(_ p: Vector3) -> Vector3 { transform.transformPoint(p) }
+        let wFirst = world(verts[0].position)
+        let wLast = world(verts[verts.count - 1].position)
+        let dFirst = (pickWorld.x - wFirst.x) * (pickWorld.x - wFirst.x)
+            + (pickWorld.y - wFirst.y) * (pickWorld.y - wFirst.y)
+        let dLast = (pickWorld.x - wLast.x) * (pickWorld.x - wLast.x)
+            + (pickWorld.y - wLast.y) * (pickWorld.y - wLast.y)
+        let extendingEnd: ExtendEnd = (dLast <= dFirst) ? .end : .start
+        var newVerts = verts
+        let inv = transform.inverse()
+        if extendingEnd == .end {
+            let i = verts.count - 1
+            let prevWorld = world(verts[i - 1].position)
+            if abs(verts[i - 1].bulge) <= 1e-12 {
+                var ux = wLast.x - prevWorld.x, uy = wLast.y - prevWorld.y
+                let segLen = hypot(ux, uy)
+                guard segLen > 1e-12 else {
+                    return (nil, false, "The polyline end segment has no length to extend.")
+                }
+                ux /= segLen; uy /= segLen
+                guard let hit = nearestRayBoundaryHit(
+                    origin: wLast, directionX: ux, directionY: uy,
+                    boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+                else {
+                    return (nil, false, nil)
+                }
+                let h = inv.transformPoint(hit)
+                newVerts[i].position = Vector3(x: h.x, y: h.y, z: verts[i].position.z)
+            } else {
+                guard transform.isSimilarity2D,
+                      let params = path.arcParameters(forSegment: i - 1)
+                else {
+                    return (nil, false, "The polyline end arc cannot be extended under its transform.")
+                }
+                guard let hit = extendBulgeEndHit(
+                    params: params, transform: transform, fromStart: false,
+                    boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+                else {
+                    return (nil, false, nil)
+                }
+                let h = inv.transformPoint(hit.point)
+                let aLocal = atan2(h.y - params.center.y, h.x - params.center.x)
+                let signedSweep: Double
+                if params.sweep >= 0 {
+                    signedSweep = normAngle(aLocal - params.startAngle)
+                } else {
+                    signedSweep = -normAngle(params.startAngle - aLocal)
+                }
+                guard abs(signedSweep) > 1e-9 && abs(signedSweep) < 2.0 * .pi - 1e-9 else {
+                    return (nil, false, nil)
+                }
+                newVerts[i].position = Vector3(x: h.x, y: h.y, z: verts[i].position.z)
+                newVerts[i - 1].bulge = tan(signedSweep / 4.0)
+            }
+        } else {
+            let nextWorld = world(verts[1].position)
+            if abs(verts[0].bulge) <= 1e-12 {
+                var ux = wFirst.x - nextWorld.x, uy = wFirst.y - nextWorld.y
+                let segLen = hypot(ux, uy)
+                guard segLen > 1e-12 else {
+                    return (nil, false, "The polyline end segment has no length to extend.")
+                }
+                ux /= segLen; uy /= segLen
+                guard let hit = nearestRayBoundaryHit(
+                    origin: wFirst, directionX: ux, directionY: uy,
+                    boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+                else {
+                    return (nil, false, nil)
+                }
+                let h = inv.transformPoint(hit)
+                newVerts[0].position = Vector3(x: h.x, y: h.y, z: verts[0].position.z)
+            } else {
+                guard transform.isSimilarity2D,
+                      let params = path.arcParameters(forSegment: 0)
+                else {
+                    return (nil, false, "The polyline end arc cannot be extended under its transform.")
+                }
+                guard let hit = extendBulgeEndHit(
+                    params: params, transform: transform, fromStart: true,
+                    boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+                else {
+                    return (nil, false, nil)
+                }
+                let h = inv.transformPoint(hit.point)
+                let aLocal = atan2(h.y - params.center.y, h.x - params.center.x)
+                let signedSweep: Double
+                if params.sweep >= 0 {
+                    signedSweep = normAngle(aLocal - params.startAngle)
+                } else {
+                    signedSweep = -normAngle(params.startAngle - aLocal)
+                }
+                guard abs(signedSweep) > 1e-9 && abs(signedSweep) < 2.0 * .pi - 1e-9 else {
+                    return (nil, false, nil)
+                }
+                newVerts[0].position = Vector3(x: h.x, y: h.y, z: verts[0].position.z)
+                newVerts[0].bulge = tan(signedSweep / 4.0)
+            }
+        }
+        var newPath = path
+        newPath.vertices = newVerts
+        return ([.polyline(path: newPath, color: color)], true, nil)
+    }
+
+    /// World-space hit for extending a bulged polyline end-segment along its
+    /// parent circle. `fromStart` extends the segment start backward,
+    /// otherwise the segment end forward.
+    nonisolated static func extendBulgeEndHit(
+        params: (center: Vector3, radius: Double, startAngle: Double, sweep: Double),
+        transform: Transform3D,
+        fromStart: Bool,
+        boundaries: TrimCuttingEdges,
+        allowBoundaryExtension: Bool
+    ) -> (point: Vector3, offset: Double)? {
+        let mirror = transform.reversesOrientation2D
+        let s = transform.scale
+        let wr = params.radius * 0.5 * (abs(s.x) + abs(s.y))
+        guard wr > 1e-12 else { return nil }
+        let wc = transform.transformPoint(params.center)
+        let segStartPt = transform.transformPoint(Vector3(
+            x: params.center.x + params.radius * cos(params.startAngle),
+            y: params.center.y + params.radius * sin(params.startAngle),
+            z: params.center.z))
+        let wStart = atan2(segStartPt.y - wc.y, segStartPt.x - wc.x)
+        let wSweep = mirror ? -params.sweep : params.sweep
+        let wEnd = wStart + wSweep
+        let refAngle = fromStart ? wStart : wEnd
+        let forwardSign: Double
+        if fromStart {
+            forwardSign = (wSweep >= 0) ? -1.0 : 1.0
+        } else {
+            forwardSign = (wSweep >= 0) ? 1.0 : -1.0
+        }
+        return nearestCircleBoundaryHit(
+            centerX: wc.x, centerY: wc.y, radius: wr, endZ: wc.z,
+            refAngle: refAngle, forwardSign: forwardSign,
+            boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+    }
+    // MARK: - Extend Spline Solver
+
+    /// Extends a spline only when its end-tangent ray lands cleanly on a
+    /// boundary: the picked end control point moves onto the hit (clamped
+    /// ends interpolate their end control points exactly, so the extended
+    /// curve lands on the boundary). Anything else — no hit, degenerate
+    /// tangent, unclamped end — reports a clear cannot-extend message.
+    nonisolated static func extendSplineEnd(
+        controlPoints: [Vector3], knots: [Double], degree: Int, weights: [Double]?,
+        color: ColorRGBA?,
+        transform: Transform3D,
+        pickWorld: Vector3,
+        boundaries: TrimCuttingEdges,
+        allowBoundaryExtension: Bool
+    ) -> (result: [CADPrimitive]?, modified: Bool, errorMsg: String?) {
+        let w = weights ?? Array(repeating: 1.0, count: controlPoints.count)
+        guard controlPoints.count >= 2,
+              knots.count == controlPoints.count + degree + 1
+        else {
+            return (nil, false, "That spline cannot be extended.")
+        }
+        let minT = knots[degree]
+        let maxT = knots[controlPoints.count]
+        guard maxT > minT else {
+            return (nil, false, "That spline cannot be extended.")
+        }
+        // Only clamped ends interpolate the end control point exactly, which
+        // is what makes the moved point land on the boundary.
+        func endMultiplicity(_ knot: Double, fromStart: Bool) -> Int {
+            let vals = fromStart ? knots.prefix(degree + 1) : knots.suffix(degree + 1)
+            return vals.filter { abs($0 - knot) <= 1e-9 }.count
+        }
+        guard let pStartLocal = NURBSEvaluator.evaluateAt(
+            degree: degree, knots: knots, controlPoints: controlPoints, weights: w, at: minT),
+              let pEndLocal = NURBSEvaluator.evaluateAt(
+                  degree: degree, knots: knots, controlPoints: controlPoints, weights: w, at: maxT)
+        else {
+            return (nil, false, "That spline cannot be extended.")
+        }
+        let wStart = transform.transformPoint(pStartLocal)
+        let wEnd = transform.transformPoint(pEndLocal)
+        let dStart = (pickWorld.x - wStart.x) * (pickWorld.x - wStart.x)
+            + (pickWorld.y - wStart.y) * (pickWorld.y - wStart.y)
+        let dEnd = (pickWorld.x - wEnd.x) * (pickWorld.x - wEnd.x)
+            + (pickWorld.y - wEnd.y) * (pickWorld.y - wEnd.y)
+        let extendingEnd: ExtendEnd = (dEnd <= dStart) ? .end : .start
+        guard endMultiplicity(extendingEnd == .end ? maxT : minT,
+                             fromStart: extendingEnd == .start) == degree + 1
+        else {
+            return (nil, false, "That spline cannot be extended.")
+        }
+        let eps = max(1e-6, (maxT - minT) * 1e-4)
+        let tRef = (extendingEnd == .end) ? maxT : minT
+        let tIn = (extendingEnd == .end) ? maxT - eps : minT + eps
+        guard let pRefLocal = NURBSEvaluator.evaluateAt(
+            degree: degree, knots: knots, controlPoints: controlPoints, weights: w, at: tRef),
+              let pInLocal = NURBSEvaluator.evaluateAt(
+                  degree: degree, knots: knots, controlPoints: controlPoints, weights: w, at: tIn)
+        else {
+            return (nil, false, "That spline cannot be extended.")
+        }
+        var dx = pRefLocal.x - pInLocal.x
+        var dy = pRefLocal.y - pInLocal.y
+        let localLen = hypot(dx, dy)
+        guard localLen > 1e-12 else {
+            return (nil, false, "The spline has no usable end tangent.")
+        }
+        dx /= localLen; dy /= localLen
+        let wRef = transform.transformPoint(pRefLocal)
+        let wAhead = transform.transformPoint(Vector3(
+            x: pRefLocal.x + dx, y: pRefLocal.y + dy, z: pRefLocal.z))
+        var wdx = wAhead.x - wRef.x, wdy = wAhead.y - wRef.y
+        let worldLen = hypot(wdx, wdy)
+        guard worldLen > 1e-12 else {
+            return (nil, false, "The spline has no usable end tangent.")
+        }
+        wdx /= worldLen; wdy /= worldLen
+        guard let hit = nearestRayBoundaryHit(
+            origin: wRef, directionX: wdx, directionY: wdy,
+            boundaries: boundaries, allowBoundaryExtension: allowBoundaryExtension)
+        else {
+            return (nil, false, "The spline has no clean boundary hit along its end tangent.")
+        }
+        var newCPs = controlPoints
+        let h = transform.inverse().transformPoint(hit)
+        if extendingEnd == .end {
+            newCPs[newCPs.count - 1] = Vector3(
+                x: h.x, y: h.y, z: newCPs[newCPs.count - 1].z)
+        } else {
+            newCPs[0] = Vector3(x: h.x, y: h.y, z: newCPs[0].z)
+        }
+        return ([.spline(
+            controlPoints: newCPs, knots: knots, degree: degree, weights: weights,
+            color: color)], true, nil)
+    }
+
+    // MARK: - Extend Hit Search
+
+    /// Nearest boundary hit along a world-space ray (the target's natural
+    /// path), or nil when nothing is in reach. `allowBoundaryExtension`
+    /// (EDGEMODE=1) lets each boundary cutter extend along its own natural
+    /// path; otherwise only built geometry counts.
+    nonisolated static func nearestRayBoundaryHit(
+        origin: Vector3,
+        directionX: Double, directionY: Double,
+        boundaries: TrimCuttingEdges,
+        allowBoundaryExtension: Bool
+    ) -> Vector3? {
+        let ray = Curve2d.ray(Ray2d(
+            origin: Point2d(x: origin.x, y: origin.y),
+            direction: Vec2d(x: directionX, y: directionY)))
+        var best: Vector3? = nil
+        var bestDist = Double.infinity
+        func consider(_ pt: Point2d) {
+            let dx = pt.x - origin.x, dy = pt.y - origin.y
+            let forward = dx * directionX + dy * directionY
+            guard forward > 1e-9 else { return }
+            let dist = hypot(dx, dy)
+            if dist < bestDist {
+                bestDist = dist
+                best = Vector3(x: pt.x, y: pt.y, z: origin.z)
+            }
+        }
+        for seg in boundaries.segments {
+            let cutter = Curve2d.line(LineSeg2d(
+                start: Point2d(x: seg.0.x, y: seg.0.y),
+                end: Point2d(x: seg.1.x, y: seg.1.y)))
+            for hit in Intersector2D.intersect(
+                ray, cutter, extendA: false, extendB: allowBoundaryExtension) {
+                consider(hit.point)
+            }
+        }
+        for exact in boundaries.exactCurves {
+            for hit in Intersector2D.intersect(
+                ray, exact, extendA: false, extendB: allowBoundaryExtension) {
+                consider(hit.point)
+            }
+        }
+        return best
+    }
+
+    /// Nearest boundary hit on a world-space circle past `refAngle` along
+    /// `forwardSign` (+1 CCW, -1 CW), with its angular offset. The full
+    /// circle is intersected and hits on the existing span are filtered by
+    /// the offset, so extension continues exactly along the target's arc.
+    nonisolated static func nearestCircleBoundaryHit(
+        centerX: Double, centerY: Double, radius: Double, endZ: Double,
+        refAngle: Double, forwardSign: Double,
+        boundaries: TrimCuttingEdges,
+        allowBoundaryExtension: Bool
+    ) -> (point: Vector3, offset: Double)? {
+        let circle = Curve2d.circle(Circle2d(
+            center: Point2d(x: centerX, y: centerY), radius: radius))
+        var best: (point: Vector3, offset: Double)? = nil
+        func consider(_ pt: Point2d) {
+            let a = atan2(pt.y - centerY, pt.x - centerX)
+            let offset: Double
+            if forwardSign >= 0 {
+                offset = normAngle(a - refAngle)
+            } else {
+                offset = normAngle(refAngle - a)
+            }
+            guard offset > 1e-7 && offset < 2.0 * .pi - 1e-7 else { return }
+            guard offset * radius > 1e-9 else { return }
+            if best == nil || offset < best!.offset {
+                best = (Vector3(x: pt.x, y: pt.y, z: endZ), offset)
+            }
+        }
+        for seg in boundaries.segments {
+            let cutter = Curve2d.line(LineSeg2d(
+                start: Point2d(x: seg.0.x, y: seg.0.y),
+                end: Point2d(x: seg.1.x, y: seg.1.y)))
+            for hit in Intersector2D.intersect(
+                circle, cutter, extendA: false, extendB: allowBoundaryExtension) {
+                consider(hit.point)
+            }
+        }
+        for exact in boundaries.exactCurves {
+            for hit in Intersector2D.intersect(
+                circle, exact, extendA: false, extendB: allowBoundaryExtension) {
+                consider(hit.point)
+            }
+        }
+        return best
+    }
+
+    /// Squared world distance from a point to a segment (nearest-end helper).
+    nonisolated static func pointSegDistSq(_ p: Vector3, _ a: Vector3, _ b: Vector3) -> Double {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let lenSq = dx * dx + dy * dy
+        guard lenSq > 1e-24 else {
+            let ex = p.x - a.x, ey = p.y - a.y
+            return ex * ex + ey * ey
+        }
+        var t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq
+        t = max(0.0, min(1.0, t))
+        let qx = a.x + t * dx, qy = a.y + t * dy
+        let ex = p.x - qx, ey = p.y - qy
+        return ex * ex + ey * ey
+    }
+
+    /// World-space tessellation of one primitive for extend ghosts and fence
+    /// crossing tests (StretchCommand ghost idiom, off the main actor).
+    nonisolated public static func extendWorldStrips(
+        _ primitive: CADPrimitive, transform: Transform3D
+    ) -> [[Vector3]] {
+        func world(_ points: [Vector3]) -> [Vector3] {
+            points.map { transform.transformPoint($0) }
+        }
+        switch primitive {
+        case .line(let start, let end, _):
+            return [world([start, end])]
+        case .polyline(let path, _):
+            let pts = path.tessellatedPoints()
+            return pts.count >= 2 ? [world(pts)] : []
+        case .spline(let controlPoints, let knots, let degree, let weights, _):
+            let w = weights ?? Array(repeating: 1.0, count: controlPoints.count)
+            let evaluated = NURBSEvaluator.evaluateByKnotSpans(
+                degree: degree, knots: knots, controlPoints: controlPoints,
+                weights: w, segmentsPerSpan: 8)
+            return [world(evaluated.isEmpty ? controlPoints : evaluated)]
+        case .circle(let center, let radius, _):
+            let points = (0...64).map { index -> Vector3 in
+                let angle = 2.0 * Double.pi * Double(index) / 64.0
+                return Vector3(
+                    x: center.x + cos(angle) * radius,
+                    y: center.y + sin(angle) * radius, z: center.z)
+            }
+            return [world(points)]
+        case .arc(let center, let radius, let startAngle, let endAngle, _):
+            var span = endAngle - startAngle
+            if span < 0 { span += 2.0 * Double.pi }
+            let divisions = max(8, Int(ceil(span * 32.0 / Double.pi)))
+            let points = (0...divisions).map { index -> Vector3 in
+                let angle = startAngle + span * Double(index) / Double(divisions)
+                return Vector3(
+                    x: center.x + cos(angle) * radius,
+                    y: center.y + sin(angle) * radius, z: center.z)
+            }
+            return [world(points)]
+        case .ellipse(let center, let majorAxis, let minorRatio, _):
+            let minor = Vector3(x: -majorAxis.y * minorRatio, y: majorAxis.x * minorRatio, z: 0)
+            let points = (0...64).map { index -> Vector3 in
+                let t = 2.0 * Double.pi * Double(index) / 64.0
+                return center + majorAxis * cos(t) + minor * sin(t)
+            }
+            return [world(points)]
+        case .rect(let origin, let size, _), .fillRect(let origin, let size, _):
+            let corners = [
+                origin,
+                Vector3(x: origin.x + size.x, y: origin.y, z: origin.z),
+                Vector3(x: origin.x + size.x, y: origin.y + size.y, z: origin.z),
+                Vector3(x: origin.x, y: origin.y + size.y, z: origin.z),
+                origin,
+            ]
+            return [world(corners)]
+        case .polygon(let points, _), .fillPolygon(let points, _):
+            guard points.count >= 2 else { return [] }
+            var loop = points
+            if let first = loop.first { loop.append(first) }
+            return [world(loop)]
+        default:
+            return []
+        }
+    }
+
+    /// First fence-segment midpoint crossing an entity's world geometry, or
+    /// nil when no fence segment touches it. The midpoint acts as the pick
+    /// for end disambiguation (the end nearest the fence extends).
+    nonisolated public static func fenceCrossingPick(
+        entity: CADEntity, fence: [(Vector3, Vector3)]
+    ) -> Vector3? {
+        guard let geom = entity.localGeometry else { return nil }
+        let strips = geom.flatMap { extendWorldStrips($0, transform: entity.transform) }
+        guard strips.contains(where: { $0.count >= 2 }) else { return nil }
+        for (f1, f2) in fence {
+            for strip in strips {
+                guard strip.count >= 2 else { continue }
+                for i in 0..<(strip.count - 1) {
+                    if CADRectSelect.segmentsIntersect(strip[i], strip[i + 1], f1, f2) {
+                        return Vector3(
+                            x: 0.5 * (f1.x + f2.x),
+                            y: 0.5 * (f1.y + f2.y),
+                            z: 0.5 * (f1.z + f2.z))
+                    }
+                }
+            }
+        }
+        return nil
     }
 }

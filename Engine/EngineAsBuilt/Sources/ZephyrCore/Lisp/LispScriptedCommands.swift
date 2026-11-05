@@ -36,7 +36,7 @@ enum LispScriptedCommands {
     /// add a name here only with its implementation + test below.
     static let scripted: Set<String> = [
         "LINE", "CIRCLE", "PLINE", "ARC",
-        "COPY", "ROTATE", "MOVE", "ERASE", "SELECT",
+        "COPY", "ROTATE", "MOVE", "ERASE", "MIRROR", "STRETCH", "BREAK", "BREAKATPOINT", "EXTEND", "SELECT",
         "-LAYER", "-LA", "LAYERSTATE", "-LAYERSTATE", "LAYERP",
         "UNDO", "U", "REDRAW", "REGEN", "INSERT", "-INSERT", "-ATTACH",
         "RECTANG", "RECTANGLE", "CHPROP", "CHANGE", "-HATCH", "HATCH", "TEXT", "-TEXT", "DTEXT", "AUTOCONTRAST",
@@ -175,6 +175,11 @@ enum LispScriptedCommands {
         case "ROTATE": try runRotate(&operands, host: host)
         case "MOVE": try runMove(&operands, host: host)
         case "ERASE": try runErase(&operands, host: host)
+        case "MIRROR": try await runMirror(&operands, host: host)
+        case "STRETCH": try runStretch(&operands, host: host)
+        case "BREAK": try runBreak(&operands, host: host)
+        case "BREAKATPOINT": try runBreakAtPoint(&operands, host: host)
+        case "EXTEND": try await runExtend(&operands, host: host)
         case "SELECT": try runSelect(&operands, host: host)
         case "INSERT", "-INSERT": try await runInsert(&operands, host: host)
         case "-ATTACH": try runAttach(&operands, host: host)
@@ -1597,6 +1602,656 @@ enum LispScriptedCommands {
         let targets = try takeSelection(&operands, command: "ERASE", host: host)
         guard !targets.isEmpty else { return } // ERASE of nothing: silent no-op.
         host.document.removeEntities(handles: targets)
+    }
+
+    /// `(command "MIRROR" ss "" p1 p2 erase?)` — mirror a selection across
+    /// the line p1 → p2. `ss` is any selection sequence (entity names,
+    /// selection sets, `_L`, `_P`, `ALL`, `W`/`C` windows, terminated by
+    /// `""`/Enter); `erase?` is `"_Y"`/`"Y"`/`"YES"` (erase sources),
+    /// `"N"`/`"NO"`/`"_N"` or bare `""` (Enter, default No). One undo entry
+    /// either way. Fails closed on coincident mirror points, unknown
+    /// keywords, or trailing operands. `MIRRTEXT` is read live (0 keeps
+    /// text/attributes readable, nonzero mirrors them truly).
+    private static func runMirror(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let targets = try takeSelection(&operands, command: "MIRROR", host: host)
+        guard !targets.isEmpty else {
+            throw LispError.hostError("command: MIRROR requires a selection")
+        }
+        let p1 = try takePoint(&operands, command: "MIRROR", what: "a first mirror point")
+        let p2 = try takePoint(&operands, command: "MIRROR", what: "a second mirror point")
+        guard let mirror = CADGeometryMath.mirrorTransform(p1: p1, p2: p2) else {
+            throw LispError.hostError("command: MIRROR mirror points are coincident")
+        }
+        let eraseSource: Bool
+        guard let keyword = takeKeyword(&operands) else {
+            throw LispError.hostError("command: MIRROR needs Yes/No (erase source objects)")
+        }
+        switch keyword {
+        case .word("Y"), .word("YES"):
+            eraseSource = true
+        case .word("N"), .word("NO"), .enter:
+            eraseSource = false
+        case .word(let word):
+            throw LispError.hostError(
+                "command: MIRROR does not support keyword \"\(word)\"")
+        }
+        if let extra = takeKeyword(&operands, skippingSnaps: false) {
+            switch extra {
+            case .enter:
+                break
+            case .word(let word):
+                throw LispError.hostError(
+                    "command: MIRROR got unexpected trailing keyword \"\(word)\"")
+            }
+        }
+        if !operands.isEmpty {
+            throw LispError.hostError("command: MIRROR got unexpected trailing input")
+        }
+        var mirrText = 0
+        if let value = await host.getSystemVar("MIRRTEXT"), case .int(let raw) = value {
+            mirrText = raw == 0 ? 0 : 1
+        }
+        let outcome = host.document.mirrorEntities(
+            handles: targets, mirror: mirror,
+            eraseSource: eraseSource, mirrText: mirrText)
+        if !outcome.newHandles.isEmpty {
+            host.lastCreated = outcome.newHandles.sorted(by: { $0.uuidString < $1.uuidString }).last
+        }
+    }
+
+    /// `(command "STRETCH" "_C" p1 p2 "" base second)` — stretch the
+    /// crossing window p1 → p2 by `second - base`. The `_CP` form takes a
+    /// crossing polygon: `(command "STRETCH" "_CP" pt ... "" base second)`.
+    /// A `"_D"`/`"D"` keyword after the selection Enter takes the
+    /// displacement branch: `(command "STRETCH" "_C" p1 p2 "" "_D" disp)`
+    /// (the point's coordinates ARE the displacement). A bare `""` where
+    /// the second point goes uses the base point itself as the displacement.
+    /// One undo entry when anything moves; zero displacement is a silent
+    /// no-op. Fails closed when the selection is not a named crossing
+    /// region (`_C`/`_CP`), on missing Enter terminators, unknown keywords,
+    /// or trailing operands.
+    private static func runStretch(_ operands: inout [LispValue], host: LispCADHost) throws {
+        guard let first = operands.first, case let .string(rawRegion) = first else {
+            throw LispError.hostError(
+                "command: STRETCH requires a crossing window (_C) or crossing polygon (_CP) selection")
+        }
+        let regionWord = canonicalName(rawRegion)
+        guard regionWord == "C" || regionWord == "CP" else {
+            throw LispError.hostError(
+                "command: STRETCH requires a crossing window (_C) or crossing polygon (_CP) selection, got \"\(rawRegion)\"")
+        }
+        operands.removeFirst()
+
+        var targets = Set<UUID>()
+        var regions: [StretchRegion] = []
+        switch regionWord {
+        case "C":
+            let corner1 = try takePoint(&operands, command: "STRETCH", what: "a first crossing corner")
+            let corner2 = try takePoint(&operands, command: "STRETCH", what: "an opposite crossing corner")
+            guard let terminator = takeKeyword(&operands), case .enter = terminator else {
+                throw LispError.hostError("command: STRETCH needs Enter after the crossing window")
+            }
+            regions.append(.rect(
+                min: Vector3(x: min(corner1.x, corner2.x), y: min(corner1.y, corner2.y), z: 0),
+                max: Vector3(x: max(corner1.x, corner2.x), y: max(corner1.y, corner2.y), z: 0)))
+            targets = host.handlesInRect(
+                corner1, corner2, style: .crossing)
+
+        case "CP":
+            var vertices: [Vector3] = []
+            while let next = operands.first, let coords = next.asPoint, coords.count >= 2 {
+                operands.removeFirst()
+                vertices.append(Vector3(
+                    x: coords[0], y: coords[1],
+                    z: coords.count > 2 ? coords[2] : 0))
+            }
+            guard vertices.count >= 3 else {
+                throw LispError.hostError("command: STRETCH crossing polygon needs at least 3 points")
+            }
+            guard let terminator = takeKeyword(&operands), case .enter = terminator else {
+                throw LispError.hostError("command: STRETCH needs Enter after the crossing polygon")
+            }
+            regions.append(.polygon(vertices))
+            targets = CADLassoSelect.handlesInPolygon(
+                worldPoints: vertices, document: host.document, style: .crossing)
+
+        default:
+            throw LispError.hostError(
+                "command: STRETCH requires a crossing window (_C) or crossing polygon (_CP) selection")
+        }
+
+        let delta: Vector3
+        if let next = operands.first, case let .string(raw) = next,
+           ["D", "DISPLACEMENT"].contains(canonicalName(raw)) {
+            operands.removeFirst()
+            delta = try takePoint(&operands, command: "STRETCH", what: "a displacement")
+        } else {
+            let base = try takePoint(&operands, command: "STRETCH", what: "a base point")
+            if let next = operands.first, case .string("") = next {
+                operands.removeFirst()
+                delta = base
+            } else {
+                let second = try takePoint(&operands, command: "STRETCH", what: "a second point")
+                delta = Vector3(
+                    x: second.x - base.x, y: second.y - base.y, z: second.z - base.z)
+            }
+        }
+        if let extra = takeKeyword(&operands, skippingSnaps: false) {
+            switch extra {
+            case .enter:
+                break
+            case .word(let word):
+                throw LispError.hostError(
+                    "command: STRETCH got unexpected trailing keyword \"\(word)\"")
+            }
+        }
+        if !operands.isEmpty {
+            throw LispError.hostError("command: STRETCH got unexpected trailing input")
+        }
+        guard delta.magnitude > 1e-9 else { return } // Zero displacement: no undo.
+        if !targets.isEmpty { host.previousSelection = targets }
+        _ = host.document.stretchEntities(
+            handles: targets, regions: regions, moveWhole: [], by: delta)
+        StretchSettings.lastDisplacement = delta
+    }
+
+    /// `(command "BREAK" ent p)` — break `ent` at `p` with no gap (the
+    /// single point acts as both first and second point). Two points give
+    /// the span: `(command "BREAK" ent p1 p2)`. The explicit first-point
+    /// form is `(command "BREAK" ent "_F" p1 p2)`. The point-pick form
+    /// `(command "BREAK" p1 p2)` selects the object under `p1` (Fonts
+    /// door-routine idiom: `(command "BREAK" X5 X6)`). An entsel-style
+    /// `(ename pickpoint)` pair may stand in for `ent`, supplying the
+    /// pick (first) point. One undo entry when anything breaks; rejected
+    /// kinds throw, locked/projected/degenerate targets are silent
+    /// no-ops (MIRROR/STRETCH precedent).
+    private static func runBreak(_ operands: inout [LispValue], host: LispCADHost) throws {
+        skipSnaps(&operands)
+        if let coords = operands.first?.asPoint, coords.count >= 2 {
+            operands.removeFirst()
+            let p1 = Vector3(
+                x: coords[0], y: coords[1],
+                z: coords.count > 2 ? coords[2] : 0)
+            let p2 = try takePoint(&operands, command: "BREAK", what: "a second break point")
+            try consumeOptionalEnter(&operands, command: "BREAK")
+            guard let handle = pickBreakTarget(host: host, at: p1) else {
+                throw LispError.hostError(
+                    "command: BREAK found no object near the first point")
+            }
+            try applyBreak(
+                handle: handle, first: p1, second: p2,
+                host: host, command: "BREAK")
+            return
+        }
+        let target = try takeBreakTarget(&operands, command: "BREAK", host: host)
+        skipSnaps(&operands)
+        let first: Vector3
+        let second: Vector3
+        if let next = operands.first, case let .string(raw) = next,
+           ["F", "FIRST"].contains(canonicalName(raw)) {
+            operands.removeFirst()
+            first = try takePoint(&operands, command: "BREAK", what: "a first break point")
+            second = try takePoint(&operands, command: "BREAK", what: "a second break point")
+        } else if let coords = operands.first?.asPoint, coords.count >= 2 {
+            operands.removeFirst()
+            let pointA = Vector3(
+                x: coords[0], y: coords[1],
+                z: coords.count > 2 ? coords[2] : 0)
+            if let nextCoords = operands.first?.asPoint,
+               nextCoords.count >= 2 {
+                operands.removeFirst()
+                first = pointA
+                second = Vector3(
+                    x: nextCoords[0], y: nextCoords[1],
+                    z: nextCoords.count > 2 ? nextCoords[2] : 0)
+            } else {
+                // Single point after the entity: no-gap split at that point.
+                first = target.pick ?? pointA
+                second = pointA
+            }
+        } else {
+            throw LispError.hostError(
+                "command: BREAK needs a second break point (or \"_F\" first second)")
+        }
+        try consumeOptionalEnter(&operands, command: "BREAK")
+        try applyBreak(
+            handle: target.handle, first: first, second: second,
+            host: host, command: "BREAK")
+    }
+
+    /// `(command "BREAKATPOINT" ent p)` — split `ent` at `p` with no gap.
+    /// One undo entry when anything breaks; otherwise the BREAK rules
+    /// above (reject throws, locked/projected/degenerate silent no-op).
+    private static func runBreakAtPoint(_ operands: inout [LispValue], host: LispCADHost) throws {
+        skipSnaps(&operands)
+        let target = try takeBreakTarget(&operands, command: "BREAKATPOINT", host: host)
+        let point = try takePoint(&operands, command: "BREAKATPOINT", what: "a break point")
+        try consumeOptionalEnter(&operands, command: "BREAKATPOINT")
+        try applyBreak(
+            handle: target.handle, first: point, second: point,
+            host: host, command: "BREAKATPOINT")
+    }
+
+    /// One BREAK/BREAKATPOINT target: an entity name, an entsel-style
+    /// `(ename pickpoint)` pair (the pick doubles as the first point for
+    /// BREAK), `_L` (last created), `_P` (previous selection, single), or
+    /// a one-handle selection set. Anything else fails closed: BREAK
+    /// operates on exactly one object.
+    private struct BreakTarget {
+        var handle: UUID
+        var pick: Vector3?
+    }
+
+    private static func takeBreakTarget(
+        _ operands: inout [LispValue], command: String, host: LispCADHost
+    ) throws -> BreakTarget {
+        skipSnaps(&operands)
+        guard let first = operands.first else {
+            throw LispError.hostError("command: \(command) requires a single object")
+        }
+        if let items = first.properList, items.count == 2,
+           case let .entityName(handleString) = items[0],
+           let coords = items[1].asPoint, coords.count >= 2,
+           let uuid = UUID(uuidString: handleString),
+           host.document.entity(for: uuid) != nil {
+            operands.removeFirst()
+            return BreakTarget(
+                handle: uuid,
+                pick: Vector3(
+                    x: coords[0], y: coords[1],
+                    z: coords.count > 2 ? coords[2] : 0))
+        }
+        if case let .entityName(handleString) = first {
+            operands.removeFirst()
+            guard let uuid = UUID(uuidString: handleString),
+                  host.document.entity(for: uuid) != nil else {
+                throw LispError.hostError(
+                    "command: \(command) selection no longer exists")
+            }
+            return BreakTarget(handle: uuid, pick: nil)
+        }
+        if case let .selectionSet(id) = first {
+            operands.removeFirst()
+            let handles = host.selectionHandles(id: id)
+            guard handles.count == 1, let handle = handles.first else {
+                throw LispError.hostError(
+                    "command: \(command) requires a single object")
+            }
+            return BreakTarget(handle: handle, pick: nil)
+        }
+        if case let .string(raw) = first {
+            let word = canonicalName(raw)
+            if word == "L" || word == "LAST" {
+                operands.removeFirst()
+                if let last = host.lastCreated
+                    ?? host.document.allEntities.last?.handle {
+                    return BreakTarget(handle: last, pick: nil)
+                }
+                throw LispError.hostError(
+                    "command: \(command) requires a single object (nothing drawn yet)")
+            }
+            if word == "P" || word == "PREVIOUS" {
+                operands.removeFirst()
+                guard host.previousSelection.count == 1,
+                      let handle = host.previousSelection.first else {
+                    throw LispError.hostError(
+                        "command: \(command) requires a single object")
+                }
+                return BreakTarget(handle: handle, pick: nil)
+            }
+            throw LispError.hostError(
+                "command: \(command) requires a single object (got keyword \"\(raw)\")")
+        }
+        throw LispError.typeMismatch(
+            name: "command",
+            expected: "\(command) single object (entity, _L, _P, or Enter)",
+            got: first)
+    }
+
+    /// Point-pick for the scripted `(command "BREAK" p1 p2)` form: the
+    /// nearest breakable object to `point` within the headless pick
+    /// aperture (the `CADHitTesting.hitTest` default, which the scripted
+    /// runner cannot call: it is MainActor-bound and the eval task never
+    /// hops). Invisible layers and viewport copies are skipped.
+    private static func pickBreakTarget(
+        host: LispCADHost, at point: Vector3
+    ) -> UUID? {
+        let aperture = 3.0
+        var best: (UUID, Double)?
+        for entity in host.document.allEntities {
+            if entity.isViewportProjected { continue }
+            guard let layer = host.document.layer(for: entity.layerID),
+                  layer.isVisible else { continue }
+            guard let projected = BreakGeometryEngine.projectedPoint(
+                entity: entity, worldPick: point) else { continue }
+            let distance = hypot(
+                projected.x - point.x, projected.y - point.y)
+            if distance <= aperture,
+               best == nil || distance < best!.1 {
+                best = (entity.handle, distance)
+            }
+        }
+        return best?.0
+    }
+
+    /// Apply one scripted break: rejected kinds throw (fail closed);
+    /// locked, projected, and degenerate targets are silent no-ops.
+    private static func applyBreak(
+        handle: UUID, first: Vector3, second: Vector3,
+        host: LispCADHost, command: String
+    ) throws {
+        let outcome = host.document.breakEntity(
+            handle: handle, firstWorld: first, secondWorld: second)
+        if outcome.rejected {
+            throw LispError.hostError(
+                "command: \(command) \(outcome.message ?? "object cannot be broken")")
+        }
+        guard outcome.broken + outcome.removed > 0 else { return }
+        host.previousSelection = [handle]
+        if !outcome.newHandles.isEmpty {
+            host.lastCreated = outcome.newHandles
+                .sorted { $0.uuidString < $1.uuidString }.last
+        }
+    }
+
+    /// `(command "EXTEND" ss-boundaries "" pick ...)` — extend the open end
+    /// nearest each pick point to the nearest boundary edge along its natural
+    /// path. Boundaries are any selection sequence (entity names, sets, `_L`,
+    /// `_P`, `ALL`, `W`/`C` windows, terminated by `""`); an empty boundary
+    /// set means all visible, like interactive select-all. Each following
+    /// point extends the nearest extendable object within the headless pick
+    /// aperture. `"_F" pt ... ""` batch-extends everything the fence crosses,
+    /// `"_C" c1 c2` extends the crossing window (candidates run clockwise
+    /// from the first corner), `"_E" v` sets EDGEMODE (0/1) and `"_P" v` sets
+    /// PROJMODE (0/1/2, also by keyword). Anything else by name rejects. One
+    /// undo entry per call when anything extends; misses and locked or
+    /// projected targets are silent no-ops while invalid kinds throw.
+    private static func runExtend(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let boundaryHandles = try takeSelection(&operands, command: "EXTEND", host: host)
+        var edges = TrimGeometryEngine.collectCuttingEdges(
+            document: host.document,
+            cuttingHandles: boundaryHandles.isEmpty ? nil : boundaryHandles,
+            excludedHandle: nil)
+        var edgeMode = 0
+        if let value = await host.getSystemVar("EDGEMODE"), case .int(let raw) = value {
+            edgeMode = (raw == 1) ? 1 : 0
+        }
+        let preSnapshot = host.document.snapshot()
+        var anyExtended = false
+        var changed = Set<UUID>()
+
+        func noteExtended(_ handle: UUID) {
+            anyExtended = true
+            changed.insert(handle)
+        }
+
+        var done = false
+        while !done, !operands.isEmpty {
+            skipSnaps(&operands)
+            guard let current = operands.first else { break }
+            if let coords = current.asPoint, coords.count >= 2 {
+                operands.removeFirst()
+                let pick = Vector3(
+                    x: coords[0], y: coords[1],
+                    z: coords.count > 2 ? coords[2] : 0)
+                guard let target = nearestExtendableTarget(host: host, at: pick) else {
+                    throw LispError.hostError(
+                        "command: EXTEND found no extendable object near the pick point")
+                }
+                if try applyExtendOne(
+                    handle: target, pick: pick, edges: edges, edgeMode: edgeMode, host: host) {
+                    noteExtended(target)
+                    edges = TrimGeometryEngine.collectCuttingEdges(
+                        document: host.document,
+                        cuttingHandles: boundaryHandles.isEmpty ? nil : boundaryHandles,
+                        excludedHandle: nil)
+                }
+                continue
+            }
+            guard case .string = current else {
+                throw LispError.typeMismatch(
+                    name: "command",
+                    expected: "EXTEND pick point or keyword (point, _F, _C, _E, _P, or Enter)",
+                    got: current)
+            }
+            guard let keyword = takeKeyword(&operands, skippingSnaps: false) else { break }
+            switch keyword {
+            case .enter:
+                done = true
+            case .word("F"), .word("FENCE"):
+                try runExtendFence(
+                    &operands, boundaryHandles: boundaryHandles, edges: &edges,
+                    edgeMode: edgeMode, note: noteExtended, host: host)
+            case .word("C"), .word("CROSSING"):
+                try runExtendCrossing(
+                    &operands, boundaryHandles: boundaryHandles, edges: &edges,
+                    edgeMode: edgeMode, note: noteExtended, host: host)
+            case .word("E"), .word("EDGE"):
+                edgeMode = try takeExtendSysvar(
+                    &operands, name: "EDGEMODE", allowed: [0, 1], host: host)
+            case .word("P"), .word("PROJECT"):
+                _ = try takeExtendSysvar(
+                    &operands, name: "PROJMODE", allowed: [0, 1, 2], host: host)
+            case .word(let word):
+                throw LispError.hostError(
+                    "command: EXTEND does not support keyword \"\(word)\"")
+            }
+        }
+        if anyExtended {
+            host.document.pushUndo(preSnapshot)
+            host.document.invalidateEntityGrid()
+            host.document.markEdited(regenerate: true)
+            host.previousSelection = changed
+        }
+        try consumeOptionalEnter(&operands, command: "EXTEND")
+    }
+
+    /// Nearest extendable target to a scripted pick: the closest entity with
+    /// an extendable primitive (line/arc/open-polyline/spline) within the
+    /// headless pick aperture. Viewport copies, block references, invisible
+    /// and locked layers are skipped (the BREAK point-pick precedent).
+    private static func nearestExtendableTarget(
+        host: LispCADHost, at pick: Vector3
+    ) -> UUID? {
+        let aperture = 3.0
+        var best: (UUID, Double)?
+        for entity in host.document.allEntities {
+            if entity.isViewportProjected { continue }
+            if entity.blockID != nil { continue }
+            guard let layer = host.document.layer(for: entity.layerID),
+                  layer.isVisible, !layer.isLocked else { continue }
+            for prim in entity.localGeometry ?? [] {
+                guard let d = TrimGeometryEngine.extendDistanceSqToPrimitive(
+                    prim, transform: entity.transform, point: pick) else { continue }
+                if d <= aperture * aperture, best == nil || d < best!.1 {
+                    best = (entity.handle, d)
+                }
+            }
+        }
+        return best?.0
+    }
+
+    /// Apply one scripted extend: invalid kinds throw (fail closed); locked,
+    /// projected, and missed targets are silent no-ops. Returns whether
+    /// anything changed (the caller recompiles boundaries on success).
+    private static func applyExtendOne(
+        handle: UUID, pick: Vector3,
+        edges: TrimGeometryEngine.TrimCuttingEdges, edgeMode: Int,
+        host: LispCADHost
+    ) throws -> Bool {
+        guard let entity = host.document.entity(for: handle) else { return false }
+        if let layer = host.document.layer(for: entity.layerID), layer.isLocked { return false }
+        if entity.isViewportProjected { return false }
+        guard entity.blockID == nil else {
+            throw LispError.hostError("command: EXTEND cannot extend block references")
+        }
+        let (newGeom, modified, errorMsg) = TrimGeometryEngine.extendEntity(
+            entity: entity, pickWorld: pick, boundaries: edges, edgeMode: edgeMode)
+        if let errorMsg {
+            throw LispError.hostError("command: EXTEND \(errorMsg)")
+        }
+        guard modified, let geom = newGeom else { return false }
+        host.document.updateEntityGeometryLive(for: handle, geometry: geom)
+        return true
+    }
+
+    /// Scripted `"_F" pt ... ""` fence batch: everything the fence crosses
+    /// extends toward the fence, in handle order for determinism.
+    private static func runExtendFence(
+        _ operands: inout [LispValue],
+        boundaryHandles: Set<UUID>,
+        edges: inout TrimGeometryEngine.TrimCuttingEdges,
+        edgeMode: Int,
+        note: (UUID) -> Void,
+        host: LispCADHost
+    ) throws {
+        var vertices: [Vector3] = []
+        while let next = operands.first, let coords = next.asPoint, coords.count >= 2 {
+            operands.removeFirst()
+            vertices.append(Vector3(
+                x: coords[0], y: coords[1],
+                z: coords.count > 2 ? coords[2] : 0))
+        }
+        guard vertices.count >= 2 else {
+            throw LispError.hostError("command: EXTEND fence needs at least two points")
+        }
+        guard let terminator = takeKeyword(&operands, skippingSnaps: false),
+              case .enter = terminator else {
+            throw LispError.hostError("command: EXTEND needs Enter after the fence points")
+        }
+        var fence: [(Vector3, Vector3)] = []
+        fence.reserveCapacity(vertices.count - 1)
+        for i in 0..<(vertices.count - 1) {
+            fence.append((vertices[i], vertices[i + 1]))
+        }
+        for entity in host.document.allEntities.sorted(by: { $0.handle.uuidString < $1.handle.uuidString }) {
+            guard let layer = host.document.layer(for: entity.layerID),
+                  layer.isVisible, !layer.isLocked else { continue }
+            if entity.blockID != nil { continue }
+            if entity.isViewportProjected { continue }
+            guard let pick = TrimGeometryEngine.fenceCrossingPick(entity: entity, fence: fence) else {
+                continue
+            }
+            if try applyExtendOne(
+                handle: entity.handle, pick: pick, edges: edges, edgeMode: edgeMode, host: host) {
+                note(entity.handle)
+                edges = TrimGeometryEngine.collectCuttingEdges(
+                    document: host.document,
+                    cuttingHandles: boundaryHandles.isEmpty ? nil : boundaryHandles,
+                    excludedHandle: nil)
+            }
+        }
+    }
+
+    /// Scripted `"_C" c1 c2` crossing batch: candidates run clockwise from
+    /// the first corner, each extending toward the end nearest that corner.
+    private static func runExtendCrossing(
+        _ operands: inout [LispValue],
+        boundaryHandles: Set<UUID>,
+        edges: inout TrimGeometryEngine.TrimCuttingEdges,
+        edgeMode: Int,
+        note: (UUID) -> Void,
+        host: LispCADHost
+    ) throws {
+        let c1 = try takePoint(&operands, command: "EXTEND", what: "a first crossing corner")
+        let c2 = try takePoint(&operands, command: "EXTEND", what: "an opposite crossing corner")
+        let targets = host.handlesInRect(c1, c2, style: .crossing)
+        let minX = min(c1.x, c2.x), maxX = max(c1.x, c2.x)
+        let minY = min(c1.y, c2.y), maxY = max(c1.y, c2.y)
+        let cx = 0.5 * (minX + maxX), cy = 0.5 * (minY + maxY)
+        let base = atan2(c1.y - cy, c1.x - cx)
+        let ordered = targets.sorted { a, b in
+            func key(_ handle: UUID) -> Double {
+                guard let entity = host.document.entity(for: handle),
+                      let box = entity.worldBoundingBox else {
+                    return Double.greatestFiniteMagnitude
+                }
+                let ex = 0.5 * (box.min.x + box.max.x)
+                let ey = 0.5 * (box.min.y + box.max.y)
+                return TrimGeometryEngine.normAngle(base - atan2(ey - cy, ex - cx))
+            }
+            let ka = key(a), kb = key(b)
+            if ka == kb { return a.uuidString < b.uuidString }
+            return ka < kb
+        }
+        for handle in ordered {
+            guard let entity = host.document.entity(for: handle) else { continue }
+            guard let layer = host.document.layer(for: entity.layerID),
+                  layer.isVisible, !layer.isLocked else { continue }
+            if entity.blockID != nil { continue }
+            if entity.isViewportProjected { continue }
+            if try applyExtendOne(
+                handle: handle, pick: c1, edges: edges, edgeMode: edgeMode, host: host) {
+                note(handle)
+                edges = TrimGeometryEngine.collectCuttingEdges(
+                    document: host.document,
+                    cuttingHandles: boundaryHandles.isEmpty ? nil : boundaryHandles,
+                    excludedHandle: nil)
+            }
+        }
+    }
+
+    /// Scripted `"_E" v` / `"_P" v` value: a number or keyword for EDGEMODE
+    /// (0/1, Extend/No extend) or PROJMODE (0/1/2, None/UCS/View). The
+    /// validated write goes through the sysvar store, so out-of-range
+    /// values fail closed with the store's own message.
+    private static func takeExtendSysvar(
+        _ operands: inout [LispValue], name: String, allowed: [Int], host: LispCADHost
+    ) throws -> Int {
+        guard let raw = operands.first else {
+            throw LispError.hostError("command: EXTEND needs a value after \"_\(name.prefix(1))\"")
+        }
+        if let coords = raw.asPoint, coords.count >= 2 {
+            throw LispError.hostError(
+                "command: EXTEND needs a value after \"_\(name.prefix(1))\" (got a point)")
+        }
+        let value: Int
+        if let number = raw.asDouble {
+            operands.removeFirst()
+            value = Int(number)
+        } else if case .string(let text) = raw {
+            operands.removeFirst()
+            switch canonicalName(text) {
+            case "EXTEND", "YES", "UCS":
+                value = 1
+            case "NO", "NOEXTEND", "NO EXTEND", "NONE":
+                value = 0
+            case "VIEW":
+                value = 2
+            default:
+                throw LispError.hostError(
+                    "command: EXTEND does not support keyword \"\(text)\"")
+            }
+        } else {
+            throw LispError.typeMismatch(
+                name: "command", expected: "EXTEND \(name) value", got: raw)
+        }
+        guard allowed.contains(value) else {
+            throw LispError.hostError(
+                "command: EXTEND \(name) requires \(allowed.map(String.init).joined(separator: ", "))")
+        }
+        try host.setSystemVarChecked(name, .int(value))
+        return value
+    }
+
+    /// Consume one optional trailing Enter, then fail on anything left
+    /// (MIRROR trailing-operand idiom).
+    private static func consumeOptionalEnter(
+        _ operands: inout [LispValue], command: String
+    ) throws {
+        if let extra = takeKeyword(&operands, skippingSnaps: false) {
+            switch extra {
+            case .enter:
+                break
+            case .word(let word):
+                throw LispError.hostError(
+                    "command: \(command) got unexpected trailing keyword \"\(word)\"")
+            }
+        }
+        if !operands.isEmpty {
+            throw LispError.hostError(
+                "command: \(command) got unexpected trailing input")
+        }
     }
 
     /// SELECT makes a selection current (pickfirst + previous): the
