@@ -118,7 +118,7 @@ final class LispVarStore: @unchecked Sendable {
         "SNAPMODE": .int(0),
         "SPLINESEGS": .int(8),
         "TEXTSTYLE": .string("Standard"),
-        "TRIMEXTENDMODE": .int(0),
+        "TRIMEXTENDMODE": .int(1),
         "BINDTYPE": .int(0),
         "REFPATHTYPE": .int(1),
         "VISRETAIN": .int(1),
@@ -203,6 +203,9 @@ final class LispVarStore: @unchecked Sendable {
         case "TRIMEXTENDMODE":
             // Live: shared with TrimCommand.preferredMode (0 = Standard, 1 = Quick).
             return .int(TrimSettings.trimExtendMode)
+        case "PICKFIRST":
+            // Live: shared with TRIM/EXTEND start-up (0 = off, 1 = noun/verb).
+            return .int(PickFirstSettings.pickFirst)
         case "LASTPOINT":
             if let p = document.lastPoint {
                 return LispEntityAdapter.pointValue(p)
@@ -517,6 +520,12 @@ final class LispVarStore: @unchecked Sendable {
                 return "TRIMEXTENDMODE requires 0 (Standard) or 1 (Quick)"
             }
             TrimSettings.trimExtendMode = intVal
+            return nil
+        case "PICKFIRST":
+            guard case let .int(intVal) = value, (0...1).contains(intVal) else {
+                return "PICKFIRST requires 0 or 1"
+            }
+            PickFirstSettings.pickFirst = intVal
             return nil
         case "BINDTYPE", "REFPATHTYPE", "VISRETAIN", "XREFNOTIFY", "XLOADCTL", "XDWGFADECTL":
             let intValue: Int?

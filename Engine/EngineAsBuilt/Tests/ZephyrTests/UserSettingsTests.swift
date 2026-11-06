@@ -50,4 +50,38 @@ final class UserSettingsTests: XCTestCase {
         XCTAssertTrue(captured.layersPanelVisible)
         XCTAssertTrue(captured.hasCompletedSetup)
     }
+
+    /// Pre-registry settings files decode the Quick + PICKFIRST defaults.
+    func testLegacyFileDecodesTrimRegistryDefaults() throws {
+        let settings = try JSONDecoder().decode(
+            UserSettings.self, from: Data(legacyJSON.utf8))
+        XCTAssertEqual(settings.trimExtendMode, 1)
+        XCTAssertEqual(settings.pickFirst, 1)
+    }
+
+    func testTrimRegistryRoundTrip() throws {
+        var settings = UserSettings.default
+        settings.trimExtendMode = 0
+        settings.pickFirst = 0
+        let decoded = try JSONDecoder().decode(
+            UserSettings.self, from: try JSONEncoder().encode(settings))
+        XCTAssertEqual(decoded.trimExtendMode, 0)
+        XCTAssertEqual(decoded.pickFirst, 0)
+    }
+
+    /// capture() without explicit registry args snapshots the live statics.
+    func testCaptureDefaultsToLiveTrimRegistry() {
+        let savedMode = TrimSettings.trimExtendMode
+        let savedPick = PickFirstSettings.pickFirst
+        defer {
+            TrimSettings.trimExtendMode = savedMode
+            PickFirstSettings.pickFirst = savedPick
+        }
+        TrimSettings.trimExtendMode = 0
+        PickFirstSettings.pickFirst = 0
+        let ui = EngineUIManager()
+        let captured = UserSettings.capture(ui: ui)
+        XCTAssertEqual(captured.trimExtendMode, 0)
+        XCTAssertEqual(captured.pickFirst, 0)
+    }
 }

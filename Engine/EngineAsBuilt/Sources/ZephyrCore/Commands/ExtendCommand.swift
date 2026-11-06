@@ -20,7 +20,9 @@ import ZephyrLisp
 //
 // Extend prompt: "Select object to extend or shift-select to trim or
 // [Cutting edges/Fence/Crossing/Mode/Project/Edge/Undo]" (Quick omits
-// Edge). Sub-flows: Fence (first/next point or [Undo], Enter executes,
+// Edge). In Quick mode an empty-space press arms a freehand path (drag +
+// release extends via fence, plain click arms a two-point fence); C forces
+// a crossing box. Sub-flows: Fence (first/next point or [Undo], Enter executes,
 // Undo drops the last fence point), Crossing (two corners; candidates are
 // ordered clockwise from the first corner), Cutting edges (back to boundary
 // picking), Mode (explicit [Quick/Standard] entry sets TRIMEXTENDMODE and
@@ -58,6 +60,13 @@ public final class ExtendCommand: FeatureCommand {
         case crossingSecond(startWorld: Vector3, startScreen: SDL_FPoint)
         /// Interactive fence: clicks append points, Enter executes.
         case fenceSelecting(points: [Vector3])
+        /// Quick-mode press-drag: empty-space press arms a freehand path,
+        /// resolved on release (drag extends via fence, plain click arms a
+        /// two-point fence). AutoCAD Quick parity (TRIM idiom).
+        case freehandSelecting(points: [Vector3], startScreen: SDL_FPoint)
+        /// Quick-mode two-point fence: first empty click is armed, the second
+        /// click executes a single fence segment.
+        case fenceTwoPoint(first: Vector3)
         /// Explicit mode entry [Quick/Standard].
         case askMode
         /// Explicit projection entry [None/UCS/View].
@@ -131,25 +140,31 @@ public final class ExtendCommand: FeatureCommand {
         askReturn = .selectExtendTarget
         print("[CAD] EXTEND: \(TrimCommand.currentSettingsLine(processor: processor))")
 
-        // Adopt pre-selected objects as boundary edges (TRIM idiom).
+        // Noun/verb pre-selection (PICKFIRST, TRIM idiom): when on,
+        // pre-selected objects become the only boundary edges, even in
+        // Quick mode. When off, the selection set is left intact.
         let preselected = engine.cadSelection.selectedHandles.filter { handle in
             guard let entity = engine.document.entity(for: handle) else { return false }
             guard let layer = engine.document.layer(for: entity.layerID), layer.isVisible else { return false }
             return entity.blockID == nil
         }
 
-        if !preselected.isEmpty {
+        switch TrimCommand.startDecision(
+            pickFirst: TrimCommand.readPickFirst(processor: processor),
+            mode: currentMode, hasPreselection: !preselected.isEmpty
+        ) {
+        case .adoptPreselected:
             selectedBoundaryHandles = Set(preselected)
             engine.cadSelection.clearSelection()
             recompileBoundaries(in: engine.document)
             step = .selectExtendTarget
             processor.commandPrompt =
                 "Boundary edge(s) selected (\(selectedBoundaryHandles.count)). \(extendPrompt)"
-        } else if currentMode == .standard {
+        case .promptForEdges:
             selectedBoundaryHandles.removeAll()
             step = .selectBoundaries
             processor.commandPrompt = boundaryPrompt
-        } else {
+        case .allEdges:
             selectedBoundaryHandles.removeAll()
             recompileBoundaries(in: engine.document)
             step = .selectExtendTarget
@@ -257,6 +272,16 @@ public final class ExtendCommand: FeatureCommand {
                 }
                 return .handled
             } else {
+                if currentMode == .quick {
+                    // Quick mode (AutoCAD parity): arm a freehand path. A
+                    // press-drag extends everything the path crosses on
+                    // release; a plain click arms a two-point fence instead.
+                    step = .freehandSelecting(
+                        points: [rawClick],
+                        startScreen: SDL_FPoint(x: Float(rawScreenX), y: Float(rawScreenY)))
+                    processor.commandPrompt = "Drag to extend with a freehand path, or click a second point for a fence:"
+                    return .handled
+                }
                 step = .targetBoxSelecting(
                     startWorld: rawClick,
                     startScreen: SDL_FPoint(x: Float(rawScreenX), y: Float(rawScreenY)))
@@ -325,6 +350,22 @@ public final class ExtendCommand: FeatureCommand {
             processor.commandPrompt = "Specify next fence point or [Undo] (\(points.count) points):"
             return .handled
 
+        case .freehandSelecting:
+            // Mid-press extra press (e.g. multi-touch): hold the armed path;
+            // the release resolves it.
+            return .handled
+
+        case .fenceTwoPoint(let first):
+            let fenceCount = performFenceExtend(
+                points: [first, rawClick], engine: engine, processor: processor)
+            step = .selectExtendTarget
+            if fenceCount > 0 {
+                processor.commandPrompt = "\(fenceCount) object(s) extended by fence. \(extendPrompt)"
+            } else {
+                processor.commandPrompt = "No boundary found to extend to. \(extendPrompt)"
+            }
+            return .handled
+
         case .askMode, .askProject, .askEdge:
             processor.commandPrompt = askPromptForCurrentStep(processor: processor)
             return .handled
@@ -341,6 +382,55 @@ public final class ExtendCommand: FeatureCommand {
         currentMouseWorldY = worldY
         currentMouseScreenX = Float(engine.interaction.lastMouseX)
         currentMouseScreenY = Float(engine.interaction.lastMouseY)
+        // Grow the armed Quick freehand path (TRIM idiom).
+        if case .freehandSelecting(var points, let startScreen) = step {
+            if let last = points.last {
+                let minSpacing = 4.0 / max(Double(engine.camera.zoom), 0.001)
+                let dx = worldX - last.x
+                let dy = worldY - last.y
+                if hypot(dx, dy) >= minSpacing {
+                    points.append(Vector3(x: worldX, y: worldY, z: 0))
+                    step = .freehandSelecting(points: points, startScreen: startScreen)
+                }
+            }
+        }
+    }
+
+    public func handleMouseUp(
+        worldX: Double, worldY: Double,
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult {
+        guard active else { return .finished }
+        switch step {
+        case .freehandSelecting(let points, let startScreen):
+            let releaseScreenX = Float(engine.interaction.lastMouseX)
+            let releaseScreenY = Float(engine.interaction.lastMouseY)
+            let dragPx = hypot(
+                releaseScreenX - startScreen.x, releaseScreenY - startScreen.y)
+            let threshPx = engine.interaction.pressDragThresholdPixels
+                * max(engine.currentDpiScale, 1.0)
+            if dragPx > threshPx, points.count >= 2 {
+                // Deliberate press-drag: extend everything the path crosses.
+                var path = points
+                path.append(Vector3(x: worldX, y: worldY, z: 0))
+                let count = performFenceExtend(
+                    points: path, engine: engine, processor: processor)
+                step = .selectExtendTarget
+                if count > 0 {
+                    processor.commandPrompt = "\(count) object(s) extended by fence. \(extendPrompt)"
+                } else {
+                    processor.commandPrompt = "No boundary found to extend to. \(extendPrompt)"
+                }
+                return .handled
+            }
+            // Plain click in empty space: arm a two-point fence.
+            step = .fenceTwoPoint(
+                first: points.first ?? Vector3(x: worldX, y: worldY, z: 0))
+            processor.commandPrompt = "Specify second fence point:"
+            return .handled
+        default:
+            return .continue
+        }
     }
 
     // MARK: - Key Down Handling
@@ -355,7 +445,7 @@ public final class ExtendCommand: FeatureCommand {
                 step = .selectBoundaries
                 processor.commandPrompt = boundaryPrompt
                 return .handled
-            case .targetBoxSelecting, .fenceSelecting, .crossingFirst, .crossingSecond:
+            case .targetBoxSelecting, .fenceSelecting, .freehandSelecting, .fenceTwoPoint, .crossingFirst, .crossingSecond:
                 step = .selectExtendTarget
                 processor.commandPrompt = extendPrompt
                 return .handled
@@ -396,7 +486,7 @@ public final class ExtendCommand: FeatureCommand {
                 step = .selectExtendTarget
                 return .handled
 
-            case .crossingFirst:
+            case .crossingFirst, .fenceTwoPoint:
                 step = .selectExtendTarget
                 processor.commandPrompt = extendPrompt
                 return .handled
@@ -629,6 +719,14 @@ public final class ExtendCommand: FeatureCommand {
             return .continue
 
         case .crossingFirst:
+            if value.isEmpty {
+                step = .selectExtendTarget
+                processor.commandPrompt = extendPrompt
+                return .handled
+            }
+            return .continue
+
+        case .fenceTwoPoint:
             if value.isEmpty {
                 step = .selectExtendTarget
                 processor.commandPrompt = extendPrompt
@@ -1138,7 +1236,7 @@ public final class ExtendCommand: FeatureCommand {
             ImDrawListAddLine(drawList, p4Draw, p1Draw, borderCol, 1.5)
 
         // 3. Fence Line Overlay.
-        case .fenceSelecting(let points):
+        case .fenceSelecting(let points), .freehandSelecting(let points, _):
             let fenceCol = makeCol32(255, 170, 0, 240)
             if !points.isEmpty {
                 for i in 0..<(points.count - 1) {
@@ -1153,6 +1251,14 @@ public final class ExtendCommand: FeatureCommand {
                     ImDrawListAddLine(drawList, ImVec2(x: sLast.x, y: sLast.y), ImVec2(x: sCur.x, y: sCur.y), fenceCol, 1.5)
                 }
             }
+
+        // 4. Two-point fence rubber band (first point armed, cursor is second).
+        case .fenceTwoPoint(let first):
+            let fenceCol = makeCol32(255, 170, 0, 240)
+            let sFirst = EngineCameraManager.worldToScreen(worldX: first.x, worldY: first.y, cam: cam)
+            let sCur = EngineCameraManager.worldToScreen(
+                worldX: currentMouseWorldX, worldY: currentMouseWorldY, cam: cam)
+            ImDrawListAddLine(drawList, ImVec2(x: sFirst.x, y: sFirst.y), ImVec2(x: sCur.x, y: sCur.y), fenceCol, 1.5)
 
         default:
             break

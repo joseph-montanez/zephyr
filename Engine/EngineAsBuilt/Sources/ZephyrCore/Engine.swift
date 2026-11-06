@@ -805,6 +805,9 @@ public final class PhrostEngine {
         self.commandProcessor.applyPlotRegistry(
             offset: settings.plotOffset, update: settings.paperUpdate,
             rotMode: settings.plotRotMode, transparency: settings.plotTransparencyOverride)
+        // Seed the trim/extend registry sysvars (setters normalize 0/1).
+        TrimSettings.trimExtendMode = settings.trimExtendMode
+        PickFirstSettings.pickFirst = settings.pickFirst
         self.tabManager.autoOpenPageSetupForNewLayouts = settings.displayPageSetupForNewLayouts
         self.tabManager.onRequestPageSetup = { [weak self] in
             self?.ui.pageSetupManagerActive = true

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed
+- TRIM and EXTEND now default to Quick mode (TRIMEXTENDMODE=1, the current
+  AutoCAD default): starting TRIM with nothing selected goes straight to
+  click-to-trim with all objects acting as cutting edges. An empty-space
+  press-drag trims/extends everything the freehand path crosses on release,
+  a plain empty click arms a two-point fence, and C forces a crossing box
+  (new in TRIM). A picked object that cannot be trimmed is deleted in Quick
+  mode instead of left unchanged. PICKFIRST is now honored by both commands:
+  pre-selected objects become the only edges when on (even in Quick) and are
+  ignored when off. TRIM's Mode option is an explicit [Quick/Standard]
+  prompt like EXTEND's. TRIMEXTENDMODE and PICKFIRST persist across restarts.
+
 ### Fixed
 - Snap and trim responsiveness after the screen-space curve LOD change. Each
   mouse-motion snap ran the discrete anchor + intersection solve up to three

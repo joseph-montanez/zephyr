@@ -184,8 +184,37 @@ final class TrimCommandTests: XCTestCase {
         XCTAssertTrue(options.contains { $0.value == "M" })
     }
 
-    func testTrimModeDefaultIsStandard() {
-        XCTAssertEqual(TrimCommand.preferredMode, .standard)
+    func testTrimModeDefaultIsQuick() {
+        let savedMode = TrimCommand.preferredMode
+        defer { TrimCommand.preferredMode = savedMode }
+        // Fresh-launch initial value (current AutoCAD default).
+        TrimSettings.trimExtendMode = 1
+        XCTAssertEqual(TrimCommand.preferredMode, .quick)
+        XCTAssertEqual(TrimSettings.trimExtendMode, 1)
+    }
+
+    /// Noun/verb × mode start matrix shared by TRIM and EXTEND (PICKFIRST):
+    /// pre-selection is adopted as the only edges when PICKFIRST is on
+    /// (even in Quick mode) and ignored when off.
+    func testTrimStartDecisionMatrix() {
+        XCTAssertEqual(
+            TrimCommand.startDecision(pickFirst: 1, mode: .quick, hasPreselection: true),
+            .adoptPreselected)
+        XCTAssertEqual(
+            TrimCommand.startDecision(pickFirst: 1, mode: .standard, hasPreselection: true),
+            .adoptPreselected)
+        XCTAssertEqual(
+            TrimCommand.startDecision(pickFirst: 0, mode: .quick, hasPreselection: true),
+            .allEdges)
+        XCTAssertEqual(
+            TrimCommand.startDecision(pickFirst: 0, mode: .standard, hasPreselection: true),
+            .promptForEdges)
+        XCTAssertEqual(
+            TrimCommand.startDecision(pickFirst: 1, mode: .quick, hasPreselection: false),
+            .allEdges)
+        XCTAssertEqual(
+            TrimCommand.startDecision(pickFirst: 1, mode: .standard, hasPreselection: false),
+            .promptForEdges)
     }
 
     // MARK: - Quick/select-all spline trim (regression: trim-after-1.eab)

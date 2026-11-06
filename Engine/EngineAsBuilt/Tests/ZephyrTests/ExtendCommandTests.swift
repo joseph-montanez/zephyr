@@ -531,6 +531,28 @@ final class ExtendCommandTests: XCTestCase {
         }, "target line runs 0 -> 8, got: \(xs)")
     }
 
+    /// The interactive Quick default must not change the scripted grammar:
+    /// explicit `(command "EXTEND" boundaries "" picks ...)` keeps working
+    /// with TRIMEXTENDMODE=1.
+    func testScriptedExtendExplicitBoundariesUnderQuickMode() async throws {
+        let savedMode = TrimCommand.preferredMode
+        defer { TrimCommand.preferredMode = savedMode }
+        TrimCommand.preferredMode = .quick
+        let host = makeHost()
+        var env = LispEnvironment()
+        seedTargetAndBoundary(host)
+
+        _ = try await eval(
+            "(command \"EXTEND\" \"ALL\" \"\" '(4.5 0 0))",
+            host: host, env: &env)
+
+        XCTAssertEqual(host.document.entityCount, 2, "extend never creates entities")
+        let xs = host.document.allEntities.compactMap { lineEndpoints($0) }
+        XCTAssertTrue(xs.contains {
+            abs($0.0.x) < 1e-9 && abs($0.1.x - 8) < 1e-9
+        }, "target line runs 0 -> 8 under Quick default, got: \(xs)")
+    }
+
     func testScriptedExtendFenceBatch() async throws {
         let host = makeHost()
         var env = LispEnvironment()

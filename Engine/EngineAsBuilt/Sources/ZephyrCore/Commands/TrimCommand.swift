@@ -16,14 +16,44 @@ import ZephyrLisp
 /// actor; mirrors the `OffsetSettings` sharing pattern.
 public enum TrimSettings: Sendable {
     private static let lock = NSLock()
-    private nonisolated(unsafe) static var storedMode: Int = 0
+    private nonisolated(unsafe) static var storedMode: Int = 1
 
-    /// 0 = Standard (classic cutting-edge selection, AutoCAD default),
-    /// 1 = Quick (all visible objects act as cutting edges).
+    /// 0 = Standard (classic cutting-edge selection),
+    /// 1 = Quick (all visible objects act as cutting edges; current AutoCAD default).
     public static var trimExtendMode: Int {
         get { lock.withLock { storedMode } }
         set { lock.withLock { storedMode = (newValue == 0) ? 0 : 1 } }
     }
+}
+
+/// Backing store for the `PICKFIRST` sysvar (0 = off, 1 = noun/verb selection).
+///
+/// Single source of truth shared by TRIM/EXTEND start-up and the Lisp
+/// `getvar`/`setvar` bridge. Mirrors the `TrimSettings` sharing pattern.
+public enum PickFirstSettings: Sendable {
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var storedValue: Int = 1
+
+    /// 0 = ignore pre-selection, 1 = adopt pre-selected objects (AutoCAD default).
+    public static var pickFirst: Int {
+        get { lock.withLock { storedValue } }
+        set { lock.withLock { storedValue = (newValue == 0) ? 0 : 1 } }
+    }
+}
+
+/// Shared TRIM/EXTEND start-up decision: how a command with an optional
+/// pre-selection enters, given PICKFIRST and the TRIMEXTENDMODE mode.
+///
+/// Pure function of its inputs so the noun/verb × mode matrix is unit-testable
+/// without an engine harness.
+public enum TrimStartDecision: Sendable, Equatable {
+    /// PICKFIRST is on and objects were pre-selected: adopt them as the only
+    /// cutting/boundary edges and skip the setup prompt (even in Quick mode).
+    case adoptPreselected
+    /// Standard mode with no adopted pre-selection: prompt for cutting edges.
+    case promptForEdges
+    /// Quick mode with no adopted pre-selection: all objects act as edges.
+    case allEdges
 }
 
 // MARK: - TrimCommand
@@ -31,7 +61,8 @@ public enum TrimSettings: Sendable {
 
 /// TRIM — AutoCAD-style trim command supporting cutting edge selection,
 /// single-click trimming, crossing/window box trimming, fence trimming,
-/// in-session undo, and on-the-fly option switching.
+/// Quick-mode freehand/two-point fence gestures, in-session undo, and
+/// on-the-fly option switching.
 @MainActor
 public final class TrimCommand: FeatureCommand {
 
@@ -58,6 +89,17 @@ public final class TrimCommand: FeatureCommand {
         case targetBoxSelecting(startWorld: Vector3, startScreen: SDL_FPoint)
         /// Interactive polyline fence selection to trim everything crossed by the fence.
         case fenceSelecting(points: [Vector3])
+        /// Quick-mode press-drag: empty-space press arms a freehand path,
+        /// resolved on release (drag trims via fence, plain click arms a
+        /// two-point fence). AutoCAD Quick parity.
+        case freehandSelecting(points: [Vector3], startScreen: SDL_FPoint)
+        /// Quick-mode two-point fence: first empty click is armed, the second
+        /// click executes a single fence segment.
+        case fenceTwoPoint(first: Vector3)
+        /// Forced crossing (C option): waiting for the first corner.
+        case crossingFirst
+        /// Forced crossing: waiting for the opposite corner.
+        case crossingSecond(startWorld: Vector3, startScreen: SDL_FPoint)
 
         /// eRase sub-mode: click objects to delete directly without leaving TRIM.
         case eraseSelecting
@@ -67,15 +109,36 @@ public final class TrimCommand: FeatureCommand {
         case askProject
         /// Explicit implied-edge entry [Extend/No extend] (shared EXTEND handshake).
         case askEdge
+        /// Explicit mode entry [Quick/Standard] (shared EXTEND handshake).
+        case askMode
     }
 
     // MARK: - Static Configuration
 
-    /// User's preferred TRIM mode across sessions. Defaults to `.standard` (classic AutoCAD).
+    /// User's preferred TRIM mode across sessions. Defaults to `.quick` (current AutoCAD).
     /// Backed by `TrimSettings.trimExtendMode` (`TRIMEXTENDMODE` sysvar): the single source of truth.
     public static var preferredMode: TrimMode {
         get { TrimSettings.trimExtendMode == 0 ? .standard : .quick }
         set { TrimSettings.trimExtendMode = (newValue == .standard) ? 0 : 1 }
+    }
+
+    /// Shared TRIM/EXTEND start-up decision for the noun/verb × mode matrix.
+    public static func startDecision(
+        pickFirst: Int, mode: TrimMode, hasPreselection: Bool
+    ) -> TrimStartDecision {
+        if hasPreselection && pickFirst != 0 {
+            return .adoptPreselected
+        }
+        return mode == .standard ? .promptForEdges : .allEdges
+    }
+
+    /// Reads PICKFIRST (0 = off, 1 = noun/verb selection); anything else reads as on.
+    public static func readPickFirst(processor: CADCommandProcessor) -> Int {
+        if case .int(let value) = processor.systemVariable("PICKFIRST"),
+           (0...1).contains(value) {
+            return value
+        }
+        return 1
     }
 
     // MARK: - Projection / Edge (shared EXTEND handshake)
@@ -139,11 +202,60 @@ public final class TrimCommand: FeatureCommand {
         _ = processor.lispVars.set("EDGEMODE", .int(mode), document: engine.document)
     }
 
+    // MARK: - Mode Prompt Helpers (shared EXTEND handshake)
+
+    /// Ask prompt for the Mode option with the current value as default.
+    private func askModePrompt() -> String {
+        let current = (currentMode == .quick) ? "Quick" : "Standard"
+        return "Enter mode [Quick/Standard] <\(current)>:"
+    }
+
+    /// Trim-target prompt (Quick skips cutting-edge selection entirely).
+    private var trimTargetPrompt: String {
+        "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+    }
+
+    /// Cutting-edge selection prompt.
+    private var cuttingEdgePrompt: String {
+        "Select cutting edges ... Select objects or <select all>:"
+    }
+
+    private func promptForStep(_ step: TrimStep) -> String {
+        switch step {
+        case .selectCuttingEdges:
+            return cuttingEdgePrompt
+        case .askMode:
+            return askModePrompt()
+        default:
+            return trimTargetPrompt
+        }
+    }
+
+    private func applyMode(
+        _ mode: TrimMode,
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) {
+        currentMode = mode
+        Self.preferredMode = mode
+        recompileCuttingSegments(in: engine.document)
+        if mode == .quick {
+            step = .selectTrimTarget
+            processor.commandPrompt = trimTargetPrompt
+            print("[CAD] TRIM: mode set to QUICK.")
+        } else {
+            step = .selectCuttingEdges
+            processor.commandPrompt = cuttingEdgePrompt
+            print("[CAD] TRIM: mode set to STANDARD.")
+        }
+    }
+
     // MARK: - Instance State
 
     private var active: Bool = true
     private var currentMode: TrimMode = TrimCommand.preferredMode
     private var step: TrimStep = .selectCuttingEdges
+    /// Step to return to after an askMode/askProject/askEdge sub-prompt.
+    private var askReturn: TrimStep = .selectTrimTarget
 
     /// Handles of entities explicitly selected as cutting edges. Empty means all visible entities act as cutting edges.
     private var selectedCuttingHandles: Set<UUID> = []
@@ -186,26 +298,33 @@ public final class TrimCommand: FeatureCommand {
         active = true
         operationsInSession = 0
         currentMode = Self.preferredMode
+        askReturn = .selectTrimTarget
 
-        // Check for pre-selected entities
+        // Noun/verb pre-selection (PICKFIRST): when on, pre-selected objects
+        // become the only cutting edges, even in Quick mode. When off, the
+        // selection set is left intact but not adopted.
         let preselected = engine.cadSelection.selectedHandles.filter { handle in
             guard let entity = engine.document.entity(for: handle) else { return false }
             guard let layer = engine.document.layer(for: entity.layerID), layer.isVisible else { return false }
             return entity.blockID == nil
         }
 
-        if !preselected.isEmpty {
+        switch Self.startDecision(
+            pickFirst: Self.readPickFirst(processor: processor),
+            mode: currentMode, hasPreselection: !preselected.isEmpty
+        ) {
+        case .adoptPreselected:
             // Adopt pre-selected objects as cutting edges immediately (AutoCAD behavior)
             selectedCuttingHandles = Set(preselected)
             engine.cadSelection.clearSelection()
             recompileCuttingSegments(in: engine.document)
             step = .selectTrimTarget
             processor.commandPrompt = "Cutting edge(s) selected (\(selectedCuttingHandles.count)). Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
-        } else if currentMode == .standard {
+        case .promptForEdges:
             selectedCuttingHandles.removeAll()
             step = .selectCuttingEdges
             processor.commandPrompt = "Select cutting edges ... Select objects or <select all>:"
-        } else {
+        case .allEdges:
             selectedCuttingHandles.removeAll()
             recompileCuttingSegments(in: engine.document)
             step = .selectTrimTarget
@@ -314,6 +433,16 @@ public final class TrimCommand: FeatureCommand {
                 }
                 return .handled
             } else {
+                if currentMode == .quick {
+                    // Quick mode (AutoCAD parity): arm a freehand path. A
+                    // press-drag trims everything the path crosses on release;
+                    // a plain click arms a two-point fence instead.
+                    step = .freehandSelecting(
+                        points: [rawClick],
+                        startScreen: SDL_FPoint(x: Float(rawScreenX), y: Float(rawScreenY)))
+                    processor.commandPrompt = "Drag to trim with a freehand path, or click a second point for a fence:"
+                    return .handled
+                }
                 // Clicked empty space → begin box selection to batch-trim!
                 step = .targetBoxSelecting(startWorld: rawClick, startScreen: SDL_FPoint(x: Float(rawScreenX), y: Float(rawScreenY)))
                 processor.commandPrompt = "Specify opposite corner:"
@@ -346,6 +475,48 @@ public final class TrimCommand: FeatureCommand {
             points.append(rawClick)
             step = .fenceSelecting(points: points)
             processor.commandPrompt = "Specify next fence point or press Enter to finish (\(points.count) points):"
+            return .handled
+
+        case .freehandSelecting:
+            // Mid-press extra press (e.g. multi-touch): hold the armed path;
+            // the release resolves it.
+            return .handled
+
+        case .fenceTwoPoint(let first):
+            let fenceCount = performFenceTrim(
+                points: [first, rawClick], engine: engine, processor: processor)
+            step = .selectTrimTarget
+            if fenceCount > 0 {
+                processor.commandPrompt = "\(fenceCount) object(s) trimmed by fence. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+            } else {
+                processor.commandPrompt = "No valid trim intersections found. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+            }
+            return .handled
+
+        case .crossingFirst:
+            step = .crossingSecond(
+                startWorld: rawClick,
+                startScreen: SDL_FPoint(x: Float(rawScreenX), y: Float(rawScreenY)))
+            processor.commandPrompt = "Specify opposite corner:"
+            return .handled
+
+        case .crossingSecond(let startWorld, _):
+            let minX = min(startWorld.x, rawClick.x)
+            let maxX = max(startWorld.x, rawClick.x)
+            let minY = min(startWorld.y, rawClick.y)
+            let maxY = max(startWorld.y, rawClick.y)
+            let crossedCount = performBoxTrim(
+                boxMin: Vector3(x: minX, y: minY, z: 0),
+                boxMax: Vector3(x: maxX, y: maxY, z: 0),
+                isCrossing: true,
+                engine: engine, processor: processor
+            )
+            step = .selectTrimTarget
+            if crossedCount > 0 {
+                processor.commandPrompt = "\(crossedCount) object(s) trimmed. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+            } else {
+                processor.commandPrompt = "No valid trim intersections found. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+            }
             return .handled
 
         // ── Phase 3: eRase Mode ──
@@ -407,6 +578,10 @@ public final class TrimCommand: FeatureCommand {
         case .askEdge:
             processor.commandPrompt = Self.askEdgePrompt(processor: processor)
             return .handled
+
+        case .askMode:
+            processor.commandPrompt = askModePrompt()
+            return .handled
         }
     }
 
@@ -420,6 +595,56 @@ public final class TrimCommand: FeatureCommand {
         currentMouseWorldY = worldY
         currentMouseScreenX = Float(engine.interaction.lastMouseX)
         currentMouseScreenY = Float(engine.interaction.lastMouseY)
+        // Grow the armed Quick freehand path (screen-spaced so slow and fast
+        // drags trim the same segments).
+        if case .freehandSelecting(var points, let startScreen) = step {
+            if let last = points.last {
+                let minSpacing = 4.0 / max(Double(engine.camera.zoom), 0.001)
+                let dx = worldX - last.x
+                let dy = worldY - last.y
+                if hypot(dx, dy) >= minSpacing {
+                    points.append(Vector3(x: worldX, y: worldY, z: 0))
+                    step = .freehandSelecting(points: points, startScreen: startScreen)
+                }
+            }
+        }
+    }
+
+    public func handleMouseUp(
+        worldX: Double, worldY: Double,
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult {
+        guard active else { return .finished }
+        switch step {
+        case .freehandSelecting(let points, let startScreen):
+            let releaseScreenX = Float(engine.interaction.lastMouseX)
+            let releaseScreenY = Float(engine.interaction.lastMouseY)
+            let dragPx = hypot(
+                releaseScreenX - startScreen.x, releaseScreenY - startScreen.y)
+            let threshPx = engine.interaction.pressDragThresholdPixels
+                * max(engine.currentDpiScale, 1.0)
+            if dragPx > threshPx, points.count >= 2 {
+                // Deliberate press-drag: trim everything the path crosses.
+                var path = points
+                path.append(Vector3(x: worldX, y: worldY, z: 0))
+                let count = performFenceTrim(
+                    points: path, engine: engine, processor: processor)
+                step = .selectTrimTarget
+                if count > 0 {
+                    processor.commandPrompt = "\(count) object(s) trimmed. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                } else {
+                    processor.commandPrompt = "No valid trim intersections found. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                }
+                return .handled
+            }
+            // Plain click in empty space: arm a two-point fence.
+            step = .fenceTwoPoint(
+                first: points.first ?? Vector3(x: worldX, y: worldY, z: 0))
+            processor.commandPrompt = "Specify second fence point:"
+            return .handled
+        default:
+            return .continue
+        }
     }
 
     // MARK: - Key Down Handling
@@ -434,9 +659,13 @@ public final class TrimCommand: FeatureCommand {
                 step = .selectCuttingEdges
                 processor.commandPrompt = "Select cutting edges ... Select objects or <select all>:"
                 return .handled
-            case .targetBoxSelecting, .fenceSelecting, .eraseSelecting, .eraseBoxSelecting, .askProject, .askEdge:
+            case .targetBoxSelecting, .fenceSelecting, .freehandSelecting, .fenceTwoPoint, .crossingFirst, .crossingSecond, .eraseSelecting, .eraseBoxSelecting, .askProject, .askEdge:
                 step = .selectTrimTarget
                 processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            case .askMode:
+                step = askReturn
+                processor.commandPrompt = promptForStep(step)
                 return .handled
             case .selectCuttingEdges, .selectTrimTarget:
                 active = false
@@ -469,6 +698,30 @@ public final class TrimCommand: FeatureCommand {
                 processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
                 return .handled
 
+            case .fenceTwoPoint, .crossingFirst:
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+
+            case .crossingSecond(let startWorld, _):
+                let cursor = Vector3(x: currentMouseWorldX, y: currentMouseWorldY, z: 0)
+                let minX = min(startWorld.x, cursor.x)
+                let maxX = max(startWorld.x, cursor.x)
+                let minY = min(startWorld.y, cursor.y)
+                let maxY = max(startWorld.y, cursor.y)
+                let crossed = performBoxTrim(
+                    boxMin: Vector3(x: minX, y: minY, z: 0),
+                    boxMax: Vector3(x: maxX, y: maxY, z: 0),
+                    isCrossing: true,
+                    engine: engine, processor: processor)
+                step = .selectTrimTarget
+                if crossed > 0 {
+                    processor.commandPrompt = "\(crossed) object(s) trimmed. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                } else {
+                    processor.commandPrompt = "No valid trim intersections found. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                }
+                return .handled
+
 case .askProject:
                 Self.setProjectionMode(1, engine: engine, processor: processor)
                 step = .selectTrimTarget
@@ -478,6 +731,11 @@ case .askProject:
             case .askEdge:
                 step = .selectTrimTarget
                 processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+
+            case .askMode:
+                step = askReturn
+                processor.commandPrompt = promptForStep(step)
                 return .handled
 
             case .selectTrimTarget:
@@ -495,7 +753,8 @@ case .askProject:
             return .handled
 
         case SDL_SCANCODE_C where isWaitingForTarget:
-            processor.commandPrompt = "Crossing selection: click first corner in drawing area."
+            step = .crossingFirst
+            processor.commandPrompt = "Specify first corner:"
             return .handled
 
         case SDL_SCANCODE_E where isWaitingForTarget:
@@ -504,10 +763,9 @@ case .askProject:
             return .handled
 
         case SDL_SCANCODE_M where isWaitingForTarget:
-            currentMode = (currentMode == .standard) ? .quick : .standard
-            Self.preferredMode = currentMode
-            recompileCuttingSegments(in: engine.document)
-            processor.commandPrompt = "TRIM mode set to \(currentMode.rawValue.uppercased()). Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+            askReturn = .selectTrimTarget
+            step = .askMode
+            processor.commandPrompt = askModePrompt()
             return .handled
 
         case SDL_SCANCODE_P where isWaitingForTarget:
@@ -551,10 +809,9 @@ case .askProject:
                 processor.commandPrompt = "All objects selected as cutting edges. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
                 return .handled
             } else if upper == "M" || upper == "MODE" {
-                currentMode = (currentMode == .standard) ? .quick : .standard
-                Self.preferredMode = currentMode
-                recompileCuttingSegments(in: engine.document)
-                processor.commandPrompt = "TRIM mode set to \(currentMode.rawValue.uppercased()). Select cutting edges ... Select objects or <select all>:"
+                askReturn = .selectCuttingEdges
+                step = .askMode
+                processor.commandPrompt = askModePrompt()
                 return .handled
             }
 
@@ -566,7 +823,8 @@ case .askProject:
                 return .handled
 
             case "C", "CROSSING":
-                processor.commandPrompt = "Crossing selection: click first corner in drawing area."
+                step = .crossingFirst
+                processor.commandPrompt = "Specify first corner:"
                 return .handled
 
             case "E", "CUTTING", "EDGES", "CUTTING EDGES":
@@ -575,10 +833,9 @@ case .askProject:
                 return .handled
 
             case "M", "MODE":
-                currentMode = (currentMode == .standard) ? .quick : .standard
-                Self.preferredMode = currentMode
-                recompileCuttingSegments(in: engine.document)
-                processor.commandPrompt = "TRIM mode set to \(currentMode.rawValue.uppercased()). Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                askReturn = .selectTrimTarget
+                step = .askMode
+                processor.commandPrompt = askModePrompt()
                 return .handled
 
             case "P", "PROJECT":
@@ -657,6 +914,49 @@ case .askProject:
                 return .handled
             }
 
+        case .askMode:
+            switch upper {
+            case "":
+                step = askReturn
+                processor.commandPrompt = promptForStep(step)
+                return .handled
+            case "Q", "QUICK":
+                applyMode(.quick, engine: engine, processor: processor)
+                return .handled
+            case "S", "STANDARD":
+                applyMode(.standard, engine: engine, processor: processor)
+                return .handled
+            case "U", "UNDO":
+                return performUndo(engine: engine, processor: processor)
+            default:
+                processor.commandPrompt =
+                    "Invalid mode. \(askModePrompt())"
+                return .handled
+            }
+
+        case .crossingFirst:
+            if upper.isEmpty {
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            }
+            return .continue
+
+        case .crossingSecond:
+            if upper.isEmpty {
+                return handleKeyDown(
+                    scancode: SDL_SCANCODE_RETURN, engine: engine, processor: processor)
+            }
+            return .continue
+
+        case .fenceTwoPoint:
+            if upper.isEmpty {
+                step = .selectTrimTarget
+                processor.commandPrompt = "Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return .handled
+            }
+            return .continue
+
         default:
             break
         }
@@ -669,18 +969,24 @@ case .askProject:
         case .selectCuttingEdges:
             return [
                 .init(value: "ALL", title: "Select all", aliases: ["A"]),
-                .init(value: "M", title: "Mode", aliases: ["MODE"], description: "Toggle Quick vs Standard")
+                .init(value: "M", title: "Mode", aliases: ["MODE"], description: "Quick vs Standard mode")
             ]
         case .selectTrimTarget:
             return [
                 .init(value: "F", title: "Fence", aliases: ["FENCE"], description: "Draw fence line to trim"),
                 .init(value: "C", title: "Crossing", aliases: ["CROSSING"], description: "Crossing window trim"),
                 .init(value: "E", title: "Cutting edges", aliases: ["CUTTING", "EDGES"], description: "Change cutting edges"),
-                .init(value: "M", title: "Mode", aliases: ["MODE"], description: "Toggle Quick vs Standard"),
+                .init(value: "M", title: "Mode", aliases: ["MODE"], description: "Quick vs Standard mode"),
                 .init(value: "R", title: "eRase", aliases: ["ERASE"], description: "Delete entities directly"),
                 .init(value: "P", title: "Project", aliases: ["PROJECT"], description: "Projection option (None/UCS/View)"),
                 .init(value: "EDGE", title: "Edge", aliases: [], description: "Implied edge mode (Extend/No extend)"),
                 .init(value: "U", title: "Undo", aliases: ["UNDO"], description: "Revert last trim operation")
+            ]
+        case .askMode:
+            return [
+                .init(value: "Q", title: "Quick", aliases: ["QUICK"], description: "Quick mode: everything is a cutting edge"),
+                .init(value: "S", title: "Standard", aliases: ["STANDARD"], description: "Standard mode: pick cutting edges"),
+                .init(value: "U", title: "Undo", aliases: ["UNDO"], description: "Revert last trim operation"),
             ]
         default:
             return []
@@ -723,6 +1029,29 @@ case .askProject:
         }
 
         guard modified, let geom = newGeom else {
+            // Quick-mode parity: a picked object that cannot be trimmed is
+            // deleted instead (AutoCAD Quick behavior). Standard mode leaves
+            // the geometry unchanged. Locked layers and viewport copies are
+            // never deleted. Returning false preserves the prompt below: the
+            // caller overwrites it on true.
+            if currentMode == .quick,
+               let layer = doc.layer(for: entity.layerID), !layer.isLocked,
+               !entity.isViewportProjected {
+                doc.pushUndo(preSnapshot)
+                operationsInSession += 1
+                doc.removeEntities(handles: [hitHandle])
+                engine.cadSelection.clearSelection()
+                doc.rebuildEntityGrid()
+                doc.markEdited(regenerate: true)
+                engine.tabManager.markActiveDirty()
+                refreshCutterContribution(for: hitHandle, in: doc, deleted: true)
+                processor.commandPrompt = "Object cannot be trimmed — deleted. Select object to trim or shift-select to extend or [Fence/Crossing/Cutting edges/Mode/Project/Edge/eRase/Undo]:"
+                return false
+            }
+            if let layer = doc.layer(for: entity.layerID), layer.isLocked {
+                processor.commandPrompt = "The object is on a locked layer."
+                return false
+            }
             processor.commandPrompt = "No valid trim intersection found. Geometry was left unchanged."
             return false
         }
@@ -1006,6 +1335,7 @@ case .askProject:
         switch step {
         case .edgeBoxSelecting(let startWorld, let startScreen),
              .targetBoxSelecting(let startWorld, let startScreen),
+             .crossingSecond(let startWorld, let startScreen),
              .eraseBoxSelecting(let startWorld, let startScreen):
 
             let p1 = EngineCameraManager.worldToScreen(worldX: startWorld.x, worldY: startWorld.y, cam: cam)
@@ -1042,7 +1372,7 @@ case .askProject:
             ImDrawListAddLine(drawList, p4Draw, p1Draw, borderCol, 1.5)
 
         // 3. Fence Line Overlay
-        case .fenceSelecting(let points):
+        case .fenceSelecting(let points), .freehandSelecting(let points, _):
             let fenceCol = makeCol32(255, 170, 0, 240)
             if !points.isEmpty {
                 for i in 0..<(points.count - 1) {
@@ -1057,6 +1387,13 @@ case .askProject:
                     ImDrawListAddLine(drawList, ImVec2(x: sLast.x, y: sLast.y), ImVec2(x: sCur.x, y: sCur.y), fenceCol, 1.5)
                 }
             }
+
+        // 4. Two-point fence rubber band (first point armed, cursor is second)
+        case .fenceTwoPoint(let first):
+            let fenceCol = makeCol32(255, 170, 0, 240)
+            let sFirst = EngineCameraManager.worldToScreen(worldX: first.x, worldY: first.y, cam: cam)
+            let sCur = EngineCameraManager.worldToScreen(worldX: currentMouseWorldX, worldY: currentMouseWorldY, cam: cam)
+            ImDrawListAddLine(drawList, ImVec2(x: sFirst.x, y: sFirst.y), ImVec2(x: sCur.x, y: sCur.y), fenceCol, 1.5)
 
         default:
             break

@@ -64,6 +64,12 @@ public struct UserSettings: Codable, Sendable {
     /// Page Setup Manager "Display when creating a new layout" checkbox.
     public var displayPageSetupForNewLayouts: Bool
 
+    // MARK: - Trim/Extend registry (TRIMEXTENDMODE / PICKFIRST).
+    // Registry-type sysvars that survive restarts (current AutoCAD defaults
+    // to Quick mode with noun/verb selection on).
+    public var trimExtendMode: Int
+    public var pickFirst: Int
+
     // MARK: - Initialization
 
     /// Memberwise initializer (explicit: the custom Decodable init
@@ -95,7 +101,9 @@ public struct UserSettings: Codable, Sendable {
         paperUpdate: Int = 0,
         plotRotMode: Int = 1,
         plotTransparencyOverride: Int = 1,
-        displayPageSetupForNewLayouts: Bool = false
+        displayPageSetupForNewLayouts: Bool = false,
+        trimExtendMode: Int = 1,
+        pickFirst: Int = 1
     ) {
         self.isDarkTheme = isDarkTheme
         self.themeName = themeName ?? (isDarkTheme ? "dark" : "light")
@@ -124,6 +132,8 @@ public struct UserSettings: Codable, Sendable {
         self.plotRotMode = plotRotMode
         self.plotTransparencyOverride = plotTransparencyOverride
         self.displayPageSetupForNewLayouts = displayPageSetupForNewLayouts
+        self.trimExtendMode = (trimExtendMode == 0) ? 0 : 1
+        self.pickFirst = (pickFirst == 0) ? 0 : 1
     }
 
     // MARK: - Default instance
@@ -199,17 +209,25 @@ public struct UserSettings: Codable, Sendable {
             ?? fallback.plotTransparencyOverride
         displayPageSetupForNewLayouts = try box.decodeIfPresent(Bool.self, forKey: .displayPageSetupForNewLayouts)
             ?? fallback.displayPageSetupForNewLayouts
+        trimExtendMode = try box.decodeIfPresent(Int.self, forKey: .trimExtendMode)
+            ?? fallback.trimExtendMode
+        pickFirst = try box.decodeIfPresent(Int.self, forKey: .pickFirst)
+            ?? fallback.pickFirst
     }
 
     /// Snapshots the live UI state into persistable settings. Single
     /// source of truth for shutdown saves and setup completion.
     /// Pass the live plot registry values so they persist across restarts.
+    /// TRIMEXTENDMODE/PICKFIRST default to the live statics so callers that
+    /// only pass UI state still persist the current sysvar values.
     @MainActor
     public static func capture(ui: EngineUIManager,
                                plotOffset: Int = 0,
                                paperUpdate: Int = 0,
                                plotRotMode: Int = 1,
-                               plotTransparencyOverride: Int = 1) -> UserSettings {
+                               plotTransparencyOverride: Int = 1,
+                               trimExtendMode: Int = TrimSettings.trimExtendMode,
+                               pickFirst: Int = PickFirstSettings.pickFirst) -> UserSettings {
         UserSettings(
             isDarkTheme: ui.isDarkTheme,
             themeName: ui.theme.id,
@@ -236,7 +254,9 @@ public struct UserSettings: Codable, Sendable {
             plotOffset: plotOffset,
             paperUpdate: paperUpdate,
             plotRotMode: plotRotMode,
-            plotTransparencyOverride: plotTransparencyOverride
+            plotTransparencyOverride: plotTransparencyOverride,
+            trimExtendMode: trimExtendMode,
+            pickFirst: pickFirst
         )
     }
 

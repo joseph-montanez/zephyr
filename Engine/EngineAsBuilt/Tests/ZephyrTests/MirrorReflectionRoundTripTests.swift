@@ -232,7 +232,7 @@ final class MirrorReflectionRoundTripTests: XCTestCase {
         var env = LispEnvironment()
         do { let got = try await self.eval(#"(getvar "EDGEMODE")"#, host: host, env: &env); XCTAssertEqual(got, .int(0)) }
         do { let got = try await self.eval(#"(getvar "PROJMODE")"#, host: host, env: &env); XCTAssertEqual(got, .int(1)) }
-        do { let got = try await self.eval(#"(getvar "TRIMEXTENDMODE")"#, host: host, env: &env); XCTAssertEqual(got, .int(0)) }
+        do { let got = try await self.eval(#"(getvar "TRIMEXTENDMODE")"#, host: host, env: &env); XCTAssertEqual(got, .int(1)) }
         do { let got = try await self.eval(#"(getvar "MIRRTEXT")"#, host: host, env: &env); XCTAssertEqual(got, .int(0)) }
 
         _ = try await self.eval(#"(setvar "EDGEMODE" 1)"#, host: host, env: &env)
@@ -258,22 +258,46 @@ final class MirrorReflectionRoundTripTests: XCTestCase {
         let (host, _) = makeHost()
         var env = LispEnvironment()
 
-        // Default is Standard on both surfaces.
-        XCTAssertEqual(TrimCommand.preferredMode, .standard)
-        XCTAssertEqual(TrimSettings.trimExtendMode, 0)
-        do { let got = try await self.eval(#"(getvar "TRIMEXTENDMODE")"#, host: host, env: &env); XCTAssertEqual(got, .int(0)) }
+        // Default is Quick on both surfaces (current AutoCAD default).
+        TrimCommand.preferredMode = .quick
+        XCTAssertEqual(TrimSettings.trimExtendMode, 1)
+        do { let got = try await self.eval(#"(getvar "TRIMEXTENDMODE")"#, host: host, env: &env); XCTAssertEqual(got, .int(1)) }
 
         // setvar drives the command default ...
-        _ = try await self.eval(#"(setvar "TRIMEXTENDMODE" 1)"#, host: host, env: &env)
-        XCTAssertEqual(TrimCommand.preferredMode, .quick)
+        _ = try await self.eval(#"(setvar "TRIMEXTENDMODE" 0)"#, host: host, env: &env)
+        XCTAssertEqual(TrimCommand.preferredMode, .standard)
         // ... and the command default drives getvar back.
-        TrimCommand.preferredMode = .standard
-        do { let got = try await self.eval(#"(getvar "TRIMEXTENDMODE")"#, host: host, env: &env); XCTAssertEqual(got, .int(0)) }
+        TrimCommand.preferredMode = .quick
+        do { let got = try await self.eval(#"(getvar "TRIMEXTENDMODE")"#, host: host, env: &env); XCTAssertEqual(got, .int(1)) }
 
         // Out-of-range writes are rejected; the mode stays put.
         _ = try? await self.eval(#"(setvar "TRIMEXTENDMODE" 3)"#, host: host, env: &env)
-        XCTAssertEqual(TrimCommand.preferredMode, .standard)
-        XCTAssertEqual(TrimSettings.trimExtendMode, 0)
+        XCTAssertEqual(TrimCommand.preferredMode, .quick)
+        XCTAssertEqual(TrimSettings.trimExtendMode, 1)
+    }
+
+    @MainActor
+    func testPickFirstSysvarDefaultAndValidation() async throws {
+        let savedPick = PickFirstSettings.pickFirst
+        defer { PickFirstSettings.pickFirst = savedPick }
+        let (host, _) = makeHost()
+        var env = LispEnvironment()
+
+        // Default is on (noun/verb selection).
+        PickFirstSettings.pickFirst = 1
+        do { let got = try await self.eval(#"(getvar "PICKFIRST")"#, host: host, env: &env); XCTAssertEqual(got, .int(1)) }
+
+        // setvar drives the shared backing ...
+        _ = try await self.eval(#"(setvar "PICKFIRST" 0)"#, host: host, env: &env)
+        XCTAssertEqual(PickFirstSettings.pickFirst, 0)
+        do { let got = try await self.eval(#"(getvar "PICKFIRST")"#, host: host, env: &env); XCTAssertEqual(got, .int(0)) }
+        _ = try await self.eval(#"(setvar "PICKFIRST" 1)"#, host: host, env: &env)
+        XCTAssertEqual(PickFirstSettings.pickFirst, 1)
+
+        // Out-of-range writes are rejected; the value stays put.
+        _ = try? await self.eval(#"(setvar "PICKFIRST" 5)"#, host: host, env: &env)
+        XCTAssertEqual(PickFirstSettings.pickFirst, 1)
+        do { let got = try await self.eval(#"(getvar "PICKFIRST")"#, host: host, env: &env); XCTAssertEqual(got, .int(1)) }
     }
 
     // MARK: - $MIRRTEXT header wiring
