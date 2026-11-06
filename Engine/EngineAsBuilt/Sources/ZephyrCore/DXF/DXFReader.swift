@@ -44,6 +44,35 @@ public class DXFReader {
     private struct TableStyleInfo {
         var horizontalMargin: Double
         var verticalMargin: Double
+        /// Group-170 cell alignments of the style's three repeated
+        /// row-style blocks, which appear in data/title/header order.
+        var dataAlignmentCode: Int?
+        var titleAlignmentCode: Int?
+        var headerAlignmentCode: Int?
+        /// Group 280/281: title / column-heading row suppressed.
+        var suppressTitle: Bool = false
+        var suppressHeader: Bool = false
+    }
+
+    /// Maps an ACAD_TABLE group-170 alignment code (1...9, laid out as
+    /// TL TC TR / ML MC MR / BL BC BR) to horizontal/vertical alignment.
+    private static func tableAlignment(
+        fromCode code: Int
+    ) -> (horizontal: DataTableCellAlignment, vertical: DataTableCellVerticalAlignment) {
+        let horizontal: DataTableCellAlignment
+        switch (code - 1) % 3 {
+        case 1: horizontal = .center
+        case 2: horizontal = .right
+        default: horizontal = .left
+        }
+
+        let vertical: DataTableCellVerticalAlignment
+        switch code {
+        case 1...3: vertical = .top
+        case 7...9: vertical = .bottom
+        default: vertical = .middle
+        }
+        return (horizontal, vertical)
     }
 
     public var versionRaw: String = ""
@@ -2142,9 +2171,17 @@ extension DXFReader {
         var cellAlignments: [Int?] = []
         var cellTextStyles: [String?] = []
         var cellTextHeights: [Double?] = []
+        var cellColSpans: [Int] = []
+        var cellRowSpans: [Int] = []
+        var cellMergedFlags: [Bool] = []
         var pendingAlignment: Int?
         var pendingTextStyle: String?
         var pendingTextHeight: Double?
+        // Groups 175/176: merged-cell border width/height, in cells.
+        // Group 173: 1 on the virtual cells a merged anchor covers.
+        var pendingColSpan = 1
+        var pendingRowSpan = 1
+        var pendingMerged = false
         var readingValue = false
         var rawValue: String?
         var displayValue: String?
@@ -2159,6 +2196,12 @@ extension DXFReader {
             cellAlignments.append(pendingAlignment)
             cellTextStyles.append(pendingTextStyle)
             cellTextHeights.append(pendingTextHeight)
+            cellColSpans.append(pendingColSpan)
+            cellRowSpans.append(pendingRowSpan)
+            cellMergedFlags.append(pendingMerged)
+            pendingColSpan = 1
+            pendingRowSpan = 1
+            pendingMerged = false
             readingValue = false
             rawValue = nil
             displayValue = nil
@@ -2170,6 +2213,9 @@ extension DXFReader {
                 pendingAlignment = nil
                 pendingTextStyle = nil
                 pendingTextHeight = nil
+                pendingColSpan = 1
+                pendingRowSpan = 1
+                pendingMerged = false
             }
 
             if code == 301,
@@ -2220,6 +2266,12 @@ extension DXFReader {
             switch code {
             case 170:
                 pendingAlignment = i(value)
+            case 173:
+                pendingMerged = i(value) != 0
+            case 175:
+                pendingColSpan = max(1, i(value))
+            case 176:
+                pendingRowSpan = max(1, i(value))
             case 7:
                 let decoded = decode(value)
                 pendingTextStyle = decoded.isEmpty ? nil : decoded
@@ -2265,20 +2317,7 @@ extension DXFReader {
             from code: Int?
         ) -> (horizontal: DataTableCellAlignment, vertical: DataTableCellVerticalAlignment) {
             let normalized = code.flatMap { (1...9).contains($0) ? $0 : nil } ?? 4
-            let horizontal: DataTableCellAlignment
-            switch (normalized - 1) % 3 {
-            case 1: horizontal = .center
-            case 2: horizontal = .right
-            default: horizontal = .left
-            }
-
-            let vertical: DataTableCellVerticalAlignment
-            switch normalized {
-            case 1...3: vertical = .top
-            case 7...9: vertical = .bottom
-            default: vertical = .middle
-            }
-            return (horizontal, vertical)
+            return Self.tableAlignment(fromCode: normalized)
         }
 
         let validHeights = rowHeights.prefix(safeRowCount).map { max(0.001, $0) }
@@ -2307,6 +2346,34 @@ extension DXFReader {
                 alignment: alignment(from: alignmentCode).horizontal))
         }
 
+        // A covered cell is flagged by group 173, but also derive it
+        // from each anchor's span so files that only carry 175/176
+        // still render as one merged cell with no interior grid lines.
+        func clampedColSpan(row: Int, column: Int) -> Int {
+            let index = row * safeColumnCount + column
+            let span = index < cellColSpans.count ? cellColSpans[index] : 1
+            return max(1, min(span, safeColumnCount - column))
+        }
+        func clampedRowSpan(row: Int, column: Int) -> Int {
+            let index = row * safeColumnCount + column
+            let span = index < cellRowSpans.count ? cellRowSpans[index] : 1
+            return max(1, min(span, safeRowCount - row))
+        }
+        var coveredCells = Set<Int>()
+        for row in 0..<safeRowCount {
+            for column in 0..<safeColumnCount {
+                let colSpan = clampedColSpan(row: row, column: column)
+                let rowSpan = clampedRowSpan(row: row, column: column)
+                guard colSpan > 1 || rowSpan > 1 else { continue }
+                for coveredRow in row..<(row + rowSpan) {
+                    for coveredColumn in column..<(column + colSpan)
+                    where coveredRow != row || coveredColumn != column {
+                        coveredCells.insert(coveredRow * safeColumnCount + coveredColumn)
+                    }
+                }
+            }
+        }
+
         var rows: [DataTableRow] = []
         rows.reserveCapacity(safeRowCount)
         for row in 0..<safeRowCount {
@@ -2319,11 +2386,16 @@ extension DXFReader {
                 let cellAlignment = alignmentCode.map { alignment(from: $0) }
                 let rawValue = index < cellRawValues.count ? cellRawValues[index] : nil
                 let formula = rawValue.flatMap { $0.hasPrefix("=") ? $0 : nil }
+                let covered = (index < cellMergedFlags.count && cellMergedFlags[index])
+                    || coveredCells.contains(index)
                 cells.append(DataTableCell(
                     columnID: columns[column].id,
                     value: value.isEmpty ? .empty : .string(value),
                     formulaExpression: formula,
                     cachedDisplayText: value.isEmpty ? nil : value,
+                    rowSpan: covered ? 1 : clampedRowSpan(row: row, column: column),
+                    colSpan: covered ? 1 : clampedColSpan(row: row, column: column),
+                    coveredByMerge: covered,
                     horizontalAlignment: cellAlignment?.horizontal,
                     verticalAlignment: cellAlignment?.vertical ?? .middle,
                     nativeDXFGroups: index < rawCellGroups.count ? rawCellGroups[index] : nil))
@@ -3068,6 +3140,9 @@ extension DXFReader {
         var handle: UInt32 = 0
         var horizontalMargin: Double?
         var verticalMargin: Double?
+        var rowStyleAlignmentCodes: [Int] = []
+        var suppressTitle = false
+        var suppressHeader = false
         var inTableStyle = false
 
         while idx < pairs.count {
@@ -3090,6 +3165,15 @@ extension DXFReader {
                 if horizontalMargin == nil { horizontalMargin = max(0, d(value)) }
             case 41:
                 if verticalMargin == nil { verticalMargin = max(0, d(value)) }
+            case 170:
+                let alignmentCode = i(value)
+                if (1...9).contains(alignmentCode) {
+                    rowStyleAlignmentCodes.append(alignmentCode)
+                }
+            case 280:
+                suppressTitle = i(value) != 0
+            case 281:
+                suppressHeader = i(value) != 0
             default:
                 break
             }
@@ -3097,9 +3181,20 @@ extension DXFReader {
         pos = idx
 
         guard handle != 0 else { return }
+        // The row-style blocks repeat in data/title/header order.
+        func alignmentCode(at index: Int) -> Int? {
+            rowStyleAlignmentCodes.indices.contains(index)
+                ? rowStyleAlignmentCodes[index]
+                : rowStyleAlignmentCodes.first
+        }
         tableStylesByHandle[handle] = TableStyleInfo(
             horizontalMargin: horizontalMargin ?? 0,
-            verticalMargin: verticalMargin ?? horizontalMargin ?? 0)
+            verticalMargin: verticalMargin ?? horizontalMargin ?? 0,
+            dataAlignmentCode: alignmentCode(at: 0),
+            titleAlignmentCode: alignmentCode(at: 1),
+            headerAlignmentCode: alignmentCode(at: 2),
+            suppressTitle: suppressTitle,
+            suppressHeader: suppressHeader)
     }
 
     private func resolveTableObjectGraphs() {
@@ -3168,6 +3263,50 @@ extension DXFReader {
     private func resolveTableStyles() {
         guard !tableStylesByHandle.isEmpty else { return }
 
+        func applyStyleAlignment(_ style: TableStyleInfo, to table: DXFTableEntity) {
+            // Row 0 is the title row and the next row the column-heading
+            // row, unless the style suppresses either; all other rows
+            // take the data row style. Only cells with no explicit
+            // group-170 override inherit (parseTable leaves those nil).
+            let titleRow = style.suppressTitle ? nil : 0
+            let headerRow = style.suppressHeader ? nil : (style.suppressTitle ? 0 : 1)
+            for rowIndex in table.data.rows.indices {
+                let code: Int?
+                if rowIndex == titleRow {
+                    code = style.titleAlignmentCode
+                } else if rowIndex == headerRow {
+                    code = style.headerAlignmentCode
+                } else {
+                    code = style.dataAlignmentCode
+                }
+                guard let code, (1...9).contains(code) else { continue }
+                let inherited = Self.tableAlignment(fromCode: code)
+                for cellIndex in table.data.rows[rowIndex].cells.indices
+                where table.data.rows[rowIndex].cells[cellIndex].horizontalAlignment == nil {
+                    table.data.rows[rowIndex].cells[cellIndex].horizontalAlignment =
+                        inherited.horizontal
+                    table.data.rows[rowIndex].cells[cellIndex].verticalAlignment =
+                        inherited.vertical
+                }
+            }
+
+            // Keep column/table defaults in step where every visible
+            // cell in the column now agrees on one alignment.
+            for columnIndex in table.data.columns.indices {
+                let alignments = Set(table.data.rows.compactMap { row -> DataTableCellAlignment? in
+                    guard row.cells.indices.contains(columnIndex) else { return nil }
+                    let cell = row.cells[columnIndex]
+                    return cell.coveredByMerge ? nil : cell.horizontalAlignment
+                })
+                if alignments.count == 1, let only = alignments.first {
+                    table.data.columns[columnIndex].alignment = only
+                }
+            }
+            if let dataCode = style.dataAlignmentCode, (1...9).contains(dataCode) {
+                table.data.cellAlignment = Self.tableAlignment(fromCode: dataCode).horizontal
+            }
+        }
+
         func resolve(_ list: [DXFEntity]) {
             for entity in list {
                 if let table = entity as? DXFTableEntity,
@@ -3175,6 +3314,7 @@ extension DXFReader {
                    let style = tableStylesByHandle[parseHandle(handleValue)] {
                     table.data.horizontalTextMargin = style.horizontalMargin
                     table.data.verticalTextMargin = style.verticalMargin
+                    applyStyleAlignment(style, to: table)
                 }
                 if let block = entity as? DXFBlockEntity {
                     resolve(block.entities)

@@ -977,7 +977,10 @@ public class DXFWriter {
             groups = [
                 DataTableRawDXFGroup(code: 171, value: "1"),
                 DataTableRawDXFGroup(code: 172, value: "0"),
-                DataTableRawDXFGroup(code: 173, value: "0"),
+                DataTableRawDXFGroup(code: 173, value: cell.coveredByMerge ? "1" : "0"),
+                DataTableRawDXFGroup(code: 174, value: "0"),
+                DataTableRawDXFGroup(code: 175, value: String(max(1, cell.colSpan))),
+                DataTableRawDXFGroup(code: 176, value: String(max(1, cell.rowSpan))),
                 DataTableRawDXFGroup(code: 170, value: "4"),
                 DataTableRawDXFGroup(code: 140, value: dxfFmt(table.textHeight)),
                 DataTableRawDXFGroup(code: 301, value: "CELL_VALUE"),
@@ -1001,6 +1004,9 @@ public class DXFWriter {
         var wroteAlignment = false
         var wroteStyle = false
         var wroteHeight = false
+        var wroteMerged = false
+        var wroteColSpan = false
+        var wroteRowSpan = false
 
         for index in groups.indices {
             let code = groups[index].code
@@ -1008,7 +1014,16 @@ public class DXFWriter {
             if code == 301, marker == "CELL_VALUE" { inValue = true }
             if code == 304, marker == "ACVALUE_END" { inValue = false }
 
-            if code == 170, !wroteAlignment {
+            if code == 173, !wroteMerged {
+                groups[index].value = cell.coveredByMerge ? "1" : "0"
+                wroteMerged = true
+            } else if code == 175, !wroteColSpan {
+                groups[index].value = String(max(1, cell.colSpan))
+                wroteColSpan = true
+            } else if code == 176, !wroteRowSpan {
+                groups[index].value = String(max(1, cell.rowSpan))
+                wroteRowSpan = true
+            } else if code == 170, !wroteAlignment {
                 groups[index].value = String(alignment)
                 wroteAlignment = true
             } else if code == 7, !wroteStyle, let style = table.textStyleName, !style.isEmpty {
@@ -1026,6 +1041,26 @@ public class DXFWriter {
             }
         }
 
+        if cell.coveredByMerge || cell.colSpan > 1 || cell.rowSpan > 1 {
+            var insertion = groups.firstIndex(where: { $0.code == 301 }) ?? groups.endIndex
+            if !wroteMerged {
+                groups.insert(
+                    DataTableRawDXFGroup(code: 173, value: cell.coveredByMerge ? "1" : "0"),
+                    at: insertion)
+                insertion += 1
+            }
+            if !wroteColSpan {
+                groups.insert(
+                    DataTableRawDXFGroup(code: 175, value: String(max(1, cell.colSpan))),
+                    at: insertion)
+                insertion += 1
+            }
+            if !wroteRowSpan {
+                groups.insert(
+                    DataTableRawDXFGroup(code: 176, value: String(max(1, cell.rowSpan))),
+                    at: insertion)
+            }
+        }
         if !wroteAlignment {
             let insertion = min(3, groups.count)
             groups.insert(DataTableRawDXFGroup(code: 170, value: String(alignment)), at: insertion)
