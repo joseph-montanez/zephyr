@@ -252,6 +252,73 @@ final class PDFMultiPageTests: XCTestCase {
                        "monochrome pen must not emit red dimension vectors or text")
     }
 
+    /// Drive Roller sheet regression: the paper-space border polyline is
+    /// ByLayer ACI 7 (white) with no per-primitive color. collectItems
+    /// inverts it to charcoal for a light page, but applyPlotStyles used
+    /// to recompute the raw layer color and plot it white-on-white —
+    /// invisibly erasing every table edge that coincides with the sheet
+    /// border (Parts List top/right, title-block bottom/right).
+    func testPlotStylePassKeepsACIWhiteInvertedWhenNoPenRecolors() throws {
+        let doc = makeDoc(color: .white)
+        addLine(to: doc)
+
+        let items = PDFExporter.collectItems(document: doc, isLightBackground: true)
+        for item in items {
+            if case .geometry(_, let color, _) = item {
+                XCTAssertEqual(
+                    color, ColorRGBA(r: 24, g: 24, b: 24),
+                    "collectItems must invert ACI white for a light page")
+            }
+        }
+
+        // Plot styles requested but no style sheet resolves (pen == nil):
+        // the pass may still run for lineweight/screening policy, but it
+        // must not restore the unadjusted white.
+        var settings = a3Settings()
+        settings.plotFlags |= 32 // PlotPlotStyles
+        settings.styleSheet = ""
+        let styled = PDFExporter.applyPlotStyles(
+            items: items, document: doc, settings: settings, plotTable: nil)
+        var sawGeometry = false
+        for item in styled {
+            if case .geometry(_, let color, _) = item {
+                sawGeometry = true
+                XCTAssertEqual(
+                    color, ColorRGBA(r: 24, g: 24, b: 24),
+                    "object-color plotting must keep ACI white as charcoal, not raw white")
+            }
+        }
+        XCTAssertTrue(sawGeometry)
+
+        // Page level: the rendered sheet must stroke charcoal, never white.
+        let catalog = PDFTextEmitter.PDFFontCatalog()
+        let tempDoc = CADDocument()
+        tempDoc.restore(from: doc.snapshot())
+        tempDoc.plotSettings = settings
+        tempDoc.layoutSettings = settings.layoutSettings
+        let page = try PDFExporter.renderPage(
+            document: tempDoc, backgroundColor: .white, catalog: catalog)
+        let content = String(decoding: page.contentData, as: UTF8.self)
+        XCTAssertFalse(
+            content.contains("1 1 1 RG"),
+            "no white strokes may reach a white page; got: \(content.prefix(800))")
+        XCTAssertTrue(
+            content.contains("0.0941 0.0941 0.0941 RG"),
+            "ACI white must stroke as charcoal; got: \(content.prefix(800))")
+    }
+
+    /// The catalog must be syntactically valid: /UseOutlines is a
+    /// /PageMode value, not a value-less ViewerPreferences key (strict
+    /// parsers such as MuPDF reject the whole catalog and see 0 pages).
+    func testCatalogUsesValidPageModeEntry() throws {
+        let doc = makeDoc()
+        addLine(to: doc)
+        let data = try PDFExporter.generatePDF(document: doc, backgroundColor: .white)
+        let text = pdfText(data)
+        XCTAssertTrue(text.contains("/PageMode /UseOutlines"))
+        XCTAssertFalse(text.contains("/None /UseOutlines"))
+    }
+
     // MARK: - Unchanged single-page behavior
 
     func testSinglePageWrapperMatchesMultiPage() throws {

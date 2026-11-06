@@ -457,7 +457,24 @@ public enum PDFExporter {
                     pen: pen,
                     objectLineweightMM: lwBase,
                     scaleLineweights: scaleLW, plotScale: plotScale)
-                var rgb = (resolved.r, resolved.g, resolved.b)
+                // Only a pen that explicitly recolors (ARGB override or
+                // grayscale) replaces the object color. No pen / an
+                // object-color pen must keep the color collectItems
+                // resolved, which already applied the source-aware
+                // light-page adjustment — restoring the raw color here
+                // plotted ACI 7 as raw white on white paper, erasing
+                // every table edge that coincides with such geometry
+                // (Drive Roller sheet border over the Parts List).
+                // Mirrors resolveTextPlotColor's display preservation.
+                var rgb: (UInt8, UInt8, UInt8)
+                switch pen?.colorPolicy {
+                case 5, 0 where pen?.colorARGB != nil:
+                    rgb = (resolved.r, resolved.g, resolved.b)
+                case 3:
+                    rgb = (resolved.r, resolved.g, resolved.b)
+                default:
+                    rgb = (color.r, color.g, color.b)
+                }
                 if screeningOn, resolved.screening01 < 1 {
                     // Screening = ink coverage: blend toward white paper.
                     let t = resolved.screening01
@@ -924,10 +941,12 @@ public enum PDFExporter {
         // At least 4 binary bytes with high bit set to flag binary content
         w.write("%\u{00E2}\u{00E3}\u{00CF}\u{00D3}\n")
 
-        // Catalog with PDF 1.7 UseOutlines viewer preference
+        // Catalog: /UseOutlines is a /PageMode value, not a
+        // ViewerPreferences key (a value-less key there makes the
+        // dictionary syntactically invalid for strict parsers).
         w.beginObject(catalogObj)
         w.write("<< /Type /Catalog /Pages \(pagesObj) 0 R")
-        w.write(" /ViewerPreferences << /PrintScaling /None /UseOutlines >> >>\n")
+        w.write(" /PageMode /UseOutlines /ViewerPreferences << /PrintScaling /None >> >>\n")
         w.endObject()
 
         // Pages (one dict per page: own MediaBox + Measure for mixed sizes)
