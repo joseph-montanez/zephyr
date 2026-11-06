@@ -195,14 +195,14 @@
       <span style="font-family:'Geist Mono'; font-size:10px; padding:2px 6px; border:1px solid var(--border); border-radius:4px; color:var(--text-3); margin-left:4px;">v0.1</span>
     </a>
     <div style="display:flex; gap:28px; font-size:14px; color:var(--text-2);">
-      <a href="#features" style-hover="color:var(--text);">Features</a>
+      <a href="#roles" style-hover="color:var(--text);">Who it's for</a>
       <a href="#multi-window" style-hover="color:var(--text);">Windows</a>
       <a href="#ribbon" style-hover="color:var(--text);">Ribbon</a>
       <a href="#compatibility" style-hover="color:var(--text);">Compatibility</a>
       <a href="#references" style-hover="color:var(--text);">References</a>
-      <a href="#proof" style-hover="color:var(--text);">Proof</a>
+      
       <a href="#autolisp" style-hover="color:var(--text);">AutoLISP</a>
-      <a href="#compare" style-hover="color:var(--text);">vs AutoCAD</a>
+      
       <a href="#opensource" style-hover="color:var(--text);">Open source</a>
     </div>
     <div style="display:flex; gap:10px; align-items:center;">
@@ -249,7 +249,7 @@
       <span style="font-family:'Instrument Serif', Georgia, serif; font-style:italic; font-weight:400; color:var(--accent); letter-spacing:-0.02em;">Free.</span>
     </h1>
     <p style="font-size:21px; line-height:1.45; max-width:660px; margin:0 auto; color:var(--text-2); text-wrap:balance;">
-      Zephyr is a GPU‑accelerated drafting app written from scratch in Swift. Metal on macOS, Direct3D&nbsp;12 on Windows, Vulkan on Linux. Read/Write DWG. Costs nothing.
+      Zephyr is a GPU‑accelerated 2D drafting app written from scratch in Swift. It opens and writes DWG and DXF, runs natively on macOS, Windows and Linux, and is free and open source. It is also a 0.1 in active development — <a href="#roles" style="color:var(--accent); text-decoration:underline;">see who it's ready for today</a>.
     </p>
     <div style="display:flex; gap:10px; justify-content:center; margin-top:40px; flex-wrap:wrap;">
       <a href="#download" style="display:inline-flex; align-items:center; gap:10px; padding:14px 22px; background:var(--text); color:var(--bg); border-radius:10px; font-size:15px; font-weight:500;" style-hover="background:var(--accent); color:var(--navy);">
@@ -281,7 +281,7 @@
   </div>
 
   <!-- ============ PRODUCT MOCK ============ -->
-  <div style="max-width:1240px; margin:80px auto 0; position:relative;">
+  <div style="max-width:1100px; margin:80px auto 0; position:relative;">
     <sc-if value="{{ theme !== 'light' }}">
       <img src="assets/zephyr-dark.png" alt="Zephyr CAD Application Screenshot" style="width:100%; border-radius:14px; box-shadow: var(--shadow-lg);">
     </sc-if>
@@ -291,219 +291,141 @@
   </div>
 </section>
 
-<!-- ============ TRUST STRIP ============ -->
-<section style="padding:60px 32px; border-top:1px solid var(--border-soft); border-bottom:1px solid var(--border-soft); background:var(--bg-elev);">
+<!-- ============ WHO IT'S FOR / MOVING FROM AUTOCAD LT ============ -->
+<section id="roles" style="padding:120px 32px; border-top:1px solid var(--border-soft);">
   <div style="max-width:1100px; margin:0 auto;">
-    <div style="text-align:center; font-family:'Geist Mono'; font-size:11px; color:var(--text-3); letter-spacing:0.16em; margin-bottom:36px;">BUILT NATIVE FOR EVERY PLATFORM YOU SHIP ON</div>
-    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:32px;">
-      <div style="text-align:center;">
-        <div style="font-size:42px; font-weight:600; letter-spacing:-0.03em; color:var(--accent);">$0</div>
-        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">vs $70/mo AutoCAD LT</div>
-      </div>
-      <div style="text-align:center;">
-        <div style="font-size:42px; font-weight:600; letter-spacing:-0.03em; color:var(--text);">967</div>
-        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">entities, instant render</div>
-      </div>
-      <div style="text-align:center;">
-        <div style="font-size:42px; font-weight:600; letter-spacing:-0.03em; color:var(--text);">9×9</div>
-        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">pixel‑perfect GPU picking</div>
-      </div>
-      <div style="text-align:center;">
-        <div style="font-size:42px; font-weight:600; letter-spacing:-0.03em; color:var(--text);">256</div>
-        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">undo depth</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ============ NATIVE SECTION ============ -->
-<section id="features" style="padding:120px 32px;">
-  <div style="max-width:1100px; margin:0 auto;">
-    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">01 · ESCAPE THE RENT TRAP</div>
-    <h2 style="font-size:56px; line-height:1.1; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:880px; text-wrap:balance;">
-      Own nothing and be happy?<br>Break free from constant price hikes.
+    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">01 · WHO IT'S FOR</div>
+    <h2 style="font-size:56px; line-height:1.05; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:880px; text-wrap:balance;">
+      Moving from AutoCAD LT? Start with your role.
     </h2>
-    <div style="font-size:18px; line-height:1.6; max-width:820px; color:var(--text-2); margin:0 0 48px;">
-      <p style="margin-bottom:20px;">
-        If you look at the subscription costs for AutoCAD LT, it's <strong>$540 a year</strong> if you pay upfront, or a massive markup to <strong>$840 a year</strong> if you have to pay monthly. They use aggressive marketing to lock you into 3-year commitments just to avoid price hikes, and the second you stop paying, you own absolutely nothing.
+    <div style="font-size:18px; line-height:1.6; max-width:820px; color:var(--text-2); margin:0 0 20px;">
+      <p style="margin:0 0 16px;">
+        Zephyr is free, open-source (GPL v3) 2D drafting software in active development — v0.1, updated nightly. It is not finished, and it is not the right move for every AutoCAD LT seat today.
       </p>
-      <p style="margin-bottom:20px;">
-        On top of that, finding great cross-platform tools that treat macOS and Linux as first-class citizens is a nightmare. Most polished solutions are strictly Windows-only. For example, while Autodesk finally added AutoLISP support to AutoCAD LT on Windows recently (2024), their official documentation explicitly states that AutoLISP is completely blocked on AutoCAD LT for Mac. If you're on a Mac and need LISP automation, they force you to step up to the full AutoCAD license at over <strong>$2,000 a year</strong>.
-      </p>
-      <p style="font-size:16px; color:var(--text-3); border-left: 3px solid var(--accent); padding-left: 16px; margin-top: 28px;">
-        <em>Note:</em> We highly encourage looking at other excellent free open-source software like <strong>QCAD</strong>, <strong>LibreCAD</strong>, <strong>FreeCAD</strong>, <strong>SolveSpace</strong>, and <strong>Open 2D Studio</strong> as powerful options to try in your drafting workflows. Zephyr exists alongside these community solutions as a performance-oriented alternative, utilizing Direct3D 12 on Windows, Metal on macOS, and Vulkan on Linux through a single Swift GPU pipeline to feel native on all three.
+      <p style="margin:0;">
+        So here is the honest version, role by role: what works now, what to check on your own files before you rely on it, and where you should keep LT for the time being. Status as of November 2026; this page changes as the software does.
       </p>
     </div>
-    <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:1px; background:var(--border-soft); border:1px solid var(--border-soft); border-radius:14px; overflow:hidden;">
-      <!-- mac card -->
-      <div style="background:var(--bg-elev); padding:36px;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="var(--text)"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
-          <div style="font-size:20px; font-weight:600;">macOS</div>
-        </div>
-        <div style="font-family:'Geist Mono'; font-size:13px; color:var(--text-2); margin-bottom:24px;">Metal · x64 + ARM64</div>
-        <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; font-size:14px; color:var(--text-2);">
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Universal binary, Apple silicon native</li>
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Real Cmd shortcuts, real trackpad gestures</li>
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> High DPI on every external display</li>
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Drag‑and‑drop to open files</li>
-        </ul>
-      </div>
-      <!-- win card -->
-      <div style="background:var(--bg-elev); padding:36px;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="var(--text)"><path d="M3 5.5L10.5 4.5v7H3v-6zM11.5 4.4L21 3v8.5h-9.5v-7.1zM3 12.5h7.5v7L3 18.5v-6zM11.5 12.5H21V21l-9.5-1.4v-7.1z"/></svg>
-          <div style="font-size:20px; font-weight:600;">Windows</div>
-        </div>
-        <div style="font-family:'Geist Mono'; font-size:13px; color:var(--text-2); margin-bottom:24px;">Direct3D 12 · x64 + ARM64</div>
-        <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; font-size:14px; color:var(--text-2);">
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Native ARM64 — runs natively on Snapdragon &amp; Surface</li>
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> No .NET install, no Visual C++ runtime</li>
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Portable .zip — no installer or extra runtimes to fetch</li>
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Per‑monitor DPI, multi‑display ready</li>
-        </ul>
-      </div>
-      <!-- linux card -->
-      <div style="background:var(--bg-elev); padding:36px;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-          <div style="font-size:20px; font-weight:600;">Linux</div>
-        </div>
-        <div style="font-family:'Geist Mono'; font-size:13px; color:var(--text-2); margin-bottom:24px;">Vulkan · x64 + ARM64 + Snap</div>
-        <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; font-size:14px; color:var(--text-2);">
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Native Vulkan renderer, same GPU pipeline</li>
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Ubuntu 24.04+, plain .zip or confined Snap</li>
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> Runs on WSL2 with WSLg</li>
-          <li style="display:flex; gap:10px;"><span style="color:var(--accent);">✓</span> DWG via ODA AppImage, one command to install</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section>
+    <p style="font-size:14px; line-height:1.6; color:var(--text-3); max-width:820px; margin:0 0 56px;">
+      The same limits as LT apply, on purpose: Zephyr is 2D only. There is no 3D, no discipline-specific toolset, and no way to create parametric constraints (LT can't create them either; our solver is still in development). If those are the reason you'd leave LT, Zephyr is not the answer today.
+    </p>
 
-<!-- ============ CLEAN SPECKLES ============ -->
-<section style="padding:120px 32px; background:var(--bg-elev); border-top:1px solid var(--border-soft); border-bottom:1px solid var(--border-soft);">
-  <div style="max-width:1180px; margin:0 auto;">
-    <div style="display:grid; grid-template-columns: 1fr 1.1fr; gap:80px; align-items:center;">
-      <div>
-        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">02 · CLEAN SPECKLES</div>
-        <h2 style="font-size:48px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; text-wrap:balance;">
-          The dirty‑DXF janitor you've always wanted.
-        </h2>
-        <p style="font-size:17px; line-height:1.55; color:var(--text-2); margin:0 0 24px;">
-          Scanned a paper drawing? Imported a forty‑year‑old DXF? You know the speckles — tiny stray dots and dashes scattered through the geometry.
-        </p>
-        <p style="font-size:17px; line-height:1.55; color:var(--text-2); margin:0 0 32px;">
-          Point Zephyr at one. It learns the color and size signature, finds every match across the drawing, and lets you erase them in one motion. <span style="color:var(--text); font-weight:500;">No regex. No script. No half‑day cleanup.</span>
-        </p>
-        <div style="display:flex; gap:12px; align-items:center;">
-          <button onClick="{{ toggleSpeckles }}" style="padding:10px 18px; background:var(--accent); color:var(--navy); border-radius:8px; font-size:14px; font-weight:500;" style-hover="background:var(--accent-2);">
-            <sc-if value="{{ specklesActive }}" hint-placeholder-val="{{ false }}">Restore speckles</sc-if>
-            <sc-if value="{{ specklesInactive }}" hint-placeholder-val="{{ true }}">Try it — CS</sc-if>
-          </button>
-          <span style="font-family:'Geist Mono'; font-size:12px; color:var(--text-3);">command: <span style="color:var(--text-2);">CS</span> or <span style="color:var(--text-2);">SPECKLES</span></span>
+    <div style="border-top:1px solid var(--border-soft);">
+
+      <!-- Role 1 -->
+      <div style="display:grid; grid-template-columns: 280px 1fr; gap:40px; padding:36px 0; border-bottom:1px solid var(--border-soft);">
+        <div>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); margin-bottom:8px;">ROLE 1</div>
+          <div style="font-size:22px; font-weight:600; letter-spacing:-0.015em; margin-bottom:10px;">Drafter / CAD technician</div>
+          <div style="display:inline-block; font-family:'Geist Mono'; font-size:10px; padding:3px 8px; background:var(--accent); color:var(--navy); border-radius:3px;">CLOSEST FIT TODAY</div>
+          <p style="font-size:14px; line-height:1.55; color:var(--text-2); margin:16px 0 0;">In LT you spend the day producing and revising 2D drawings: draw, modify, dimension, annotate, keep layers and blocks tidy, plot.</p>
+        </div>
+        <div style="font-size:15px; line-height:1.6; color:var(--text-2);">
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">WORKS IN ZEPHYR TODAY</div>
+          <p style="margin:0 0 20px;">The aliases your fingers know (<span style="font-family:'Geist Mono'; font-size:13px;">L · PL · C · REC · M · O · TR · J</span> and the rest), snaps, polar and object-snap tracking, grips, layers with viewport overrides, blocks with in-place editing (<span style="font-family:'Geist Mono'; font-size:13px;">BEDIT</span>), dimensions, multileaders, tables, layouts, and <span style="font-family:'Geist Mono'; font-size:13px;">PLOT</span>/<span style="font-family:'Geist Mono'; font-size:13px;">PUBLISH</span> to PDF. DWG and DXF round-trip; core AutoLISP routines run.</p>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">CHECK BEFORE YOU RELY ON IT</div>
+          <p style="margin:0;">DWG needs a one-time ODA converter install (<span style="font-family:'Geist Mono'; font-size:13px;">INSTALLODA</span>) — native in-process DWG is on the roadmap, not shipped. Test-plot a sheet with your own CTB/STB tables, and work on copies while you learn where the rough edges are. Nightly builds move fast.</p>
         </div>
       </div>
-      <!-- demo card -->
-      <div style="background:var(--canvas); border:1px solid var(--border); border-radius:14px; overflow:hidden; box-shadow: var(--shadow-lg); position:relative;">
-        <div style="height:34px; background:var(--bg-panel); border-bottom:1px solid var(--border-soft); display:flex; align-items:center; gap:8px; padding:0 12px;">
-          <span style="width:10px; height:10px; border-radius:50%; background:#ff5f57;"></span>
-          <span style="width:10px; height:10px; border-radius:50%; background:#febc2e;"></span>
-          <span style="width:10px; height:10px; border-radius:50%; background:#28c840;"></span>
-          <div style="flex:1; text-align:center; font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">survey_2018.dxf · selecting matches</div>
-        </div>
-        <div style="position:relative; height:380px;">
-          <svg viewBox="0 0 560 380" style="position:absolute; inset:0; width:100%; height:100%;">
-            <!-- main lines (real geometry) -->
-            <g stroke="var(--canvas-line)" stroke-width="1.2" fill="none">
-              <path d="M 60 80 L 500 80 L 500 320 L 60 320 Z"/>
-              <path d="M 60 200 L 500 200"/>
-              <path d="M 280 80 L 280 320"/>
-              <path d="M 120 80 L 120 200"/>
-              <path d="M 400 200 L 400 320"/>
-            </g>
-            <g stroke="var(--canvas-dim)" stroke-width="0.6" fill="none">
-              <line x1="60" y1="50" x2="500" y2="50"/>
-              <line x1="60" y1="46" x2="60" y2="54"/>
-              <line x1="280" y1="46" x2="280" y2="54"/>
-              <line x1="500" y1="46" x2="500" y2="54"/>
-            </g>
-            <text x="170" y="42" fill="var(--canvas-dim)" font-family="Geist Mono" font-size="9" text-anchor="middle">18'-4"</text>
-            <text x="390" y="42" fill="var(--canvas-dim)" font-family="Geist Mono" font-size="9" text-anchor="middle">18'-4"</text>
-            <text x="170" y="150" fill="var(--canvas-line)" font-family="Geist Mono" font-size="11" text-anchor="middle">ROOM A</text>
-            <text x="390" y="150" fill="var(--canvas-line)" font-family="Geist Mono" font-size="11" text-anchor="middle">ROOM B</text>
-            <text x="170" y="270" fill="var(--canvas-line)" font-family="Geist Mono" font-size="11" text-anchor="middle">ROOM C</text>
-            <text x="450" y="270" fill="var(--canvas-line)" font-family="Geist Mono" font-size="11" text-anchor="middle">ROOM D</text>
 
-            <!-- speckles -->
-            <g fill="var(--canvas-red)" style="transition: opacity 600ms ease; opacity: {{ speckleOpacity }};">
-              <circle cx="92" cy="124" r="1.4"/>
-              <circle cx="156" cy="98" r="1.2"/>
-              <circle cx="218" cy="156" r="1.6"/>
-              <circle cx="84" cy="186" r="1.1"/>
-              <circle cx="244" cy="184" r="1.3"/>
-              <circle cx="332" cy="112" r="1.5"/>
-              <circle cx="404" cy="142" r="1.2"/>
-              <circle cx="466" cy="108" r="1.4"/>
-              <circle cx="356" cy="172" r="1.3"/>
-              <circle cx="438" cy="186" r="1.5"/>
-              <circle cx="102" cy="232" r="1.3"/>
-              <circle cx="174" cy="284" r="1.4"/>
-              <circle cx="232" cy="248" r="1.2"/>
-              <circle cx="86" cy="304" r="1.5"/>
-              <circle cx="244" cy="306" r="1.3"/>
-              <circle cx="332" cy="252" r="1.4"/>
-              <circle cx="392" cy="294" r="1.2"/>
-              <circle cx="448" cy="246" r="1.5"/>
-              <circle cx="476" cy="292" r="1.3"/>
-              <circle cx="142" cy="246" r="1.4"/>
-              <line x1="198" y1="116" x2="206" y2="118" stroke="var(--canvas-red)" stroke-width="0.8"/>
-              <line x1="364" y1="232" x2="372" y2="234" stroke="var(--canvas-red)" stroke-width="0.8"/>
-              <line x1="118" y1="266" x2="124" y2="262" stroke="var(--canvas-red)" stroke-width="0.8"/>
-              <line x1="420" y1="116" x2="426" y2="120" stroke="var(--canvas-red)" stroke-width="0.8"/>
-            </g>
-            <!-- selection halos when active -->
-            <g fill="none" stroke="var(--accent)" stroke-width="0.8" style="transition: opacity 400ms ease; opacity: {{ haloOpacity }};">
-              <circle cx="92" cy="124" r="5"/>
-              <circle cx="156" cy="98" r="5"/>
-              <circle cx="218" cy="156" r="5"/>
-              <circle cx="84" cy="186" r="5"/>
-              <circle cx="244" cy="184" r="5"/>
-              <circle cx="332" cy="112" r="5"/>
-              <circle cx="404" cy="142" r="5"/>
-              <circle cx="466" cy="108" r="5"/>
-              <circle cx="356" cy="172" r="5"/>
-              <circle cx="438" cy="186" r="5"/>
-              <circle cx="102" cy="232" r="5"/>
-              <circle cx="174" cy="284" r="5"/>
-              <circle cx="232" cy="248" r="5"/>
-              <circle cx="86" cy="304" r="5"/>
-              <circle cx="244" cy="306" r="5"/>
-              <circle cx="332" cy="252" r="5"/>
-              <circle cx="392" cy="294" r="5"/>
-              <circle cx="448" cy="246" r="5"/>
-              <circle cx="476" cy="292" r="5"/>
-              <circle cx="142" cy="246" r="5"/>
-            </g>
-          </svg>
-          <!-- toolbar overlay -->
-          <div style="position:absolute; top:14px; left:14px; display:flex; gap:6px; font-family:'Geist Mono'; font-size:10px;">
-            <div style="background:var(--bg-elev); border:1px solid var(--border); padding:4px 8px; border-radius:4px; color:var(--text-2);">SAMPLE: <span style="color:var(--canvas-red);">●</span> red · 1.5pt</div>
-            <div style="background:var(--bg-elev); border:1px solid var(--border); padding:4px 8px; border-radius:4px; color:var(--text-2);">MATCHES: <span style="color:var(--accent);">{{ matchCount }}</span></div>
-          </div>
-          <div style="position:absolute; bottom:14px; right:14px; background:var(--bg-elev); border:1px solid var(--border); padding:8px 12px; border-radius:6px; font-family:'Geist Mono'; font-size:11px; color:var(--text); display:flex; gap:10px; align-items:center;">
-            <span style="color:var(--text-3);">›</span><span>{{ specklesPrompt }}</span>
-          </div>
+      <!-- Role 2 -->
+      <div style="display:grid; grid-template-columns: 280px 1fr; gap:40px; padding:36px 0; border-bottom:1px solid var(--border-soft);">
+        <div>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); margin-bottom:8px;">ROLE 2</div>
+          <div style="font-size:22px; font-weight:600; letter-spacing:-0.015em; margin-bottom:10px;">Architect / architectural designer</div>
+          <div style="display:inline-block; font-family:'Geist Mono'; font-size:10px; padding:3px 8px; border:1px solid var(--accent); color:var(--accent); border-radius:3px;">PILOT A SMALL JOB FIRST</div>
+          <p style="font-size:14px; line-height:1.55; color:var(--text-2); margin:16px 0 0;">In LT you produce floor plans, elevations, sections and details, coordinate consultant drawings as xrefs, and issue plotted sets.</p>
+        </div>
+        <div style="font-size:15px; line-height:1.6; color:var(--text-2);">
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">WORKS IN ZEPHYR TODAY</div>
+          <p style="margin:0 0 20px;">External references with a proper palette — status, reload flags, clipping, <span style="font-family:'Geist Mono'; font-size:13px;">Bind</span>/<span style="font-family:'Geist Mono'; font-size:13px;">Detach</span> — plus image and PDF underlays, paper-space layouts with viewports, page setups, sheet sets (<span style="font-family:'Geist Mono'; font-size:13px;">.dst</span>), and batch <span style="font-family:'Geist Mono'; font-size:13px;">PUBLISH</span> to multi-sheet PDF.</p>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">CHECK BEFORE YOU RELY ON IT</div>
+          <p style="margin:0;">Run one small job end to end — title blocks, xref updates, a full plotted set — and open the output back in LT or your usual viewer before anything is issued. In-place xref editing (<span style="font-family:'Geist Mono'; font-size:13px;">REFEDIT</span>) isn't there yet: open the source drawing, or Bind. PDF underlays render at a fixed resolution rather than re-rendering as you zoom.</p>
+        </div>
+      </div>
+
+      <!-- Role 3 -->
+      <div style="display:grid; grid-template-columns: 280px 1fr; gap:40px; padding:36px 0; border-bottom:1px solid var(--border-soft);">
+        <div>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); margin-bottom:8px;">ROLE 3</div>
+          <div style="font-size:22px; font-weight:600; letter-spacing:-0.015em; margin-bottom:10px;">Engineer</div>
+          <div style="display:inline-block; font-family:'Geist Mono'; font-size:10px; padding:3px 8px; border:1px solid var(--accent); color:var(--accent); border-radius:3px;">PILOT BESIDE LT</div>
+          <p style="font-size:14px; line-height:1.55; color:var(--text-2); margin:16px 0 0;">Mechanical, electrical, civil and structural 2D work in LT: part and assembly drawings, schematics, schedules, details that other people build from.</p>
+        </div>
+        <div style="font-size:15px; line-height:1.6; color:var(--text-2);">
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">WORKS IN ZEPHYR TODAY</div>
+          <p style="margin:0 0 20px;">Precise geometry including NURBS splines, arrays, <span style="font-family:'Geist Mono'; font-size:13px;">MEASURE</span>/<span style="font-family:'Geist Mono'; font-size:13px;">DIVIDE</span> and hover Quick Measure; the full dimension set with styles, multileaders, tables, attributed blocks, and real SHX text so vendor drawings read the way they were authored.</p>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">CHECK BEFORE YOU RELY ON IT</div>
+          <p style="margin:0;">Your symbol and block library is the test: open your most complex library drawings, edit copies, save, and verify them in LT before trusting the round-trip. If your standards lean on a specific annotation or tolerance workflow, prove it on one real drawing first. Like LT, there are no discipline toolsets here — this is general 2D drafting.</p>
+        </div>
+      </div>
+
+      <!-- Role 4 -->
+      <div style="display:grid; grid-template-columns: 280px 1fr; gap:40px; padding:36px 0; border-bottom:1px solid var(--border-soft);">
+        <div>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); margin-bottom:8px;">ROLE 4</div>
+          <div style="font-size:22px; font-weight:600; letter-spacing:-0.015em; margin-bottom:10px;">Construction professional</div>
+          <div style="display:inline-block; font-family:'Geist Mono'; font-size:10px; padding:3px 8px; background:var(--accent); color:var(--navy); border-radius:3px;">GOOD FIT: REVIEW + LIGHT EDITING</div>
+          <p style="font-size:14px; line-height:1.55; color:var(--text-2); margin:16px 0 0;">In LT you open what consultants and suppliers send you, check dimensions, produce as-builts and shop sketches, and print PDFs for the field.</p>
+        </div>
+        <div style="font-size:15px; line-height:1.6; color:var(--text-2);">
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">WORKS IN ZEPHYR TODAY</div>
+          <p style="margin:0 0 20px;">Opens DWG, DXF and PDF; hover measurement with <span style="font-family:'Geist Mono'; font-size:13px;">MEASUREGEOM</span>; image and PDF underlays for tracing and as-builts; <span style="font-family:'Geist Mono'; font-size:13px;">CLEANSPECKLES</span> (<span style="font-family:'Geist Mono'; font-size:13px;">CS</span>) to sample a stray mark from a scanned drawing and erase every match; PDF export with a Bluebeam-compatible measurement dictionary, so the next person can take quantities off your file.</p>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">CHECK BEFORE YOU RELY ON IT</div>
+          <p style="margin:0;">DWF and DGN underlays don't render yet. And for anything contractual, round-trip a copy and compare it in your current viewer before a Zephyr-saved file goes out the door.</p>
+        </div>
+      </div>
+
+      <!-- Role 5 -->
+      <div style="display:grid; grid-template-columns: 280px 1fr; gap:40px; padding:36px 0; border-bottom:1px solid var(--border-soft);">
+        <div>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); margin-bottom:8px;">ROLE 5</div>
+          <div style="font-size:22px; font-weight:600; letter-spacing:-0.015em; margin-bottom:10px;">Designer</div>
+          <div style="display:inline-block; font-family:'Geist Mono'; font-size:10px; padding:3px 8px; border:1px solid var(--accent); color:var(--accent); border-radius:3px;">WORTH A PILOT FOR 2D LAYOUT WORK</div>
+          <p style="font-size:14px; line-height:1.55; color:var(--text-2); margin:16px 0 0;">Interiors, space planning, exhibits and fabrication drawings in LT: layout plans built from block libraries, schedules, and sheets someone else prices or builds from.</p>
+        </div>
+        <div style="font-size:15px; line-height:1.6; color:var(--text-2);">
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">WORKS IN ZEPHYR TODAY</div>
+          <p style="margin:0 0 20px;">Plan layout with blocks and attributed blocks, image and PDF underlays to draw over, hatches and gradient fills with true-color support, tables for schedules, and the same layouts/plotting path as everyone above.</p>
+          <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">CHECK BEFORE YOU RELY ON IT</div>
+          <p style="margin:0;">Test your block library and a plotted sheet first, like everyone else on this list. And be clear about scope: there is no 3D or rendering here — same as LT — so if your workflow depends on visualization, you'll still need other tools beside either one.</p>
         </div>
       </div>
     </div>
+
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-top:48px;">
+      <div style="border:1px solid var(--border-soft); border-radius:12px; padding:28px; background:var(--bg-elev);">
+        <div style="font-size:17px; font-weight:600; margin-bottom:14px;">Not ready yet — for every role</div>
+        <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:10px; font-size:14px; line-height:1.55; color:var(--text-2);">
+          <li style="display:flex; gap:10px;"><span style="color:var(--text-3); flex-shrink:0;">—</span><span><strong style="color:var(--text); font-weight:500;">Native DWG.</strong> Today DWG goes through the ODA FileConverter (one install command). An in-process Swift DWG codec is planned.</span></li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--text-3); flex-shrink:0;">—</span><span><strong style="color:var(--text); font-weight:500;">REFEDIT</strong> in-place editing of referenced drawings.</span></li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--text-3); flex-shrink:0;">—</span><span><strong style="color:var(--text); font-weight:500;">AutoLISP Tier 2.</strong> DCL dialogs, reactors and most of the <span style="font-family:'Geist Mono'; font-size:12px;">vla-*</span>/<span style="font-family:'Geist Mono'; font-size:12px;">vlax-*</span> object model report clean errors today instead of running.</span></li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--text-3); flex-shrink:0;">—</span><span><strong style="color:var(--text); font-weight:500;">DWF/DGN underlays</strong> parse but don't render; PDF underlays don't re-render on zoom.</span></li>
+          <li style="display:flex; gap:10px;"><span style="color:var(--text-3); flex-shrink:0;">—</span><span><strong style="color:var(--text); font-weight:500;">Parametric constraints.</strong> The data model is in; the solver and its commands are still to be programmed.</span></li>
+        </ul>
+      </div>
+      <div style="border:1px solid var(--border-soft); border-radius:12px; padding:28px; background:var(--bg-elev);">
+        <div style="font-size:17px; font-weight:600; margin-bottom:14px;">How to evaluate it safely</div>
+        <ol style="padding:0 0 0 18px; margin:0; display:flex; flex-direction:column; gap:10px; font-size:14px; line-height:1.55; color:var(--text-2);">
+          <li>Copy a finished, real job — not a sample file — and work only on the copy.</li>
+          <li>Do the work you actually do: edit, xref, dimension, plot the set to PDF.</li>
+          <li>Open everything Zephyr saved back in AutoCAD LT or your usual viewer and compare.</li>
+          <li>Keep your LT seat until a pilot job has gone out the door clean. Switching costs nothing; switching back mid-deadline does.</li>
+        </ol>
+        <p style="font-size:13px; line-height:1.55; color:var(--text-3); margin:16px 0 0;">Found a gap that blocks your role? <a href="https://github.com/joseph-montanez/zephyr/issues" style="color:var(--accent); text-decoration:underline;">File it</a> — that list is what sets the roadmap order.</p>
+      </div>
+    </div>
+
+    <p style="font-size:13px; line-height:1.6; color:var(--text-3); margin:28px 0 0; max-width:820px;">
+      Runs natively on macOS (Metal, universal binary), Windows (Direct3D 12, x64 and ARM64 — including Snapdragon/Surface machines) and Linux (Vulkan, x64 and ARM64; AppImage, Flatpak, Snap or portable zip). Portable downloads, no account, no telemetry. Other free 2D tools are worth your time too — QCAD, LibreCAD, FreeCAD and SolveSpace among them; try more than one on the same pilot job and keep the one that survives your files.
+    </p>
   </div>
 </section>
 
 <!-- ============ COMPATIBILITY ============ -->
 <section id="compatibility" style="padding:120px 32px;">
   <div style="max-width:1100px; margin:0 auto;">
-    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">03 · COMPATIBILITY</div>
+    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">02 · COMPATIBILITY</div>
     <h2 style="font-size:56px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:880px; text-wrap:balance;">
       Opens the files everyone else hands you.
     </h2>
@@ -546,11 +468,13 @@
     </div>
     <div style="margin-top:32px; padding:20px 24px; background:var(--bg-elev); border:1px solid var(--border-soft); border-radius:10px; display:flex; align-items:center; gap:16px; font-size:14px; color:var(--text-2);">
       <span style="width:6px; height:6px; border-radius:50%; background:var(--accent); flex-shrink:0;"></span>
-      <span><span style="color:var(--text); font-weight:500;">SHX vector text included.</span> Full shape‑font byte‑code interpreter — AutoCAD .shx files render as pure vectors at any zoom. Bitmap text degradation is a problem from 2009.</span>
+      <span><span style="color:var(--text); font-weight:500;">SHX vector text included.</span> Full shape‑font byte‑code interpreter — AutoCAD .shx files render as pure vectors at any zoom, the way they were authored.</span>
     </div>
     <div style="margin-top:16px; padding:20px 24px; background:var(--bg-elev); border:1px solid var(--border-soft); border-radius:10px; display:flex; align-items:center; gap:16px; font-size:14px; color:var(--text-2); line-height:1.55;">
       <span style="width:6px; height:6px; border-radius:50%; background:var(--accent); flex-shrink:0;"></span>
       <span><span style="color:var(--text); font-weight:500;">AutoCAD workspace names where they fit.</span> <span style="font-family:'Geist Mono'; font-size:12px;">FILETAB</span>, <span style="font-family:'Geist Mono'; font-size:12px;">FILETABCLOSE</span>, <span style="font-family:'Geist Mono'; font-size:12px;">VPORTS</span>, <span style="font-family:'Geist Mono'; font-size:12px;">VPMAX</span>, and <span style="font-family:'Geist Mono'; font-size:12px;">VPMIN</span> follow the familiar names; Zephyr then extends panes beyond same-drawing viewports. <a href="#multi-window" style="color:var(--accent); text-decoration:underline;">See the exact commands and differences →</a></span>
+
+    </div>
 
     <div id="references" style="margin-top:64px; scroll-margin-top:96px;">
       <div style="max-width:820px; margin-bottom:40px;">
@@ -584,137 +508,18 @@
         Loading is asynchronous and capped (32 drawing xrefs, depth 16, 5M primitives per tab) so a heavy reference set can't stall the canvas. Paths save relative by default (REFPATHTYPE), dependent layers arrive as Xref|Layer under VISRETAIN, and XDWGFADECTL dims reference geometry so your own linework stays readable. Clips write back as standard SPATIAL_FILTER objects.
       </p>
     </div>
-    </div>
-  </div>
-</section>
-
-<!-- ============ PROOF / DXF DUEL ============ -->
-<section id="proof" style="padding:120px 32px; border-top:1px solid var(--border-soft);">
-  <div style="max-width:1380px; margin:0 auto;">
-    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">04 · PROOF</div>
-    <h2 style="font-size:56px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:980px; text-wrap:balance;">
-      Same file. Two apps.<br>
-      <span style="color:var(--text-2);">One actually opens it.</span>
-    </h2>
-    <p style="font-size:18px; line-height:1.5; max-width:720px; color:var(--text-2); margin:0 0 24px;">
-      Same DXF — <span style="font-family:'Geist Mono'; font-size:15px; color:var(--text);">186‑841 — Pirate Ship.dxf</span>, a 3,734‑entity drawing from KOMPAN's public library. Same machine. Same operation: File → Open → Fit to view.
-    </p>
-    <div style="display:flex; gap:14px; flex-wrap:wrap; font-family:'Geist Mono'; font-size:11px; color:var(--text-3); margin:0 0 48px;">
-      <span style="display:inline-flex; align-items:center; gap:6px;"><span style="width:6px; height:6px; border-radius:50%; background:var(--accent);"></span> Zephyr 0.1</span>
-      <span style="opacity:0.4;">·</span>
-      <span>LibreCAD 2.2.1.5</span>
-      <span style="opacity:0.4;">·</span>
-      <span>June 2026 builds</span>
-    </div>
-
-    <!-- example switcher -->
-    <div style="display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:24px; flex-wrap:wrap;">
-      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <sc-for list="{{ proofExamples }}" as="ex" hint-placeholder-count="2">
-          <button onClick="{{ ex.select }}" style="display:flex; align-items:center; gap:10px; padding:10px 16px; border-radius:8px; border:1px solid {{ ex.borderColor }}; background:{{ ex.bgColor }}; color:{{ ex.textColor }}; font-size:13px; font-family:'Geist Mono'; cursor:pointer; transition: border-color 200ms, background 200ms, color 200ms;">
-            <span style="font-size:11px; color:{{ ex.tagColor }};">{{ ex.tag }}</span>
-            <span style="font-family:'Geist', system-ui, sans-serif; font-size:14px; font-weight:500;">{{ ex.title }}</span>
-          </button>
-        </sc-for>
-      </div>
-      <div style="display:flex; align-items:center; gap:10px;">
-        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">{{ proofPositionLabel }}</div>
-        <button onClick="{{ proofPrev }}" aria-label="Previous example" style="width:36px; height:36px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text-2); display:flex; align-items:center; justify-content:center;" style-hover="border-color:var(--text); color:var(--text);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
-        </button>
-        <button onClick="{{ proofNext }}" aria-label="Next example" style="width:36px; height:36px; border-radius:8px; border:1px solid var(--border); background:transparent; color:var(--text-2); display:flex; align-items:center; justify-content:center;" style-hover="border-color:var(--text); color:var(--text);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-        </button>
-      </div>
-    </div>
-
-    <!-- slider viewport -->
-    <div style="overflow:hidden; border-radius:14px;">
-      <div style="display:flex; transform: translateX({{ proofTrackTranslate }}); transition: transform 480ms cubic-bezier(0.22, 0.61, 0.36, 1); width:100%;">
-        <sc-for list="{{ proofExamples }}" as="ex" hint-placeholder-count="0">
-          <div style="flex:0 0 100%; min-width:0;">
-            <!-- caption -->
-            <div style="display:flex; align-items:baseline; gap:16px; margin-bottom:20px; flex-wrap:wrap;">
-              <div style="font-size:24px; font-weight:600; letter-spacing:-0.02em;">{{ ex.subhead }}</div>
-              <div style="font-size:14px; color:var(--text-2); line-height:1.5; max-width:720px;">{{ ex.caption }}</div>
-            </div>
-
-            <!-- two cards -->
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:24px; align-items:stretch;">
-
-              <!-- ZEPHYR -->
-              <div style="display:flex; flex-direction:column; gap:14px;">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-                  <div style="display:flex; align-items:center; gap:10px;">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="color:var(--accent);">
-                      <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.4"/>
-                      <path d="M12 3 L14.4 11.6 L12 14 L9.6 11.6 Z" fill="currentColor"/>
-                      <path d="M3 12 L11.6 9.6 L14 12 L11.6 14.4 Z" fill="currentColor" opacity="0.4"/>
-                    </svg>
-                    <div style="font-size:18px; font-weight:600; letter-spacing:-0.01em;">Zephyr 0.1</div>
-                    <div style="font-family:'Geist Mono'; font-size:11px; padding:2px 7px; background:rgba(67,198,106,0.15); color:#43c66a; border:1px solid rgba(67,198,106,0.35); border-radius:3px;">{{ ex.zephyrBadge }}</div>
-                  </div>
-                  <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">{{ ex.zephyrMetric }}</div>
-                </div>
-                <div style="border:1px solid var(--accent); border-radius:10px; overflow:hidden; box-shadow: 0 0 0 6px rgba(224,171,54,0.08), var(--shadow-lg); background:{{ ex.zephyrCanvasBg }}; position:relative; aspect-ratio: 16 / 9;">
-                  <img src="{{ ex.zephyrImg }}" alt="{{ ex.zephyrAlt }}" style="display:block; width:100%; height:100%; object-fit:cover; object-position:center;">
-                </div>
-                <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; font-size:13px; color:var(--text-2);">
-                  <sc-for list="{{ ex.zephyrPoints }}" as="pt" hint-placeholder-count="3">
-                    <li style="display:flex; gap:10px;"><span style="color:#43c66a; flex-shrink:0;">✓</span> <span>{{ pt }}</span></li>
-                  </sc-for>
-                </ul>
-              </div>
-
-              <!-- LIBRECAD -->
-              <div style="display:flex; flex-direction:column; gap:14px;">
-                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-                  <div style="display:flex; align-items:center; gap:10px;">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                      <circle cx="12" cy="12" r="9.5" stroke="var(--text-3)" stroke-width="1.4"/>
-                      <path d="M8 12 L11 15 L16 9" stroke="var(--text-3)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.5"/>
-                    </svg>
-                    <div style="font-size:18px; font-weight:600; letter-spacing:-0.01em; color:var(--text-2);">LibreCAD 2.2.1.5</div>
-                    <div style="font-family:'Geist Mono'; font-size:11px; padding:2px 7px; background:rgba(232,92,84,0.15); color:var(--canvas-red); border:1px solid rgba(232,92,84,0.35); border-radius:3px;">{{ ex.libreBadge }}</div>
-                  </div>
-                  <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3);">{{ ex.libreMetric }}</div>
-                </div>
-                <div style="border:1px solid var(--border); border-radius:10px; overflow:hidden; box-shadow: var(--shadow-lg); background:{{ ex.libreCanvasBg }}; position:relative; aspect-ratio: 16 / 9;">
-                  <img src="{{ ex.libreImg }}" alt="{{ ex.libreAlt }}" style="display:block; width:100%; height:100%; object-fit:cover; object-position:center;">
-                  <sc-for list="{{ ex.callouts }}" as="co" hint-placeholder-count="3">
-                    <div style="position:absolute; left:{{ co.x }}; top:{{ co.y }}; font-family:'Geist Mono'; font-size:10px; color:#ffffff; background:var(--canvas-red); padding:3px 7px; border-radius:3px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); white-space:nowrap;">{{ co.text }}</div>
-                  </sc-for>
-                </div>
-                <ul style="list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:8px; font-size:13px; color:var(--text-2);">
-                  <sc-for list="{{ ex.librePoints }}" as="pt" hint-placeholder-count="3">
-                    <li style="display:flex; gap:10px;"><span style="color:var(--canvas-red); flex-shrink:0;">✕</span> <span>{{ pt }}</span></li>
-                  </sc-for>
-                </ul>
-              </div>
-
-            </div>
-
-            <!-- per-example why note -->
-            <div style="margin-top:32px; padding:20px 24px; background:var(--bg-elev); border:1px solid var(--border-soft); border-radius:10px; display:flex; align-items:flex-start; gap:16px; font-size:14px; color:var(--text-2); line-height:1.55;">
-              <span style="font-family:'Geist Mono'; font-size:11px; padding:3px 8px; background:var(--accent); color:var(--navy); border-radius:3px; flex-shrink:0; margin-top:2px;">WHY</span>
-              <span>{{ ex.why }}</span>
-            </div>
-          </div>
-        </sc-for>
-      </div>
-    </div>
   </div>
 </section>
 
 <!-- ============ WORKFLOW GRID ============ -->
 <section style="padding:120px 32px; background:var(--bg-elev); border-top:1px solid var(--border-soft); border-bottom:1px solid var(--border-soft);">
-  <div style="max-width:1180px; margin:0 auto;">
-    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">05 · WORKFLOW</div>
+  <div style="max-width:1100px; margin:0 auto;">
+    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">03 · WORKFLOW</div>
     <h2 style="font-size:56px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:880px; text-wrap:balance;">
       Classic shortcuts. Modern interface.
     </h2>
     <p style="font-size:18px; line-height:1.5; max-width:680px; color:var(--text-2); margin:0 0 64px;">
-      Every command you muscle‑memorized in AutoCAD still works — L, PL, C, REC, M, O, TR, J. New tools you'll wish you'd had.
+      The core commands and aliases you muscle‑memorized in AutoCAD work here — L, PL, C, REC, M, O, TR, J and the rest of the everyday set.
     </p>
     <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:1px; background:var(--border-soft); border:1px solid var(--border-soft); border-radius:14px; overflow:hidden;">
       <sc-for list="{{ workflowCells }}" as="cell" hint-placeholder-count="9">
@@ -894,18 +699,18 @@
 
 <!-- ============ AUTOLISP ============ -->
 <section id="autolisp" style="padding:120px 32px;">
-  <div style="max-width:1180px; margin:0 auto;">
+  <div style="max-width:1100px; margin:0 auto;">
     <div style="display:grid; grid-template-columns: 1fr 1.1fr; gap:80px; align-items:center;">
       <div>
-        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">06 · AUTOMATION</div>
+        <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">04 · AUTOMATION</div>
         <h2 style="font-size:48px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; text-wrap:balance;">
-          AutoLISP that runs everywhere. Yes, even on Mac.
+          AutoLISP that runs the same on Mac, Windows and Linux.
         </h2>
         <p style="font-size:17px; line-height:1.55; color:var(--text-2); margin:0 0 24px;">
           A native AutoLISP engine with the full inventoried builtin set — verified against every documented example. Routines written for full AutoCAD run unmodified: entity creation and editing, selection sets, system variables, file I/O, dictionaries, layer states, and scripted <span style="font-family:'Geist Mono'; font-size:15px; color:var(--text);">(command …)</span> calls.
         </p>
         <p style="font-size:17px; line-height:1.55; color:var(--text-2); margin:0 0 32px;">
-          Identical behavior on <span style="color:var(--text); font-weight:500;">macOS, Windows, and Linux</span> — the platform AutoCAD LT blocks LISP on is a first-class citizen here. Unsupported Tier‑2 calls report clean errors instead of failing silently.
+          Identical behavior on <span style="color:var(--text); font-weight:500;">macOS, Windows, and Linux</span>. Routines that reach for Tier‑2 features we haven't built yet — DCL dialogs, reactors, most of the vla‑* object model — report a clean error instead of failing silently, so you find out at load time, not mid‑job.
         </p>
         <p style="font-size:17px; line-height:1.55; color:var(--text-2); margin:0 0 32px;">
           It is not only drawing automation: the ribbon and its <span style="font-family:'Geist Mono'; font-size:15px; color:var(--text);">File / Edit / View</span> menu bar are an AutoLISP file too.
@@ -913,7 +718,7 @@
         </p>
         <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
           <a href="./autolisp.html" style="padding:10px 18px; background:var(--accent); color:var(--navy); border-radius:8px; font-size:14px; font-weight:500;" style-hover="background:var(--accent-2);">
-            Browse the 305-function reference →
+            Browse the AutoLISP function reference →
           </a>
           <span style="font-family:'Geist Mono'; font-size:12px; color:var(--text-3);">commands: <span style="color:var(--text-2);">LOAD</span> · <span style="color:var(--text-2);">EVAL</span> · <span style="color:var(--text-2);">SCRIPT</span></span>
         </div>
@@ -937,68 +742,15 @@
   (setq i (1+ i)))</code></pre>
       </div>
     </div>
-    <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:1px; background:var(--border-soft); border:1px solid var(--border-soft); border-radius:14px; overflow:hidden; margin-top:64px;">
-      <div style="background:var(--bg-elev); padding:28px; text-align:center;">
-        <div style="font-size:36px; font-weight:600; letter-spacing:-0.03em; color:var(--accent);">305</div>
-        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">builtins inventoried</div>
-      </div>
-      <div style="background:var(--bg-elev); padding:28px; text-align:center;">
-        <div style="font-size:36px; font-weight:600; letter-spacing:-0.03em; color:var(--text);">288</div>
-        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">implemented today</div>
-      </div>
-      <div style="background:var(--bg-elev); padding:28px; text-align:center;">
-        <div style="font-size:36px; font-weight:600; letter-spacing:-0.03em; color:var(--text);">3</div>
-        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">commands: LOAD · EVAL · SCRIPT</div>
-      </div>
-      <div style="background:var(--bg-elev); padding:28px; text-align:center;">
-        <div style="font-size:36px; font-weight:600; letter-spacing:-0.03em; color:var(--text);">3</div>
-        <div style="font-size:13px; color:var(--text-2); margin-top:6px;">platforms, identical behavior</div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ============ COMPARISON ============ -->
-<section id="compare" style="padding:120px 32px; background:var(--bg-elev); border-top:1px solid var(--border-soft); border-bottom:1px solid var(--border-soft);">
-  <div style="max-width:1100px; margin:0 auto;">
-    <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); letter-spacing:0.16em; margin-bottom:16px;">07 · HOW WE COMPARE</div>
-    <h2 style="font-size:56px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 24px; font-weight:600; max-width:880px; text-wrap:balance;">
-      You don't need a subscription. You don't need to compromise.
-    </h2>
-    <p style="font-size:18px; line-height:1.5; max-width:680px; color:var(--text-2); margin:0 0 56px;">
-      Honest table. We're not the right tool for every job — but for 2D drafting, here's the actual delta.
-    </p>
-    <div style="border:1px solid var(--border-soft); border-radius:14px; overflow:hidden; background:var(--bg-elev);">
-      <div style="display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; background:var(--bg-panel); border-bottom:1px solid var(--border-soft);">
-        <div style="padding:20px 24px; font-family:'Geist Mono'; font-size:11px; color:var(--text-3); letter-spacing:0.08em;">CAPABILITY</div>
-        <div style="padding:20px 24px; font-size:15px; font-weight:600; color:var(--accent); display:flex; align-items:center; gap:8px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="color:var(--accent);">
-            <circle cx="12" cy="12" r="9.5" stroke="currentColor" stroke-width="1.4"/>
-            <path d="M12 3 L14.4 11.6 L12 14 L9.6 11.6 Z" fill="currentColor"/>
-          </svg>
-          Zephyr
-        </div>
-        <div style="padding:20px 24px; font-size:15px; font-weight:500; color:var(--text-2);">AutoCAD LT</div>
-        <div style="padding:20px 24px; font-size:15px; font-weight:500; color:var(--text-2);">FOSS Ecosystem</div>
-      </div>
-      <sc-for list="{{ compareRows }}" as="row" hint-placeholder-count="12">
-        <div style="display:grid; grid-template-columns: 2fr 1fr 1fr 1fr; border-top:1px solid var(--border-soft);">
-          <div style="padding:18px 24px; font-size:14px; color:var(--text);">{{ row.label }}</div>
-          <div style="padding:18px 24px; font-size:14px; color:var(--text); font-family:'Geist Mono';">{{ row.zephyr }}</div>
-          <div style="padding:18px 24px; font-size:14px; color:var(--text-2); font-family:'Geist Mono';">{{ row.autocad }}</div>
-          <div style="padding:18px 24px; font-size:14px; color:var(--text-2); font-family:'Geist Mono';">{{ row.qcad }}</div>
-        </div>
-      </sc-for>
-    </div>
-    <div style="margin-top:16px; font-family:'Geist Mono'; font-size:11px; color:var(--text-3); text-align:center;">Pricing as of June 2026 · Autodesk, QCAD, LibreCAD, FreeCAD, SolveSpace, and Open 2D Studio are properties of their respective projects and entities.</div>
+    <p style="font-size:14px; line-height:1.6; color:var(--text-3); max-width:760px; margin:48px 0 0;">Function-by-function status lives in the reference and changes between builds. If a routine you depend on uses DCL dialogs or reactors, assume it won't run yet and check there first.</p>
   </div>
 </section>
 
 <!-- ============ OPEN SOURCE ============ -->
 <section id="opensource" style="padding:120px 32px; background:var(--navy); color:#f0f4f7; position:relative; overflow:hidden;">
   <div aria-hidden="true" style="position:absolute; inset:0; background-image: radial-gradient(circle, rgba(74,138,184,0.4) 1px, transparent 1px); background-size: 32px 32px; opacity:0.4; mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%); -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);"></div>
-  <div style="max-width:1000px; margin:0 auto; position:relative; text-align:center;">
-    <div style="font-family:'Geist Mono'; font-size:11px; color:#e0ab36; letter-spacing:0.16em; margin-bottom:20px;">08 · FREE FOREVER</div>
+  <div style="max-width:1100px; margin:0 auto; position:relative; text-align:center;">
+    <div style="font-family:'Geist Mono'; font-size:11px; color:#e0ab36; letter-spacing:0.16em; margin-bottom:20px;">05 · FREE FOREVER</div>
     <h2 style="font-size:72px; line-height:1.0; letter-spacing:-0.035em; margin:0 0 28px; font-weight:600; text-wrap:balance; color:#f0f4f7;">
       Open source. <span style="font-family:'Instrument Serif', Georgia, serif; font-style:italic; font-weight:400; color:#e0ab36;">Always.</span>
     </h2>
@@ -1024,12 +776,12 @@
 
 <!-- ============ FINAL CTA ============ -->
 <section id="download" style="padding:140px 32px;">
-  <div style="max-width:880px; margin:0 auto; text-align:center;">
+  <div style="max-width:1100px; margin:0 auto; text-align:center;">
     <h2 style="font-size:88px; line-height:0.95; letter-spacing:-0.045em; margin:0 0 28px; font-weight:600; text-wrap:balance;">
-      Stop renting your CAD.
+      Try it on a copy of a real job.
     </h2>
     <p style="font-size:20px; line-height:1.5; color:var(--text-2); margin:0 0 44px; max-width:560px; margin-left:auto; margin-right:auto;">
-      Free download. No account, no telemetry, no email gate. The .dxf files you author inside your open-source tools will open here perfectly.
+      Free download. No account, no telemetry, no email gate. Open a copy of a finished job, do your usual work, plot it, and check the result in the tools you already trust. That's the only test that counts.
     </p>
     <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
       <a href="https://github.com/joseph-montanez/zephyr/releases/download/nightly/Zephyr-macOS-Universal.zip" style="display:inline-flex; align-items:center; gap:10px; padding:16px 24px; background:var(--text); color:var(--bg); border-radius:10px; font-size:16px; font-weight:500;" style-hover="background:var(--accent); color:var(--navy);">
@@ -1134,11 +886,11 @@
           </svg>
           <span style="font-size:17px; font-weight:600;">Zephyr</span>
         </div>
-        <div style="font-size:13px; color:var(--text-2); line-height:1.55; max-width:300px;">A native 2D CAD app for people who'd rather not pay $840 a year to draw rectangles.</div>
+        <div style="font-size:13px; color:var(--text-2); line-height:1.55; max-width:300px;">A free, open-source 2D CAD app in active development. Native on macOS, Windows and Linux.</div>
       </div>
       <div style="display:flex; flex-direction:column; gap:10px;">
         <div style="font-family:'Geist Mono'; font-size:11px; color:var(--text-3); letter-spacing:0.08em; margin-bottom:4px;">PRODUCT</div>
-        <a style="font-size:13px; color:var(--text-2);" href="#features">Features</a>
+        <a style="font-size:13px; color:var(--text-2);" href="#roles">Who it's for</a>
         <a style="font-size:13px; color:var(--text-2);" href="#compatibility">Compatibility</a>
         <a style="font-size:13px; color:var(--text-2);" href="#download">Download</a>
         <a style="font-size:13px; color:var(--text-2);" href="#">Changelog</a>
@@ -1199,7 +951,7 @@ function detectSystem() {
 }
 
 class Component extends DCLogic {
-  state = { theme: 'dark', specklesActive: false, proofIndex: 0, ...detectSystem() };
+  state = { theme: 'dark', ...detectSystem() };
 
   componentDidMount() {
     try {
@@ -1226,126 +978,8 @@ class Component extends DCLogic {
     this.setState(s => ({ theme: s.theme === 'dark' ? 'light' : 'dark' }));
   };
 
-  toggleSpeckles = () => {
-    this.setState(s => ({ specklesActive: !s.specklesActive }));
-  };
-
-  selectProof = (i) => () => {
-    this.setState({ proofIndex: i });
-  };
-
-  proofPrev = () => {
-    this.setState(s => ({ proofIndex: (s.proofIndex - 1 + this.proofData().length) % this.proofData().length }));
-  };
-
-  proofNext = () => {
-    this.setState(s => ({ proofIndex: (s.proofIndex + 1) % this.proofData().length }));
-  };
-
-  proofData = () => ([
-    {
-      tag: '01',
-      title: 'Title block & dimensions',
-      subhead: 'Whole drawing — fit to view',
-      caption: "KOMPAN's 186‑841 — Pirate Ship.dxf. 3,734 entities, 13 layers, dimension chains, hatches, leader callouts, a title block, a logo. The kind of file your suppliers actually send you.",
-      zephyrImg: 'assets/zephyr-dxf.png',
-      zephyrAlt: 'Zephyr opening the KOMPAN Pirate Ship DXF with full geometry, dimensions, title block, layers and logo all rendered correctly.',
-      zephyrBadge: 'CLEAN IMPORT',
-      zephyrMetric: '~0.4 s · 3,734 / 3,734 entities',
-      zephyrCanvasBg: '#ffffff',
-      zephyrPoints: [
-        'Title block, KOMPAN logo, dimension chains — all in place',
-        'Layers panel populated with the 13 source layers + colors',
-        'Text scaled and oriented correctly, leaders attached',
-      ],
-      libreImg: 'assets/librecad-dxf.png',
-      libreAlt: 'LibreCAD opening the same DXF with scrambled text, broken dimension placement and overlapping revision labels covering the drawing.',
-      libreBadge: 'MANGLED',
-      libreMetric: '~3.8 s · text + dims scrambled',
-      libreCanvasBg: '#ffffff',
-      callouts: [
-        { x: '32%', y: '74%', text: 'text scale broken' },
-        { x: '8%',  y: '48%', text: 'no title block' },
-        { x: '62%', y: '30%', text: 'geometry clipped' },
-      ],
-      librePoints: [
-        'Title block and logo missing entirely',
-        'Revision text rendered at world scale — covers the drawing',
-        'Dimension styles dropped, leaders detached',
-      ],
-      why: 'LibreCAD\'s parser falls back to a default text style when it can\'t resolve SHX fonts, then computes height in drawing units instead of paper space. Zephyr resolves DIMSTYLE and STYLE tables before laying anything out — and ships AutoCAD‑compatible SHX rendering in the binary.',
-    },
-    {
-      tag: '02',
-      title: 'Splines & ellipses',
-      subhead: 'Zoomed in — same coordinates',
-      caption: 'Same file, zoomed to the title‑block corner. NURBS splines define the play‑equipment outline and the KOMPAN logo glyphs; an ellipse defines the title‑block circle.',
-      zephyrImg: 'assets/zephyr-dxf-2.png',
-      zephyrAlt: 'Zephyr zoomed in showing smooth spline curves, a properly bounded ellipse and the KOMPAN logo glyphs rendering crisply.',
-      zephyrBadge: 'CURVES CORRECT',
-      zephyrMetric: 'NURBS tessellated at view DPI',
-      zephyrCanvasBg: 'var(--canvas)',
-      zephyrPoints: [
-        'Ellipse honors its bounding box — no overshoot',
-        'KOMPAN logo glyphs render as smooth filled curves',
-        'Spline endpoints, knots and weights all preserved',
-      ],
-      libreImg: 'assets/librecad-dxf-2.png',
-      libreAlt: 'LibreCAD at the same zoom showing an oversized red dashed ellipse overshooting the drawing, hatching that fills the box, and the KOMPAN logo as a scrambled tangle of curves.',
-      libreBadge: 'CURVES WRONG',
-      libreMetric: 'NURBS sampled at wrong density',
-      libreCanvasBg: '#ffffff',
-      callouts: [
-        { x: '42%', y: '20%', text: 'ellipse overshoots by ~10×' },
-        { x: '54%', y: '60%', text: 'logo glyphs scrambled' },
-        { x: '14%', y: '76%', text: 'spline endpoints adrift' },
-      ],
-      librePoints: [
-        'Ellipse parameters misread — arc extends far past its endpoints',
-        'Logo glyph splines fold into themselves — text is unreadable',
-        'Hatch boundary computed against wrong curve — pattern overflows',
-      ],
-      why: 'LibreCAD samples NURBS at a fixed step count regardless of curvature, and treats DXF ellipse start/end angles as full‑turn parameters. Zephyr uses adaptive subdivision keyed to screen pixels and honors the OCS‑relative angle convention in the DXF spec — so curves stay smooth at any zoom and bounded arcs stay bounded.',
-    },
-    {
-      tag: '03',
-      title: 'Text & placement',
-      subhead: 'Same plan — labels, notes and callouts',
-      caption: 'A real residential floor plan with MText labels, multi‑line notes, and a "FLOOR PLAN" title block. Room names use DXF formatting codes (%%u for underline). Notes are anchored to walls via attachment points.',
-      zephyrImg: 'assets/zephyr-dxf-3.png',
-      zephyrAlt: 'Zephyr rendering the floor plan with clean readable room labels, properly sized multi-line notes wrapped in place, and the FLOOR PLAN title fitted under the drawing.',
-      zephyrBadge: 'TEXT RESOLVED',
-      zephyrMetric: '967 entities · 22 text styles',
-      zephyrCanvasBg: 'var(--canvas)',
-      zephyrPoints: [
-        'MText control codes parsed — "MASTER BEDROOM", not "%%uMASTER %%uBEDROOM"',
-        'Multi‑line notes wrap at the original column width',
-        'Title block "FLOOR PLAN" centered under the drawing extents',
-      ],
-      libreImg: 'assets/librecad-dxf-3.png',
-      libreAlt: 'LibreCAD showing the same floor plan with text rendered too small to read, room labels showing raw %%u escape codes, and notes overlapping each other across the drawing.',
-      libreBadge: 'CODES RAW',
-      libreMetric: 'MText codes unparsed · text scale wrong',
-      libreCanvasBg: '#ffffff',
-      callouts: [
-        { x: '20%', y: '30%', text: 'raw %%u codes shown' },
-        { x: '46%', y: '57%', text: 'text scale microscopic' },
-        { x: '54%', y: '76%', text: 'notes overlap geometry' },
-      ],
-      librePoints: [
-        'DXF formatting codes (%%u, %%o, %%d, %%c) leak through as literal characters',
-        'Text height falls back to a default — labels become unreadable at fit‑to‑view',
-        'Multi‑line note wrapping is dropped; runs collide with walls and each other',
-      ],
-      why: 'AutoCAD MText stores formatting as in‑band control codes — \\P for paragraph breaks, %%u/%%o for underline/overline, %%dNNN for special glyphs, plus a stack of font, color and width changes. Zephyr ships a full MText interpreter that honors attachment point, column width and line spacing factor. LibreCAD\'s TEXT path treats the string as opaque.',
-    },
-  ]);
-
   renderVals() {
     const isDark = this.state.theme === 'dark';
-    const active = this.state.specklesActive;
-    const examples = this.proofData();
-    const idx = this.state.proofIndex;
     const dlOS = this.state.dlOS || 'unknown';
     const dlArch = this.state.dlArch === 'arm64' ? 'arm64' : 'x64';
     const dlArchLabel = dlArch === 'arm64' ? 'ARM64' : 'x64';
@@ -1368,29 +1002,6 @@ class Component extends DCLogic {
       isDark,
       isLight: !isDark,
       toggleTheme: this.toggleTheme,
-      specklesActive: active,
-      specklesInactive: !active,
-      toggleSpeckles: this.toggleSpeckles,
-      speckleOpacity: active ? 0 : 1,
-      haloOpacity: active ? 1 : 0,
-      matchCount: active ? '0 / 24' : '24',
-      specklesPrompt: active
-        ? 'CS: erased 24 speckles · undo with Cmd+Z'
-        : 'CS: click a speckle to sample, ENTER to erase all',
-
-      proofExamples: examples.map((ex, i) => ({
-        ...ex,
-        select: this.selectProof(i),
-        borderColor: i === idx ? 'var(--accent)' : 'var(--border)',
-        bgColor:     i === idx ? 'rgba(224,171,54,0.10)' : 'transparent',
-        textColor:   i === idx ? 'var(--text)' : 'var(--text-2)',
-        tagColor:    i === idx ? 'var(--accent)' : 'var(--text-3)',
-      })),
-      proofTrackTranslate: `-${idx * 100}%`,
-      proofPositionLabel: `EXAMPLE ${String(idx + 1).padStart(2, '0')} / ${String(examples.length).padStart(2, '0')}`,
-      proofPrev: this.proofPrev,
-      proofNext: this.proofNext,
-
       layers: [
         { name: '0 — Default',       color: '#9eb2c2', count: 12 },
         { name: 'WALLS',             color: '#4ad6e0', count: 184 },
@@ -1429,28 +1040,6 @@ class Component extends DCLogic {
           body: 'Coincident, parallel, perpendicular, tangent, concentric, distance, angle, fix, midpoint, collinear, symmetric, offset — numerical solver to be programmed.' },
       ],
 
-      compareRows: [
-        { label: 'Price',                          zephyr: 'Free',         autocad: '$70 / mo',     qcad: 'Free / low cost' },
-        { label: 'License',                        zephyr: 'GPL v3',       autocad: 'Subscription', qcad: 'Open Source Ecosystem' },
-        { label: 'Native Mac (Metal)',             zephyr: '✓',            autocad: 'Blocked (LT)', qcad: '— (Alternative UI)' },
-        { label: 'Native Windows (D3D12)',         zephyr: '✓',            autocad: '✓',            qcad: '— (Alternative UI)' },
-        { label: 'Native Windows ARM64',           zephyr: '✓',            autocad: 'Emulation',    qcad: '—' },
-        { label: 'Native Linux (Vulkan)',            zephyr: '✓',            autocad: '—',            qcad: '✓' },
-        { label: 'GPU‑accelerated rendering',      zephyr: '✓',            autocad: 'Partial',      qcad: '—' },
-        { label: 'DWG read/write',                       zephyr: '✓',            autocad: '✓',            qcad: 'Varies' },
-        { label: 'DXF R2007 round‑trip',           zephyr: '✓',            autocad: '✓',            qcad: '✓' },
-        { label: 'PDF export w/ measurements',     zephyr: '✓ Bluebeam',   autocad: '✓',            qcad: 'Flat' },
-        { label: 'External references (XREF)',     zephyr: '✓',            autocad: '✓',            qcad: 'Varies' },
-        { label: 'Referenced image/PDF underlays', zephyr: '✓',            autocad: '✓',            qcad: 'Varies' },
-        { label: 'AutoLISP automation',             zephyr: '✓ 305 builtins', autocad: 'Win only (LT)', qcad: '—' },
-        { label: 'Ribbon + menu bar in AutoLISP', zephyr: '✓ .lsp file',  autocad: 'CUIx (XML)',   qcad: '—' },
-        { label: 'Quick Measure (hover)',          zephyr: '✓',            autocad: '—',            qcad: '—' },
-        { label: 'Clean Speckles (by example)',    zephyr: '✓',            autocad: '—',            qcad: '—' },
-        { label: 'Split panes, different drawings', zephyr: '✓',           autocad: 'VPORTS: one drawing', qcad: 'Varies' },
-        { label: 'Model + layout in split panes',   zephyr: '✓',           autocad: 'Layout workflow', qcad: 'Varies' },
-        { label: 'Open source option friendly',    zephyr: '✓',            autocad: '—',            qcad: '✓' },
-        { label: 'No subscription, no telemetry',  zephyr: '✓',            autocad: '—',            qcad: '✓' },
-      ],
     };
   }
 }
