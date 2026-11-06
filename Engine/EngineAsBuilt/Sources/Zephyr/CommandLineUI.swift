@@ -8,11 +8,12 @@ import ImGui
 // Activated by typing any letter key, this provides an AutoCAD-style command prompt
 // with input buffer, autocomplete popup, and Up/Down arrow history.
 //
-// Key behaviors:
-//   - Space: Literal space in the buffer (repeat-last-command only fires when idle)
+// Key behaviors (Space == Enter):
+//   - Space/Enter: Submit the current buffer (one token per keypress).
+//     At a `.line` prompt (names, paths, text) Space stays literal and
+//     only Enter submits. Repeat-last-command only fires when idle.
 //   - Tab: Auto-complete to the first match
 //   - Up/Down: Navigate through autocomplete matches
-//   - Enter: Execute the current buffer or selected autocomplete match
 //   - Esc: Cancel / close command line
 //
 // The command buffer is persisted in engine.commandProcessor.commandBuffer
@@ -24,8 +25,8 @@ struct CommandLineUI {
     static var _cmdAutoMatches: [(descriptor: CommandDescriptor, matchingAlias: String)] = []
 
     /// When true, the next InputText callback frame will clear any text selection
-    /// and move the cursor to the end. Set after filling the buffer with a command
-    /// name that needs parameters (Enter on BACKGROUND, LAYER NEW, etc.).
+    /// and move the cursor to the end. Set after the buffer changes
+    /// programmatically (submit round-trips, Tab completion).
     static var _needsClearSelection: Bool = false
 
     /// Tracks previous frame's command line state to detect when it just opened.
@@ -101,10 +102,9 @@ struct CommandLineUI {
         let featureClampedIndex = !featureOptions.isEmpty
             ? max(0, min(selIndex, featureOptions.count - 1))
             : 0
-        let paramHint = featureInputActive ? nil : findParameterHint(input: newText)
         let showPalette = featureInputActive
             ? !featureOptions.isEmpty
-            : (!inputMatches.isEmpty || (!newText.isEmpty && paramHint != nil))
+            : !inputMatches.isEmpty
         
         var currentY = winY
         
@@ -199,7 +199,17 @@ struct CommandLineUI {
                 return String(cString: base)
             }
 
-            if newTextFromInput != engine.commandProcessor.commandBuffer {
+            // Space == Enter: at a `.token` prompt a space in the buffer
+            // submits exactly like Enter (one token per keypress). At a
+            // `.line` prompt spaces are literal and only Enter submits.
+            let spaceSubmit = !submitted
+                && engine.commandProcessor.promptInputKind == .token
+                && newTextFromInput.contains(where: { $0.isWhitespace })
+            let submitText = spaceSubmit
+                ? newTextFromInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                : newTextFromInput
+
+            if !spaceSubmit, newTextFromInput != engine.commandProcessor.commandBuffer {
                 engine.commandProcessor.commandBuffer = newTextFromInput
                 engine.commandProcessor.commandSelectionIndex = 0
                 CommandLineUI._needsClearSelection = true
@@ -223,51 +233,44 @@ struct CommandLineUI {
                 updateSelection(engine: engine, matches: inputMatches)
             }
 
-            if submitted {
+            // One submit path for Enter and Space alike: the selected
+            // autocomplete match runs, otherwise the buffer goes through
+            // `executeCommand`, which replays multi-token input stepwise.
+            if submitted || spaceSubmit {
                 if featureInputActive {
                     engine.commandProcessor.commandLineActive = false
                     engine.commandProcessor.commandBuffer = ""
+                    // Empty buffer + highlighted option: Enter takes the
+                    // option (arrows + Enter, no typing needed). Typed text
+                    // always wins otherwise.
+                    let submit = CADCommandProcessor.featureSubmitText(
+                        buffer: submitText,
+                        options: featureOptions,
+                        selectedIndex: featureClampedIndex)
                     _ = engine.commandProcessor.submitTextToActiveFeatureCommand(
-                        newTextFromInput,
+                        submit,
                         engine: engine)
                     if engine.commandProcessor.commandLineActive {
                         _needsClearSelection = true
                         _needsFocus = true
                     }
-                } else if !inputMatches.isEmpty && clampedIndex >= 0 && clampedIndex < inputMatches.count {
+                } else if engine.commandProcessor.pendingPromptCommand == nil,
+                          !inputMatches.isEmpty && clampedIndex >= 0 && clampedIndex < inputMatches.count {
+                    // No pending session: Enter and Space both run the
+                    // selected autocomplete match. While a pending session
+                    // is open the text below goes to it instead (modal).
                     let desc = inputMatches[clampedIndex].descriptor
-                    if !desc.syntax.isEmpty && !desc.bareEnterExecutes {
-                        prepareForParameterEntry(engine: engine, descriptor: desc)
-                    } else {
-                        engine.commandProcessor.commandLineActive = false
-                        engine.commandProcessor.commandBuffer = ""
-                        engine.commandProcessor.executeCommand(desc.canonicalName)
-                        if engine.commandProcessor.commandLineActive {
-                            _needsClearSelection = true
-                            _needsFocus = true
-                        }
+                    engine.commandProcessor.commandLineActive = false
+                    engine.commandProcessor.commandBuffer = ""
+                    engine.commandProcessor.executeCommand(desc.canonicalName)
+                    if engine.commandProcessor.commandLineActive {
+                        _needsClearSelection = true
+                        _needsFocus = true
                     }
                 } else {
-                    let hint = findParameterHint(input: newTextFromInput)
-                    if let hintDesc = hint {
-                        let parts = newTextFromInput.split(maxSplits: 1, whereSeparator: \.isWhitespace)
-                        if parts.count > 1 {
-                            engine.commandProcessor.commandLineActive = false
-                            engine.commandProcessor.commandBuffer = ""
-                            engine.commandProcessor.executeCommand(newTextFromInput)
-                        } else if hintDesc.bareEnterExecutes {
-                            // Bare "NAME " + Enter: run it (LOAD/SCRIPT pick a file).
-                            engine.commandProcessor.commandLineActive = false
-                            engine.commandProcessor.commandBuffer = ""
-                            engine.commandProcessor.executeCommand(hintDesc.canonicalName)
-                        } else {
-                            prepareForParameterEntry(engine: engine, descriptor: hintDesc)
-                        }
-                    } else {
-                        engine.commandProcessor.commandLineActive = false
-                        engine.commandProcessor.commandBuffer = ""
-                        engine.commandProcessor.executeCommand(newTextFromInput)
-                    }
+                    engine.commandProcessor.commandLineActive = false
+                    engine.commandProcessor.commandBuffer = ""
+                    engine.commandProcessor.executeCommand(submitText)
                     if engine.commandProcessor.commandLineActive {
                         _needsClearSelection = true
                         _needsFocus = true
@@ -308,16 +311,7 @@ struct CommandLineUI {
                         cmdW: cmdW
                     )
                 } else if !newText.isEmpty {
-                    if let hintDesc = paramHint {
-                        CommandAutocompleteUI.renderMatches(
-                            engine: engine,
-                            matches: [(hintDesc, hintDesc.canonicalName)],
-                            clampedIndex: 0,
-                            cmdW: cmdW
-                        )
-                    } else {
-                        CommandAutocompleteUI.renderNoMatches(engine: engine, cmdW: cmdW)
-                    }
+                    CommandAutocompleteUI.renderNoMatches(engine: engine, cmdW: cmdW)
                 }
             }
             igEnd()
@@ -370,29 +364,10 @@ struct CommandLineUI {
         ImGuiPopStyleVar(4)
     }
 
-    /// Completes a command that still needs arguments and keeps the text field
-    /// ready for uninterrupted typing after Enter deactivates InputText.
-    private static func prepareForParameterEntry(
-        engine: PhrostEngine,
-        descriptor: CommandDescriptor
-    ) {
-        engine.commandProcessor.commandBuffer = descriptor.canonicalName + " "
-        engine.commandProcessor.commandSelectionIndex = 0
-        _needsClearSelection = true
-        _needsFocus = true
-    }
-
-    private static func findParameterHint(input: String) -> CommandDescriptor? {
-        let upper = input.uppercased()
-        for desc in CommandDescriptor.allCommands {
-            for candidate in desc.allMatches {
-                if upper.hasPrefix(candidate + " ") {
-                    return desc
-                }
-            }
-        }
-        return nil
-    }
+    // Retired: commands that need arguments open a pending prompted session
+    // (or a feature command) instead of prefilling `"NAME "` into the
+    // buffer. Space submits exactly like Enter, so a buffer can never hold
+    // a same-line `"CMD arg"` tail.
 
     private static func renderFeatureOptions(
         engine: PhrostEngine,
@@ -404,15 +379,34 @@ struct CommandLineUI {
         ImGuiPopStyleColor(1)
         ImGuiDummy(ImVec2(x: 0, y: 6))
 
+        // Row metrics mirror the command palette: one text line per row.
+        let rowH = ImGuiGetTextLineHeightWithSpacing()
+        let padX = ImGuiGetStyle()?.pointee.FramePadding.x ?? 4.0
+        let transparent = ImVec4(x: 0, y: 0, z: 0, w: 0)
+
         for (index, option) in options.enumerated() {
             let aliasText = option.aliases.isEmpty
                 ? option.value
                 : "\(option.value) [\(option.aliases.joined(separator: "/"))]"
-            if ImGuiSelectable(
-                "\(aliasText)##FeatureOption\(index)",
-                index == selectedIndex,
-                0,
-                ImVec2(x: 0, y: 0)) {
+            let isSelected = index == selectedIndex
+            let rowStart = igGetCursorScreenPos()
+            let rowW = ImGuiGetContentRegionAvail().x
+
+            // Transparent native highlight: the theme's raw Header/Hovered
+            // colors are unreadable in some themes, so the tinted
+            // commandRowHighlight rect below is the only background.
+            ImGuiPushStyleColor(Int32(ImGuiCol_Header.rawValue), transparent)
+            ImGuiPushStyleColor(Int32(ImGuiCol_HeaderHovered.rawValue), transparent)
+            ImGuiPushStyleColor(Int32(ImGuiCol_HeaderActive.rawValue), transparent)
+            let clickedRow = ImGuiSelectable(
+                "##FeatureOption\(index)",
+                isSelected,
+                Int32(ImGuiSelectableFlags_AllowOverlap.rawValue),
+                ImVec2(x: rowW, y: rowH))
+            ImGuiPopStyleColor(3)
+            let isHovered = ImGuiIsItemHovered(0)
+            let highlighted = isSelected || isHovered
+            if clickedRow {
                 engine.commandProcessor.commandLineActive = false
                 engine.commandProcessor.commandBuffer = ""
                 _ = engine.commandProcessor.submitTextToActiveFeatureCommand(
@@ -423,12 +417,32 @@ struct CommandLineUI {
                     _needsFocus = true
                 }
             }
+
+            if highlighted {
+                ImDrawListAddRectFilled(
+                    igGetWindowDrawList(),
+                    ImVec2(x: rowStart.x, y: rowStart.y),
+                    ImVec2(x: rowStart.x + rowW, y: rowStart.y + rowH),
+                    igGetColorU32_Vec4(engine.ui.theme.commandRowHighlight), 0, 0)
+            }
+
+            // Label re-drawn on top of the tint: gold when highlighted,
+            // primary otherwise — same pairing as the command palette.
+            igSetCursorScreenPos(ImVec2(x: rowStart.x + padX, y: rowStart.y))
+            ImGuiPushStyleColor(
+                Int32(ImGuiCol_Text.rawValue),
+                highlighted ? engine.ui.theme.brandGold : engine.ui.theme.textPrimary)
+            ImGuiTextV(aliasText)
+            ImGuiPopStyleColor(1)
             if !option.description.isEmpty {
                 ImGuiSameLine(260, 0)
                 ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textDim)
                 ImGuiTextV(option.description)
                 ImGuiPopStyleColor(1)
             }
+            // Pin the cursor to the next row; the SameLine above leaves it
+            // mid-row.
+            igSetCursorScreenPos(ImVec2(x: rowStart.x, y: rowStart.y + rowH))
         }
     }
 

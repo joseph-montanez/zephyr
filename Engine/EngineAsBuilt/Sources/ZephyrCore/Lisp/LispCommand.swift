@@ -120,11 +120,15 @@ public final class LispCommand: FeatureCommand {
             processor.commandPrompt = "Select a file…"
         } else if mode == .call {
             processor.commandPrompt = "Enter function call to run:"
+            // Expressions may contain blanks: Space stays literal here.
+            processor.promptInputKind = .line
             processor.commandLineActive = true
             processor.commandBuffer = ""
             processor.commandSelectionIndex = 0
         } else {
             processor.commandPrompt = "Enter expression to EVAL:"
+            // Expressions may contain blanks: Space stays literal here.
+            processor.promptInputKind = .line
             processor.commandLineActive = true
             processor.commandBuffer = ""
             processor.commandSelectionIndex = 0
@@ -276,6 +280,9 @@ public final class LispCommand: FeatureCommand {
             switch kind {
             case .point, .line:
                 if let char = scancodeToChar(scancode) {
+                    if case let .line(_, allowSpaces) = kind {
+                        processor.promptInputKind = allowSpaces ? .line : .token
+                    }
                     processor.commandLineActive = true
                     processor.commandBuffer = String(char)
                     processor.commandSelectionIndex = 0
@@ -355,7 +362,10 @@ public final class LispCommand: FeatureCommand {
                 ? "Lisp running… (Esc cancels)"
                 : host.currentPrompt
         }
-        if case .line = host.broker.pendingKind {
+        if case let .line(_, allowSpaces) = host.broker.pendingKind {
+            // getstring T keeps Space literal (.line); otherwise Space
+            // submits exactly like Enter (.token).
+            processor.promptInputKind = allowSpaces ? .line : .token
             if !processor.commandLineActive {
                 processor.commandLineActive = true
                 processor.commandBuffer = ""
@@ -716,8 +726,7 @@ public enum LispDescriptors {
         aliases: [],
         category: .lisp,
         syntax: "<file>",
-        description: "Load and evaluate an AutoLISP (.lsp) file (opens a file picker)",
-        bareEnterExecutes: true)
+        description: "Load and evaluate an AutoLISP (.lsp) file (opens a file picker)")
     public static let eval = CommandDescriptor(
         canonicalName: "EVAL",
         aliases: [],
@@ -729,6 +738,5 @@ public enum LispDescriptors {
         aliases: ["SCR"],
         category: .lisp,
         syntax: "<file>",
-        description: "Run a command script (.scr) file (opens a file picker)",
-        bareEnterExecutes: true)
+        description: "Run a command script (.scr) file (opens a file picker)")
 }

@@ -42,7 +42,10 @@ public final class PlaceCalloutCommand: FeatureCommand {
     }
 
     private enum Phase {
-        case idle
+        case file
+        case view
+        case block
+        case rest
         case awaitingPoint
     }
 
@@ -94,32 +97,92 @@ public final class PlaceCalloutCommand: FeatureCommand {
 
     private var request: Request?
     private var view: SheetSetSheetViews.NamedView?
-    private var phase: Phase = .idle
+    private var phase: Phase = .file
     private var mouseWorldX: Double = 0
     private var mouseWorldY: Double = 0
     private var previewBox: BoundingBox3D?
+    private var collectedModelPath: String = ""
+    private var collectedViewName: String = ""
+    private var collectedBlockName: String = ""
 
     public init() {}
 
     public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
-        phase = .idle
-        processor.commandPrompt = "Model drawing, view name, and callout block (\(Self.usage))"
+        phase = .file
+        collectedModelPath = ""
+        collectedViewName = ""
+        collectedBlockName = ""
+        openPrompt("Model drawing path:", kind: .line, processor: processor)
     }
 
-    public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {}
+    public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
+        processor.promptInputKind = .token
+    }
 
+    // Space == Enter: operands arrive one submit at a time (file → view →
+    // block → point/overrides). The retired one-line form lives on only as
+    // the static `parse(_:)`, reused for the trailing rest line.
     public func handleCommandText(
         _ text: String, engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty else {
-            processor.commandPrompt = Self.usage
+        switch phase {
+        case .file:
+            guard !input.isEmpty else {
+                openPrompt("Model drawing path:", kind: .line, processor: processor)
+                return .continue
+            }
+            collectedModelPath = input
+            phase = .view
+            openPrompt("View name in '\(input)':", kind: .line, processor: processor)
+            return .continue
+        case .view:
+            guard !input.isEmpty else {
+                openPrompt("View name in '\(collectedModelPath)':", kind: .line, processor: processor)
+                return .continue
+            }
+            collectedViewName = input
+            phase = .block
+            openPrompt("Callout block name:", kind: .line, processor: processor)
+            return .continue
+        case .block:
+            guard !input.isEmpty else {
+                openPrompt("Callout block name:", kind: .line, processor: processor)
+                return .continue
+            }
+            collectedBlockName = input
+            phase = .rest
+            openPrompt(
+                "Placement paper X Y and TAG=value overrides (empty = pick on screen):",
+                kind: .line, processor: processor)
+            return .continue
+        case .rest:
+            // Reuse the quote-aware one-line parser over the collected
+            // operands plus this trailing line.
+            let full = [
+                CADCommandProcessor.quotePendingArg(collectedModelPath),
+                CADCommandProcessor.quotePendingArg(collectedViewName),
+                CADCommandProcessor.quotePendingArg(collectedBlockName),
+                input,
+            ].filter { !$0.isEmpty }.joined(separator: " ")
+            guard let parsed = Self.parse(full) else {
+                openPrompt(
+                    "Cannot parse '\(input)'. Placement paper X Y and TAG=value overrides (empty = pick on screen):",
+                    kind: .line, processor: processor)
+                return .continue
+            }
+            return applyParsed(
+                parsed, engine: engine, processor: processor)
+        case .awaitingPoint:
+            processor.commandPrompt = "Specify placement point for '\(collectedBlockName)' (\(collectedViewName)):"
             return .continue
         }
-        guard let parsed = Self.parse(input) else {
-            processor.commandPrompt = Self.usage
-            return .continue
-        }
+    }
+
+    private func applyParsed(
+        _ parsed: Request,
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult {
         guard let found = Self.resolveView(modelPath: parsed.modelPath, viewName: parsed.viewName) else {
             let known = SheetSetSheetViews.readViews(atPath: parsed.modelPath)?
                 .map(\.name).joined(separator: ", ") ?? "(unreadable — .dxf/.dwt only)"
@@ -148,6 +211,18 @@ public final class PlaceCalloutCommand: FeatureCommand {
         phase = .awaitingPoint
         processor.commandPrompt = "Specify placement point for '\(parsed.blockName)' (\(found.name)):"
         return .continue
+    }
+
+    private func openPrompt(
+        _ prompt: String, kind: CommandPromptInputKind,
+        processor: CADCommandProcessor
+    ) {
+        processor.commandPrompt = prompt
+        processor.commandBuffer = ""
+        processor.commandSelectionIndex = 0
+        processor.promptInputKind = kind
+        processor.commandLineActive = true
+        print("[CAD] \(prompt)")
     }
 
     public func handleMouseClick(

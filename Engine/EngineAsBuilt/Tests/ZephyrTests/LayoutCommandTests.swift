@@ -30,7 +30,6 @@ final class LayoutCommandTests: XCTestCase {
     func testLayoutDescriptorBareEnterAndAliases() {
         let desc = CommandDescriptor.allCommands.first { $0.canonicalName == "LAYOUT" }
         XCTAssertNotNil(desc)
-        XCTAssertEqual(desc?.bareEnterExecutes, true)
         XCTAssertEqual(desc?.aliases, ["SHEET", "LO", "-LAYOUT"])
 
         let processor = CADCommandProcessor()

@@ -352,6 +352,8 @@ public final class LeaderCreateCommand: FeatureCommand {
         processor.commandPrompt = prompt
         processor.commandBuffer = ""
         processor.commandSelectionIndex = 0
+        // Annotation lines may contain blanks: Space stays literal here.
+        processor.promptInputKind = .line
         processor.commandLineActive = true
     }
 

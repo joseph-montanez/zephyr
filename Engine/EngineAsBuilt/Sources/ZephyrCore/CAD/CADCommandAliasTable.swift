@@ -30,7 +30,6 @@ public struct CADCommandAliasEntry: Sendable {
     /// True when this is a known LT name with no implementation yet.
     /// Stubs are discoverable (autocomplete) but never execute anything.
     public let isReservedStub: Bool
-    public let bareEnterExecutes: Bool
 
     public init(
         canonicalName: String,
@@ -38,8 +37,7 @@ public struct CADCommandAliasEntry: Sendable {
         category: CommandCategory,
         syntax: String = "",
         description: String = "",
-        isReservedStub: Bool = false,
-        bareEnterExecutes: Bool = false
+        isReservedStub: Bool = false
     ) {
         self.canonicalName = canonicalName.uppercased()
         self.aliases = aliases.map { $0.uppercased() }
@@ -47,7 +45,6 @@ public struct CADCommandAliasEntry: Sendable {
         self.syntax = syntax
         self.description = description
         self.isReservedStub = isReservedStub
-        self.bareEnterExecutes = bareEnterExecutes
     }
 
     /// Descriptor form, for seeding the S1 autocomplete registry.
@@ -57,8 +54,7 @@ public struct CADCommandAliasEntry: Sendable {
             aliases: aliases,
             category: category,
             syntax: syntax,
-            description: description,
-            bareEnterExecutes: bareEnterExecutes)
+            description: description)
     }
 }
 
@@ -358,8 +354,7 @@ public enum CADCommandAliasTable {
         CADCommandAliasEntry(
             canonicalName: "LAYOUT", aliases: ["SHEET", "LO", "-LAYOUT"], category: .view,
             syntax: "[Copy/Delete/New/Template/Rename/SAveas/Set/?]",
-            description: "Manage sheet layouts",
-            bareEnterExecutes: true),
+            description: "Manage sheet layouts"),
         CADCommandAliasEntry(
             canonicalName: "INSERT", aliases: ["I", "-I", "-INSERT"],
             category: .block,

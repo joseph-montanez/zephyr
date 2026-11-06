@@ -173,7 +173,13 @@ enum HostBuiltins {
         for arg in args {
             if case let .string(text) = arg { prompt = text } else { allowSpaces = arg.isTrue }
         }
-        guard let line = try await host.requestLine(prompt: prompt) else {
+        let line: String?
+        if allowSpaces {
+            line = try await host.requestLineAllowingSpaces(prompt: prompt, allowSpaces: true)
+        } else {
+            line = try await host.requestLine(prompt: prompt)
+        }
+        guard let line else {
             return .string("")
         }
         if allowSpaces { return .string(line) }

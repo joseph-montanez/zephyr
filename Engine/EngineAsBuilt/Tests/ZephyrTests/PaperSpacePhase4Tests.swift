@@ -358,7 +358,6 @@ final class PaperSpacePhase4Tests: XCTestCase {
         let cmd = LayoutCommand()
 
         let desc = CommandDescriptor.allCommands.first { $0.canonicalName == "LAYOUT" }
-        XCTAssertEqual(desc?.bareEnterExecutes, true)
         XCTAssertEqual(desc?.aliases, ["SHEET", "LO", "-LAYOUT"])
 
         cmd.start(tabManager: manager, processor: processor)

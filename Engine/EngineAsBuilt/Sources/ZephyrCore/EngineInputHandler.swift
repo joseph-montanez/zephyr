@@ -752,7 +752,7 @@ internal final class EngineInputHandler {
                 case SDL_SCANCODE_L:
                     engine.commandProcessor.executeCommand("ORTHO")
                 case SDL_SCANCODE_B:
-                    engine.commandProcessor.executeCommand("GRID SNAP")
+                    engine.commandProcessor.executeCommand("GRIDSNAP")
                 case SDL_SCANCODE_1:
                     engine.commandProcessor.executeCommand("PROPERTIES")
                 case SDL_SCANCODE_9:
@@ -821,7 +821,7 @@ internal final class EngineInputHandler {
                 case SDL_SCANCODE_F8:
                     engine.commandProcessor.executeCommand("ORTHO")
                 case SDL_SCANCODE_F9:
-                    engine.commandProcessor.executeCommand("GRID SNAP")
+                    engine.commandProcessor.executeCommand("GRIDSNAP")
                 case SDL_SCANCODE_F10:
                     engine.commandProcessor.executeCommand("POLAR")
                 case SDL_SCANCODE_F11:

@@ -224,11 +224,10 @@ final class CommandAliasParityTests: XCTestCase {
         XCTAssertEqual(processor.featureCommandKeys["LO"], "LAYOUT")
         XCTAssertEqual(processor.featureCommandKeys["SHEET"], "LAYOUT")
         XCTAssertEqual(processor.featureCommandKeys["-LAYOUT"], "LAYOUT")
-        XCTAssertEqual(
+        XCTAssertNotNil(
             CommandDescriptor.allCommands.first {
                 $0.canonicalName == "LAYOUT"
-            }?.bareEnterExecutes,
-            true)
+            })
         assertLayoutCommandFlow(processor: processor)
     }
 

@@ -29,6 +29,9 @@ public protocol LispHost: Sendable {
     /// Reads one input line. Returns nil on empty input (bare Enter).
     /// Throws .userCancel on Esc. Callers parse + re-prompt.
     func requestLine(prompt: String) async throws -> String?
+    /// `getstring T` variant: spaces are literal input terminated by Enter
+    /// only. Hosts without a Space-submits UI may ignore the flag.
+    func requestLineAllowingSpaces(prompt: String, allowSpaces: Bool) async throws -> String?
 
     // MARK: - Geometric input
 
@@ -197,6 +200,14 @@ public protocol LispHost: Sendable {
 extension LispHost {
     public func alert(_ text: String) async {
         await write(text)
+    }
+
+    /// Hosts without a Space-submits command line (REPL, scripted tests)
+    /// read whole lines either way; the `getstring` builtin itself still
+    /// truncates non-T input at the first space.
+    public func requestLineAllowingSpaces(prompt: String, allowSpaces: Bool) async throws -> String? {
+        _ = allowSpaces
+        return try await requestLine(prompt: prompt)
     }
 
     public func requestPointOrNumber(prompt: String, base: [Double]?) async throws -> LispPointInput? {

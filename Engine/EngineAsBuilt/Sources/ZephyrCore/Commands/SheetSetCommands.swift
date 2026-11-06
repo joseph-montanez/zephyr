@@ -16,6 +16,18 @@ extension CADCommandProcessor {
     /// line (verb + args); `upper` is its uppercased form.
     public func runSheetSetCommand(text: String, upper: String, engine: PhrostEngine?) {
         let (verb, arg) = Self.sheetSetVerbAndArg(text: text, upper: upper)
+        // Bare verbs that need operands open a pending prompted session;
+        // each Space/Enter submits one operand (Space == Enter).
+        switch verb {
+        case "NEWSHEETSET", "OPENSHEETSET", "-PUBLISHSET", "-TRANSMITSET":
+            if arg.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !_inPendingCompletion {
+                startPendingPrompt(command: verb, engine: engine)
+                return
+            }
+        default:
+            break
+        }
         switch verb {
         case "NEWSHEETSET":
             newSheetSet(arg: arg)

@@ -164,10 +164,6 @@ public struct CommandDescriptor: Sendable {
     public let syntax: String
     /// One-sentence description of what the command does.
     public let description: String
-    /// Bare Enter executes the command even though `syntax` is non-empty:
-    /// parameters are optional (LOAD/SCRIPT open a file picker instead).
-    /// Without this, Enter on a parameterized command waits for arguments.
-    public let bareEnterExecutes: Bool
 
     /// All strings that match this command (canonical name + all aliases).
     public var allMatches: [String] {
@@ -179,15 +175,13 @@ public struct CommandDescriptor: Sendable {
         aliases: [String] = [],
         category: CommandCategory,
         syntax: String = "",
-        description: String = "",
-        bareEnterExecutes: Bool = false
+        description: String = ""
     ) {
         self.canonicalName = canonicalName.uppercased()
         self.aliases = aliases.map { $0.uppercased() }
         self.category = category
         self.syntax = syntax
         self.description = description
-        self.bareEnterExecutes = bareEnterExecutes
     }
 
     /// Master list of every known command, used for autocomplete matching.
@@ -213,7 +207,7 @@ public struct CommandDescriptor: Sendable {
         // --- Ribbon (AutoLISP-defined command chrome) ---
         CommandDescriptor(canonicalName: "RIBBON",      aliases: [],               category: .view,    syntax: "", description: "Show or hide the ribbon"),
         CommandDescriptor(canonicalName: "RIBBONCLOSE", aliases: [],               category: .view,    syntax: "", description: "Hide the ribbon"),
-        CommandDescriptor(canonicalName: "RIBBONMODE",  aliases: [],               category: .view,    syntax: "[menu|labels|full]", description: "Switch the ribbon between the classic menu bar, labels, and icons + labels", bareEnterExecutes: true),
+        CommandDescriptor(canonicalName: "RIBBONMODE",  aliases: [],               category: .view,    syntax: "[menu|labels|full]", description: "Switch the ribbon between the classic menu bar, labels, and icons + labels"),
         CommandDescriptor(canonicalName: "RIBBONRELOAD", aliases: [],              category: .settings, syntax: "", description: "Re-read the AutoLISP ribbon definition (lisp/ribbon.lsp)"),
         CommandDescriptor(canonicalName: "TABWINDOW",  aliases: ["TABW", "FLOAT"], category: .draw,    syntax: "", description: "Move the active drawing tab into its own window"),
         CommandDescriptor(canonicalName: "TABDOCK",    aliases: ["TABD", "DOCK"],  category: .draw,    syntax: "", description: "Dock the active floating tab back into the main window"),
@@ -225,7 +219,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "VPMAX",      aliases: [],                category: .view,    syntax: "", description: "Maximize the focused pane"),
         CommandDescriptor(canonicalName: "VPMIN",      aliases: [],                category: .view,    syntax: "", description: "Restore the split arrangement saved by VPMAX"),
         CommandDescriptor(canonicalName: "VPEQUAL",    aliases: ["EQUALIZE"],      category: .view,    syntax: "", description: "Resize all split panes to equal sizes"),
-        CommandDescriptor(canonicalName: "VPRESIZE",   aliases: [],                category: .view,    syntax: "[+|-]percent", description: "Grow (+) or shrink (-) the focused pane by a percentage of its parent split", bareEnterExecutes: true),
+        CommandDescriptor(canonicalName: "VPRESIZE",   aliases: [],                category: .view,    syntax: "[+|-]percent", description: "Grow (+) or shrink (-) the focused pane by a percentage of its parent split"),
         // --- Draw ---
         CommandDescriptor(canonicalName: "LINE",       aliases: ["L"],             category: .draw,    syntax: "", description: "Draw a line segment by picking two points"),
         CommandDescriptor(canonicalName: "PLINE",      aliases: ["POLYLINE", "PL"], category: .draw, syntax: "", description: "Draw a multi-segment polyline"),
@@ -296,8 +290,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "-PURGE", aliases: [], category: .modify, syntax: "", description: "Remove unused definitions without confirming"),
         CommandDescriptor(canonicalName: "SPELL", aliases: ["SP"], category: .modify, syntax: "", description: "Spell-check drawing text (unavailable: no platform checker reachable)"),
         // --- History ---
-        CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)", bareEnterExecutes: true),
-        CommandDescriptor(canonicalName: "REDO",       aliases: [],                category: .modify,  syntax: "[<count>]", description: "Re-apply the last undone change (Cmd/Ctrl+Y)", bareEnterExecutes: true),
+        CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)"),
+        CommandDescriptor(canonicalName: "REDO",       aliases: [],                category: .modify,  syntax: "[<count>]", description: "Re-apply the last undone change (Cmd/Ctrl+Y)"),
         // --- Modify ---
         CommandDescriptor(canonicalName: "MOVE",       aliases: ["M"],             category: .modify,  syntax: "", description: "Move selected entities by picking two points"),
         CommandDescriptor(canonicalName: "ROTATE",     aliases: ["RO"],            category: .modify,  syntax: "", description: "Rotate selected entities around their collective center"),
@@ -350,7 +344,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "ZOOM",        aliases: ["Z"],             category: .view,    syntax: "", description: "Zoom: All/Center/Dynamic/Extents/Left/Previous/Right/Scale/Object/Window"),
         CommandDescriptor(canonicalName: "ZOOMEXTENTS",aliases: ["ZOOME"],         category: .view,    syntax: "", description: "Zoom to fit all entities in the viewport"),
         CommandDescriptor(canonicalName: "VIEW",       aliases: ["V", "VIEWS"],     category: .view,    syntax: "[name|index]", description: "List, select, or cycle model and sheet views"),
-        CommandDescriptor(canonicalName: "LAYOUT",     aliases: ["SHEET", "LO", "-LAYOUT"], category: .view, syntax: "[Copy/Delete/New/Template/Rename/SAveas/Set/?]", description: "Manage sheet layouts", bareEnterExecutes: true),
+        CommandDescriptor(canonicalName: "LAYOUT",     aliases: ["SHEET", "LO", "-LAYOUT"], category: .view, syntax: "[Copy/Delete/New/Template/Rename/SAveas/Set/?]", description: "Manage sheet layouts"),
         CommandDescriptor(canonicalName: "MODEL",      aliases: ["2DVIEW"],        category: .view,    syntax: "", description: "Switch to the DXF 2D model-space view"),
         CommandDescriptor(canonicalName: "NEXTVIEW",   aliases: ["VIEWNEXT"],      category: .view,    syntax: "", description: "Switch to the next model or sheet view"),
         CommandDescriptor(canonicalName: "PREVIOUSVIEW", aliases: ["PREVVIEW", "VIEWPREV"], category: .view, syntax: "", description: "Switch to the previous model or sheet view"),
@@ -367,17 +361,14 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "NAV",        aliases: ["RADIALNAV"],     category: .view,    syntax: "", description: "Show/hide the radial navigation tool"),
         CommandDescriptor(canonicalName: "PAN",        aliases: ["P"],             category: .view,    syntax: "", description: "Pan the view by clicking and dragging"),
         CommandDescriptor(canonicalName: "-PAN",       aliases: [],                category: .view,    syntax: "", description: "Pan the view by specifying a displacement vector"),
-        CommandDescriptor(canonicalName: "UCS",        aliases: [],                category: .view,    syntax: "[World/3point/View/Z/Origin/Prev] <World>", description: "Define the planar user coordinate system", bareEnterExecutes: true),
-        CommandDescriptor(canonicalName: "PLAN",       aliases: [],                category: .view,    syntax: "[Current ucs/Ucs/World] <Current>", description: "Align the view to the current or World UCS XY plane and zoom to extents", bareEnterExecutes: true),
+        CommandDescriptor(canonicalName: "UCS",        aliases: [],                category: .view,    syntax: "[World/3point/View/Z/Origin/Prev] <World>", description: "Define the planar user coordinate system"),
+        CommandDescriptor(canonicalName: "PLAN",       aliases: [],                category: .view,    syntax: "[Current ucs/Ucs/World] <Current>", description: "Align the view to the current or World UCS XY plane and zoom to extents"),
         CommandDescriptor(canonicalName: "DVIEW",      aliases: ["DV"],            category: .view,    syntax: "", description: "Dynamic view: twist the 2D view angle"),
         CommandDescriptor(canonicalName: "SNAPANG",    aliases: [],                category: .settings, syntax: "<degrees>", description: "Set the crosshair and ortho rotation angle"),
         // --- Layer ---
         CommandDescriptor(canonicalName: "LAYER",      aliases: ["LA"],            category: .layer,   syntax: "", description: "Show/hide the layer panel"),
         CommandDescriptor(canonicalName: "-LAYER",     aliases: ["-LA"],           category: .layer,   syntax: "?/Make/Set/New/Rename/Delete/On/Off/Color/Ltype/LWeight/Transparency/Plot/NoPlot/Description/Reconcile/Lock/Unlock/Freeze/Thaw/VPFreeze/VPThaw/State <args>", description: "Manage layers from the command line"),
-        CommandDescriptor(canonicalName: "LAYER NEW",  aliases: ["LA NEW"],        category: .layer,   syntax: "<name>", description: "Create a new layer with an optional name"),
-        CommandDescriptor(canonicalName: "LAYER DELETE", aliases: ["LAYER DEL", "LA DELETE", "LA DEL"], category: .layer, syntax: "<name>", description: "Delete a layer by name"),
-        CommandDescriptor(canonicalName: "LAYER RENAME", aliases: ["LA RENAME"],   category: .layer,   syntax: "<oldName> <newName>", description: "Rename an existing layer"),
-        CommandDescriptor(canonicalName: "LAYERSORT", aliases: ["LASORT", "LAYER SORT", "LA SORT"], category: .layer, syntax: "[Name|On|Color|Linetype|Lineweight|Opacity|Plot|Used] [Asc|Desc]", description: "Sort layers in the Layers panel by property; repeat a key to toggle direction"),
+        CommandDescriptor(canonicalName: "LAYERSORT", aliases: ["LASORT"], category: .layer, syntax: "[Name|On|Color|Linetype|Lineweight|Opacity|Plot|Used] [Asc|Desc]", description: "Sort layers in the Layers panel by property; repeat a key to toggle direction"),
         CommandDescriptor(canonicalName: "LAYERMOVE",    aliases: ["LM", "LAYMOVE"], category: .layer, syntax: "", description: "Move selected entities to a different layer (autocomplete prompt)"),
         CommandDescriptor(canonicalName: "LAYOFF",     aliases: [],                category: .layer,   syntax: "", description: "Turn off the layer of a selected object (pick-driven)"),
         CommandDescriptor(canonicalName: "LAYON",      aliases: [],                category: .layer,   syntax: "", description: "Turn on the layer of a selected object (pick-driven)"),
@@ -442,14 +433,16 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "STYLESMANAGER", aliases: [], category: .settings, syntax: "", description: "Open the plot styles folder"),
         CommandDescriptor(canonicalName: "PLOTTERMANAGER", aliases: [], category: .settings, syntax: "", description: "Open the plotters folder"),
         CommandDescriptor(canonicalName: "MLEADERSTYLE", aliases: ["MLS"], category: .settings, syntax: "", description: "Create and edit multileader styles"),
-        CommandDescriptor(canonicalName: "THEME",      aliases: ["DARKMODE", "LIGHTMODE"], category: .settings, syntax: "[DARK|LIGHT]", description: "Toggle or set the UI theme (dark/light mode)"),
+        CommandDescriptor(canonicalName: "THEME",      aliases: [], category: .settings, syntax: "[Dark/Light/Latte/Frappe/Macchiato/Mocha/Next/?]", description: "Choose the UI theme at a sub-prompt (bare THEME opens it; DARKMODE/LIGHTMODE are direct)"),
+        CommandDescriptor(canonicalName: "DARKMODE",   aliases: [], category: .settings, syntax: "", description: "Switch to the dark UI theme"),
+        CommandDescriptor(canonicalName: "LIGHTMODE",  aliases: [], category: .settings, syntax: "", description: "Switch to the light UI theme"),
         CommandDescriptor(canonicalName: "FPS",        aliases: [],                        category: .settings, syntax: "", description: "Toggle FPS counter in the title bar"),
         CommandDescriptor(canonicalName: "AUTOCONTRAST", aliases: ["CONTRAST", "TRUECOLORCONTRAST"], category: .settings, syntax: "[ON|OFF]", description: "Toggle auto-contrast clamping for 24-bit TrueColors and gradients"),
         CommandDescriptor(canonicalName: "SET-BACKGROUND", aliases: ["SETBG", "BACKGROUND"], category: .settings, syntax: "<index|hex>", description: "Set viewport background color (ACI index 1-255 or hex RRGGBB)"),
         CommandDescriptor(canonicalName: "GRID",            aliases: [],                category: .settings, syntax: "", description: "Toggle the background grid on/off"),
-        CommandDescriptor(canonicalName: "GRID SNAP",       aliases: [],                category: .settings, syntax: "", description: "Toggle snapping to grid intersections on/off"),
-        CommandDescriptor(canonicalName: "GRID SPACING",    aliases: [],                category: .settings, syntax: "<value>", description: "Set the base grid spacing in world units"),
-        CommandDescriptor(canonicalName: "GRID ORIGIN",     aliases: [],                category: .settings, syntax: "<x> <y>", description: "Set the grid origin in world coordinates"),
+        CommandDescriptor(canonicalName: "GRIDSNAP",        aliases: [],                category: .settings, syntax: "", description: "Toggle snapping to grid intersections on/off"),
+        CommandDescriptor(canonicalName: "GRIDSPACING",     aliases: [],                category: .settings, syntax: "<value>", description: "Set the base grid spacing in world units"),
+        CommandDescriptor(canonicalName: "GRIDORIGIN",      aliases: [],                category: .settings, syntax: "<x> <y>", description: "Set the grid origin in world coordinates (two prompted numbers)"),
         CommandDescriptor(canonicalName: "SPLINETESS",  aliases: ["SPLINESEGS"],   category: .settings, syntax: "[value]", description: "Set or show the legacy spline fallback density divisor (higher = smoother, default 5000); interactive curves use automatic screen-space tessellation"),
         CommandDescriptor(canonicalName: "SIMPLIFY",        aliases: ["SIMP", "COMPLEX", "COMPLEXBLOCKS"], category: .settings, syntax: "[ON|OFF]", description: "Toggle or set the simplification of complex block references to bounding boxes on/off"),
         CommandDescriptor(canonicalName: "SIMPLIFYPOLY",    aliases: ["SIMPPOLY", "COMPLEXPOLY", "SIMPLIFYPOLYLINES"], category: .settings, syntax: "[ON|OFF]", description: "Toggle or set the simplification of dense polylines on/off"),
@@ -518,7 +511,29 @@ public final class CADCommandProcessor {
     }
 
     /// Last executed command text, used by Spacebar repeat-last-command (AutoCAD style).
+    /// Stores the canonical command name only (never same-line arguments):
+    /// repeat re-enters at the first prompt, matching AutoCAD.
     public var lastExecutedCommand: String?
+
+    /// Input kind of the currently open command-line prompt. `.token`
+    /// submits on Space or Enter; `.line` keeps Space literal for values
+    /// that may contain blanks (names, paths, text). Reset by
+    /// `clearCommand()`; prompts set it when they open.
+    public var promptInputKind: CommandPromptInputKind = .token
+
+    /// Canonical name of the one-shot command awaiting prompted arguments,
+    /// if a pending session is open (see CADPromptedSessions.swift).
+    public var pendingPromptCommand: String? = nil
+    /// Arguments collected so far by the open pending session.
+    public var pendingPromptCollected: [String] = []
+    /// Index of the pending phase currently shown.
+    public var pendingPromptPhaseIndex: Int = 0
+
+    /// Re-entrancy guard for `executeCommand` token replay.
+    var _isReplaying: Bool = false
+    /// True while a pending completion runs its reconstructed full line, so
+    /// bare-form cases run their legacy behaviour instead of re-prompting.
+    var _inPendingCompletion: Bool = false
 
     /// Internal clipboard for CAD entity copy/paste (COPYCLIP, COPYBASE, PASTECLIP, etc.).
     public var clipboard = CADClipboard()
@@ -587,6 +602,10 @@ public final class CADCommandProcessor {
         let key = alias.uppercased().trimmingCharacters(in: .whitespaces)
         let target = command.uppercased().trimmingCharacters(in: .whitespaces)
         guard !key.isEmpty, !target.isEmpty else { return "ignoring empty alias" }
+        // Space submits: an alias is one token, so blanks are rejected.
+        guard !key.contains(where: { $0.isWhitespace }) else {
+            return "ignoring alias '\(alias)': aliases cannot contain spaces"
+        }
         guard key != target else { return "ignoring self-alias '\(alias)'" }
         var known = Set(CommandDescriptor.allCommands.map { $0.canonicalName.uppercased() })
         known.formUnion(featureCommandRegistry.keys.map { $0.uppercased() })
@@ -847,7 +866,61 @@ public final class CADCommandProcessor {
     // MARK: - Command Execution
 
     /// Execute a command string (e.g. "MOVE", "M", "ERASE").
+    ///
+    /// Space == Enter: at a `.token` prompt the buffer can never hold a
+    /// space, so multi-token input only arrives here from paste or
+    /// programmatic callers. It replays token by token through
+    /// `executeSingleSubmit`, in order, so `"UCS Z 45"` lands as the
+    /// keystroke sequence `UCS` Space `Z` Space `45` Space. At a `.line`
+    /// prompt the whole line is one submit (spaces are data).
     public func executeCommand(_ text: String) {
+        if promptInputKind == .line
+            && (pendingPromptCommand != nil || activeFeatureCommand != nil
+                || plotCliSession != nil || publishCliSession != nil) {
+            executeSingleSubmit(text)
+            return
+        }
+        let tokens = Self.splitSheetSetArgs(text)
+        guard tokens.count > 1 else {
+            executeSingleSubmit(text)
+            return
+        }
+        if _isReplaying {
+            executeSingleSubmit(text)
+            return
+        }
+        _isReplaying = true
+        defer { _isReplaying = false }
+        for token in tokens {
+            executeSingleSubmit(token)
+        }
+    }
+
+    /// One single submit: exactly one token (or one literal line). Routes an
+    /// open pending session first, then runs the full dispatch.
+    public func executeSingleSubmit(_ text: String) {
+        if pendingPromptCommand != nil {
+            handlePendingSubmit(text, engine: engine)
+            return
+        }
+        let bare = text.uppercased().trimmingCharacters(in: .whitespaces)
+        // VIEW/MVIEW take prompted options; bare entry opens the prompt
+        // instead of running the no-arg behaviour (list/cycle).
+        if bare == "VIEW" || bare == "V" || bare == "VIEWS" {
+            startPendingPrompt(command: "VIEW", engine: engine)
+            return
+        }
+        if bare == "MVIEW" || bare == "MV" {
+            startPendingPrompt(command: "MVIEW", engine: engine)
+            return
+        }
+        executeFullLine(text)
+    }
+
+    /// Full-line dispatch: the pre-existing command switch. Multi-token
+    /// lines only reach here from pending completions (reconstructed from
+    /// stepwise-prompts); the interactive path submits one token at a time.
+    public func executeFullLine(_ text: String) {
         // Reject-nested-interactive gate: while a Lisp routine runs, no
         // other command may start. Must precede lastExecutedCommand so a
         // rejected command never poisons spacebar repeat.
@@ -888,7 +961,12 @@ public final class CADCommandProcessor {
             }
             return
         }
-        lastExecutedCommand = text
+        // Repeat-last stores the command name only: repeat re-enters at the
+        // first prompt (pending/feature sessions consume their own submits
+        // before this line, so only fresh command names land here).
+        lastExecutedCommand = upper.split(
+            whereSeparator: { $0.isWhitespace }
+        ).first.map(String.init) ?? upper
 
         if activeFeatureCommand is UCSCommand, let eng = engine {
             _ = submitTextToActiveFeatureCommand(text, engine: eng)
@@ -979,10 +1057,18 @@ public final class CADCommandProcessor {
             performRedo(engine: engine, steps: steps)
             clearCommand()
         case "UNDO", "U":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "UNDO", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             performUndo(engine: engine, steps: 1)
             clearCommand()
         case "REDO":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "REDO", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             performRedo(engine: engine, steps: 1)
             clearCommand()
@@ -1060,6 +1146,10 @@ public final class CADCommandProcessor {
             guard let engine = engine else { clearCommand(); return }
             startPlotCliSession(.psetupin, engine: engine)
         case _ where upper == "+PUBLISH" || upper.hasPrefix("+PUBLISH "):
+            if upper == "+PUBLISH" && !_inPendingCompletion {
+                startPendingPrompt(command: "+PUBLISH", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             let plusArg = String(text.dropFirst(8))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1098,6 +1188,12 @@ public final class CADCommandProcessor {
         case _ where upper.hasPrefix("NEWSHEETSET ") || upper.hasPrefix("OPENSHEETSET ") || upper.hasPrefix("-PUBLISHSET ") || upper.hasPrefix("-TRANSMITSET "):
             runSheetSetCommand(text: text, upper: upper, engine: engine)
         case "SCALELISTEDIT", "-SCALELISTEDIT":
+            if !upper.contains(where: { $0.isWhitespace }) && !_inPendingCompletion {
+                // Both spellings share one pending flow; completion rebuilds
+                // the canonical form (both cases run the same function).
+                startPendingPrompt(command: "SCALELISTEDIT", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             runScaleListEdit(text: text, upper: upper, engine: engine)
         case "STYLESMANAGER":
@@ -1107,6 +1203,10 @@ public final class CADCommandProcessor {
             openSupportFolder(named: "Plotters", createIfMissing: true)
             clearCommand()
         case "-HATCH":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "-HATCH", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             startDashHatchCommand(text: text, upper: upper, engine: engine)
         case _ where upper.hasPrefix("-HATCH "):
@@ -1203,6 +1303,10 @@ public final class CADCommandProcessor {
             }
             clearCommand()
         case "RIBBONMODE":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "RIBBONMODE", engine: engine)
+                return
+            }
             if let eng = engine {
                 print("[CAD] Ribbon mode is '\(eng.ui.ribbonMode.rawValue)'. "
                     + "Usage: RIBBONMODE [menu|labels|full]")
@@ -1252,6 +1356,10 @@ public final class CADCommandProcessor {
             }
             clearCommand()
         case _ where upper == "VPRESIZE" || upper.hasPrefix("VPRESIZE "):
+            if upper == "VPRESIZE" && !_inPendingCompletion {
+                startPendingPrompt(command: "VPRESIZE", engine: engine)
+                return
+            }
             let argument = String(upper.dropFirst("VPRESIZE".count))
                 .trimmingCharacters(in: .whitespaces)
                 .replacingOccurrences(of: "%", with: "")
@@ -1266,6 +1374,10 @@ public final class CADCommandProcessor {
             }
             clearCommand()
         case _ where upper == "VPORTS" || upper.hasPrefix("VPORTS "):
+            if upper == "VPORTS" && !_inPendingCompletion {
+                startPendingPrompt(command: "VPORTS", engine: engine)
+                return
+            }
             if let engine {
                 let arg = String(upper.dropFirst("VPORTS".count))
                     .trimmingCharacters(in: .whitespaces)
@@ -1315,6 +1427,10 @@ public final class CADCommandProcessor {
             clearCommand()
             showNativeSaveDialog(engine: eng)
         case "DXFVERSION", "DXFVER":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "DXFVERSION", engine: engine)
+                return
+            }
             guard let eng = engine else { clearCommand(); return }
             let version = eng.tabManager.activeTab?.dxfVersion ?? .preferredExport
             print("[CAD] DXF export version: \(version.displayName) (\(version.rawValue))")
@@ -1344,6 +1460,10 @@ public final class CADCommandProcessor {
             eng.ui.exportPDFDialogActive = true
             // No commandPrompt: the dialog is not a modal command, and a lingering prompt renders as stuck active.
         case "-EXPORTPDF":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "-EXPORTPDF", engine: engine)
+                return
+            }
             guard let eng = engine else { clearCommand(); return }
             runDashExportPDF(text: text, engine: eng)
         case _ where upper.hasPrefix("-EXPORTPDF "):
@@ -1475,12 +1595,14 @@ public final class CADCommandProcessor {
             guard engine != nil else { clearCommand(); return }
             startCommand("-PAN", prompt: "Specify base point")
 
-        case _ where upper == "UCS" || upper.hasPrefix("UCS "):
+        case "UCS":
+            // No same-line tail: options arrive as their own submits and
+            // route through the active-UCS branch above.
             startUCSFeatureCommand(text: upper, engine: engine, processor: self)
-        case _ where upper == "PLAN" || upper.hasPrefix("PLAN "):
+        case "PLAN":
             // Bare PLAN opens the options prompt like UCS (AutoCAD flow:
-            // PLAN -> Enter -> Enter accepts <Current>); it no longer
-            // instant-applies without showing the prompt.
+            // PLAN -> Enter -> Enter accepts <Current>); follow-up submits
+            // route through the active-PLAN branch above.
             startPlanFeatureCommand(text: upper, engine: engine, processor: self)
 
         case "DVIEW", "DV":
@@ -1506,6 +1628,10 @@ public final class CADCommandProcessor {
             clearCommand()
 
         case "SNAPANG":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SNAPANG", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             print("[CAD] Current snap angle: \(engine.snap.snapAngle)°")
             print("[CAD] Usage: SNAPANG <degrees>")
@@ -1581,38 +1707,11 @@ public final class CADCommandProcessor {
                 break
             }
             startCommand("BLOCK", prompt: "Enter block name")
+            // Block names may contain blanks: Space stays literal here.
+            promptInputKind = .line
 
-        case _ where upper.hasPrefix("BLOCK ") || upper.hasPrefix("BMAKE ") || upper.hasPrefix("B "):
-            guard let engine = engine else {
-                clearCommand()
-                break
-            }
-            guard engine.cadSelection.hasSelection else {
-                print("[CAD] BLOCK requires entities to be selected.")
-                clearCommand()
-                break
-            }
-
-            let parts = text.split(maxSplits: 1, whereSeparator: \.isWhitespace)
-            let namePart = parts.count > 1
-                ? String(parts[1]).trimmingCharacters(in: .whitespaces)
-                : ""
-            guard !namePart.isEmpty else {
-                startCommand("BLOCK", prompt: "Enter block name")
-                break
-            }
-
-            let selectedCount = engine.cadSelection.selectedHandles.count
-            let block = engine.document.createBlockFromEntities(
-                handles: engine.cadSelection.selectedHandles,
-                name: namePart)
-            if block != nil {
-                print("[CAD] Block '\(namePart)' created with \(selectedCount) entities.")
-                engine.cadSelection.clearSelection()
-            } else {
-                print("[CAD] Failed to create block '\(namePart)'.")
-            }
-            clearCommand()
+        // No `BLOCK <name>` same-line form: the name arrives as its own
+        // submit through the active-BLOCK branch above (Space == Enter).
         case "BLOCKS", "BLOCKPANEL":
             if let engine = engine {
                 engine.ui.blockPanelVisible.toggle()
@@ -1625,31 +1724,26 @@ public final class CADCommandProcessor {
             clearCommand()
         // --- Layer commands ---
         // --- Theme ---
+        // Bare THEME opens the prompted sub-command (theme/Next/?); the
+        // choice arrives as its own submit. DARKMODE/LIGHTMODE stay direct.
         case "THEME":
-            engine?.ui.cycleTheme()
-            if let eng = engine {
-                let themes = AppTheme.allPresets.map(\.displayName).joined(separator: ", ")
-                print("[CAD] Theme set to: \(eng.ui.theme.name). Available themes: \(themes)")
-            }
-            clearCommand()
+            guard let engine = engine else { clearCommand(); return }
+            // A keyboard-driven command never inherits a centered cursor.
+            RadialNavCapture.releaseAllRelativeMouseModes(windows: engine.windowManager.windows)
+            let cmd = ThemeCommand()
+            activeFeatureCommand = cmd
+            cmd.start(engine: engine, processor: self)
         case "DARKMODE":
             engine?.ui.setTheme(AppTheme.dark)
             clearCommand()
         case "LIGHTMODE":
             engine?.ui.setTheme(AppTheme.light)
             clearCommand()
-        case _ where upper.hasPrefix("THEME "):
-            let arg = String(upper.dropFirst(6)).trimmingCharacters(in: .whitespaces)
-            if let eng = engine {
-                if eng.ui.setTheme(named: arg) {
-                    print("[CAD] Theme set to: \(eng.ui.theme.name)")
-                } else {
-                    let available = AppTheme.allPresets.map(\.displayName).joined(separator: ", ")
-                    print("[CAD] Unknown theme '\(arg)'. Available themes: \(available)")
-                }
-            }
-            clearCommand()
         case "LANGUAGE", "LANG", "UILANGUAGE", "FONTLANG":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "LANGUAGE", engine: engine)
+                return
+            }
             if let engine = engine {
                 let profiles = UIFontLanguageProfile.allCases.map(\.rawValue).joined(separator: ", ")
                 print("[CAD] UI font language profile: \(engine.uiFontLanguageProfile.rawValue)")
@@ -1680,53 +1774,26 @@ public final class CADCommandProcessor {
                 engine.ui.layersPanelVisible.toggle()
             }
             clearCommand()
-        case _ where upper == "LAYERSORT" || upper == "LASORT" || upper == "LAYER SORT" || upper == "LA SORT"
-            || upper.hasPrefix("LAYERSORT ") || upper.hasPrefix("LASORT ")
-            || upper.hasPrefix("LAYER SORT ") || upper.hasPrefix("LA SORT "):
-            let tokens = upper.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-            let argTokens: [String]
-            if tokens.count >= 2, tokens[0] == "LAYER" || tokens[0] == "LA", tokens[1] == "SORT" {
-                argTokens = Array(tokens.dropFirst(2))
-            } else {
-                argTokens = Array(tokens.dropFirst())
-            }
-            let current = LayerSortSettings.load()
-            let usage = "LAYERSORT [Name|On|Color|Linetype|Lineweight|Opacity|Plot|Used] [Asc|Desc|Reverse]"
-            if argTokens.isEmpty || argTokens.contains("?") {
-                print("[CAD] Layer sort: \(current.key.displayName) \(current.ascending ? "ascending" : "descending"). Usage: \(usage)")
-            } else if let updated = current.applyingCommandTokens(argTokens) {
-                updated.save()
-                print("[CAD] Layer sort: \(updated.key.displayName) \(updated.ascending ? "ascending" : "descending").")
-            } else {
-                print("[CAD] Invalid LAYERSORT option. Usage: \(usage)")
-            }
-            // Make the result visible immediately, like opening AutoCAD's
-            // Layer Properties Manager to apply a column sort.
-            engine?.ui.layersPanelVisible = true
-            clearCommand()
-        case _ where upper == "LAYER ?" || upper == "-LAYER ?" || upper == "LA ?" || upper == "-LA ?":
-            guard let engine = engine else { clearCommand(); return }
-            let doc = engine.document
-            let counts = LayerSortPolicy.entityCounts(in: doc)
-            print("[CAD] Layers (alphabetical):")
-            for layer in doc.allLayers.sorted(by: { $0.name < $1.name }) {
-                let state = layer.isVisible ? "On" : "Off"
-                let current = doc.activeLayerID == layer.handle ? " (current)" : ""
-                print("[CAD]   \(layer.name)\(current) — \(state), color \(DXFColorTable.rgbaToACI(layer.color)), lt \(layer.lineType), \(counts[layer.handle] ?? 0) ent")
-            }
-            clearCommand()
-        case _ where upper.hasPrefix("LAYER NEW ") || upper.hasPrefix("LA NEW "):
-            guard let engine = engine else { clearCommand(); return }
-            let namePart = text.dropFirst(upper.hasPrefix("LAYER ") ? 10 : 7).trimmingCharacters(in: .whitespaces)
-            let name = namePart.isEmpty ? engine.document.uniqueLayerName() : namePart
-            let layer = Layer(name: name)
-            engine.document.addLayer(layer)
-            print("[CAD] Layer '\(name)' created.")
-            clearCommand()
+        case "LAYERSORT", "LASORT":
+            // Keys and directions arrive as their own submits through the
+            // pending session (Space == Enter); validation lives there.
+            // A reconstructed same-line form cannot reach this switch: the
+            // public entry replays multi-token input stepwise.
+            startPendingPrompt(command: "LAYERSORT", engine: engine)
+        // Spaced command names are retired (Space submits): `-LAYER ?`
+        // lists layers stepwise, and layer creation folds into `-LAYER New`.
         case "-LAYER", "-LA":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "-LAYER", engine: engine)
+                return
+            }
             print("[CAD] -LAYER ?/Make/Set/New/Rename/Delete/On/Off/Color/Ltype/LWeight/Transparency/Plot/NoPlot/Description/Reconcile/Lock/Unlock/Freeze/Thaw/VPFreeze/VPThaw/State <args>")
             clearCommand()
         case "LAYERSTATE", "-LAYERSTATE":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "LAYERSTATE", engine: engine)
+                return
+            }
             print("[CAD] LAYERSTATE Save <name> | Restore <name> | Delete <name> | Rename <old> <new> | List | Export <name> <path> | Import <path>")
             clearCommand()
         case _ where upper.hasPrefix("LAYERSTATE ") || upper.hasPrefix("-LAYERSTATE "):
@@ -1744,71 +1811,26 @@ public final class CADCommandProcessor {
             guard let engine = engine else { clearCommand(); return }
             runDashLayerCommand(text: text, upper: upper, engine: engine)
         case "-DIMSTYLE":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "-DIMSTYLE", engine: engine)
+                return
+            }
             print("[CAD] -DIMSTYLE Restore <name> | Save <name> | Apply <name>")
             clearCommand()
         case _ where upper.hasPrefix("-DIMSTYLE "):
             guard let engine = engine else { clearCommand(); return }
             runDashDimStyleCommand(text: text, upper: upper, engine: engine)
-        case _ where upper.hasPrefix("LAYER DELETE ") || upper.hasPrefix("LAYER DEL ") || upper.hasPrefix("LA DELETE ") || upper.hasPrefix("LA DEL "):
-            guard let engine = engine else { clearCommand(); return }
-            let prefixLen: Int
-            if upper.hasPrefix("LAYER DELETE ") { prefixLen = 13 }
-            else if upper.hasPrefix("LAYER DEL ") { prefixLen = 10 }
-            else if upper.hasPrefix("LA DELETE ") { prefixLen = 10 }
-            else { prefixLen = 7 }  // "LA DEL "
-            let namePart = String(text.dropFirst(prefixLen)).trimmingCharacters(in: .whitespaces)
-            guard !namePart.isEmpty else {
-                print("[CAD] LAYER DELETE requires a layer name.")
-                clearCommand()
-                return
-            }
-            guard let layer = engine.document.findLayer(named: namePart) else {
-                print("[CAD] Layer '\(namePart)' not found.")
-                clearCommand()
-                return
-            }
-            guard engine.document.layerCount > 1 else {
-                print("[CAD] Cannot delete the last remaining layer.")
-                clearCommand()
-                return
-            }
-            engine.document.removeLayer(handle: layer.handle)
-            print("[CAD] Layer '\(namePart)' deleted.")
-            clearCommand()
-        case _ where upper.hasPrefix("LAYER RENAME ") || upper.hasPrefix("LA RENAME "):
-            guard let engine = engine else { clearCommand(); return }
-            let prefixLen = upper.hasPrefix("LAYER RENAME ") ? 13 : 10
-            let args = String(text.dropFirst(prefixLen)).trimmingCharacters(in: .whitespaces)
-            let parts = args.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-            guard parts.count == 2 else {
-                print("[CAD] LAYER RENAME <oldName> <newName>")
-                clearCommand()
-                return
-            }
-            let oldName = String(parts[0])
-            let newName = String(parts[1])
-            guard let layer = engine.document.findLayer(named: oldName) else {
-                print("[CAD] Layer '\(oldName)' not found.")
-                clearCommand()
-                return
-            }
-            if let existing = engine.document.findLayer(named: newName), existing.handle != layer.handle {
-                print("[CAD] A layer named '\(newName)' already exists.")
-                clearCommand()
-                return
-            }
-            engine.document.renameLayer(handle: layer.handle, name: newName)
-            print("[CAD] Layer '\(oldName)' renamed to '\(newName)'.")
-            clearCommand()
-        case _ where upper == "LAYERP ?" || upper == "LAYERP LIST" || upper == "LAYERP LS":
-            guard let engine = engine else { clearCommand(); return }
-            let depth = LayerTransactionService().layerHistoryDepth(in: engine.document)
-            print("[CAD] Layer history depth: \(depth) (max \(LayerPreviousHistory.maxDepth)).")
-            clearCommand()
+        // Spaced `LAYER DELETE` / `LAYER RENAME` are retired (Space
+        // submits): use `-LAYER Delete <name>` / `-LAYER Rename <old>
+        // <new>` stepwise instead.
         case _ where upper == "LAYFRZ" || upper.hasPrefix("LAYFRZ ") || upper == "LAYFREEZE" || upper.hasPrefix("LAYFREEZE ")
             || upper == "LAYTHW" || upper.hasPrefix("LAYTHW ") || upper == "LAYTHAW" || upper.hasPrefix("LAYTHAW ")
             || upper == "LAYLCK" || upper.hasPrefix("LAYLCK ") || upper == "LAYLOCK" || upper.hasPrefix("LAYLOCK ")
             || upper == "LAYULK" || upper.hasPrefix("LAYULK ") || upper == "LAYUNLOCK" || upper.hasPrefix("LAYUNLOCK "):
+            if !upper.contains(where: { $0.isWhitespace }) && !_inPendingCompletion {
+                startPendingPrompt(command: "LAYFRZ", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             let words = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).map(String.init)
             let cmd = words[0].uppercased()
@@ -1838,6 +1860,10 @@ public final class CADCommandProcessor {
             }
             clearCommand()
         case _ where upper == "LAYDEL" || upper.hasPrefix("LAYDEL ") || upper == "LAYDELETE" || upper.hasPrefix("LAYDELETE "):
+            if !upper.contains(where: { $0.isWhitespace }) && !_inPendingCompletion {
+                startPendingPrompt(command: "LAYDEL", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             let words = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).map(String.init)
             guard words.count == 2, !words[1].trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -1854,6 +1880,10 @@ public final class CADCommandProcessor {
             }
             clearCommand()
         case _ where upper == "LAYMRG" || upper.hasPrefix("LAYMRG ") || upper == "LAYMERGE" || upper.hasPrefix("LAYMERGE "):
+            if !upper.contains(where: { $0.isWhitespace }) && !_inPendingCompletion {
+                startPendingPrompt(command: "LAYMRG", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             let words = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
             guard words.count >= 3 else {
@@ -1871,6 +1901,10 @@ public final class CADCommandProcessor {
             }
             clearCommand()
         case _ where upper == "LAYWALK" || upper.hasPrefix("LAYWALK "):
+            if upper == "LAYWALK" && !_inPendingCompletion {
+                startPendingPrompt(command: "LAYWALK", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             let tail = String(text.dropFirst(7)).trimmingCharacters(in: .whitespaces)
             if tail.isEmpty {
@@ -1892,6 +1926,10 @@ public final class CADCommandProcessor {
             }
             clearCommand()
         case _ where upper == "COPYTOLAYER" || upper.hasPrefix("COPYTOLAYER "):
+            if upper == "COPYTOLAYER" && !_inPendingCompletion {
+                startPendingPrompt(command: "COPYTOLAYER", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             let words = text.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true).map(String.init)
             guard words.count == 2, !words[1].trimmingCharacters(in: .whitespaces).isEmpty else {
@@ -1914,9 +1952,21 @@ public final class CADCommandProcessor {
             }
             clearCommand()
         case _ where upper == "VPLAYER" || upper.hasPrefix("VPLAYER "):
+            if upper == "VPLAYER" && !_inPendingCompletion {
+                startPendingPrompt(command: "VPLAYER", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             runVPlayerCommand(text: text, upper: upper, engine: engine)
         // --- Background color ---
+        case "SET-BACKGROUND", "SETBG", "BACKGROUND":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SET-BACKGROUND", engine: engine)
+                return
+            }
+            print("[CAD] Usage: SET-BACKGROUND <index|hex>")
+            print("[CAD]   ACI index (0-255) or hex RRGGBB (e.g. BD20FF)")
+            clearCommand()
         case _ where upper.hasPrefix("SET-BACKGROUND ") || upper.hasPrefix("SETBG ") || upper.hasPrefix("BACKGROUND "):
             guard let engine = engine else { clearCommand(); return }
             let prefixLen: Int
@@ -1960,6 +2010,10 @@ public final class CADCommandProcessor {
             clearCommand()
         // --- Auto-Contrast ---
         case "AUTOCONTRAST", "TRUECOLORCONTRAST", "CONTRAST":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "AUTOCONTRAST", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             let doc = engine.tabManager.activeDocument
             doc.autoContrastTrueColor.toggle()
@@ -1993,6 +2047,10 @@ public final class CADCommandProcessor {
             clearCommand()
         // --- Simplify Complex Blocks ---
         case "SIMPLIFY", "SIMP", "COMPLEX", "COMPLEXBLOCKS":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SIMPLIFY", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             engine.toggleSimplifyComplexBlocks()
             clearCommand()
@@ -2015,6 +2073,10 @@ public final class CADCommandProcessor {
             clearCommand()
         // --- Simplify Dense Polylines ---
         case "SIMPLIFYPOLY", "SIMPPOLY", "COMPLEXPOLY", "SIMPLIFYPOLYLINES":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SIMPLIFYPOLY", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             engine.toggleSimplifyPolylines()
             clearCommand()
@@ -2037,6 +2099,10 @@ public final class CADCommandProcessor {
             clearCommand()
         // --- Grip Settings ---
         case "SETTINGSGRIPOBJECTMAX", "GRIPOBJECTMAX", "GRIPOBJLIMIT":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SETTINGSGRIPOBJECTMAX", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             print("[CAD] Grip object max: \(engine.gripObjectMax) (entities)")
             clearCommand()
@@ -2058,6 +2124,10 @@ public final class CADCommandProcessor {
             engine.interaction.cachedGripGeneration = -1
             clearCommand()
         case "SETTINGSGRIPMAX", "GRIPMAX":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SETTINGSGRIPMAX", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             print("[CAD] Grip max: \(engine.gripMax) (total grip squares drawn)")
             clearCommand()
@@ -2075,6 +2145,10 @@ public final class CADCommandProcessor {
             engine.interaction.cachedGripGeneration = -1
             clearCommand()
         case "SELECTIONPREVIEWLIMIT":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SELECTIONPREVIEWLIMIT", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             print("[CAD] Selection preview limit: \(engine.selectionPreviewLimit) (entities)")
             clearCommand()
@@ -2091,6 +2165,10 @@ public final class CADCommandProcessor {
             clearCommand()
         // --- Spline Tessellation ---
         case "SPLINETESS", "SPLINESEGS":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SPLINETESS", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             print("[CAD] Legacy spline fallback divisor: \(engine.splineTessellationDivisor) (higher = smoother, default 5000); interactive curves use automatic screen-space tessellation")
             clearCommand()
@@ -2115,7 +2193,7 @@ public final class CADCommandProcessor {
                 "GRIDMODE", on: engine.snap.gridVisible, engine: engine)
             print("[CAD] Grid: \(engine.snap.gridVisible ? "ON" : "OFF")")
             clearCommand()
-        case "GRID SNAP":
+        case "GRIDSNAP":
             guard let engine = engine else { clearCommand(); return }
             engine.snap.gridSnapEnabled.toggle()
             syncToggleSysvar(
@@ -2154,31 +2232,35 @@ public final class CADCommandProcessor {
             engine.ui.exitCleanScreen()
             print("[CAD] Clean screen off.")
             clearCommand()
-        case _ where upper.hasPrefix("GRID SPACING "):
+        // Spaced `GRID ...` names are retired (Space submits): single-token
+        // GRIDSNAP / GRIDSPACING / GRIDORIGIN take prompted input instead.
+        case "GRIDSPACING":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "GRIDSPACING", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
-            let arg = String(text.dropFirst(13)).trimmingCharacters(in: .whitespaces)
+            print("[CAD] Grid spacing: \(engine.snap.gridBaseSpacing)")
+            print("[CAD] Usage: GRIDSPACING <value>")
+            clearCommand()
+        case _ where upper.hasPrefix("GRIDSPACING "):
+            guard let engine = engine else { clearCommand(); return }
+            let arg = String(text.dropFirst(12)).trimmingCharacters(in: .whitespaces)
             guard let val = Double(arg), val > 0 else {
-                print("[CAD] GRID SPACING requires a positive number (e.g. 'GRID SPACING 5')")
+                print("[CAD] GRIDSPACING requires a positive number (e.g. 'GRIDSPACING 5')")
                 clearCommand()
                 return
             }
             engine.snap.gridBaseSpacing = val
             print("[CAD] Grid spacing set to \(val)")
             clearCommand()
-        case _ where upper.hasPrefix("GRID ORIGIN "):
-            guard let engine = engine else { clearCommand(); return }
-            let args = String(text.dropFirst(12)).trimmingCharacters(in: .whitespaces)
-                .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-            guard args.count == 2,
-                  let x = Double(args[0]),
-                  let y = Double(args[1]) else {
-                print("[CAD] GRID ORIGIN requires two numbers (e.g. 'GRID ORIGIN 100 50')")
-                clearCommand()
+        case "GRIDORIGIN":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "GRIDORIGIN", engine: engine)
                 return
             }
-            engine.snap.gridOriginX = x
-            engine.snap.gridOriginY = y
-            print("[CAD] Grid origin set to (\(x), \(y))")
+            guard let engine = engine else { clearCommand(); return }
+            print("[CAD] Grid origin: (\(engine.snap.gridOriginX), \(engine.snap.gridOriginY))")
             clearCommand()
         // --- Snap Toggles ---
         case "POLAR":
@@ -2188,6 +2270,15 @@ public final class CADCommandProcessor {
                 "POLARMODE", on: engine.snap.polarTrackingEnabled,
                 engine: engine)
             print("[CAD] Polar Tracking: \(engine.snap.polarTrackingEnabled ? "ON" : "OFF")")
+            clearCommand()
+        case "POLARANG":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "POLARANG", engine: engine)
+                return
+            }
+            guard let engine = engine else { clearCommand(); return }
+            print("[CAD] Polar angle increment: \(engine.snap.polarAngleIncrement)°")
+            print("[CAD] Usage: POLARANG <degrees>")
             clearCommand()
         case _ where upper.hasPrefix("POLARANG "):
             guard let engine = engine else { clearCommand(); return }
@@ -2221,6 +2312,10 @@ public final class CADCommandProcessor {
             print("[CAD] Ortho: \(engine.snap.orthoEnabled ? "ON" : "OFF")")
             clearCommand()
         case "LASSO", "PICKDRAG":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "LASSO", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             engine.interaction.allowPressAndDragLasso.toggle()
             print("[CAD] Press-and-drag Lasso: \(engine.interaction.allowPressAndDragLasso ? "ON" : "OFF")")
@@ -2243,6 +2338,10 @@ public final class CADCommandProcessor {
             clearCommand()
         // --- Drawing Units ---
         case "UNITS", "UN", "UNIT", "DDUNITS":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "UNITS", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             let unitLabel = switch engine.document.unit {
             case .millimeter: "millimeters"
@@ -2258,6 +2357,10 @@ public final class CADCommandProcessor {
             clearCommand()
         // --- UI Scale ---
         case "SETUISCALE", "ZOOMUI", "UISCALE":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SETUISCALE", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
             if let override = engine.uiScaleOverride {
                 print("[CAD] Current UI scale: \(String(format: "%.1f", override))x (override)")
@@ -2364,14 +2467,9 @@ public final class CADCommandProcessor {
                 let cmd = factory()
                 activeFeatureCommand = cmd
                 cmd.start(engine: eng, processor: self)
-                if parts.count > 1, activeFeatureCommand != nil {
-                    let rawParts = text.trimmingCharacters(in: .whitespaces).split(maxSplits: 1, whereSeparator: \.isWhitespace)
-                    let argument = rawParts.count > 1 ? String(rawParts[1]) : String(parts[1])
-                    let result = cmd.handleCommandText(argument, engine: eng, processor: self)
-                    if result == .finished, activeFeatureCommand != nil {
-                        finishFeatureCommand(engine: eng)
-                    }
-                }
+                // No same-line tail forwarding: arguments arrive as their own
+                // submits (Space == Enter) and route through the
+                // active-feature branch above.
             } else {
                 clearCommand()
             }
@@ -2700,6 +2798,10 @@ public final class CADCommandProcessor {
         isSelectingObjects = false
         commandLineActive = false
         commandBuffer = ""
+        promptInputKind = .token
+        pendingPromptCommand = nil
+        pendingPromptCollected = []
+        pendingPromptPhaseIndex = 0
         pendingDistanceBuffer = ""
         commandSelectionIndex = 0
         _lastMatchInput = ""
@@ -3035,13 +3137,15 @@ public final class CADCommandProcessor {
             return
         }
         let doc = engine.document
+        // Single-name verbs rejoin the tail so layer names with blanks
+        // (typed at a `.line` prompt) survive the whitespace split.
         func needName(_ i: Int) -> String? {
             guard tokens.count > i, !tokens[i].isEmpty else {
                 print("[CAD] -LAYER \(verb) requires a layer name.")
                 clearCommand()
                 return nil
             }
-            return tokens[i]
+            return tokens[i...].joined(separator: " ")
         }
         switch verb {
         case "M", "MAKE":
@@ -3102,8 +3206,9 @@ public final class CADCommandProcessor {
                 clearCommand()
                 return
             }
-            guard let layer = doc.findLayer(named: tokens[2]) else {
-                print("[CAD] Layer '\(tokens[2])' not found.")
+            let colorName = tokens[2...].joined(separator: " ")
+            guard let layer = doc.findLayer(named: colorName) else {
+                print("[CAD] Layer '\(colorName)' not found.")
                 clearCommand()
                 return
             }
@@ -3135,8 +3240,9 @@ public final class CADCommandProcessor {
                 clearCommand()
                 return
             }
-            guard let layer = doc.findLayer(named: tokens[2]) else {
-                print("[CAD] Layer '\(tokens[2])' not found.")
+            let ltypeName = tokens[2...].joined(separator: " ")
+            guard let layer = doc.findLayer(named: ltypeName) else {
+                print("[CAD] Layer '\(ltypeName)' not found.")
                 clearCommand()
                 return
             }
@@ -3149,8 +3255,9 @@ public final class CADCommandProcessor {
                 clearCommand()
                 return
             }
-            guard let layer = doc.findLayer(named: tokens[2]) else {
-                print("[CAD] Layer '\(tokens[2])' not found.")
+            let lweightName = tokens[2...].joined(separator: " ")
+            guard let layer = doc.findLayer(named: lweightName) else {
+                print("[CAD] Layer '\(lweightName)' not found.")
                 clearCommand()
                 return
             }
@@ -3212,8 +3319,9 @@ public final class CADCommandProcessor {
                 clearCommand()
                 return
             }
-            guard let layer = doc.findLayer(named: tokens[2]) else {
-                print("[CAD] Layer '\(tokens[2])' not found.")
+            let transName = tokens[2...].joined(separator: " ")
+            guard let layer = doc.findLayer(named: transName) else {
+                print("[CAD] Layer '\(transName)' not found.")
                 clearCommand()
                 return
             }
@@ -3494,6 +3602,9 @@ public final class CADCommandProcessor {
     }
 
     /// `SCALELISTEDIT` list/add/delete/reset over the drawing custom scales.
+    /// `SCALELISTEDIT` list/add/delete/reset over the drawing custom scales.
+    /// Bare entry opens a pending verb prompt at the call site; the verb +
+    /// rest arrive as their own submits (Space == Enter).
     private func runScaleListEdit(text: String, upper: String, engine: PhrostEngine) {
         let manager = engine.tabManager
         let tail = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3632,6 +3743,10 @@ public final class CADCommandProcessor {
         isSelectingObjects = selectingObjects
         commandLineActive = false
         commandBuffer = ""
+        promptInputKind = .token
+        pendingPromptCommand = nil
+        pendingPromptCollected = []
+        pendingPromptPhaseIndex = 0
         pendingDistanceBuffer = ""
         commandSelectionIndex = 0
         _lastMatchInput = ""

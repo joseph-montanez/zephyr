@@ -36,7 +36,11 @@ public final class PlaceViewCommand: FeatureCommand {
     }
 
     private enum Phase {
-        case idle
+        case file
+        case view
+        case scale
+        case paperX
+        case paperY(x: Double)
         case awaitingPoint
     }
 
@@ -67,57 +71,129 @@ public final class PlaceViewCommand: FeatureCommand {
     }
 
     public static let usage =
-        "PLACEVIEW \"<model.dxf>\" <view> <scale> [paperX paperY] (e.g. PLACEVIEW \"C:/m.dxf\" Lobby 50)"
+        "PLACEVIEW prompts for model drawing, view name, scale, then an optional point (e.g. PLACEVIEW, \"C:/m.dxf\", Lobby, 50)"
 
     private var request: Request?
     private var view: SheetSetSheetViews.NamedView?
-    private var phase: Phase = .idle
+    private var phase: Phase = .file
     private var mouseWorldX: Double = 0
     private var mouseWorldY: Double = 0
+    private var collectedModelPath: String = ""
+    private var collectedViewName: String = ""
+    private var collectedScale: Double = 50
 
     public init() {}
 
     public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
-        phase = .idle
-        processor.commandPrompt = "Model drawing, view name, and scale (\(Self.usage))"
+        phase = .file
+        collectedModelPath = ""
+        collectedViewName = ""
+        openPrompt("Model drawing path:", kind: .line, processor: processor)
     }
 
-    public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {}
+    public func cancel(engine: PhrostEngine, processor: CADCommandProcessor) {
+        processor.promptInputKind = .token
+    }
 
+    // Space == Enter: operands arrive one submit at a time (file → view →
+    // scale → point). The retired one-line form lives on only as the static
+    // `parse(_:)` below, which stays for tests and scripted callers.
     public func handleCommandText(
         _ text: String, engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
         let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty else {
-            processor.commandPrompt = Self.usage
+        switch phase {
+        case .file:
+            guard !input.isEmpty else {
+                openPrompt("Model drawing path:", kind: .line, processor: processor)
+                return .continue
+            }
+            collectedModelPath = input
+            phase = .view
+            openPrompt("View name in '\(input)':", kind: .line, processor: processor)
             return .continue
-        }
-        guard let parsed = Self.parse(input) else {
-            processor.commandPrompt = Self.usage
+        case .view:
+            guard !input.isEmpty else {
+                openPrompt("View name in '\(collectedModelPath)':", kind: .line, processor: processor)
+                return .continue
+            }
+            collectedViewName = input
+            guard let found = Self.resolveView(
+                modelPath: collectedModelPath, viewName: collectedViewName) else {
+                let known = SheetSetSheetViews.readViews(atPath: collectedModelPath)?
+                    .map(\.name).joined(separator: ", ") ?? "(unreadable — .dxf/.dwt only)"
+                print("[PlaceView] View '\(collectedViewName)' not found in '\(collectedModelPath)'. Known: \(known). Nothing placed.")
+                return .finished
+            }
+            view = found
+            phase = .scale
+            openPrompt("Scale denominator for '\(found.name)' (50 = 1:50):", kind: .token, processor: processor)
             return .continue
-        }
-        guard let found = Self.resolveView(modelPath: parsed.modelPath, viewName: parsed.viewName) else {
-            let known = SheetSetSheetViews.readViews(atPath: parsed.modelPath)?
-                .map(\.name).joined(separator: ", ") ?? "(unreadable — .dxf/.dwt only)"
-            print("[PlaceView] View '\(parsed.viewName)' not found in '\(parsed.modelPath)'. Known: \(known). Nothing placed.")
-            return .finished
-        }
-        request = parsed
-        view = found
-        if let x = parsed.paperX, let y = parsed.paperY {
+        case .scale:
+            guard let scale = Double(input), scale > 0 else {
+                openPrompt("Invalid scale. Scale denominator for '\(collectedViewName)' (50 = 1:50):", kind: .token, processor: processor)
+                return .continue
+            }
+            collectedScale = scale
+            request = Request(
+                modelPath: collectedModelPath, viewName: collectedViewName,
+                scaleDenominator: scale)
+            phase = .paperX
+            openPrompt("Placement paper X (empty = pick on screen):", kind: .token, processor: processor)
+            return .continue
+        case .paperX:
+            if input.isEmpty {
+                return openPlacementPoint(processor: processor)
+            }
+            guard let x = Double(input) else {
+                openPrompt("Invalid number. Placement paper X (empty = pick on screen):", kind: .token, processor: processor)
+                return .continue
+            }
+            phase = .paperY(x: x)
+            openPrompt("Placement paper Y:", kind: .token, processor: processor)
+            return .continue
+        case .paperY(let x):
+            guard let y = Double(input) else {
+                openPrompt("Invalid number. Placement paper Y:", kind: .token, processor: processor)
+                return .continue
+            }
+            request?.paperX = x
+            request?.paperY = y
             place(atX: x, y: y, engine: engine)
             return .finished
+        case .awaitingPoint:
+            openPlacementPoint(processor: processor)
+            return .continue
         }
+    }
+
+    @discardableResult
+    private func openPlacementPoint(processor: CADCommandProcessor) -> CommandResult {
         phase = .awaitingPoint
-        processor.commandPrompt = "Specify placement point for '\(found.name)' at 1:\(parsed.scaleDenominator):"
+        let name = view?.name ?? collectedViewName
+        openPrompt(
+            "Specify placement point for '\(name)' at 1:\(collectedScale):",
+            kind: .token, processor: processor)
         return .continue
+    }
+
+    private func openPrompt(
+        _ prompt: String, kind: CommandPromptInputKind,
+        processor: CADCommandProcessor
+    ) {
+        processor.commandPrompt = prompt
+        processor.commandBuffer = ""
+        processor.commandSelectionIndex = 0
+        processor.promptInputKind = kind
+        processor.commandLineActive = true
+        print("[CAD] \(prompt)")
     }
 
     public func handleMouseClick(
         worldX: Double, worldY: Double,
         engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
-        guard phase == .awaitingPoint else { return .continue }
+        guard case .awaitingPoint = phase else { return .continue }
         let picked = engine.snap.currentSnapResult?.worldPos
             ?? Vector3(x: worldX, y: worldY, z: 0)
         place(atX: picked.x, y: picked.y, engine: engine)
@@ -143,7 +219,7 @@ public final class PlaceViewCommand: FeatureCommand {
     }
 
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {
-        guard phase == .awaitingPoint,
+        guard case .awaitingPoint = phase,
               let view = view, let request = request else { return }
         let corners = PlacePreview.rectCorners(
             centerX: mouseWorldX, centerY: mouseWorldY,

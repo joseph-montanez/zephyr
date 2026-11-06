@@ -41,7 +41,14 @@ public enum PGPAliasLoader {
                 warnings.append("line \(index + 1): missing command name")
                 continue
             }
-            aliases.append((alias: parts[0].uppercased(), command: command))
+            // Space submits one token per keypress, so aliases and command
+            // names must be single tokens; anything else never fires.
+            let alias = parts[0].uppercased()
+            if alias.contains(where: { $0.isWhitespace }) {
+                warnings.append("line \(index + 1): alias '\(parts[0])' contains a space and will never fire")
+                continue
+            }
+            aliases.append((alias: alias, command: command))
         }
         return (aliases, warnings)
     }

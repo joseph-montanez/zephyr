@@ -141,7 +141,8 @@ extension LayerSortPolicyTests {
             LayerSortSettings.load(),
             LayerSortSettings(key: .color, ascending: false))
 
-        processor.executeCommand("LAYER SORT COLOR")
+        processor.executeCommand("LAYERSORT COLOR")
+        processor.executeCommand("")
         XCTAssertEqual(
             LayerSortSettings.load(),
             LayerSortSettings(key: .color, ascending: true),
@@ -152,7 +153,7 @@ extension LayerSortPolicyTests {
             LayerSortSettings.load(),
             LayerSortSettings(key: .used, ascending: true))
 
-        processor.executeCommand("LA SORT REVERSE")
+        processor.executeCommand("LAYERSORT REVERSE")
         XCTAssertEqual(
             LayerSortSettings.load(),
             LayerSortSettings(key: .used, ascending: false))

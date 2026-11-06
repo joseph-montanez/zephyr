@@ -286,6 +286,7 @@ public final class DashTextCommand: FeatureCommand {
         styleName = style.name
         height = style.fixedHeight > 0 ? style.fixedHeight : 2.5
         rotation = 0
+        processor.promptInputKind = .token
         processor.commandPrompt = "Enter text height <\(formatHeight(height))>:"
     }
 
@@ -307,6 +308,7 @@ public final class DashTextCommand: FeatureCommand {
                 height = h
             }
             step = .rotation
+            processor.promptInputKind = .token
             processor.commandPrompt = "Enter text rotation <0>:"
             return .handled
         case .rotation:
@@ -318,6 +320,8 @@ public final class DashTextCommand: FeatureCommand {
                 rotation = r
             }
             step = .style
+            // Style names may contain blanks: Space stays literal here.
+            processor.promptInputKind = .line
             processor.commandPrompt = "Enter text style <\(styleName)>:"
             return .handled
         case .style:
@@ -364,6 +368,8 @@ public final class DashTextCommand: FeatureCommand {
         insertX = worldX
         insertY = worldY
         step = .value
+        // Text content may contain blanks: Space stays literal here.
+        processor.promptInputKind = .line
         processor.commandPrompt = "Enter text:"
         return .continue
     }

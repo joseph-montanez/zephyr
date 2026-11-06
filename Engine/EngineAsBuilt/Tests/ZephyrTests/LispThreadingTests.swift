@@ -25,7 +25,7 @@ final class LispThreadingTests: XCTestCase {
 
     func testBrokerCancelSettlesAcrossThreads() async throws {
         let broker = LispInputBroker()
-        let waiter = Task.detached { try await broker.request(.line(prompt: "Text:")) }
+        let waiter = Task.detached { try await broker.request(.line(prompt: "Text:", allowSpaces: false)) }
         await waitForPending(broker)
         broker.cancelPending()
         do {

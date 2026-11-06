@@ -155,8 +155,13 @@ final class LispCADHost: LispHost, @unchecked Sendable {
     // MARK: - Line input
 
     func requestLine(prompt: String) async throws -> String? {
+        try await requestLineAllowingSpaces(prompt: prompt, allowSpaces: false)
+    }
+
+    func requestLineAllowingSpaces(prompt: String, allowSpaces: Bool) async throws -> String? {
         setPrompt(prompt, base: nil)
-        let event = try await broker.requestCancellable(.line(prompt: prompt))
+        let event = try await broker.requestCancellable(
+            .line(prompt: prompt, allowSpaces: allowSpaces))
         guard case let .line(text) = event else { return nil }
         return text
     }

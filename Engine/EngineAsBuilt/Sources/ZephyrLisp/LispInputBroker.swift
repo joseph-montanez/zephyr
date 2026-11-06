@@ -32,7 +32,7 @@ public final class LispInputBroker: @unchecked Sendable {
     /// What the evaluator is waiting for.
     public enum RequestKind: Sendable, Equatable {
         case point(prompt: String)
-        case line(prompt: String)
+        case line(prompt: String, allowSpaces: Bool)
         case entity(prompt: String)
         case device
     }

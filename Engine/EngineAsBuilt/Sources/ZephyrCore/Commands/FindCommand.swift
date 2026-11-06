@@ -68,6 +68,8 @@ public final class FindCommand: FeatureCommand {
         cursor = 0
         replaceAll = false
         marked = []
+        // Find/replace strings may contain blanks: Space stays literal.
+        processor.promptInputKind = .line
         processor.commandPrompt = "Find what:"
     }
 
@@ -116,12 +118,14 @@ public final class FindCommand: FeatureCommand {
             }
             findText = trimmed
             phase = .replaceString
+            processor.promptInputKind = .line
             processor.commandPrompt = "Replace with (Enter for find-only):"
             return .continue
 
         case .replaceString:
             replaceText = text.trimmingCharacters(in: .newlines)
             phase = .caseOption
+            processor.promptInputKind = .token
             processor.commandPrompt = "Case-sensitive? [Yes/No] <No>:"
             return .continue
 

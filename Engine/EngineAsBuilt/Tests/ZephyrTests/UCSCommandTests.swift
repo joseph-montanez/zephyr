@@ -36,14 +36,23 @@ final class UCSCommandTests: XCTestCase {
         XCTAssertTrue(match?.descriptor.syntax.contains("Prev") ?? false)
     }
 
-    func testUCSAndPlanBareEnterExecutes() {
-        // Bare UCS/PLAN + Enter must start the interactive prompt flow
-        // (AutoCAD parity) instead of waiting for same-line parameters.
+    func testBareCommandsOpenPromptedSessions() {
+        // Space == Enter: a bare one-shot command opens its prompted session
+        // (one token per submit) instead of waiting for same-line arguments.
         let processor = makeProcessor()
+        processor.executeCommand("UNDO")
+        XCTAssertEqual(processor.pendingPromptCommand, "UNDO")
+        XCTAssertTrue(processor.commandLineActive)
+        processor.executeCommand("")
+        XCTAssertNil(processor.pendingPromptCommand)
+        processor.executeCommand("LAYERSORT")
+        XCTAssertEqual(processor.pendingPromptCommand, "LAYERSORT")
+        XCTAssertTrue(processor.commandLineActive)
+        // UCS/PLAN descriptors stay discoverable with their option syntax.
         XCTAssertTrue(
-            processor.matchCommands(input: "UCS").first?.descriptor.bareEnterExecutes ?? false)
-        XCTAssertTrue(
-            processor.matchCommands(input: "PLAN").first?.descriptor.bareEnterExecutes ?? false)
+            processor.matchCommands(input: "UCS").first?.descriptor.syntax.contains("Prev") ?? false)
+        XCTAssertEqual(
+            processor.matchCommands(input: "PLAN").first?.descriptor.canonicalName, "PLAN")
     }
 
     func testUCSInteractiveOptionChain() {

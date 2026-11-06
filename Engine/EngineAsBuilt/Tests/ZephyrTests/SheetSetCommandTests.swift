@@ -40,6 +40,8 @@ final class SheetSetCommandTests: XCTestCase {
     func testNewSheetSetCreatesCurrentInMemorySet() {
         let processor = CADCommandProcessor()
         processor.executeCommand("NEWSHEETSET \"TI Set\"")
+        // In-memory: empty .dst submit finishes the prompted flow.
+        processor.executeCommand("")
         XCTAssertEqual(processor.sheetSetStore.current?.name, "TI Set")
         XCTAssertEqual(processor.sheetSetStore.current?.allSheetsInOrder.count, 0)
     }
@@ -212,6 +214,8 @@ final class SheetSetCommandTests: XCTestCase {
     func testShowAndHideManager() {
         let processor = CADCommandProcessor()
         processor.executeCommand("NEWSHEETSET Demo")
+        // In-memory: empty .dst submit finishes the prompted flow.
+        processor.executeCommand("")
         processor.executeCommand("SHEETSET")
         XCTAssertTrue(SheetSetSysvars.managerOpen)
         XCTAssertEqual(processor.sheetSetStore.current?.name, "Demo")

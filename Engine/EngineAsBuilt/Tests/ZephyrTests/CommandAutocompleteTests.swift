@@ -30,12 +30,10 @@ final class CommandAutocompleteTests: XCTestCase {
         let undo = CommandDescriptor.allCommands.first { $0.canonicalName == "UNDO" }
         XCTAssertEqual(undo?.aliases, ["U"])
         XCTAssertEqual(undo?.syntax, "[<count>]")
-        XCTAssertEqual(undo?.bareEnterExecutes, true)
         XCTAssertEqual(undo?.category, .modify)
 
         let redo = CommandDescriptor.allCommands.first { $0.canonicalName == "REDO" }
         XCTAssertEqual(redo?.syntax, "[<count>]")
-        XCTAssertEqual(redo?.bareEnterExecutes, true)
     }
 
     func testAutoContrastIsDiscoverableCommand() {
@@ -50,7 +48,6 @@ final class CommandAutocompleteTests: XCTestCase {
         XCTAssertNotNil(desc)
         XCTAssertEqual(desc?.aliases, ["CONTRAST", "TRUECOLORCONTRAST"])
         XCTAssertEqual(desc?.syntax, "[ON|OFF]")
-        XCTAssertEqual(desc?.bareEnterExecutes, false)
         XCTAssertEqual(desc?.category, .settings)
     }
 }

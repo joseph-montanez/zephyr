@@ -92,42 +92,27 @@ final class LispCommandTests: XCTestCase {
         XCTAssertNil(LispCommand.openFilter(for: .eval))
     }
 
-    func testBareEnterDescriptors() {
-        // Bare Enter must execute (the picker supplies the file).
-        XCTAssertTrue(LispDescriptors.load.bareEnterExecutes)
-        XCTAssertTrue(LispDescriptors.script.bareEnterExecutes)
-        XCTAssertFalse(LispDescriptors.eval.bareEnterExecutes)
-        // UNDO/REDO take an optional step count: bare Enter performs one step
-        // (AutoCAD parity) instead of waiting for an argument.
-        for name in ["UNDO", "REDO"] {
-            let descriptor = CommandDescriptor.allCommands.first { $0.canonicalName == name }
-            XCTAssertNotNil(descriptor, "\(name) must be a registered command")
-            XCTAssertTrue(descriptor?.bareEnterExecutes ?? false)
-        }
-        // Spot-check: other parameterized commands still wait for arguments.
-        // RIBBONMODE is the same deal as UNDO/REDO: bare Enter reports the
-        // current mode instead of waiting for a keyword.
-        let optionalArgumentCommands: Set<String> = [
-            "LOAD", "SCRIPT", "UNDO", "REDO", "RIBBONMODE", "VPRESIZE",
-            // Plot: bare Enter lists (SCALELISTEDIT) or opens the file
-            // picker (PSETUPIN) instead of waiting for arguments.
-            "PSETUPIN", "SCALELISTEDIT", "-SCALELISTEDIT",
-            // LAYOUT: bare Enter enters the modal option prompt.
-            "LAYOUT",
-            // UCS/PLAN: bare Enter enters the interactive option prompt
-            // (AutoCAD parity: UCS -> Enter -> Z -> Enter -> 45 -> Enter;
-            // PLAN -> Enter -> Enter accepts <Current>).
-            "UCS", "PLAN",
-        ]
-        let others = CommandDescriptor.allCommands.filter {
-            !$0.syntax.isEmpty
-                && !optionalArgumentCommands.contains($0.canonicalName)
-        }
-        XCTAssertFalse(others.isEmpty)
-        for desc in others {
-            XCTAssertFalse(
-                desc.bareEnterExecutes,
-                "\(desc.canonicalName) must keep parameter-entry behavior")
+    func testBareCommandsOpenPromptFlows() {
+        // Space == Enter: a bare command opens its prompt flow (pending
+        // session or modal command) instead of waiting for same-line
+        // arguments. LOAD/SCRIPT still supply the file via picker.
+        XCTAssertEqual(LispDescriptors.load.syntax, "<file>")
+        XCTAssertEqual(LispDescriptors.script.syntax, "<file>")
+        XCTAssertEqual(LispDescriptors.eval.syntax, "<expression>")
+        let processor = CADCommandProcessor()
+        processor.executeCommand("UNDO")
+        XCTAssertEqual(processor.pendingPromptCommand, "UNDO")
+        processor.executeCommand("")
+        XCTAssertNil(processor.pendingPromptCommand)
+        processor.executeCommand("REDO")
+        XCTAssertEqual(processor.pendingPromptCommand, "REDO")
+        // No command name or alias contains a space: one token per submit.
+        for desc in CommandDescriptor.allCommands {
+            for match in desc.allMatches {
+                XCTAssertFalse(
+                    match.contains(where: { $0.isWhitespace }),
+                    "\(desc.canonicalName) has a spaced match '\(match)'")
+            }
         }
     }
 }

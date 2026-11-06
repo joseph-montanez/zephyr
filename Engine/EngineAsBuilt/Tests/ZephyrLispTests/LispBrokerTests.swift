@@ -7,7 +7,7 @@ import XCTest
 final class LispBrokerTests: XCTestCase {
     func testRequestOfferValue() async throws {
         let broker = await LispInputBroker()
-        async let answer = broker.requestCancellable(.line(prompt: "p"))
+        async let answer = broker.requestCancellable(.line(prompt: "p", allowSpaces: false))
         await broker.offer(.line("hi"))
         let event = try await answer
         XCTAssertEqual(event, .line("hi"))
@@ -81,7 +81,7 @@ final class LispBrokerTests: XCTestCase {
         // request startup wins): the next request throws without suspending.
         await broker.cancelPending()
         do {
-            _ = try await broker.requestCancellable(.line(prompt: "p"))
+            _ = try await broker.requestCancellable(.line(prompt: "p", allowSpaces: false))
             XCTFail("expected cancel")
         } catch let error as LispError {
             XCTAssertEqual(error, .userCancel)
@@ -93,7 +93,7 @@ final class LispBrokerTests: XCTestCase {
     func testTaskCancelSettlesOnce() async throws {
         let broker = await LispInputBroker()
         let task = Task {
-            try await broker.requestCancellable(.line(prompt: "p"))
+            try await broker.requestCancellable(.line(prompt: "p", allowSpaces: false))
         }
         // Wait until the request is provably suspended, then cancel it.
         var suspended = false
@@ -120,7 +120,7 @@ final class LispBrokerTests: XCTestCase {
 
     func testPostSettleOfferIgnored() async throws {
         let broker = await LispInputBroker()
-        async let answer = broker.requestCancellable(.line(prompt: "p"))
+        async let answer = broker.requestCancellable(.line(prompt: "p", allowSpaces: false))
         await broker.offer(.line("first"))
         _ = try await answer
         // Slot is idle now: the late offer queues (harmless), never resumes.
