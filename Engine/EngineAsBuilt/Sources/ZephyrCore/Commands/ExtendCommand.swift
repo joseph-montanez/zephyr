@@ -840,10 +840,10 @@ public final class ExtendCommand: FeatureCommand {
         doc.pushUndo(preSnapshot)
         operationsInSession += 1
         doc.updateEntityGeometryLive(for: hitHandle, geometry: geom)
-        doc.invalidateEntityGrid()
+        doc.rebuildEntityGrid()
         doc.markEdited(regenerate: true)
         engine.tabManager.markActiveDirty()
-        recompileBoundaries(in: doc)
+        refreshBoundaryContribution(for: hitHandle, in: doc, deleted: false)
         return true
     }
 
@@ -892,13 +892,11 @@ public final class ExtendCommand: FeatureCommand {
             doc.updateEntityGeometryLive(for: hitHandle, geometry: geom)
         }
 
-        doc.invalidateEntityGrid()
+        doc.rebuildEntityGrid()
         doc.markEdited(regenerate: true)
         engine.tabManager.markActiveDirty()
 
-        if selectedBoundaryHandles.contains(hitHandle) || selectedBoundaryHandles.isEmpty {
-            recompileBoundaries(in: doc)
-        }
+        refreshBoundaryContribution(for: hitHandle, in: doc, deleted: geom.isEmpty)
         return true
     }
 
@@ -948,10 +946,12 @@ public final class ExtendCommand: FeatureCommand {
         for (handle, geom) in changed {
             doc.updateEntityGeometryLive(for: handle, geometry: geom)
         }
-        doc.invalidateEntityGrid()
+        doc.rebuildEntityGrid()
         doc.markEdited(regenerate: true)
         engine.tabManager.markActiveDirty()
-        recompileBoundaries(in: doc)
+        for (handle, _) in changed {
+            refreshBoundaryContribution(for: handle, in: doc, deleted: false)
+        }
         return (changed.count, lockedSkipped)
     }
 
@@ -996,10 +996,12 @@ public final class ExtendCommand: FeatureCommand {
         for (handle, geom) in changed {
             doc.updateEntityGeometryLive(for: handle, geometry: geom)
         }
-        doc.invalidateEntityGrid()
+        doc.rebuildEntityGrid()
         doc.markEdited(regenerate: true)
         engine.tabManager.markActiveDirty()
-        recompileBoundaries(in: doc)
+        for (handle, _) in changed {
+            refreshBoundaryContribution(for: handle, in: doc, deleted: false)
+        }
         return changed.count
     }
 
@@ -1067,6 +1069,18 @@ public final class ExtendCommand: FeatureCommand {
             cuttingHandles: selectedBoundaryHandles.isEmpty ? nil : selectedBoundaryHandles,
             excludedHandle: nil
         )
+    }
+
+    /// Splice one entity's new (or removed) geometry into the cached
+    /// boundaries instead of recompiling drawing-wide. No-op when the
+    /// entity is not part of the boundary set. Undo still recompiles fully.
+    private func refreshBoundaryContribution(for handle: UUID, in doc: CADDocument, deleted: Bool) {
+        guard selectedBoundaryHandles.isEmpty || selectedBoundaryHandles.contains(handle) else { return }
+        if deleted {
+            TrimGeometryEngine.removeCuttingEdges(&cachedBoundaries, for: handle)
+        } else {
+            TrimGeometryEngine.updateCuttingEdges(&cachedBoundaries, for: handle, document: doc)
+        }
     }
 
     // MARK: - Overlay Rendering

@@ -250,32 +250,14 @@ public enum TrimGeometryEngine {
 
         for otherEntity in entities {
             if let excluded = excludedHandle, otherEntity.handle == excluded { continue }
-            guard let layer = document.layer(for: otherEntity.layerID), layer.isVisible else { continue }
-            guard otherEntity.blockID == nil else { continue }
-            guard let geom = document.resolvedGeometry(for: otherEntity) else { continue }
+            guard let contribution = contribution(of: otherEntity, document: document) else { continue }
 
             let segStart = edges.segments.count
             let lineStart = edges.exactLines.count
             let curveStart = edges.exactCurves.count
-            for prim in geom {
-                if case .line(let start, let end, _) = prim {
-                    let segment = (otherEntity.transform.transformPoint(start), otherEntity.transform.transformPoint(end))
-                    edges.segments.append(segment)
-                    edges.exactLines.append(segment)
-                } else {
-                    // Exact world-space cutter curves (no chord error) for the
-                    // analytical solvers. Lines are covered by the segment
-                    // path, so only non-line curves are added here. When an
-                    // exact curve exists its exploded chords are NOT also
-                    // added: chord hits duplicate exact hits at chord-error
-                    // offsets and made cuts land off-curve (approximate).
-                    let exact = exactWorldCurves(for: prim, transform: otherEntity.transform)
-                    edges.exactCurves.append(contentsOf: exact)
-                    if exact.isEmpty {
-                        edges.segments.append(contentsOf: explode(primitive: prim, t: otherEntity.transform))
-                    }
-                }
-            }
+            edges.segments.append(contentsOf: contribution.segments)
+            edges.exactLines.append(contentsOf: contribution.exactLines)
+            edges.exactCurves.append(contentsOf: contribution.exactCurves)
             edges.rangesByHandle[otherEntity.handle] = (
                 segments: segStart..<edges.segments.count,
                 exactLines: lineStart..<edges.exactLines.count,
@@ -283,6 +265,136 @@ public enum TrimGeometryEngine {
         }
 
         return edges
+    }
+
+    /// One entity's cutter contribution, or nil when the entity must not cut
+    /// (hidden layer, block reference, no resolvable geometry). Shared by the
+    /// full compile and the incremental per-entity refresh below so both
+    /// paths build identical edges.
+    nonisolated static func contribution(
+        of entity: CADEntity,
+        document: CADDocument
+    ) -> (segments: [(Vector3, Vector3)], exactLines: [(Vector3, Vector3)], exactCurves: [Curve2d])? {
+        guard let layer = document.layer(for: entity.layerID), layer.isVisible else { return nil }
+        guard entity.blockID == nil else { return nil }
+        guard let geom = document.resolvedGeometry(for: entity) else { return nil }
+
+        var segments: [(Vector3, Vector3)] = []
+        var exactLines: [(Vector3, Vector3)] = []
+        var exactCurves: [Curve2d] = []
+        for prim in geom {
+            if case .line(let start, let end, _) = prim {
+                let segment = (entity.transform.transformPoint(start), entity.transform.transformPoint(end))
+                segments.append(segment)
+                exactLines.append(segment)
+            } else {
+                // Exact world-space cutter curves (no chord error) for the
+                // analytical solvers. Lines are covered by the segment
+                // path, so only non-line curves are added here. When an
+                // exact curve exists its exploded chords are NOT also
+                // added: chord hits duplicate exact hits at chord-error
+                // offsets and made cuts land off-curve (approximate).
+                let exact = exactWorldCurves(for: prim, transform: entity.transform)
+                exactCurves.append(contentsOf: exact)
+                if exact.isEmpty {
+                    segments.append(contentsOf: explode(primitive: prim, t: entity.transform))
+                }
+            }
+        }
+        return (segments, exactLines, exactCurves)
+    }
+
+    /// Splice helper: replace one entity's range in a cutter array, shifting
+    /// every later contributor's range so provenance stays exact. The
+    /// owner's own range is re-pointed at the freshly spliced elements.
+    private nonisolated static func spliceContribution<T>(
+        _ array: inout [T],
+        ranges: inout [UUID: (segments: Range<Int>, exactLines: Range<Int>, exactCurves: Range<Int>)],
+        owner: UUID,
+        keyPath: WritableKeyPath<(segments: Range<Int>, exactLines: Range<Int>, exactCurves: Range<Int>), Range<Int>>,
+        oldRange: Range<Int>,
+        newElements: [T]
+    ) {
+        let delta = newElements.count - oldRange.count
+        array.replaceSubrange(oldRange, with: newElements)
+        let newRange = oldRange.lowerBound..<(oldRange.lowerBound + newElements.count)
+        if var entry = ranges[owner] {
+            entry[keyPath: keyPath] = newRange
+            ranges[owner] = entry
+        }
+        guard delta != 0 else { return }
+        for handle in ranges.keys {
+            if handle == owner { continue }
+            var entry = ranges[handle]!
+            let range = entry[keyPath: keyPath]
+            if range.lowerBound >= oldRange.upperBound {
+                entry[keyPath: keyPath] = (range.lowerBound + delta)..<(range.upperBound + delta)
+                ranges[handle] = entry
+            }
+        }
+    }
+
+    /// Refresh one entity's cutter contribution in place after a trim/extend
+    /// rewrites its geometry. O(entity geometry + contributors), not O(full
+    /// drawing): the alternative — recompiling every cutter per click —
+    /// explodes curves drawing-wide on every single trim.
+    nonisolated public static func updateCuttingEdges(
+        _ edges: inout TrimCuttingEdges,
+        for handle: UUID,
+        document: CADDocument
+    ) {
+        guard let old = edges.rangesByHandle[handle] else {
+            // Not previously a contributor (or compiled with an explicit
+            // handle set that excluded it): append when it now contributes.
+            guard let entity = document.entity(for: handle),
+                  let c = contribution(of: entity, document: document) else { return }
+            let segStart = edges.segments.count
+            let lineStart = edges.exactLines.count
+            let curveStart = edges.exactCurves.count
+            edges.segments.append(contentsOf: c.segments)
+            edges.exactLines.append(contentsOf: c.exactLines)
+            edges.exactCurves.append(contentsOf: c.exactCurves)
+            edges.rangesByHandle[handle] = (
+                segments: segStart..<edges.segments.count,
+                exactLines: lineStart..<edges.exactLines.count,
+                exactCurves: curveStart..<edges.exactCurves.count)
+            return
+        }
+        let fresh = document.entity(for: handle).flatMap { contribution(of: $0, document: document) }
+        spliceContribution(
+            &edges.segments, ranges: &edges.rangesByHandle, owner: handle, keyPath: \.segments,
+            oldRange: old.segments, newElements: fresh?.segments ?? [])
+        // The owner's other ranges are untouched by the segments splice
+        // (separate arrays); re-read them for the next splice.
+        let mid = edges.rangesByHandle[handle]!
+        spliceContribution(
+            &edges.exactLines, ranges: &edges.rangesByHandle, owner: handle, keyPath: \.exactLines,
+            oldRange: mid.exactLines, newElements: fresh?.exactLines ?? [])
+        let afterLines = edges.rangesByHandle[handle]!
+        spliceContribution(
+            &edges.exactCurves, ranges: &edges.rangesByHandle, owner: handle, keyPath: \.exactCurves,
+            oldRange: afterLines.exactCurves, newElements: fresh?.exactCurves ?? [])
+    }
+
+    /// Drop one entity's cutter contribution in place (entity deleted by a
+    /// trim). Same complexity story as `updateCuttingEdges`.
+    nonisolated public static func removeCuttingEdges(
+        _ edges: inout TrimCuttingEdges,
+        for handle: UUID
+    ) {
+        guard let old = edges.rangesByHandle[handle] else { return }
+        spliceContribution(
+            &edges.segments, ranges: &edges.rangesByHandle, owner: handle, keyPath: \.segments,
+            oldRange: old.segments, newElements: [])
+        let mid = edges.rangesByHandle[handle]!
+        spliceContribution(
+            &edges.exactLines, ranges: &edges.rangesByHandle, owner: handle, keyPath: \.exactLines,
+            oldRange: mid.exactLines, newElements: [])
+        let afterLines = edges.rangesByHandle[handle]!
+        spliceContribution(
+            &edges.exactCurves, ranges: &edges.rangesByHandle, owner: handle, keyPath: \.exactCurves,
+            oldRange: afterLines.exactCurves, newElements: [])
+        edges.rangesByHandle.removeValue(forKey: handle)
     }
 
     /// World-space analytical curves for a cutter primitive. Arcs, circles,
@@ -341,6 +453,45 @@ public enum TrimGeometryEngine {
                     .line(LineSeg2d(start: p2, end: p3)), .line(LineSeg2d(start: p3, end: p0))]
         default:
             return []
+        }
+    }
+
+    // MARK: - Cutter Broad Phase
+
+    /// World-space bbox filter for cutter segments: a cutter that does not
+    /// touch the target's bbox cannot intersect the target, so it is dropped
+    /// before any kernel solve runs. Bbox math is O(1); the kernel solves it
+    /// replaces (line-spline subdivision + Newton polish, and the N×M loops
+    /// in the polyline/exploded solvers) are orders of magnitude more
+    /// expensive. Touching boxes count as overlapping (kernel-tolerance slop
+    /// in `intersects`), so exact endpoint touches are never filtered out.
+    nonisolated static func broadPhaseSegments(
+        _ segments: [(Vector3, Vector3)],
+        intersecting target: BoundingBox2d
+    ) -> [(Vector3, Vector3)] {
+        segments.filter { seg in
+            BoundingBox2d(
+                min: Point2d(x: min(seg.0.x, seg.1.x), y: min(seg.0.y, seg.1.y)),
+                max: Point2d(x: max(seg.0.x, seg.1.x), y: max(seg.0.y, seg.1.y))
+            ).intersects(target)
+        }
+    }
+
+    /// Same filter for analytical cutter curves. Unbounded cutters (rays,
+    /// xlines) and curves without computable bounds are always kept.
+    nonisolated static func broadPhaseCurves(
+        _ curves: [Curve2d],
+        intersecting target: BoundingBox2d
+    ) -> [Curve2d] {
+        curves.filter { curve in
+            switch curve {
+            case .ray, .xline:
+                return true
+            default:
+                break
+            }
+            guard let bb = CurveEval.boundingBox(curve) else { return true }
+            return bb.intersects(target)
         }
     }
 
@@ -518,8 +669,12 @@ public enum TrimGeometryEngine {
                 }
             }
         }
+        // Broad phase: only cutters touching the target's bbox can hit it.
+        let targetBox = BoundingBox2d(min: ws.point2d, max: we.point2d)
+        let nearSegments = broadPhaseSegments(cuttingSegments, intersecting: targetBox)
+        let nearCurves = broadPhaseCurves(exactCurves, intersecting: targetBox)
         let targetLine = LineSeg2d(start: ws.point2d, end: we.point2d)
-        for edge in cuttingSegments {
+        for edge in nearSegments {
             let cutter = LineSeg2d(start: edge.0.point2d, end: edge.1.point2d)
             let res = Intersector2D.intersectLineLine(
                 targetLine, cutter, extendA: false, extendB: false)
@@ -528,7 +683,7 @@ public enum TrimGeometryEngine {
         // Exact cutter curves (arcs/splines/ellipses/bulges): line cutters
         // are already covered by the segment path, so skip those.
         let targetCurve = Curve2d.line(targetLine)
-        for exact in exactCurves {
+        for exact in nearCurves {
             if case .line(_) = exact { continue }
             for hit in Intersector2D.intersect(targetCurve, exact, extendA: false, extendB: false) {
                 collect(hit.paramA)
@@ -633,7 +788,20 @@ public enum TrimGeometryEngine {
                 }
             }
         }
-        for edge in cuttingSegments {
+        // Exact cutter curves: world arc vs analytical cutter.
+        let worldArc = Arc2d(center: wc.point2d, radius: wr, startAngle: wsa, sweep: span)
+        // Broad phase: only cutters touching the target's bbox can hit it.
+        let arcBox = CurveEval.boundingBox(.arc(worldArc))
+        let nearArcSegments: [(Vector3, Vector3)]
+        let nearArcCurves: [Curve2d]
+        if let arcBox {
+            nearArcSegments = broadPhaseSegments(cuttingSegments, intersecting: arcBox)
+            nearArcCurves = broadPhaseCurves(exactCurves, intersecting: arcBox)
+        } else {
+            nearArcSegments = cuttingSegments
+            nearArcCurves = exactCurves
+        }
+        for edge in nearArcSegments {
             let pts = intersectSegmentCircle(segmentA: edge.0, segmentB: edge.1, circleCenter: wc, radius: wr)
             for pt in pts {
                 let a = atan2(pt.y - wc.y, pt.x - wc.x)
@@ -642,9 +810,7 @@ public enum TrimGeometryEngine {
                 }
             }
         }
-        // Exact cutter curves: world arc vs analytical cutter.
-        let worldArc = Arc2d(center: wc.point2d, radius: wr, startAngle: wsa, sweep: span)
-        for exact in exactCurves {
+        for exact in nearArcCurves {
             if case .line(_) = exact { continue }
             for hit in Intersector2D.intersect(.arc(worldArc), exact, extendA: false, extendB: false) {
                 collectArc(hit.paramA * span)
@@ -748,14 +914,20 @@ public enum TrimGeometryEngine {
                 hitsAngle.append(a)
             }
         }
-        for edge in cuttingSegments {
+        // Broad phase: only cutters touching the target's bbox can hit it.
+        let circleBox = BoundingBox2d(
+            min: Point2d(x: wc.x - wr, y: wc.y - wr),
+            max: Point2d(x: wc.x + wr, y: wc.y + wr))
+        let nearCircleSegments = broadPhaseSegments(cuttingSegments, intersecting: circleBox)
+        let nearCircleCurves = broadPhaseCurves(exactCurves, intersecting: circleBox)
+        for edge in nearCircleSegments {
             let pts = intersectSegmentCircle(segmentA: edge.0, segmentB: edge.1, circleCenter: wc, radius: wr)
             for pt in pts {
                 collectCircle(normAngle(atan2(pt.y - wc.y, pt.x - wc.x)))
             }
         }
         let worldCircle = Circle2d(center: wc.point2d, radius: wr)
-        for exact in exactCurves {
+        for exact in nearCircleCurves {
             if case .line(_) = exact { continue }
             for hit in Intersector2D.intersect(.circle(worldCircle), exact, extendA: false, extendB: false) {
                 collectCircle(normAngle(hit.paramA * 2.0 * .pi))
@@ -968,9 +1140,24 @@ public enum TrimGeometryEngine {
             }
         }
 
-        for edge in cuttingSegments { findHitsKernel(on: edge) }
-        for exact in exactCurves { findHitsKernelCurve(exact) }
-        for edge in localExactLineEdges {
+        // Broad phase: the spline lies inside its control hull, so cutters
+        // missing the world control bbox cannot hit it. Local line edges
+        // filter against the local control bbox instead.
+        var worldMin = worldCPs[0].point2d
+        var worldMax = worldCPs[0].point2d
+        for wcp in worldCPs.dropFirst() {
+            let p = wcp.point2d
+            worldMin = Point2d(x: min(worldMin.x, p.x), y: min(worldMin.y, p.y))
+            worldMax = Point2d(x: max(worldMax.x, p.x), y: max(worldMax.y, p.y))
+        }
+        let splineWorldBox = BoundingBox2d(min: worldMin, max: worldMax)
+        let splineLocalBox = BoundingBox2d(min: localMin.point2d, max: localMax.point2d)
+        let nearSplineSegments = broadPhaseSegments(cuttingSegments, intersecting: splineWorldBox)
+        let nearSplineCurves = broadPhaseCurves(exactCurves, intersecting: splineWorldBox)
+        let nearLocalLineEdges = broadPhaseSegments(localExactLineEdges, intersecting: splineLocalBox)
+        for edge in nearSplineSegments { findHitsKernel(on: edge) }
+        for exact in nearSplineCurves { findHitsKernelCurve(exact) }
+        for edge in nearLocalLineEdges {
             findHits(on: extendedEdge(edge, by: localTolerance), searchSegments: 256)
             addEndpointTouchHit(edge.0)
             addEndpointTouchHit(edge.1)
@@ -1121,9 +1308,40 @@ public enum TrimGeometryEngine {
                 }
             }
         }
-        for edge in cuttingSegments {
+        // Broad phase, two levels: coarse whole-target filter on the cutter
+        // sets, then a per-edge bbox reject inside the N×M loop so each
+        // kernel solve only runs for cutters near that edge.
+        var plineMin = worldSegs[0].startPoint
+        var plineMax = worldSegs[0].startPoint
+        func expandPlineBox(_ p: Point2d) {
+            plineMin = Point2d(x: min(plineMin.x, p.x), y: min(plineMin.y, p.y))
+            plineMax = Point2d(x: max(plineMax.x, p.x), y: max(plineMax.y, p.y))
+        }
+        for seg in worldSegs {
+            switch seg.geometry {
+            case .line(let l): expandPlineBox(l.start); expandPlineBox(l.end)
+            case .arc(let a):
+                if let bb = CurveEval.boundingBox(.arc(a)) {
+                    expandPlineBox(bb.min); expandPlineBox(bb.max)
+                }
+            }
+        }
+        let plineBox = BoundingBox2d(min: plineMin, max: plineMax)
+        let nearPlineSegments = broadPhaseSegments(cuttingSegments, intersecting: plineBox)
+        let nearPlineCurves = broadPhaseCurves(exactCurves, intersecting: plineBox)
+        let segBoxes: [BoundingBox2d] = worldSegs.map { seg in
+            switch seg.geometry {
+            case .line(let l): return BoundingBox2d(min: l.start, max: l.end)
+            case .arc(let a):
+                return CurveEval.boundingBox(.arc(a))
+                    ?? BoundingBox2d(point: a.center).expanded(by: a.radius)
+            }
+        }
+        for edge in nearPlineSegments {
+            let cutterBox = BoundingBox2d(min: edge.0.point2d, max: edge.1.point2d)
             let cutter = Curve2d.line(LineSeg2d(start: edge.0.point2d, end: edge.1.point2d))
             for (i, seg) in worldSegs.enumerated() {
+                guard segBoxes[i].intersects(cutterBox) else { continue }
                 let results = Intersector2D.intersect(.polySegment(seg), cutter)
                 for h in results {
                     let segL = segLen(seg)
@@ -1133,7 +1351,7 @@ public enum TrimGeometryEngine {
             }
         }
         // Exact cutter curves (skip lines: covered above).
-        for exact in exactCurves {
+        for exact in nearPlineCurves {
             if case .line(_) = exact { continue }
             for (i, seg) in worldSegs.enumerated() {
                 for h in Intersector2D.intersect(.polySegment(seg), exact) {
@@ -1275,6 +1493,45 @@ public enum TrimGeometryEngine {
         let targetSegs = explode(primitive: primitive, t: .identity)
         guard !targetSegs.isEmpty else { return ([], true, nil) }
 
+        // Broad phase: world bbox of the exploded target (local bbox corners
+        // mapped through the transform — conservative for any affine map).
+        // Cutters missing it cannot hit any target segment.
+        var localBoxMin = targetSegs[0].0
+        var localBoxMax = targetSegs[0].0
+        for s in targetSegs {
+            for p in [s.0, s.1] {
+                localBoxMin = Vector3(
+                    x: min(localBoxMin.x, p.x), y: min(localBoxMin.y, p.y), z: min(localBoxMin.z, p.z))
+                localBoxMax = Vector3(
+                    x: max(localBoxMax.x, p.x), y: max(localBoxMax.y, p.y), z: max(localBoxMax.z, p.z))
+            }
+        }
+        var explodedWorldBox: BoundingBox2d? = nil
+        for corner in [
+            Vector3(x: localBoxMin.x, y: localBoxMin.y, z: localBoxMin.z),
+            Vector3(x: localBoxMax.x, y: localBoxMin.y, z: localBoxMin.z),
+            Vector3(x: localBoxMin.x, y: localBoxMax.y, z: localBoxMin.z),
+            Vector3(x: localBoxMax.x, y: localBoxMax.y, z: localBoxMin.z),
+        ] {
+            let w = transform.transformPoint(corner).point2d
+            if let box = explodedWorldBox {
+                var grown = box
+                grown.include(w)
+                explodedWorldBox = grown
+            } else {
+                explodedWorldBox = BoundingBox2d(point: w)
+            }
+        }
+        let nearExplodedSegments: [(Vector3, Vector3)]
+        let nearExplodedCurves: [Curve2d]
+        if let explodedWorldBox {
+            nearExplodedSegments = broadPhaseSegments(cuttingSegments, intersecting: explodedWorldBox)
+            nearExplodedCurves = broadPhaseCurves(exactCurves, intersecting: explodedWorldBox)
+        } else {
+            nearExplodedSegments = cuttingSegments
+            nearExplodedCurves = exactCurves
+        }
+
         var cumLen: [Double] = [0]
         for s in targetSegs {
             let dx = s.1.x - s.0.x
@@ -1288,7 +1545,7 @@ public enum TrimGeometryEngine {
         struct Hit { let localPoint: Vector3; let t: Double }
         var hits: [Hit] = []
 
-        for edge in cuttingSegments {
+        for edge in nearExplodedSegments {
             let localEdge0 = invTransform.transformPoint(edge.0)
             let localEdge1 = invTransform.transformPoint(edge.1)
 
@@ -1314,8 +1571,8 @@ public enum TrimGeometryEngine {
         // Exact cutter curves (world space): intersect each exploded
         // target segment analytically so curve cutters whose chords were
         // omitted from cuttingSegments still cut here.
-        if !exactCurves.isEmpty {
-            for exact in exactCurves {
+        if !nearExplodedCurves.isEmpty {
+            for exact in nearExplodedCurves {
                 if case .line(_) = exact { continue }
                 for (i, s) in targetSegs.enumerated() {
                     let w0 = transform.transformPoint(s.0)

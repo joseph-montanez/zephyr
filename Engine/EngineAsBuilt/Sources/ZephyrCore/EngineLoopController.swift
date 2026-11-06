@@ -3,6 +3,75 @@ import ImGui
 import SwiftSDL
 
 // =========================================================================
+// MARK: - SnapArbitration
+//
+// Pure per-frame snap-choice helpers, factored out of computeSnap so the
+// arbitration is unit-testable without a full engine harness. The discrete
+// anchor/intersection pass runs once per mouse-motion; these helpers decide
+// how that result combines with the extension/on-curve fallbacks and the
+// active command's in-progress drawing points.
+// =========================================================================
+@MainActor
+internal enum SnapArbitration {
+    /// Carry the already-computed discrete result forward when nothing else
+    /// claimed the cursor. A transient `.nearest` (narrow extension or
+    /// on-curve) is NOT seeded: the wide fallback re-evaluates those stages.
+    /// Returns the snap that should stand as current (possibly unchanged).
+    static func seedDiscrete(current: SnapResult?, discrete: SnapResult?) -> SnapResult? {
+        guard current == nil,
+              let discrete,
+              discrete.anchor.isDiscreteTarget else { return current }
+        return discrete
+    }
+
+    /// Compete an in-progress command's drawing vertices and segment
+    /// midpoints against the current best snap. Strictly closer wins; ties
+    /// keep the current best — matching computeSnap's long-standing rule
+    /// that entity snaps beat coincident drawing points.
+    static func competeDrawingPoints(
+        _ drawingPts: [Vector3],
+        best: SnapResult?,
+        bestDist: Double,
+        cursorX: Double,
+        cursorY: Double
+    ) -> SnapResult? {
+        var winner = best
+        var winnerDist = bestDist
+        for (i, pt) in drawingPts.enumerated() {
+            let dx = cursorX - pt.x
+            let dy = cursorY - pt.y
+            let dist = sqrt(dx * dx + dy * dy)
+            if dist < winnerDist {
+                winnerDist = dist
+                winner = SnapResult(
+                    entityHandle: PhrostEngine.drawingSnapSentinel,
+                    anchor: .vertex(localPosition: pt, index: i),
+                    worldPos: pt)
+            }
+        }
+        if drawingPts.count >= 2 {
+            for i in 0..<(drawingPts.count - 1) {
+                let a = drawingPts[i]
+                let b = drawingPts[i + 1]
+                let midX = (a.x + b.x) * 0.5
+                let midY = (a.y + b.y) * 0.5
+                let dx = cursorX - midX
+                let dy = cursorY - midY
+                let dist = sqrt(dx * dx + dy * dy)
+                if dist < winnerDist {
+                    winnerDist = dist
+                    winner = SnapResult(
+                        entityHandle: PhrostEngine.drawingSnapSentinel,
+                        anchor: .midpoint(localPosition: Vector3(x: midX, y: midY, z: 0), segmentIndex: i),
+                        worldPos: Vector3(x: midX, y: midY, z: 0))
+                }
+            }
+        }
+        return winner
+    }
+}
+
+// =========================================================================
 // MARK: - EngineLoopController
 //
 // Replaces Engine+Loop.swift. Handles the main application loop, frame 
@@ -1325,6 +1394,13 @@ public final class EngineLoopController {
                 }
             }
 
+            // The discrete anchor/intersection pass already ran up top: if
+            // tracking and ortho left the cursor unclaimed, carry a discrete
+            // result forward so the extension-only fallback below can't drop
+            // it. This is the endpoint/midpoint/center/intersection snap.
+            snapMgr.currentSnapResult = SnapArbitration.seedDiscrete(
+                current: snapMgr.currentSnapResult, discrete: discreteAnchorSnap)
+
             // Only compute wide extension snaps if ortho didn't constrain the cursor.
             if snapMgr.currentSnapResult == nil {
             snapMgr.currentSnapResult = engine.snap.snapEngine.nearestSnap(
@@ -1338,48 +1414,24 @@ public final class EngineLoopController {
                 extensionThresholdPx: snapMgr.trajectoryTrackingAperturePixels,
                 pixelsPerWorldUnit: ppwu,
                 gridSnapEnabled: false,
-                nearestOnCurveOverride: false)
+                nearestOnCurveOverride: false,
+                // Discrete anchors + intersections already ran above; this
+                // wide-extension fallback must not pay for them again.
+                skipDiscreteTargets: true)
 
-            var bestOsnapDist = snapMgr.currentSnapResult.map { snap in
+            let bestOsnapDist = snapMgr.currentSnapResult.map { snap in
                 let dx = worldX - snap.worldPos.x
                 let dy = worldY - snap.worldPos.y
                 return sqrt(dx * dx + dy * dy)
             } ?? acquireThreshold
 
             if let featureCmd = engine.commandProcessor.activeFeatureCommand {
-                let drawingPts = featureCmd.getDrawingSnapPoints()
-
-                for (i, pt) in drawingPts.enumerated() {
-                    let dx = worldX - pt.x
-                    let dy = worldY - pt.y
-                    let dist = sqrt(dx * dx + dy * dy)
-                    if dist < bestOsnapDist {
-                        bestOsnapDist = dist
-                        snapMgr.currentSnapResult = SnapResult(
-                            entityHandle: PhrostEngine.drawingSnapSentinel,
-                            anchor: .vertex(localPosition: pt, index: i),
-                            worldPos: pt)
-                    }
-                }
-
-                if drawingPts.count >= 2 {
-                    for i in 0..<(drawingPts.count - 1) {
-                        let a = drawingPts[i]
-                        let b = drawingPts[i + 1]
-                        let midX = (a.x + b.x) * 0.5
-                        let midY = (a.y + b.y) * 0.5
-                        let dx = worldX - midX
-                        let dy = worldY - midY
-                        let dist = sqrt(dx * dx + dy * dy)
-                        if dist < bestOsnapDist {
-                            bestOsnapDist = dist
-                            snapMgr.currentSnapResult = SnapResult(
-                                entityHandle: PhrostEngine.drawingSnapSentinel,
-                                anchor: .midpoint(localPosition: Vector3(x: midX, y: midY, z: 0), segmentIndex: i),
-                                worldPos: Vector3(x: midX, y: midY, z: 0))
-                        }
-                    }
-                }
+                snapMgr.currentSnapResult = SnapArbitration.competeDrawingPoints(
+                    featureCmd.getDrawingSnapPoints(),
+                    best: snapMgr.currentSnapResult,
+                    bestDist: bestOsnapDist,
+                    cursorX: worldX,
+                    cursorY: worldY)
             }
 
             if let snap = snapMgr.currentSnapResult {
@@ -1487,7 +1539,14 @@ public final class EngineLoopController {
                 }
             }
 
-            if engine.snap.snapEngine.nearestOnCurveEnabled {
+            // Same seeding as above: tracking/polar/grid can all pass while
+            // the discrete pass found an anchor (the tracking engine returns
+            // nil until points are acquired). Carry it forward; the
+            // on-curve-only fallback below must not drop it.
+            snapMgr.currentSnapResult = SnapArbitration.seedDiscrete(
+                current: snapMgr.currentSnapResult, discrete: discreteAnchorSnap)
+
+            if snapMgr.currentSnapResult == nil, engine.snap.snapEngine.nearestOnCurveEnabled {
                 snapMgr.currentSnapResult = engine.snap.snapEngine.nearestSnap(
                     worldX: worldX, worldY: worldY,
                     entities: Array(visibleEntities),
@@ -1497,7 +1556,9 @@ public final class EngineLoopController {
                     spatialGrid: { [unowned self] in self.engine.document.spatialGrid(for: $0) },
                     extensionSnapEnabled: false,
                     gridSnapEnabled: false,
-                    nearestOnCurveOverride: true)
+                    nearestOnCurveOverride: true,
+                    // Discrete pass already ran; on-curve fallback skips it.
+                    skipDiscreteTargets: true)
 
                 if snapMgr.currentSnapResult == nil, let featureCmd = engine.commandProcessor.activeFeatureCommand {
                     let drawingPts = featureCmd.getDrawingSnapPoints()
@@ -1642,6 +1703,9 @@ public final class EngineLoopController {
                 snapMgr.lastPolarResult = nil
             }
 
+            // No seeding needed here: this branch assigns the full discrete
+            // result directly up top, so a nil current snap proves the
+            // discrete pass found nothing. The skip below is safe as-is.
             if snapMgr.currentSnapResult == nil, engine.snap.snapEngine.nearestOnCurveEnabled {
                 snapMgr.currentSnapResult = engine.snap.snapEngine.nearestSnap(
                     worldX: worldX, worldY: worldY,
@@ -1652,7 +1716,9 @@ public final class EngineLoopController {
                     spatialGrid: { [unowned self] in self.engine.document.spatialGrid(for: $0) },
                     extensionSnapEnabled: false,
                     gridSnapEnabled: false,
-                    nearestOnCurveOverride: true)
+                    nearestOnCurveOverride: true,
+                    // Discrete pass already ran; on-curve fallback skips it.
+                    skipDiscreteTargets: true)
 
                 if snapMgr.currentSnapResult == nil, let featureCmd = engine.commandProcessor.activeFeatureCommand {
                     let drawingPts = featureCmd.getDrawingSnapPoints()

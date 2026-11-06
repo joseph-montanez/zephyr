@@ -128,6 +128,7 @@ let package = Package(
             name: "ZephyrTests",
             dependencies: [
                 "ZephyrCore",
+                "ZephyrKernel",
                 .product(name: "CSDL3", package: "SwiftSDL"),
                 .product(name: "ImGui", package: "SwiftImGui"),
             ],

@@ -359,10 +359,10 @@ public final class TrimCommand: FeatureCommand {
                 doc.pushUndo()
                 operationsInSession += 1
                 doc.removeEntities(handles: [hitHandle])
-                doc.invalidateEntityGrid()
+                doc.rebuildEntityGrid()
                 doc.markEdited(regenerate: true)
                 engine.tabManager.markActiveDirty()
-                recompileCuttingSegments(in: doc)
+                refreshCutterContribution(for: hitHandle, in: doc, deleted: true)
                 processor.commandPrompt = "Object erased. Select objects to erase or press Enter to return to Trim:"
                 return .handled
             } else {
@@ -389,10 +389,12 @@ public final class TrimCommand: FeatureCommand {
                 doc.pushUndo()
                 operationsInSession += 1
                 doc.removeEntities(handles: handles)
-                doc.invalidateEntityGrid()
+                doc.rebuildEntityGrid()
                 doc.markEdited(regenerate: true)
                 engine.tabManager.markActiveDirty()
-                recompileCuttingSegments(in: doc)
+                for h in handles {
+                    refreshCutterContribution(for: h, in: doc, deleted: true)
+                }
                 processor.commandPrompt = "\(handles.count) object(s) erased. Select objects to erase or press Enter to return to Trim:"
             }
             step = .eraseSelecting
@@ -735,14 +737,16 @@ case .askProject:
             doc.updateEntityGeometryLive(for: hitHandle, geometry: geom)
         }
 
-        doc.invalidateEntityGrid()
+        // Rebuild (not just invalidate) so the next snap keeps its grid
+        // broad phase instead of falling back to a full scan per mousemove
+        // until the background regen lands.
+        doc.rebuildEntityGrid()
         doc.markEdited(regenerate: true)
         engine.tabManager.markActiveDirty()
 
-        // If the trimmed entity was a cutting edge, refresh cached cutting edges
-        if selectedCuttingHandles.contains(hitHandle) || selectedCuttingHandles.isEmpty {
-            recompileCuttingSegments(in: doc)
-        }
+        // If the trimmed entity was a cutting edge, splice its new geometry
+        // into the cached cutters instead of recompiling drawing-wide.
+        refreshCutterContribution(for: hitHandle, in: doc, deleted: geom.isEmpty)
 
         return true
     }
@@ -781,13 +785,11 @@ case .askProject:
         doc.pushUndo(preSnapshot)
         operationsInSession += 1
         doc.updateEntityGeometryLive(for: hitHandle, geometry: geom)
-        doc.invalidateEntityGrid()
+        doc.rebuildEntityGrid()
         doc.markEdited(regenerate: true)
         engine.tabManager.markActiveDirty()
 
-        if selectedCuttingHandles.contains(hitHandle) || selectedCuttingHandles.isEmpty {
-            recompileCuttingSegments(in: doc)
-        }
+        refreshCutterContribution(for: hitHandle, in: doc, deleted: false)
 
         return true
     }
@@ -848,11 +850,16 @@ case .askProject:
             doc.removeEntities(handles: [handle])
         }
 
-        doc.invalidateEntityGrid()
+        doc.rebuildEntityGrid()
         doc.markEdited(regenerate: true)
         engine.tabManager.markActiveDirty()
 
-        recompileCuttingSegments(in: doc)
+        for (handle, _) in modifiedEntities {
+            refreshCutterContribution(for: handle, in: doc, deleted: false)
+        }
+        for handle in deletedHandles {
+            refreshCutterContribution(for: handle, in: doc, deleted: true)
+        }
 
         return modifiedEntities.count + deletedHandles.count
     }
@@ -931,11 +938,16 @@ case .askProject:
             doc.removeEntities(handles: [handle])
         }
 
-        doc.invalidateEntityGrid()
+        doc.rebuildEntityGrid()
         doc.markEdited(regenerate: true)
         engine.tabManager.markActiveDirty()
 
-        recompileCuttingSegments(in: doc)
+        for handle in modifiedEntities.keys {
+            refreshCutterContribution(for: handle, in: doc, deleted: false)
+        }
+        for handle in deletedHandles {
+            refreshCutterContribution(for: handle, in: doc, deleted: true)
+        }
 
         return modifiedEntities.count + deletedHandles.count
     }
@@ -959,6 +971,19 @@ case .askProject:
             cuttingHandles: selectedCuttingHandles.isEmpty ? nil : selectedCuttingHandles,
             excludedHandle: nil
         )
+    }
+
+    /// Splice one entity's new (or removed) geometry into the cached cutters
+    /// instead of recompiling every cutter drawing-wide. No-op when the
+    /// entity is not part of the cutter set, mirroring the old full-recompile
+    /// guard. Undo still recompiles fully: it can restore arbitrary state.
+    private func refreshCutterContribution(for handle: UUID, in doc: CADDocument, deleted: Bool) {
+        guard selectedCuttingHandles.isEmpty || selectedCuttingHandles.contains(handle) else { return }
+        if deleted {
+            TrimGeometryEngine.removeCuttingEdges(&cachedCuttingEdges, for: handle)
+        } else {
+            TrimGeometryEngine.updateCuttingEdges(&cachedCuttingEdges, for: handle, document: doc)
+        }
     }
 
     // MARK: - Overlay Rendering

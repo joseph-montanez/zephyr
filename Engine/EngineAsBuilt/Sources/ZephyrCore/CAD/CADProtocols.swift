@@ -37,6 +37,16 @@ public enum AnchorPoint: Hashable, Sendable {
     /// snap result is attributed to (the first of the two curves).
     case intersection(localPosition: Vector3)
 
+    /// Whether this anchor is a stable geometric target (endpoint, midpoint,
+    /// center, insertion, quadrant, intersection). Only `.nearest` is
+    /// transient: it is recomputed per frame and re-evaluated by the
+    /// extension / on-curve fallback passes, so fallback-only snap queries
+    /// must not treat it as an already-settled discrete result.
+    public var isDiscreteTarget: Bool {
+        if case .nearest = self { return false }
+        return true
+    }
+
     /// World-space position for this anchor given an entity's transform.
     public func worldPosition(transform: Transform3D) -> Vector3 {
         let local: Vector3

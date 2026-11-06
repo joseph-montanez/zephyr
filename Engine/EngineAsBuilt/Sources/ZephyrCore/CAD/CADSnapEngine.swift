@@ -391,6 +391,22 @@ public final class SnapEngine {
                     if let visibility, primIndex < visibility.count, !visibility[primIndex] { continue }
                     for curve in Self.intersectionWorldCurves(
                         for: geometry[primIndex], transform: instanceTransform) {
+                        // Cheap reject before projection: spline projection
+                        // samples + Newton-polishes per curve, so skip curves
+                        // whose bounds are already beyond the threshold.
+                        if let bb = CurveEval.boundingBox(curve) {
+                            let qx = cursor.x, qy = cursor.y
+                            let dx = qx < bb.min.x ? bb.min.x - qx : (qx > bb.max.x ? qx - bb.max.x : 0)
+                            let dy = qy < bb.min.y ? bb.min.y - qy : (qy > bb.max.y ? qy - bb.max.y : 0)
+                            // Rays/xlines report a degenerate point box, so
+                            // only this reject applies to bounded curves.
+                            switch curve {
+                            case .ray, .xline:
+                                break
+                            default:
+                                if dx * dx + dy * dy > threshold * threshold { continue }
+                            }
+                        }
                         let proj = Projector2D.closestPointOnCurve(curve, to: cursor.point2d)
                         if proj.distance <= threshold {
                             near.append(NearWorldCurve(
@@ -404,11 +420,17 @@ public final class SnapEngine {
         guard near.count >= 2 else { return }
         // Bound the pairwise solve in pathological piles of overlapping
         // geometry: the curves nearest the cursor are the plausible ones.
-        if near.count > 64 {
-            near.sort { $0.distance < $1.distance }
-            near = Array(near.prefix(64))
+        // Sorted order also powers the early exit below, so always sort.
+        near.sort { $0.distance < $1.distance }
+        if near.count > 32 {
+            near = Array(near.prefix(32))
         }
         for i in 0..<near.count {
+            // An intersection on curve i is at least near[i].distance from
+            // the cursor; once that floor reaches bestDist, no later pair
+            // (all involving curves at least as far) can win. bestDist only
+            // shrinks, so this exit preserves exact results.
+            if near[i].distance >= bestDist { break }
             for j in (i + 1)..<near.count {
                 for hit in Intersector2D.intersect(near[i].curve, near[j].curve) {
                     let dx = hit.point.x - cursor.x
@@ -476,7 +498,12 @@ public final class SnapEngine {
         gridOriginX: Double = 0,
         gridOriginY: Double = 0,
         gridSpacing: Double = 10,
-        nearestOnCurveOverride: Bool? = nil
+        nearestOnCurveOverride: Bool? = nil,
+        /// Skip Tier 2 anchors + intersection solving and evaluate only the
+        /// fallback stages (extension/grid/nearest-on-curve). Lets per-frame
+        /// callers run the discrete pass once and reuse it instead of paying
+        /// for anchor + intersection solving on every fallback pass.
+        skipDiscreteTargets: Bool = false
     ) -> SnapResult? {
         let thresh = threshold ?? self.threshold
         let cursor = Vector3(x: worldX, y: worldY, z: 0)
@@ -494,6 +521,11 @@ public final class SnapEngine {
         var best: SnapResult? = nil
         var bestDist = thresh
 
+        // Fallback-only passes (extension / on-curve) skip anchor and
+        // intersection solving: the caller already ran the discrete pass.
+        // (Block intentionally keeps its original indentation; Swift is
+        // whitespace-insensitive.)
+        if !skipDiscreteTargets {
         for entity in candidates {
             // Anchors carry no per-primitive index, so visibility can only
             // suppress an entity whose primitives are ALL hidden here;
@@ -593,6 +625,8 @@ public final class SnapEngine {
                 spatialGrid: spatialGrid,
                 threshold: thresh, best: &best, bestDist: &bestDist)
         }
+
+        } // end if !skipDiscreteTargets
 
         if best != nil { return best }
 
