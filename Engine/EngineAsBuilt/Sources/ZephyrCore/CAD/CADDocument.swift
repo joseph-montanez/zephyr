@@ -1117,6 +1117,74 @@ public final class CADDocument {
         }
     }
 
+    /// Delete several layers at once (bulk LAYDEL). Exactly one undo
+    /// step with one LAYERP checkpoint no matter how many layers are
+    /// removed. Callers (`LayerTransactionService.deleteLayersBulk`)
+    /// validate first (protected, current, xref, in-use guards);
+    /// unknown handles are skipped. When `eraseEntities` is true every
+    /// entity on a deleted layer is erased into the OOPS buffer like a
+    /// normal erase; otherwise the caller guarantees the layers are
+    /// unused. Returns the layers deleted and entities erased.
+    @discardableResult
+    public func deleteLayers(
+        handles: [UUID], eraseEntities: Bool
+    ) -> (deleted: Int, erased: Int) {
+        documentLock.withLock {
+            var ordered: [UUID] = []
+            var seen = Set<UUID>()
+            for handle in handles where seen.insert(handle).inserted {
+                if layerTable[handle] != nil { ordered.append(handle) }
+            }
+            guard !ordered.isEmpty else { return (0, 0) }
+            checkpointLayerPrevious()
+            pushUndo()
+            let doomed = Set(ordered)
+            var erased: [CADEntity] = []
+            if eraseEntities {
+                for (key, entity) in Array(entityRegistry)
+                    where doomed.contains(entity.layerID) {
+                    if entity.isViewportProjected != true {
+                        erased.append(entity)
+                        entityRegistry.removeValue(forKey: key)
+                    }
+                }
+                oopsBuffer = erased
+            }
+            var deleted = 0
+            for handle in ordered {
+                layerTable.removeValue(forKey: handle)
+                pruneViewportOverridesInPlace(forDeletedLayer: handle)
+                deleted += 1
+            }
+            if let active = activeLayerID, doomed.contains(active) {
+                activeLayerID = layerTable.keys.first
+            }
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+            return (deleted, erased.count)
+        }
+    }
+
+    /// Render-only layer removal for sibling view documents: drop layers
+    /// without pushing undo or dirtying the revision (same contract as
+    /// `adoptLayers`, which only upserts and never removes). Prunes
+    /// viewport overrides and repoints a dangling current-layer pointer.
+    func dropLayersRenderOnly(handles: [UUID]) {
+        documentLock.withLock {
+            var changed = false
+            for handle in handles where layerTable[handle] != nil {
+                layerTable.removeValue(forKey: handle)
+                _ = pruneViewportOverridesInPlace(forDeletedLayer: handle)
+                changed = true
+            }
+            if let active = activeLayerID, layerTable[active] == nil {
+                activeLayerID = layerTable.keys.first
+                changed = true
+            }
+            if changed { markNeedsRegeneration() }
+        }
+    }
+
     /// Copy entities onto another layer (COPYTOLAYER). Duplicates keep
     /// their geometry and gain fresh handles on the target layer, in
     /// exactly one undo step. Viewport-projected copies are skipped.

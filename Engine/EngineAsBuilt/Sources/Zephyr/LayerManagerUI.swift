@@ -28,6 +28,17 @@ struct LayerManagerUI {
     static var viewportFrozenOnly: Bool = false
     static var notice: String = ""
 
+    // MARK: Multi-selection state (AutoCAD-style)
+
+    /// The panel's layer selection, independent of `activeLayerID`.
+    /// Reset whenever the panel switches documents.
+    static var selection = LayerSelectionModel()
+    static var selectionDocID: ObjectIdentifier? = nil
+    /// Full visible display order (uncapped), refreshed by the panel
+    /// each frame before the toolbar renders. Selection commands and
+    /// Shift-range math use this, never the 500-row render window.
+    static var visibleOrder: [UUID] = []
+
     /// Hard cap on rendered rows per layer group. The scope itself is
     /// uncapped (bulk edits hit every in-scope layer); only ImGui row
     /// submission is bounded.
@@ -186,27 +197,91 @@ struct LayerManagerUI {
         items.joined(separator: "\0") + "\0\0"
     }
 
+    // MARK: Selection helpers
+
+    /// Reset the selection when the panel switches documents and drop
+    /// handles for layers that no longer exist (deleted/undone).
+    static func ensureSelection(for doc: CADDocument) {
+        if selectionDocID != ObjectIdentifier(doc) {
+            selection = LayerSelectionModel()
+            selectionDocID = ObjectIdentifier(doc)
+        }
+        selection.prune(valid: Set(doc.allLayers.map(\.handle)))
+    }
+
+    /// Bulk target: the selection when one exists, else the scope.
+    /// Selection order follows the visible display order; out-of-scope
+    /// picks are appended by name for determinism.
+    static func targetHandles(
+        for doc: CADDocument
+    ) -> (handles: [UUID], isSelection: Bool) {
+        ensureSelection(for: doc)
+        let valid = Set(doc.allLayers.map(\.handle))
+        let picked = selection.orderedSelection(in: visibleOrder) {
+            doc.layer(for: $0)?.name
+        }.filter { valid.contains($0) }
+        if !picked.isEmpty { return (picked, true) }
+        return (scopedLayers(for: doc).map(\.handle), false)
+    }
+
+    /// "(N selected)" vs "(N in scope)" for dialog titles.
+    static func targetCountLabel(for doc: CADDocument) -> String {
+        let target = targetHandles(for: doc)
+        return target.isSelection
+            ? "(\(target.handles.count) selected)"
+            : "(\(target.handles.count) in scope)"
+    }
+
     // MARK: Bulk helper
 
-    static func applyScoped(
+    static func applyTarget(
         _ doc: CADDocument, _ label: String,
         _ op: ([UUID]) -> Result<Int, LayerEditError>
     ) {
-        let handles = scopedLayers(for: doc).map(\.handle)
-        guard !handles.isEmpty else {
-            notice = "\(label): no layers in scope."
+        let target = targetHandles(for: doc)
+        guard !target.handles.isEmpty else {
+            notice = "\(label): no layers "
+                + (target.isSelection ? "selected." : "in scope.")
             return
         }
-        switch op(handles) {
+        switch op(target.handles) {
         case .success(let n):
-            notice = "\(label): \(n) layer\(n == 1 ? "" : "s")."
+            let scope = target.isSelection ? "selected" : "in scope"
+            notice = "\(label): \(n) layer\(n == 1 ? "" : "s") (\(scope))."
         case .failure(let error):
             notice = "\(label): \(error.description)"
         }
     }
 
-    static func scopedNames(for doc: CADDocument) -> [String] {
-        scopedLayers(for: doc).map(\.name)
+    /// Bulk Off/Freeze refuse the current layer all-or-nothing, so
+    /// partition it out first and report the skip in the notice.
+    static func applyTargetExcludingCurrent(
+        _ doc: CADDocument, _ label: String,
+        _ op: ([UUID]) -> Result<Int, LayerEditError>
+    ) {
+        let target = targetHandles(for: doc)
+        let (handles, skippedCurrent) =
+            LayerSelectionModel.partitionExcludingCurrent(
+                target.handles, current: doc.activeLayerID)
+        guard !handles.isEmpty else {
+            notice = "\(label): only the current layer "
+                + (target.isSelection ? "selected." : "in scope.")
+            return
+        }
+        switch op(handles) {
+        case .success(let n):
+            let scope = target.isSelection ? "selected" : "in scope"
+            notice = "\(label): \(n) layer\(n == 1 ? "" : "s") (\(scope))"
+            if skippedCurrent,
+               let current = doc.activeLayerID,
+               let name = doc.layer(for: current)?.name {
+                notice += " · skipped current '\(name)'."
+            } else {
+                notice += "."
+            }
+        case .failure(let error):
+            notice = "\(label): \(error.description)"
+        }
     }
 
     // MARK: Strips
@@ -225,140 +300,312 @@ struct LayerManagerUI {
         return scoped
     }
 
+    // MARK: Select row + selection menu
+
+    /// Set Current button plus the Select menu. Shared by the toolbar;
+    /// the row context menu reuses `renderSelectionMenu` directly.
+    private static func renderSelectRow(
+        engine: PhrostEngine, document doc: CADDocument,
+        policy: LayerPanelPolicy
+    ) {
+        let theme = engine.ui.theme
+        let size = policy.toolbarButtonSize
+        ImGuiSetCursorPosX(6)
+        let single = selection.selected.count == 1
+        if PanelWidgets.labelButton(
+            id: "LPMSetCurrent", icon: "layer-cur", label: "Set Current",
+            tooltip: single
+                ? "Make the selected layer current"
+                : "Select exactly one layer (or double-click a row)",
+            theme: theme, size: size, enabled: single) {
+            if let handle = selection.selected.first {
+                doc.activeLayerID = handle
+                if let name = doc.layer(for: handle)?.name {
+                    notice = "Current layer: '\(name)'."
+                } else {
+                    notice = "Current layer set."
+                }
+            }
+        }
+        let selectWidth = PanelWidgets.labelButtonWidth(
+            icon: "select", label: "Select", size: size, chevron: true)
+        PanelWidgets.flow(itemWidth: selectWidth)
+        if PanelWidgets.labelButton(
+            id: "LPMSelectMenu", icon: "select", label: "Select",
+            tooltip: "Layer selection commands",
+            theme: theme, size: size, chevron: true) {
+            ImGuiOpenPopup("##LPMSelectPopup", 0)
+        }
+        if ImGuiBeginPopup("##LPMSelectPopup", 0) {
+            renderSelectionMenu(document: doc)
+            ImGuiEndPopup()
+        }
+        if !selection.isEmpty {
+            PanelWidgets.flow(itemWidth: 70, gap: 8)
+            let textH = ImGuiCalcTextSize(
+                "\(selection.count) selected", nil, false, -1).y
+            ImGuiSetCursorPosY(
+                igGetCursorPos().y + max(0, (size - textH) * 0.5))
+            ImGuiTextV("\(selection.count) selected")
+        }
+    }
+
+    /// Selection commands shared by the toolbar Select menu and the
+    /// row right-click menu. Commands act on the visible display order
+    /// and preserve out-of-scope picks; only Deselect All clears all.
+    static func renderSelectionMenu(document doc: CADDocument) {
+        let order = visibleOrder
+        if igMenuItem_Bool("Select All", nil, false, !order.isEmpty) {
+            selection.selectAll(in: order)
+            notice = "Selected \(selection.count) layers."
+        }
+        if igMenuItem_Bool("Deselect All", nil, false, !selection.isEmpty) {
+            selection.deselectAll()
+            notice = "Selection cleared."
+        }
+        if igMenuItem_Bool(
+            "Select All Except Current", nil, false, !order.isEmpty) {
+            selection.selectAllExceptCurrent(
+                in: order, current: doc.activeLayerID)
+            notice = "Selected \(selection.count) layers (except current)."
+        }
+        if igMenuItem_Bool(
+            "Invert Selection", nil, false, !order.isEmpty) {
+            selection.invert(in: order)
+            notice = "Selected \(selection.count) layers."
+        }
+        if igMenuItem_Bool(
+            "Select Current Layer", nil, false, doc.activeLayerID != nil) {
+            selection.selectCurrent(doc.activeLayerID)
+            notice = "Selected the current layer."
+        }
+        let canSimilar = !order.isEmpty && !selection.isEmpty
+        if ImGuiBeginMenu("Select Similar", canSimilar) {
+            let refHandle =
+                selection.anchor.flatMap {
+                    selection.selected.contains($0) ? $0 : nil
+                } ?? selection.orderedSelection(in: order) {
+                    doc.layer(for: $0)?.name
+                }.first
+            if let refHandle,
+               let reference = doc.layer(for: refHandle) {
+                let layers = order.compactMap { doc.layer(for: $0) }
+                for criterion in LayerSimilarCriterion.allCases {
+                    if igMenuItem_Bool(
+                        criterion.displayName, nil, false, true) {
+                        selection.selectSimilar(
+                            to: reference, in: layers,
+                            criterion: criterion)
+                        notice = "Select Similar "
+                            + "(\(criterion.displayName)): "
+                            + "\(selection.count) layers."
+                    }
+                }
+            }
+            ImGuiEndMenu()
+        }
+    }
+
     private static func renderToolbar(
         engine: PhrostEngine, document doc: CADDocument
     ) {
         let service = LayerTransactionService()
-        ImGuiSetCursorPosX(6)
-        if igSmallButton("On##LPMOn") {
-            applyScoped(doc, "Bulk On") {
+        ensureSelection(for: doc)
+        let theme = engine.ui.theme
+        let policy = LayerPanelPolicy(frameHeight: ImGuiGetFrameHeight())
+        let size = policy.toolbarButtonSize
+        let groupGap = policy.toolbarGroupGap
+        let targetLabel = targetCountLabel(for: doc)
+        func btn(
+            _ id: String, _ icon: String, _ tooltip: String,
+            gap: Float = 4, first: Bool = false,
+            enabled: Bool = true, danger: Bool = false
+        ) -> Bool {
+            if first {
+                ImGuiSetCursorPosX(6)
+            } else {
+                PanelWidgets.flow(itemWidth: size, gap: gap)
+            }
+            return PanelWidgets.iconButton(
+                id: id, icon: icon, tooltip: tooltip, theme: theme,
+                size: size, enabled: enabled, danger: danger)
+        }
+
+        renderSelectRow(engine: engine, document: doc, policy: policy)
+
+        // State toggles (pairs, group-gapped, wrapping).
+        if btn("LPMOn", "eye", "Bulk On \(targetLabel)", first: true) {
+            applyTarget(doc, "Bulk On") {
                 service.setVisibleBulk(in: doc, handles: $0, visible: true)
             }
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Off##LPMOff") {
-            applyScoped(doc, "Bulk Off") {
+        if btn("LPMOff", "eye-off", "Bulk Off \(targetLabel)") {
+            applyTargetExcludingCurrent(doc, "Bulk Off") {
                 service.setVisibleBulk(in: doc, handles: $0, visible: false)
             }
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Freeze##LPMFreeze") {
-            applyScoped(doc, "Bulk Freeze") {
+        if btn("LPMFreeze", "freeze", "Bulk Freeze \(targetLabel)",
+               gap: groupGap) {
+            applyTargetExcludingCurrent(doc, "Bulk Freeze") {
                 service.setFrozenBulk(in: doc, handles: $0, frozen: true)
             }
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Thaw##LPMThaw") {
-            applyScoped(doc, "Bulk Thaw") {
+        if btn("LPMThaw", "thaw", "Bulk Thaw \(targetLabel)") {
+            applyTarget(doc, "Bulk Thaw") {
                 service.setFrozenBulk(in: doc, handles: $0, frozen: false)
             }
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Lock##LPMLock") {
-            applyScoped(doc, "Bulk Lock") {
+        if btn("LPMLock", "lock", "Bulk Lock \(targetLabel)",
+               gap: groupGap) {
+            applyTarget(doc, "Bulk Lock") {
                 service.setLockedBulk(in: doc, handles: $0, locked: true)
             }
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Unlock##LPMUnlock") {
-            applyScoped(doc, "Bulk Unlock") {
+        if btn("LPMUnlock", "unlock", "Bulk Unlock \(targetLabel)") {
+            applyTarget(doc, "Bulk Unlock") {
                 service.setLockedBulk(in: doc, handles: $0, locked: false)
             }
         }
-        ImGuiSetCursorPosX(6)
-        if igSmallButton("Plot##LPMPlot") {
-            applyScoped(doc, "Bulk Plot") {
+        if btn("LPMPlot", "print", "Bulk Plot \(targetLabel)",
+               gap: groupGap) {
+            applyTarget(doc, "Bulk Plot") {
                 service.setPlottableBulk(in: doc, handles: $0, plottable: true)
             }
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("NoPlot##LPMNoPlot") {
-            applyScoped(doc, "Bulk NoPlot") {
+        if btn("LPMNoPlot", "no-plot", "Bulk No Plot \(targetLabel)") {
+            applyTarget(doc, "Bulk NoPlot") {
                 service.setPlottableBulk(in: doc, handles: $0, plottable: false)
             }
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("VP Frz##LPMVPFrz") {
-            if let vp = selectedViewportID, !vp.isEmpty {
-                let handles = scopedLayers(for: doc).map(\.handle)
+        let hasVP = !(selectedViewportID ?? "").isEmpty
+        if btn("LPMVPFrz", "vp-freeze",
+               hasVP ? "VP Freeze \(targetLabel)"
+                     : "VP Freeze: pick a viewport first",
+               gap: groupGap, enabled: hasVP) {
+            if let vp = selectedViewportID {
+                let target = targetHandles(for: doc)
                 switch service.setViewportFrozenBulk(
                     in: doc, viewportID: vp,
-                    handles: handles, frozen: true) {
+                    handles: target.handles, frozen: true) {
                 case .success(let n):
                     notice = "VP Freeze: \(n) layers."
                 case .failure(let error):
                     notice = "VP Freeze: \(error.description)"
                 }
-            } else {
-                notice = "VP Freeze: pick a viewport first."
             }
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("VP Thaw##LPMVPThaw") {
-            if let vp = selectedViewportID, !vp.isEmpty {
-                let handles = scopedLayers(for: doc).map(\.handle)
+        if btn("LPMVPThaw", "vp-thaw",
+               hasVP ? "VP Thaw \(targetLabel)"
+                     : "VP Thaw: pick a viewport first",
+               enabled: hasVP) {
+            if let vp = selectedViewportID {
+                let target = targetHandles(for: doc)
                 switch service.setViewportFrozenBulk(
                     in: doc, viewportID: vp,
-                    handles: handles, frozen: false) {
+                    handles: target.handles, frozen: false) {
                 case .success(let n):
                     notice = "VP Thaw: \(n) layers."
                 case .failure(let error):
                     notice = "VP Thaw: \(error.description)"
                 }
-            } else {
-                notice = "VP Thaw: pick a viewport first."
             }
         }
-        ImGuiSetCursorPosX(6)
-        if igSmallButton("Color...##LPMColor") { ImGuiOpenPopup("##LPMColorDlg", 0) }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Linetype...##LPMLinetype") { ImGuiOpenPopup("##LPMLinetypeDlg", 0) }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Weight...##LPMWeight") { ImGuiOpenPopup("##LPMWeightDlg", 0) }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Transp...##LPMTransp") { ImGuiOpenPopup("##LPMTranspDlg", 0) }
-        ImGuiSetCursorPosX(6)
-        if igSmallButton("PlotStyle...##LPMPlotStyle") { ImGuiOpenPopup("##LPMPlotStyleDlg", 0) }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Descr...##LPMDescr") { ImGuiOpenPopup("##LPMDescrDlg", 0) }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Merge...##LPMMerge") {
+        // Property dialogs + merge/delete + overflow menu.
+        if btn("LPMColor", "color-drop", "Bulk Color \(targetLabel)",
+               first: true) {
+            ImGuiOpenPopup("##LPMColorDlg", 0)
+        }
+        if btn("LPMLinetype", "linetype", "Bulk Linetype \(targetLabel)") {
+            ImGuiOpenPopup("##LPMLinetypeDlg", 0)
+        }
+        if btn("LPMWeight", "lineweight",
+               "Bulk Lineweight \(targetLabel)") {
+            ImGuiOpenPopup("##LPMWeightDlg", 0)
+        }
+        if btn("LPMTransp", "transparency",
+               "Bulk Transparency \(targetLabel)") {
+            ImGuiOpenPopup("##LPMTranspDlg", 0)
+        }
+        if btn("LPMMerge", "join", "Merge \(targetLabel)...",
+               gap: groupGap) {
             resetTextField(id: "##LPMMergeTarget")
             ImGuiOpenPopup("##LPMMergeDlg", 0)
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Delete...##LPMDelete") {
-            resetTextField(id: "##LPMDeleteName")
-            ImGuiOpenPopup("##LPMDeleteDlg", 0)
-        }
-        ImGuiSetCursorPosX(6)
-        if igSmallButton("Walk...##LPMWalk") { openWalk(for: doc) }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("States...##LPMStates") {
-            resetTextField(id: "##LPMStateName")
-            ImGuiOpenPopup("##LPMStatesDlg", 0)
-        }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("LAYERP##LPMLayerP") {
-            if LayerTransactionService().restoreLayerPrevious(in: doc) {
-                notice = "LAYERP: restored previous layer settings."
+        if btn("LPMDelete", "trash", "Delete \(targetLabel)...",
+               danger: true) {
+            let target = targetHandles(for: doc)
+            if target.handles.isEmpty {
+                notice = "Delete: no layers selected or in scope."
             } else {
-                notice = "LAYERP: nothing to restore."
+                ImGuiOpenPopup("##LPMDeleteConfirm", 0)
             }
         }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Reconcile##LPMReconcile") {
-            let n = LayerTransactionService().reconcileAllLayers(in: doc)
-            notice = "Reconciled \(n) layers."
+        if btn("LPMMore", "more", "More: Walk, States, LAYERP...",
+               gap: groupGap) {
+            ImGuiOpenPopup("##LPMMoreMenu", 0)
+        }
+        var pendingDialog: String? = nil
+        if ImGuiBeginPopup("##LPMMoreMenu", 0) {
+            if igMenuItem_Bool("Plot Style...", nil, false, true) {
+                pendingDialog = "##LPMPlotStyleDlg"
+            }
+            if igMenuItem_Bool("Description...", nil, false, true) {
+                pendingDialog = "##LPMDescrDlg"
+            }
+            ImGuiSeparator()
+            if igMenuItem_Bool("Layer Walk...", nil, false, true) {
+                openWalk(for: doc)
+            }
+            if igMenuItem_Bool("Layer States...", nil, false, true) {
+                resetTextField(id: "##LPMStateName")
+                pendingDialog = "##LPMStatesDlg"
+            }
+            if igMenuItem_Bool("LAYERP (restore previous)", nil, false, true) {
+                if LayerTransactionService().restoreLayerPrevious(in: doc) {
+                    notice = "LAYERP: restored previous layer settings."
+                } else {
+                    notice = "LAYERP: nothing to restore."
+                }
+            }
+            if igMenuItem_Bool("Reconcile All", nil, false, true) {
+                let n = LayerTransactionService().reconcileAllLayers(in: doc)
+                notice = "Reconciled \(n) layers."
+            }
+            ImGuiEndPopup()
+        }
+        if let pendingDialog {
+            ImGuiOpenPopup(pendingDialog, 0)
         }
     }
 
     private static func renderScopeStrip(
         engine: PhrostEngine, document doc: CADDocument
     ) {
-        ImGuiSetCursorPosX(6)
-        let vpLabel = "VP: \(selectedViewportID ?? "none")"
-        if igSmallButton("\(vpLabel) ##LPMViewportBtn") {
+        let theme = engine.ui.theme
+        let policy = LayerPanelPolicy(frameHeight: ImGuiGetFrameHeight())
+        let size = policy.toolbarButtonSize
+        func chip(
+            _ id: String, _ icon: String, _ label: String,
+            tooltip: String, checked: Bool, first: Bool = false
+        ) -> Bool {
+            if first {
+                ImGuiSetCursorPosX(6)
+            } else {
+                PanelWidgets.flow(
+                    itemWidth: PanelWidgets.labelButtonWidth(
+                        icon: icon, label: label, size: size,
+                        chevron: true))
+            }
+            return PanelWidgets.labelButton(
+                id: id, icon: icon, label: label, tooltip: tooltip,
+                theme: theme, size: size, checked: checked,
+                chevron: true)
+        }
+
+        if chip("LPMViewportBtn", "vport",
+                selectedViewportID ?? "No VP",
+                tooltip: "Viewport for VP overrides",
+                checked: selectedViewportID != nil, first: true) {
             ImGuiOpenPopup("##LPMViewportMenu", 0)
         }
         if ImGuiBeginPopup("##LPMViewportMenu", 0) {
@@ -372,12 +619,24 @@ struct LayerManagerUI {
             }
             ImGuiEndPopup()
         }
-        ImGuiSameLine(0, 4)
-        let filterLabel = "Filter: \(activeFilterName ?? "all")"
-        if igSmallButton("\(filterLabel) ##LPMFilterBtn") {
+        let filterActive = activeFilterName != nil
+            || unreconciledOnly || viewportFrozenOnly
+        if chip("LPMFilterBtn", "filter",
+                activeFilterName ?? "All layers",
+                tooltip: "Layer filter scope",
+                checked: filterActive) {
             ImGuiOpenPopup("##LPMFilterMenu", 0)
         }
         if ImGuiBeginPopup("##LPMFilterMenu", 0) {
+            if igMenuItem_Bool(
+                "Unreconciled only", nil, unreconciledOnly, true) {
+                unreconciledOnly.toggle()
+            }
+            if igMenuItem_Bool(
+                "VP-frozen only", nil, viewportFrozenOnly, true) {
+                viewportFrozenOnly.toggle()
+            }
+            ImGuiSeparator()
             if igMenuItem_Bool("(all)", nil, activeFilterName == nil, true) {
                 activeFilterName = nil
             }
@@ -389,9 +648,10 @@ struct LayerManagerUI {
             }
             ImGuiEndPopup()
         }
-        ImGuiSameLine(0, 4)
-        let stateLabel = "State: \(activeStateName ?? "all")"
-        if igSmallButton("\(stateLabel) ##LPMStateBtn") {
+        if chip("LPMStateBtn", "layers",
+                activeStateName ?? "Any state",
+                tooltip: "Layer state scope",
+                checked: activeStateName != nil) {
             ImGuiOpenPopup("##LPMStateMenu", 0)
         }
         if ImGuiBeginPopup("##LPMStateMenu", 0) {
@@ -405,16 +665,6 @@ struct LayerManagerUI {
                 }
             }
             ImGuiEndPopup()
-        }
-        ImGuiSetCursorPosX(6)
-        var unrec = unreconciledOnly
-        if ImGuiCheckbox("Unreconciled only", &unrec) {
-            unreconciledOnly = unrec
-        }
-        ImGuiSameLine(0, 8)
-        var vpf = viewportFrozenOnly
-        if ImGuiCheckbox("VP-frozen only", &vpf) {
-            viewportFrozenOnly = vpf
         }
     }
 
@@ -430,10 +680,17 @@ struct LayerManagerUI {
         if scopedCount > renderRowLimit {
             summary += " (first \(renderRowLimit) shown)"
         }
-        if !notice.isEmpty {
-            summary += " · \(notice)"
+        if !selection.isEmpty {
+            summary += " · Selected: \(selection.count)"
         }
         ImGuiTextV(summary)
+        if !notice.isEmpty {
+            ImGuiSetCursorPosX(6)
+            ImGuiPushStyleColor(
+                Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textAccent)
+            ImGuiTextV(notice)
+            ImGuiPopStyleColor(1)
+        }
         ImGuiPopStyleColor(1)
     }
 
@@ -456,7 +713,7 @@ struct LayerManagerUI {
 
     private static func renderColorDialog(document doc: CADDocument) {
         if ImGuiBeginPopup("##LPMColorDlg", 0) {
-            ImGuiTextV("Bulk color (\(scopedLayers(for: doc).count) in scope)")
+            ImGuiTextV("Bulk color \(targetCountLabel(for: doc))")
             ImGuiSeparator()
             var rgb = _colorRGB
             if igColorEdit3("##LPMColorEdit", &rgb, 0) {
@@ -469,7 +726,7 @@ struct LayerManagerUI {
             if igSmallButton("Apply ACI##LPMColorACI") {
                 let index = Int(_colorACI)
                 let color = DXFColorTable.aciToRGBA(Int32(index), color24: -1)
-                applyScoped(doc, "Bulk color") {
+                applyTarget(doc, "Bulk color") {
                     LayerTransactionService().setColorBulk(
                         in: doc, handles: $0, color: color,
                         source: .aci(index))
@@ -482,7 +739,7 @@ struct LayerManagerUI {
                     g: UInt8(max(0, min(255, Int(_colorRGB[1] * 255)))),
                     b: UInt8(max(0, min(255, Int(_colorRGB[2] * 255)))),
                     a: 255)
-                applyScoped(doc, "Bulk color") {
+                applyTarget(doc, "Bulk color") {
                     LayerTransactionService().setColorBulk(
                         in: doc, handles: $0, color: color)
                 }
@@ -493,7 +750,7 @@ struct LayerManagerUI {
 
     private static func renderLinetypeDialog(document doc: CADDocument) {
         if ImGuiBeginPopup("##LPMLinetypeDlg", 0) {
-            ImGuiTextV("Bulk linetype (\(scopedLayers(for: doc).count) in scope)")
+            ImGuiTextV("Bulk linetype \(targetCountLabel(for: doc))")
             ImGuiSeparator()
             let names = LayerManagerModel.availableLinetypes(in: doc)
             var index = min(_linetypeIndex, Int32(max(0, names.count - 1)))
@@ -503,7 +760,7 @@ struct LayerManagerUI {
             }
             if igSmallButton("Apply##LPMLinetypeApply"), !names.isEmpty {
                 let value = names[Int(min(index, Int32(names.count - 1)))]
-                applyScoped(doc, "Bulk linetype") {
+                applyTarget(doc, "Bulk linetype") {
                     LayerTransactionService().setLineTypeBulk(
                         in: doc, handles: $0, lineType: value)
                 }
@@ -514,7 +771,7 @@ struct LayerManagerUI {
 
     private static func renderLineweightDialog(document doc: CADDocument) {
         if ImGuiBeginPopup("##LPMWeightDlg", 0) {
-            ImGuiTextV("Bulk lineweight (\(scopedLayers(for: doc).count) in scope)")
+            ImGuiTextV("Bulk lineweight \(targetCountLabel(for: doc))")
             ImGuiSeparator()
             let names = Layer.fixedLineWeightsMM.map {
                 String(format: "%.2f mm", $0)
@@ -527,7 +784,7 @@ struct LayerManagerUI {
             if igSmallButton("Apply##LPMWeightApply") {
                 let value = Layer.fixedLineWeightsMM[
                     Int(min(index, Int32(names.count - 1)))]
-                applyScoped(doc, "Bulk lineweight") {
+                applyTarget(doc, "Bulk lineweight") {
                     LayerTransactionService().setLineWeightBulk(
                         in: doc, handles: $0, lineWeight: value)
                 }
@@ -538,7 +795,7 @@ struct LayerManagerUI {
 
     private static func renderTransparencyDialog(document doc: CADDocument) {
         if ImGuiBeginPopup("##LPMTranspDlg", 0) {
-            ImGuiTextV("Bulk transparency (\(scopedLayers(for: doc).count) in scope)")
+            ImGuiTextV("Bulk transparency \(targetCountLabel(for: doc))")
             ImGuiSeparator()
             var value = _transparency
             ImGuiSetNextItemWidth(220)
@@ -547,7 +804,7 @@ struct LayerManagerUI {
             }
             if igSmallButton("Apply##LPMTranspApply") {
                 let percent = Int(_transparency)
-                applyScoped(doc, "Bulk transparency") {
+                applyTarget(doc, "Bulk transparency") {
                     LayerTransactionService().setTransparencyBulk(
                         in: doc, handles: $0, transparency: percent)
                 }
@@ -558,7 +815,7 @@ struct LayerManagerUI {
 
     private static func renderPlotStyleDialog(document doc: CADDocument) {
         if ImGuiBeginPopup("##LPMPlotStyleDlg", 0) {
-            ImGuiTextV("Bulk plot style (\(scopedLayers(for: doc).count) in scope)")
+            ImGuiTextV("Bulk plot style \(targetCountLabel(for: doc))")
             ImGuiSeparator()
             let names = LayerManagerModel.availablePlotStyles(in: doc)
             var index = min(_plotStyleIndex, Int32(max(0, names.count - 1)))
@@ -568,7 +825,7 @@ struct LayerManagerUI {
             }
             if igSmallButton("Apply##LPMPlotStyleApply"), !names.isEmpty {
                 let value = names[Int(min(index, Int32(names.count - 1)))]
-                applyScoped(doc, "Bulk plot style") {
+                applyTarget(doc, "Bulk plot style") {
                     LayerTransactionService().setPlotStyleBulk(
                         in: doc, handles: $0, plotStyleName: value)
                 }
@@ -579,13 +836,13 @@ struct LayerManagerUI {
 
     private static func renderDescriptionDialog(document doc: CADDocument) {
         if ImGuiBeginPopup("##LPMDescrDlg", 0) {
-            ImGuiTextV("Bulk description (\(scopedLayers(for: doc).count) in scope)")
+            ImGuiTextV("Bulk description \(targetCountLabel(for: doc))")
             ImGuiSeparator()
             let value = renderTextField(
-                id: "##LPMDescrText", hint: "Description…",
+                id: "##LPMDescrText", hint: "Description...",
                 initial: "", width: 260)
             if igSmallButton("Apply##LPMDescrApply") {
-                applyScoped(doc, "Bulk description") {
+                applyTarget(doc, "Bulk description") {
                     LayerTransactionService().setDescriptionBulk(
                         in: doc, handles: $0, description: value)
                 }
@@ -596,11 +853,15 @@ struct LayerManagerUI {
 
     private static func renderMergeDialog(document doc: CADDocument) {
         if ImGuiBeginPopup("##LPMMergeDlg", 0) {
-            let names = scopedNames(for: doc)
-            ImGuiTextV("Merge \(names.count) in-scope layers")
+            let bulk = targetHandles(for: doc)
+            let names = bulk.handles.compactMap {
+                doc.layer(for: $0)?.name
+            }
+            let scope = bulk.isSelection ? "selected" : "in-scope"
+            ImGuiTextV("Merge \(names.count) \(scope) layers")
             ImGuiSeparator()
             let target = renderTextField(
-                id: "##LPMMergeTarget", hint: "Target layer…",
+                id: "##LPMMergeTarget", hint: "Target layer...",
                 initial: "", width: 220)
             if igSmallButton("Merge listed into target##LPMMergeApply") {
                 let sources = names.filter {
@@ -620,38 +881,60 @@ struct LayerManagerUI {
         }
     }
 
+    /// Bulk-delete confirmation: lists what would be deleted and what
+    /// would be skipped (current, "0", xref-dependent, in-use) before
+    /// anything changes. One undo step on confirm.
     private static func renderDeleteDialog(document doc: CADDocument) {
-        if ImGuiBeginPopup("##LPMDeleteDlg", 0) {
-            ImGuiTextV("Delete a layer")
-            ImGuiSeparator()
-            let name = renderTextField(
-                id: "##LPMDeleteName", hint: "Layer name…",
-                initial: "", width: 220)
-            var erase = _deleteEraseEntities
-            if ImGuiCheckbox("Erase its entities too", &erase) {
-                _deleteEraseEntities = erase
-            }
-            if igSmallButton("Delete##LPMDeleteApply") {
-                if _deleteEraseEntities {
-                    switch LayerTransactionService()
-                        .deleteLayerAndEntities(in: doc, named: name) {
-                    case .success(let count):
-                        notice = "Deleted '\(name)' (\(count) entities)."
-                        resetTextField(id: "##LPMDeleteName")
+        if ImGuiBeginPopup("##LPMDeleteConfirm", 0) {
+            let target = targetHandles(for: doc)
+            switch LayerTransactionService().auditBulkDelete(
+                in: doc, handles: target.handles,
+                eraseEntities: _deleteEraseEntities) {
+            case .failure(let error):
+                ImGuiTextV("Delete: \(error.description)")
+            case .success(let plan):
+                ImGuiTextV("Delete \(plan.deletable.count) layers?")
+                if !plan.skipped.isEmpty {
+                    ImGuiSeparator()
+                    ImGuiTextV("Skipped (\(plan.skipped.count)):")
+                    for skip in plan.skipped.prefix(8) {
+                        ImGuiTextV("· \(skip.name): \(skip.reason)")
+                    }
+                    if plan.skipped.count > 8 {
+                        ImGuiTextV(
+                            "...and \(plan.skipped.count - 8) more.")
+                    }
+                }
+                ImGuiSeparator()
+                var erase = _deleteEraseEntities
+                if ImGuiCheckbox("Erase its entities too", &erase) {
+                    _deleteEraseEntities = erase
+                }
+                if plan.deletable.isEmpty { ImGuiBeginDisabled(true) }
+                if igSmallButton("Delete##LPMDeleteConfirmApply") {
+                    switch LayerTransactionService().deleteLayersBulk(
+                        in: doc, handles: target.handles,
+                        eraseEntities: _deleteEraseEntities) {
+                    case .success(let outcome):
+                        notice = "Deleted \(outcome.deleted) layer"
+                            + (outcome.deleted == 1 ? "" : "s")
+                        if outcome.erasedEntities > 0 {
+                            notice += " (\(outcome.erasedEntities) entities)"
+                        }
+                        if !outcome.skipped.isEmpty {
+                            notice += " · skipped \(outcome.skipped.count)"
+                        }
+                        notice += "."
+                        ensureSelection(for: doc)
+                        ImGuiCloseCurrentPopup()
                     case .failure(let error):
                         notice = "Delete: \(error.description)"
                     }
-                } else if let layer = doc.findLayer(named: name) {
-                    switch LayerTransactionService()
-                        .deleteLayer(in: doc, handle: layer.handle) {
-                    case .success:
-                        notice = "Deleted '\(name)'."
-                        resetTextField(id: "##LPMDeleteName")
-                    case .failure(let error):
-                        notice = "Delete: \(error.description)"
-                    }
-                } else {
-                    notice = "Delete: Layer '\(name)' not found."
+                }
+                if plan.deletable.isEmpty { ImGuiEndDisabled() }
+                ImGuiSameLine(0, 4)
+                if igSmallButton("Cancel##LPMDeleteConfirmCancel") {
+                    ImGuiCloseCurrentPopup()
                 }
             }
             ImGuiEndPopup()
@@ -717,7 +1000,7 @@ struct LayerManagerUI {
             ImGuiTextV("Layer states")
             ImGuiSeparator()
             let name = renderTextField(
-                id: "##LPMStateName", hint: "State name…",
+                id: "##LPMStateName", hint: "State name...",
                 initial: "", width: 200)
             if igSmallButton("Save current##LPMStateSave"), !name.isEmpty {
                 switch LayerTransactionService().saveLayerState(

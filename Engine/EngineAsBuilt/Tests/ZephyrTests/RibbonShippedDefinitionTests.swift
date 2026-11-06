@@ -159,7 +159,7 @@ final class RibbonShippedDefinitionTests: XCTestCase {
 
     /// The painter must implement every name the definition grammar accepts,
     /// otherwise a valid definition renders letter boxes.
-    func testIconNameListMatchesPainterCoverage() {
+    func testIconNameListMatchesPainterCoverage() throws {
         // The painter lives in the app target, which tests cannot import, so
         // this asserts the shared list is non-trivial and self-consistent;
         // `RibbonIconPainterTests` (app-side manual check) covers the rest.
@@ -174,6 +174,26 @@ final class RibbonShippedDefinitionTests: XCTestCase {
             XCTAssertEqual(name, name.lowercased())
             XCTAssertFalse(name.isEmpty)
         }
+        // The painter lives in the app target, which tests cannot import,
+        // so scan its dispatch-table source: the painted names and the
+        // registered names must match exactly.
+        let iconURL = Self.repositoryRoot()
+            .appendingPathComponent("Sources/Zephyr/RibbonIcon.swift")
+        let iconSource = try String(contentsOf: iconURL, encoding: .utf8)
+        var painted = Set<String>()
+        for rawLine in iconSource.split(separator: "\n") {
+            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("\""),
+                  let close = trimmed.dropFirst().firstIndex(of: "\"")
+            else { continue }
+            let after = trimmed[trimmed.index(after: close)...]
+            guard after.hasPrefix(":") else { continue }
+            painted.insert(
+                String(trimmed.dropFirst().prefix(upTo: close)))
+        }
+        XCTAssertEqual(
+            painted, RibbonIconNames.all,
+            "RibbonIconNames and RibbonIconPainter must match exactly")
     }
 
     func testDefinitionFileExistsWhereTheLoaderLooksForIt() {

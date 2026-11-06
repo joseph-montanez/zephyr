@@ -93,6 +93,30 @@ enum RibbonIconPainter {
             "reload": reload,
             "close": close,
             "pattern": pattern,
+            // Layer panel
+            "plus": plusIcon,
+            "search": search,
+            "sort": sortIcon,
+            "filter": filterIcon,
+            "eye": eye,
+            "eye-off": eyeOff,
+            "freeze": freeze,
+            "thaw": thaw,
+            "lock": lock,
+            "unlock": unlock,
+            "no-plot": noPlot,
+            "vp-freeze": vpFreeze,
+            "vp-thaw": vpThaw,
+            "color-drop": colorDrop,
+            "linetype": linetypeIcon,
+            "lineweight": lineweightIcon,
+            "transparency": transparencyIcon,
+            "trash": trash,
+            "walk": walk,
+            "select": selectIcon,
+            "more": moreIcon,
+            "check": checkIcon,
+            "chevron-down": chevronDown,
         ]
     }
 
@@ -820,5 +844,208 @@ enum RibbonIconPainter {
         stroke(dl, r, c, [(0.34, 0.66), (0.62, 0.4)])
         arrowHead(dl, r, c, tipX: 0.66, tipY: 0.34, directionX: 1, directionY: -1)
         dot(dl, r, c, x: 0.5, y: 0.5, radius: 0.045)
+    }
+
+    // MARK: - Layer panel icons
+
+    private static func plusIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.5, 0.16), (0.5, 0.84)])
+        stroke(dl, r, c, [(0.16, 0.5), (0.84, 0.5)])
+    }
+
+    private static func search(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        circlePath(dl, r, c, centerX: 0.42, centerY: 0.42, radius: 0.26)
+        stroke(dl, r, c, [(0.62, 0.62), (0.88, 0.88)])
+    }
+
+    private static func sortIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.12, 0.24), (0.62, 0.24)], thickness: 0.9)
+        stroke(dl, r, c, [(0.12, 0.5), (0.5, 0.5)], thickness: 0.9)
+        stroke(dl, r, c, [(0.12, 0.76), (0.38, 0.76)], thickness: 0.9)
+        stroke(dl, r, c, [(0.8, 0.18), (0.8, 0.7)])
+        arrowHead(dl, r, c, tipX: 0.8, tipY: 0.84, directionX: 0, directionY: 1)
+    }
+
+    private static func filterIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.14, 0.16), (0.86, 0.16), (0.62, 0.46), (0.62, 0.82), (0.42, 0.72), (0.42, 0.46)], closed: true)
+    }
+
+    private static func eye(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        ImDrawListAddEllipse(
+            dl, point(r, 0.5, 0.5),
+            ImVec2(x: r.width * 0.4, y: r.height * 0.24),
+            c, 0, 24, max(r.width * 0.075, 1.0))
+        dot(dl, r, c, x: 0.5, y: 0.5, radius: 0.1)
+    }
+
+    private static func eyeOff(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        eye(dl, r, c)
+        stroke(dl, r, c, [(0.16, 0.84), (0.84, 0.16)])
+    }
+
+    private static func freeze(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.5, 0.1), (0.5, 0.9)], thickness: 0.9)
+        stroke(dl, r, c, [(0.16, 0.3), (0.84, 0.7)], thickness: 0.9)
+        stroke(dl, r, c, [(0.84, 0.3), (0.16, 0.7)], thickness: 0.9)
+        dot(dl, r, c, x: 0.5, y: 0.5, radius: 0.05)
+    }
+
+    private static func thaw(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        circlePath(dl, r, c, centerX: 0.5, centerY: 0.5, radius: 0.18)
+        for angle in stride(from: Float(0), to: Float.pi * 2, by: Float.pi / 4) {
+            let x0 = 0.5 + cos(angle) * 0.28
+            let y0 = 0.5 + sin(angle) * 0.28
+            let x1 = 0.5 + cos(angle) * 0.4
+            let y1 = 0.5 + sin(angle) * 0.4
+            stroke(dl, r, c, [(x0, y0), (x1, y1)], thickness: 0.9)
+        }
+    }
+
+    private static func lock(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        outline(dl, r, c, x0: 0.2, y0: 0.46, x1: 0.8, y1: 0.88, rounding: 2)
+        arcPath(dl, r, c, centerX: 0.5, centerY: 0.46, radius: 0.2,
+                from: Float.pi, to: Float.pi * 2)
+        dot(dl, r, c, x: 0.5, y: 0.66, radius: 0.07)
+    }
+
+    private static func unlock(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        outline(dl, r, c, x0: 0.2, y0: 0.46, x1: 0.8, y1: 0.88, rounding: 2)
+        arcPath(dl, r, c, centerX: 0.44, centerY: 0.46, radius: 0.2,
+                from: Float.pi, to: Float.pi * 1.6)
+        dot(dl, r, c, x: 0.5, y: 0.66, radius: 0.07)
+    }
+
+    private static func noPlot(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        printIcon(dl, r, c)
+        stroke(dl, r, c, [(0.14, 0.88), (0.86, 0.12)])
+    }
+
+    private static func vpFreeze(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        outline(dl, r, c, x0: 0.12, y0: 0.16, x1: 0.88, y1: 0.84)
+        stroke(dl, r, c, [(0.5, 0.28), (0.5, 0.72)], thickness: 0.8)
+        stroke(dl, r, c, [(0.32, 0.4), (0.68, 0.6)], thickness: 0.8)
+        stroke(dl, r, c, [(0.68, 0.4), (0.32, 0.6)], thickness: 0.8)
+    }
+
+    private static func vpThaw(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        outline(dl, r, c, x0: 0.12, y0: 0.16, x1: 0.88, y1: 0.84)
+        circlePath(dl, r, c, centerX: 0.5, centerY: 0.5, radius: 0.14)
+        dot(dl, r, c, x: 0.5, y: 0.32, radius: 0.035)
+        dot(dl, r, c, x: 0.5, y: 0.68, radius: 0.035)
+    }
+
+    private static func colorDrop(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.5, 0.1), (0.28, 0.52)], thickness: 0.9)
+        stroke(dl, r, c, [(0.5, 0.1), (0.72, 0.52)], thickness: 0.9)
+        arcPath(dl, r, c, centerX: 0.5, centerY: 0.54, radius: 0.25,
+                from: Float.pi * 0.05, to: Float.pi * 0.95)
+        dot(dl, r, c, x: 0.44, y: 0.62, radius: 0.05)
+    }
+
+    private static func linetypeIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.1, 0.3), (0.9, 0.3)])
+        stroke(dl, r, c, [(0.1, 0.56), (0.34, 0.56)])
+        stroke(dl, r, c, [(0.5, 0.56), (0.74, 0.56)])
+        dot(dl, r, c, x: 0.84, y: 0.56, radius: 0.045)
+        dot(dl, r, c, x: 0.18, y: 0.8, radius: 0.045)
+        dot(dl, r, c, x: 0.42, y: 0.8, radius: 0.045)
+        stroke(dl, r, c, [(0.58, 0.8), (0.9, 0.8)])
+    }
+
+    private static func lineweightIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.12, 0.24), (0.88, 0.24)], thickness: max(r.width * 0.04, 0.8))
+        stroke(dl, r, c, [(0.12, 0.5), (0.88, 0.5)], thickness: max(r.width * 0.1, 1.2))
+        stroke(dl, r, c, [(0.12, 0.78), (0.88, 0.78)], thickness: max(r.width * 0.18, 1.8))
+    }
+
+    private static func transparencyIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        outline(dl, r, c, x0: 0.16, y0: 0.16, x1: 0.5, y1: 0.84, filled: true)
+        outline(dl, r, c, x0: 0.5, y0: 0.16, x1: 0.84, y1: 0.84)
+        stroke(dl, r, c, [(0.5, 0.5), (0.84, 0.5)], thickness: 0.7)
+        stroke(dl, r, c, [(0.67, 0.16), (0.67, 0.84)], thickness: 0.7)
+    }
+
+    private static func trash(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.14, 0.24), (0.86, 0.24)])
+        stroke(dl, r, c, [(0.4, 0.24), (0.42, 0.12), (0.58, 0.12), (0.6, 0.24)], thickness: 0.9)
+        stroke(dl, r, c, [(0.22, 0.24), (0.28, 0.88), (0.72, 0.88), (0.78, 0.24)])
+        stroke(dl, r, c, [(0.42, 0.4), (0.44, 0.72)], thickness: 0.8)
+        stroke(dl, r, c, [(0.58, 0.4), (0.56, 0.72)], thickness: 0.8)
+    }
+
+    private static func walk(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        dot(dl, r, c, x: 0.18, y: 0.8, radius: 0.05)
+        dot(dl, r, c, x: 0.36, y: 0.64, radius: 0.05)
+        dot(dl, r, c, x: 0.52, y: 0.5, radius: 0.05)
+        circlePath(dl, r, c, centerX: 0.72, centerY: 0.3, radius: 0.16)
+        dot(dl, r, c, x: 0.72, y: 0.3, radius: 0.045)
+    }
+
+    private static func selectIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.34, 0.22), (0.88, 0.22)], thickness: 0.9)
+        stroke(dl, r, c, [(0.34, 0.5), (0.88, 0.5)], thickness: 0.9)
+        stroke(dl, r, c, [(0.34, 0.78), (0.74, 0.78)], thickness: 0.9)
+        stroke(dl, r, c, [(0.1, 0.22), (0.16, 0.3), (0.26, 0.14)])
+        stroke(dl, r, c, [(0.1, 0.5), (0.16, 0.58), (0.26, 0.42)])
+    }
+
+    private static func moreIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        dot(dl, r, c, x: 0.24, y: 0.5, radius: 0.08)
+        dot(dl, r, c, x: 0.5, y: 0.5, radius: 0.08)
+        dot(dl, r, c, x: 0.76, y: 0.5, radius: 0.08)
+    }
+
+    private static func checkIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.14, 0.54), (0.4, 0.8), (0.86, 0.2)])
+    }
+
+    private static func chevronDown(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        stroke(dl, r, c, [(0.18, 0.34), (0.5, 0.68), (0.82, 0.34)])
     }
 }

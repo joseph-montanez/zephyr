@@ -574,6 +574,106 @@ public struct LayerTransactionService {
         return .success(count)
     }
 
+    /// One skipped layer in a bulk delete: its name plus why it was kept.
+    public struct BulkDeleteSkip: Equatable, Sendable {
+        public let name: String
+        public let reason: String
+
+        public init(name: String, reason: String) {
+            self.name = name
+            self.reason = reason
+        }
+    }
+
+    /// Outcome of a bulk delete: layers removed, entities erased with
+    /// them, and every skipped layer with its reason.
+    public struct BulkDeleteOutcome: Equatable, Sendable {
+        public let deleted: Int
+        public let erasedEntities: Int
+        public let skipped: [BulkDeleteSkip]
+
+        public init(deleted: Int, erasedEntities: Int, skipped: [BulkDeleteSkip]) {
+            self.deleted = deleted
+            self.erasedEntities = erasedEntities
+            self.skipped = skipped
+        }
+    }
+
+    /// Non-mutating preview for the bulk-delete confirmation dialog:
+    /// which handles would be deleted and which would be skipped, in
+    /// the caller's order. Unknown handles fail with no state change.
+    public func auditBulkDelete(
+        in primary: CADDocument,
+        handles: [UUID],
+        eraseEntities: Bool
+    ) -> Result<(deletable: [UUID], skipped: [BulkDeleteSkip]), LayerEditError> {
+        var seen = Set<UUID>()
+        var ordered: [UUID] = []
+        for handle in handles where seen.insert(handle).inserted {
+            ordered.append(handle)
+        }
+        for handle in ordered where primary.layer(for: handle) == nil {
+            return .failure(.unknownLayer(handle.uuidString))
+        }
+        let counts = LayerSortPolicy.entityCounts(in: primary)
+        var deletable: [UUID] = []
+        var skipped: [BulkDeleteSkip] = []
+        for handle in ordered {
+            guard let layer = primary.layer(for: handle) else { continue }
+            if layer.name.caseInsensitiveCompare("0") == .orderedSame {
+                skipped.append(BulkDeleteSkip(
+                    name: layer.name, reason: "Layer '0' cannot be deleted."))
+            } else if primary.isXrefDependentLayer(layer) {
+                skipped.append(BulkDeleteSkip(
+                    name: layer.name,
+                    reason: "Xref-dependent (Detach the xref)."))
+            } else if primary.activeLayerID == handle {
+                skipped.append(BulkDeleteSkip(
+                    name: layer.name, reason: "Current layer."))
+            } else if !eraseEntities, (counts[handle] ?? 0) > 0 {
+                skipped.append(BulkDeleteSkip(
+                    name: layer.name,
+                    reason: "In use (\(counts[handle] ?? 0) entities)."))
+            } else {
+                deletable.append(handle)
+            }
+        }
+        return .success((deletable, skipped))
+    }
+
+    /// Delete several layers at once (bulk LAYDEL): exactly one undo on
+    /// the primary plus a LAYERP checkpoint, with render-only sibling
+    /// propagation. Protected layers ("0", xref-dependent), the current
+    /// layer, and — unless `eraseEntities` is set — in-use layers are
+    /// skipped with reasons instead of failing the batch. Unknown
+    /// handles fail with no state change.
+    public func deleteLayersBulk(
+        in primary: CADDocument,
+        siblings: [CADDocument] = [],
+        handles: [UUID],
+        eraseEntities: Bool
+    ) -> Result<BulkDeleteOutcome, LayerEditError> {
+        switch auditBulkDelete(
+            in: primary, handles: handles, eraseEntities: eraseEntities) {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let plan):
+            guard !plan.deletable.isEmpty else {
+                return .success(BulkDeleteOutcome(
+                    deleted: 0, erasedEntities: 0, skipped: plan.skipped))
+            }
+            let report = primary.deleteLayers(
+                handles: plan.deletable, eraseEntities: eraseEntities)
+            for sibling in siblings where sibling !== primary {
+                sibling.dropLayersRenderOnly(handles: plan.deletable)
+            }
+            propagate(from: primary, to: siblings)
+            return .success(BulkDeleteOutcome(
+                deleted: report.deleted, erasedEntities: report.erased,
+                skipped: plan.skipped))
+        }
+    }
+
     /// Copy entities onto another layer (COPYTOLAYER) in one undo step,
     /// with render-only sibling propagation. Unknown targets fail with
     /// no state change; unknown entity handles are skipped.

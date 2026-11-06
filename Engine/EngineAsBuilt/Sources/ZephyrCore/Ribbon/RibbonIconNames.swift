@@ -33,6 +33,12 @@ public enum RibbonIconNames {
         "measure", "theme", "nav",
         // Chrome
         "reload", "close",
+        // Layer panel
+        "plus", "search", "sort", "filter", "eye", "eye-off",
+        "freeze", "thaw", "lock", "unlock", "no-plot",
+        "vp-freeze", "vp-thaw", "color-drop", "linetype", "lineweight",
+        "transparency", "trash", "walk", "select", "more", "check",
+        "chevron-down",
     ]
 
     /// Icon names that only exist as aliases of a canvas name, so a

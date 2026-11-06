@@ -480,6 +480,213 @@ public struct LayerWalkSession: Equatable, Sendable {
 }
 
 // =========================================================================
+// MARK: - LayerSimilarCriterion
+// =========================================================================
+
+/// One matchable layer property for "Select Similar" in the Layer
+/// Properties Manager. Matching is by resolved value (exact RGB, not
+/// just ACI) so true-color and color-book layers match correctly.
+public enum LayerSimilarCriterion: String, CaseIterable, Sendable {
+    case color
+    case linetype
+    case lineweight
+    case transparency
+    case plot
+
+    public var displayName: String {
+        switch self {
+        case .color: return "Color"
+        case .linetype: return "Linetype"
+        case .lineweight: return "Lineweight"
+        case .transparency: return "Transparency"
+        case .plot: return "Plot"
+        }
+    }
+
+    public func matches(_ layer: Layer, reference: Layer) -> Bool {
+        switch self {
+        case .color:
+            return layer.color == reference.color
+        case .linetype:
+            return layer.lineType.caseInsensitiveCompare(reference.lineType)
+                == .orderedSame
+        case .lineweight:
+            return abs(layer.lineWeight - reference.lineWeight) < 1e-9
+        case .transparency:
+            return layer.transparency == reference.transparency
+        case .plot:
+            return layer.isPlottable == reference.isPlottable
+        }
+    }
+}
+
+// =========================================================================
+// MARK: - LayerSelectionModel
+// =========================================================================
+
+/// AutoCAD-style multi-selection for the Layer Properties Manager.
+/// Headless value logic (no ImGui): the panel owns one of these and
+/// feeds it the visible display order plus the Ctrl/Shift modifier
+/// state for each click.
+///
+/// Scope rule: commands that take an `ordered` visible list only touch
+/// the visible portion — out-of-scope picks are preserved. Only
+/// `deselectAll` (and `selectCurrent`, which targets one layer) clear
+/// everything. Selection is always independent of `activeLayerID`.
+public struct LayerSelectionModel: Equatable, Sendable {
+    public var selected: Set<UUID>
+    public var anchor: UUID?
+
+    public init(selected: Set<UUID> = [], anchor: UUID? = nil) {
+        self.selected = selected
+        self.anchor = anchor
+    }
+
+    public var isEmpty: Bool { selected.isEmpty }
+    public var count: Int { selected.count }
+
+    public func contains(_ handle: UUID) -> Bool {
+        selected.contains(handle)
+    }
+
+    /// Standard click handling: plain click selects one, Ctrl toggles,
+    /// Shift selects the continuous display range from the anchor.
+    /// Shift with no usable anchor falls back to a plain click.
+    public mutating func click(
+        handle: UUID, in ordered: [UUID], ctrl: Bool, shift: Bool
+    ) {
+        if shift, let anchor,
+           let lo = rangeIndices(from: anchor, to: handle, in: ordered) {
+            let visible = Set(ordered)
+            let range = Set(ordered[lo.0...lo.1])
+            selected.subtract(visible)
+            selected.formUnion(range)
+            return
+        }
+        if ctrl {
+            if selected.contains(handle) {
+                selected.remove(handle)
+            } else {
+                selected.insert(handle)
+            }
+            anchor = handle
+            return
+        }
+        selected = [handle]
+        anchor = handle
+    }
+
+    /// Select every visible layer, preserving out-of-scope picks.
+    public mutating func selectAll(in ordered: [UUID]) {
+        selected.formUnion(ordered)
+        if anchor == nil { anchor = ordered.first }
+    }
+
+    public mutating func deselectAll() {
+        selected = []
+        anchor = nil
+    }
+
+    /// Select every visible layer except the current one, preserving
+    /// out-of-scope picks (the topo "keep the frame" workflow).
+    public mutating func selectAllExceptCurrent(
+        in ordered: [UUID], current: UUID?
+    ) {
+        let visible = Set(ordered)
+        selected.subtract(visible)
+        for handle in ordered where handle != current {
+            selected.insert(handle)
+        }
+    }
+
+    /// Toggle every visible layer, preserving out-of-scope picks.
+    public mutating func invert(in ordered: [UUID]) {
+        for handle in ordered {
+            if selected.contains(handle) {
+                selected.remove(handle)
+            } else {
+                selected.insert(handle)
+            }
+        }
+    }
+
+    /// Select exactly the current layer (clears everything else).
+    public mutating func selectCurrent(_ current: UUID?) {
+        if let current {
+            selected = [current]
+            anchor = current
+        } else {
+            selected = []
+            anchor = nil
+        }
+    }
+
+    /// Select visible layers matching the reference on one criterion,
+    /// preserving out-of-scope picks.
+    public mutating func selectSimilar(
+        to reference: Layer, in layers: [Layer],
+        criterion: LayerSimilarCriterion
+    ) {
+        let visible = Set(layers.map(\.handle))
+        selected.subtract(visible)
+        for layer in layers where criterion.matches(layer, reference: reference) {
+            selected.insert(layer.handle)
+        }
+    }
+
+    /// Drop handles that no longer exist (deleted/undone layers).
+    /// The anchor falls back to nil when it is pruned.
+    public mutating func prune(valid: Set<UUID>) {
+        selected.formIntersection(valid)
+        if let anchor, !valid.contains(anchor) {
+            self.anchor = nil
+        }
+    }
+
+    /// Selected handles in display order, with any out-of-scope picks
+    /// appended in name order for determinism.
+    public func orderedSelection(
+        in ordered: [UUID], named lookup: (UUID) -> String?
+    ) -> [UUID] {
+        let set = selected
+        var result = ordered.filter { set.contains($0) }
+        let extra = set.subtracting(ordered).sorted {
+            (lookup($0) ?? "") < (lookup($1) ?? "")
+        }
+        result.append(contentsOf: extra)
+        return result
+    }
+
+    /// Split handles into bulk targets, skipping the current layer
+    /// (bulk Off/Freeze refuse it all-or-nothing, so callers partition
+    /// first and report the skip instead of failing the batch).
+    public static func partitionExcludingCurrent(
+        _ handles: [UUID], current: UUID?
+    ) -> (targets: [UUID], skippedCurrent: Bool) {
+        guard let current else { return (handles, false) }
+        var skipped = false
+        let targets = handles.filter {
+            if $0 == current {
+                skipped = true
+                return false
+            }
+            return true
+        }
+        return (targets, skipped)
+    }
+
+    private func rangeIndices(
+        from anchor: UUID, to handle: UUID, in ordered: [UUID]
+    ) -> (Int, Int)? {
+        guard let a = ordered.firstIndex(of: anchor),
+              let b = ordered.firstIndex(of: handle) else {
+            return nil
+        }
+        return (min(a, b), max(a, b))
+    }
+}
+
+// =========================================================================
 // MARK: - LayerTransactionService bulk setters (Phase 6)
 //
 // Every bulk setter validates every handle first and applies the whole

@@ -41,12 +41,82 @@ struct LayerPanelUI {
         return _cachedCounts
     }
 
+    /// Flat visible layer order (uncapped): host layers first, then
+    /// xref-dependent layers grouped by owning xref. Follows the shared
+    /// sort settings (LAYERSORT command / sort strip) and name search —
+    /// the same order the rows render in.
+    private static func orderedVisibleLayers(for doc: CADDocument) -> [Layer] {
+        let layers = LayerManagerUI.displayLayers(for: doc)
+        let settings = sortSettings()
+        let counts = settings.key == .used ? entityCounts(for: doc) : [:]
+        let search = _searchText.trimmingCharacters(
+            in: .whitespacesAndNewlines)
+        func visibleLayers(_ list: [Layer]) -> [Layer] {
+            let sorted = LayerSortPolicy.sorted(
+                list, entityCounts: counts, settings: settings)
+            guard !search.isEmpty else { return sorted }
+            return sorted.filter {
+                $0.name.localizedCaseInsensitiveContains(search)
+            }
+        }
+        var ordered = visibleLayers(
+            layers.filter { !doc.isXrefDependentLayer($0) })
+        let dependent = layers.filter { doc.isXrefDependentLayer($0) }
+        let owners = Array(Set(dependent.compactMap {
+            doc.xrefOwnerBlockName(forLayerName: $0.name)
+        })).sorted()
+        for owner in owners {
+            ordered.append(contentsOf: visibleLayers(dependent.filter {
+                doc.xrefOwnerBlockName(forLayerName: $0.name) == owner
+            }))
+        }
+        return ordered
+    }
+
+    /// Panel-scoped keys: Ctrl+A selects all visible layers, F2 starts
+    /// rename for a single selected layer. Only when the Layers window
+    /// is focused and no text field is active, so typing in search or
+    /// rename and the global entity Ctrl+A are never disturbed.
+    private static func handlePanelKeys(document doc: CADDocument) {
+        guard _editingLayerHandle == nil else { return }
+        guard let io = ImGuiGetIO() else { return }
+        if io.pointee.WantTextInput { return }
+        let focused = ImGuiIsWindowFocused(ImGuiFocusedFlags(
+            ImGuiFocusedFlags_RootAndChildWindows.rawValue))
+        guard focused else { return }
+        let ctrl = io.pointee.KeyCtrl || io.pointee.KeySuper
+        if ctrl && ImGuiIsKeyPressed(
+            ImGuiKey(ImGuiKey_A.rawValue), false) {
+            LayerManagerUI.selection.selectAll(
+                in: LayerManagerUI.visibleOrder)
+            LayerManagerUI.notice =
+                "Selected \(LayerManagerUI.selection.count) layers."
+        } else if ImGuiIsKeyPressed(
+            ImGuiKey(ImGuiKey_F2.rawValue), false) {
+            let picked = LayerManagerUI.selection.selected
+            if picked.count == 1, let handle = picked.first {
+                _editingLayerHandle = handle
+                _editingDocumentID = ObjectIdentifier(doc)
+                _editingLayerNameBuf = []
+            }
+        }
+    }
+
+    /// Ctrl/Shift state for row clicks (Cmd counts as Ctrl on macOS).
+    private static func clickModifiers() -> (ctrl: Bool, shift: Bool) {
+        guard let io = ImGuiGetIO() else { return (false, false) }
+        return (
+            io.pointee.KeyCtrl || io.pointee.KeySuper,
+            io.pointee.KeyShift)
+    }
+
     static func render(engine: PhrostEngine, document: CADDocument) {
         let doc = document
         let layers = LayerManagerUI.displayLayers(for: doc)
         let fontSize = ImGuiGetFontSize()
         let panelW: Float = fontSize * 18
-        let layerRowH = ImGuiGetFrameHeightWithSpacing()
+        let layerRowH = LayerPanelPolicy(
+            frameHeight: ImGuiGetFrameHeight()).rowHeight
         let minRows = max(Float(layers.count), 3)
         let panelH = max(100, layerRowH * minRows + 60)
 
@@ -90,68 +160,63 @@ struct LayerPanelUI {
                 renderHeader(engine: engine, document: doc, isDocked: wasDocked)
                 renderSortStrip(engine: engine)
                 LayerManagerUI.searchText = _searchText
+                // Flat visible order (uncapped): selection commands and
+                // Shift-range math use this, never the render window.
+                let ordered = orderedVisibleLayers(for: doc)
+                LayerManagerUI.visibleOrder = ordered.map(\.handle)
+                LayerManagerUI.ensureSelection(for: doc)
                 _ = LayerManagerUI.renderStrips(engine: engine, document: doc)
 
-                if layers.isEmpty {
+                if ordered.isEmpty {
                     ImGuiSetCursorPosX(10)
-                    ImGuiTextV("(no layers)")
+                    ImGuiTextV(layers.isEmpty ? "(no layers)" : "(no matches)")
                 } else {
                     // Host layers first; xref-dependent layers grouped
-                    // under a collapsible header per owning xref.
+                    // under a header per owning xref.
                     // Direct iteration — avoid ImGuiListClipper due to arm64e C struct ABI mismatch.
-                    // Both lists follow the shared sort settings
-                    // (LAYERSORT command / sort strip) and name search.
-                    let settings = sortSettings()
-                    let counts = settings.key == .used ? entityCounts(for: doc) : [:]
-                    let search = _searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-                    func visibleLayers(_ list: [Layer]) -> [Layer] {
-                        let sorted = LayerSortPolicy.sorted(
-                            list, entityCounts: counts, settings: settings)
-                        guard !search.isEmpty else { return sorted }
-                        return sorted.filter {
-                            $0.name.localizedCaseInsensitiveContains(search)
+                    var groupCounts: [String: Int] = [:]
+                    for layer in ordered {
+                        if let owner = doc.xrefOwnerBlockName(
+                            forLayerName: layer.name) {
+                            groupCounts[owner, default: 0] += 1
                         }
                     }
-                    let hostLayers = visibleLayers(
-                        layers.filter { !doc.isXrefDependentLayer($0) })
-                    for index in 0..<min(hostLayers.count, LayerManagerUI.renderRowLimit) {
+                    var emittedOwners = Set<String>()
+                    var rendered = 0
+                    for (displayIndex, layer) in ordered.enumerated() {
+                        if rendered >= LayerManagerUI.renderRowLimit { break }
+                        if let owner = doc.xrefOwnerBlockName(
+                            forLayerName: layer.name),
+                           !emittedOwners.contains(owner) {
+                            emittedOwners.insert(owner)
+                            let headerPos = ImGuiGetCursorScreenPos()
+                            PanelWidgets.drawIcon(
+                                "xref",
+                                drawList: ImGuiGetWindowDrawList(),
+                                center: ImVec2(
+                                    x: headerPos.x + 14,
+                                    y: headerPos.y
+                                        + ImGuiGetTextLineHeight() * 0.5),
+                                size: 14, color: engine.ui.theme.textDim)
+                            ImGuiSetCursorPosX(26)
+                            ImGuiPushStyleColor(
+                                Int32(ImGuiCol_Text.rawValue),
+                                engine.ui.theme.textDim)
+                            ImGuiTextV(
+                                "Xref: \(owner) (\(groupCounts[owner] ?? 0))")
+                            ImGuiPopStyleColor(1)
+                        }
                         renderLayerRow(
                             engine: engine,
                             document: doc,
-                            layer: hostLayers[index],
-                            index: index,
+                            layer: layer,
+                            index: displayIndex,
                             rowHeight: layerRowH,
                             fontSize: fontSize)
-                    }
-                    let dependent = layers.filter { doc.isXrefDependentLayer($0) }
-                    let owners = Array(Set(dependent.compactMap {
-                        doc.xrefOwnerBlockName(forLayerName: $0.name)
-                    })).sorted()
-                    var rowIndex = hostLayers.count
-                    for owner in owners {
-                        let group = visibleLayers(dependent.filter {
-                            doc.xrefOwnerBlockName(forLayerName: $0.name) == owner
-                        })
-                        if group.isEmpty { continue }
-                        ImGuiSetCursorPosX(6)
-                        ImGuiPushStyleColor(
-                            Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textDim)
-                        ImGuiTextV("— Xref: \(owner) (\(group.count)) —")
-                        ImGuiPopStyleColor(1)
-                        if true {
-                            for layer in group.prefix(LayerManagerUI.renderRowLimit) {
-                                renderLayerRow(
-                                    engine: engine,
-                                    document: doc,
-                                    layer: layer,
-                                    index: 10_000 + rowIndex,
-                                    rowHeight: layerRowH,
-                                    fontSize: fontSize)
-                                rowIndex += 1
-                            }
-                        }
+                        rendered += 1
                     }
                 }
+                handlePanelKeys(document: doc)
             }
         }
 
@@ -179,39 +244,25 @@ struct LayerPanelUI {
             ImGuiPopStyleColor(1)
         }
 
-        ImGuiSetCursorPos(ImVec2(x: max(0, headerWidth - 30), y: headerY))
-        ImGuiPushStyleColor(
-            Int32(ImGuiCol_Button.rawValue),
-            engine.ui.theme.panelBg)
-        ImGuiPushStyleColor(
-            Int32(ImGuiCol_ButtonHovered.rawValue),
-            engine.ui.theme.panelBg)
-        ImGuiPushStyleColor(
-            Int32(ImGuiCol_ButtonActive.rawValue),
-            engine.ui.theme.panelBg)
-        ImGuiPushStyleColor(
-            Int32(ImGuiCol_Text.rawValue),
-            engine.ui.theme.textDim)
-        if igSmallButton("+") {
+        let policy = LayerPanelPolicy(frameHeight: ImGuiGetFrameHeight())
+        let buttonSize = policy.toolbarButtonSize
+        ImGuiSetCursorPos(ImVec2(
+            x: max(0, headerWidth - buttonSize - 6), y: headerY))
+        if PanelWidgets.iconButton(
+            id: "LPMAddLayer", icon: "plus", tooltip: "Add a new layer",
+            theme: engine.ui.theme, size: buttonSize) {
             document.addLayer(Layer(name: document.uniqueLayerName()))
-        }
-        ImGuiPopStyleColor(4)
-
-        if ImGuiIsItemHovered(0) {
-            ImGuiBeginTooltip()
-            ImGuiTextV("Add a new layer")
-            ImGuiEndTooltip()
         }
 
         ImGuiSetCursorPos(ImVec2(
             x: 0,
-            y: headerY + ImGuiGetFrameHeight() + 4))
+            y: headerY + max(ImGuiGetFrameHeight(), buttonSize) + 4))
     }
 
-    /// Sort controls shared with the LAYERSORT command: clickable
-    /// On/Color/Name headers, a Sort menu with every key, and a name
-    /// search field. Reads settings fresh each frame, so commands
-    /// take effect immediately here.
+    /// Search + sort row shared with the LAYERSORT command. Reads
+    /// settings fresh each frame, so commands take effect immediately
+    /// here. Sort markers are menu check marks and drawn triangles —
+    /// the UI font has no glyphs for the old Unicode arrows.
     private static func renderSortStrip(engine: PhrostEngine) {
         // Explicit theme colors: the global gold hover/active pair
         // (brandGoldHover/Active) behind near-white text is unreadable
@@ -232,39 +283,8 @@ struct LayerPanelUI {
         defer { ImGuiPopStyleColor(11) }
 
         let settings = sortSettings()
-        func arrow(_ key: LayerSortKey) -> String {
-            guard settings.key == key else { return "" }
-            return settings.ascending ? " \u{25B2}" : " \u{25BC}"
-        }
-        ImGuiSetCursorPosX(6)
-        if igSmallButton("On\(arrow(.onOff))##LayerSortOn") {
-            applySort(settings.selecting(.onOff))
-        }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Color\(arrow(.color))##LayerSortColor") {
-            applySort(settings.selecting(.color))
-        }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Name\(arrow(.name))##LayerSortName") {
-            applySort(settings.selecting(.name))
-        }
-        ImGuiSameLine(0, 4)
-        if igSmallButton("Sort: \(settings.key.displayName)\(arrow(settings.key)) \u{25BE}##LayerSortMenuBtn") {
-            ImGuiOpenPopup("##LayerSortMenu", 0)
-        }
-        if ImGuiBeginPopup("##LayerSortMenu", 0) {
-            for key in LayerSortKey.allCases {
-                let marker = settings.key == key ? "\u{2713} " : "  "
-                if igMenuItem_Bool("\(marker)\(key.displayName)", nil, false, true) {
-                    applySort(settings.selecting(key))
-                }
-            }
-            ImGuiSeparator()
-            if igMenuItem_Bool(settings.ascending ? "Descending" : "Ascending", nil, false, true) {
-                applySort(LayerSortSettings(key: settings.key, ascending: !settings.ascending))
-            }
-            ImGuiEndPopup()
-        }
+        let policy = LayerPanelPolicy(frameHeight: ImGuiGetFrameHeight())
+        let buttonSize = policy.toolbarButtonSize
 
         let bufSize = 128
         if _searchBuf.count != bufSize {
@@ -273,11 +293,48 @@ struct LayerPanelUI {
             for i in 0..<min(bytes.count, bufSize - 1) { buffer[i] = bytes[i] }
             _searchBuf = buffer
         }
+        let sortWidth = PanelWidgets.labelButtonWidth(
+            icon: "sort", label: settings.key.displayName,
+            size: buttonSize, chevron: true)
+        let clearWidth: Float = _searchText.isEmpty ? 0 : buttonSize + 4
         ImGuiSetCursorPosX(6)
-        ImGuiSetNextItemWidth(max(60, ImGuiGetContentRegionAvail().x - 12))
-        if igInputTextWithHint("##LayerSearch", "Filter layers…",
+        let searchWidth = max(
+            60, ImGuiGetContentRegionAvail().x - 12 - sortWidth - 4
+                - clearWidth)
+        ImGuiSetNextItemWidth(searchWidth)
+        if igInputTextWithHint("##LayerSearch", "Filter layers...",
                                &_searchBuf, bufSize, 0, nil, nil) {
             _searchText = _searchBuf.withUnsafeBufferPointer { pointer in String(cString: pointer.baseAddress!) }
+        }
+        if !_searchText.isEmpty {
+            ImGuiSameLine(0, 4)
+            if PanelWidgets.iconButton(
+                id: "LayerSearchClear", icon: "close",
+                tooltip: "Clear search", theme: theme, size: buttonSize) {
+                _searchText = ""
+                _searchBuf = []
+            }
+        }
+        ImGuiSameLine(0, 4)
+        if PanelWidgets.labelButton(
+            id: "LayerSortMenuBtn", icon: "sort",
+            label: settings.key.displayName,
+            tooltip: "Sort order (LAYERSORT)",
+            theme: theme, size: buttonSize, chevron: true) {
+            ImGuiOpenPopup("##LayerSortMenu", 0)
+        }
+        if ImGuiBeginPopup("##LayerSortMenu", 0) {
+            for key in LayerSortKey.allCases {
+                if igMenuItem_Bool(
+                    key.displayName, nil, settings.key == key, true) {
+                    applySort(settings.selecting(key))
+                }
+            }
+            ImGuiSeparator()
+            if igMenuItem_Bool(settings.ascending ? "Descending" : "Ascending", nil, false, true) {
+                applySort(LayerSortSettings(key: settings.key, ascending: !settings.ascending))
+            }
+            ImGuiEndPopup()
         }
     }
 
@@ -318,6 +375,8 @@ struct LayerPanelUI {
         fontSize: Float
     ) {
         let isActive = document.activeLayerID == layer.handle
+        let isSelected = LayerManagerUI.selection.selected.contains(
+            layer.handle)
 
         ImGuiSetCursorPosX(0)
         ImGuiPushStyleColor(
@@ -331,7 +390,7 @@ struct LayerPanelUI {
             engine.ui.theme.brandGoldActive)
         let clicked = ImGuiSelectable(
             "##LayerRow\(index)",
-            isActive,
+            isSelected,
             Int32(ImGuiSelectableFlags_AllowDoubleClick.rawValue),
             ImVec2(x: ImGuiGetContentRegionAvail().x, y: rowHeight))
         ImGuiPopStyleColor(3)
@@ -340,79 +399,140 @@ struct LayerPanelUI {
         let rowMax = ImGuiGetItemRectMax()
         let hovered = ImGuiIsItemHovered(0)
         let mouse = ImGuiGetMousePos()
-        let eyeMaxX = rowMin.x + 34
-        let swatchMaxX = rowMin.x + 52
-        let propsMinX = rowMax.x - 34
+        // Status (current-layer check) | eye | swatch | name | props.
+        // Zones come from the shared policy so drawing, hit-testing,
+        // and the rename field can never drift apart.
+        let policy = LayerPanelPolicy(frameHeight: ImGuiGetFrameHeight())
+        let zones = policy.rowZones
+        let statusMaxX = rowMin.x + zones.statusEnd
+        let eyeMaxX = rowMin.x + zones.eyeEnd
+        let swatchMaxX = rowMin.x + zones.swatchEnd
+        let propsMinX = rowMax.x - zones.propsWidth
 
         if clicked {
-            if mouse.x < eyeMaxX {
-                document.setLayerVisible(
-                    layer.handle,
-                    visible: !layer.isVisible)
+            let mods = clickModifiers()
+            if mouse.x < statusMaxX {
+                LayerManagerUI.selection.click(
+                    handle: layer.handle,
+                    in: LayerManagerUI.visibleOrder,
+                    ctrl: mods.ctrl, shift: mods.shift)
+            } else if mouse.x < eyeMaxX {
+                toggleRowVisibility(document: document, layer: layer)
             } else if mouse.x < swatchMaxX {
                 ImGuiOpenPopup("##LayerColorPopup\(layer.handle.uuidString)", 0)
             } else if mouse.x >= propsMinX {
                 ImGuiOpenPopup("##LayerPropsPopup\(layer.handle.uuidString)", 0)
             } else {
-                document.activeLayerID = layer.handle
+                LayerManagerUI.selection.click(
+                    handle: layer.handle,
+                    in: LayerManagerUI.visibleOrder,
+                    ctrl: mods.ctrl, shift: mods.shift)
             }
         }
 
+        // AutoCAD parity: double-click (status or name zone) makes the
+        // layer current. Single clicks only ever change the selection.
+        let inSetCurrentZone = mouse.x < statusMaxX
+            || (mouse.x >= swatchMaxX && mouse.x < propsMinX)
         if hovered
-            && mouse.x >= swatchMaxX
-            && mouse.x < propsMinX
+            && inSetCurrentZone
             && ImGuiIsMouseDoubleClicked(
                 ImGuiMouseButton(ImGuiMouseButton_Left.rawValue))
         {
-            _editingLayerHandle = layer.handle
-            _editingDocumentID = ObjectIdentifier(document)
-            _editingLayerNameBuf = []
+            document.activeLayerID = layer.handle
+            LayerManagerUI.notice = "Current layer: '\(layer.name)'."
         }
 
+        let theme = engine.ui.theme
         let textColor = igGetColorU32_Vec4(
             hovered
-                ? engine.ui.theme.rowHoverText
-                : engine.ui.theme.textPrimary)
+                ? theme.rowHoverText
+                : theme.textPrimary)
         let drawList = ImGuiGetWindowDrawList()!
         let textY = rowMin.y + (rowHeight - fontSize) * 0.5
+        let centerY = rowMin.y + rowHeight * 0.5
+        let iconSize = policy.rowIconSize
 
-        ImDrawListAddText(
-            drawList,
-            ImVec2(x: rowMin.x + 12, y: textY),
-            textColor,
-            layer.isVisible ? "O" : "-",
-            nil)
+        // Current-layer check (drawn; the UI font has no check glyph).
+        if isActive {
+            PanelWidgets.drawIcon(
+                "check", drawList: drawList,
+                center: ImVec2(x: rowMin.x + zones.statusEnd * 0.5, y: centerY),
+                size: iconSize * 0.9, color: theme.brandGold)
+        }
+        PanelWidgets.drawIcon(
+            layer.isVisible ? "eye" : "eye-off", drawList: drawList,
+            center: ImVec2(
+                x: rowMin.x + (zones.statusEnd + zones.eyeEnd) * 0.5,
+                y: centerY),
+            size: iconSize,
+            color: layer.isVisible
+                ? (hovered ? theme.rowHoverText : theme.textPrimary)
+                : theme.textDim)
 
         let swatchColor = ImVec4(
             x: Float(layer.color.r) / 255,
             y: Float(layer.color.g) / 255,
             z: Float(layer.color.b) / 255,
             w: 1)
+        let swatchMin = ImVec2(
+            x: rowMin.x + zones.swatchRect.x0, y: rowMin.y + 4 * policy.scale)
+        let swatchMax = ImVec2(
+            x: rowMin.x + zones.swatchRect.x1, y: rowMax.y - 4 * policy.scale)
         ImDrawListAddRectFilled(
-            drawList,
-            ImVec2(x: rowMin.x + 36, y: rowMin.y + 5),
-            ImVec2(x: rowMin.x + 46, y: rowMax.y - 5),
-            igGetColorU32_Vec4(swatchColor),
-            1,
-            0)
+            drawList, swatchMin, swatchMax,
+            igGetColorU32_Vec4(swatchColor), 2, 0)
+        ImDrawListAddRect(
+            drawList, swatchMin, swatchMax,
+            igGetColorU32_Vec4(theme.borderDim), 2, 1.0, 0)
 
-        let props = "\(LayerManagerUI.vpMarker(for: layer.handle))="
-        let propsWidth = ImGuiCalcTextSize(props, nil, false, -1).x
-        let nameMaxWidth = max(0, propsMinX - (rowMin.x + 58) - 4)
+        // State indicators right-aligned before the props cell.
+        let vpFrozen = !LayerManagerUI.vpMarker(for: layer.handle).isEmpty
+        var indicators: [(icon: String, label: String)] = []
+        if layer.isFrozen { indicators.append(("freeze", "Frozen")) }
+        if vpFrozen { indicators.append(("vp-freeze", "VP frozen")) }
+        if layer.isLocked { indicators.append(("lock", "Locked")) }
+        if !layer.isPlottable { indicators.append(("no-plot", "No plot")) }
+        let indicatorsWidth = Float(indicators.count) * zones.indicatorWidth
+        for (i, indicator) in indicators.enumerated() {
+            let cx = propsMinX - indicatorsWidth
+                + zones.indicatorWidth * (Float(i) + 0.5)
+            PanelWidgets.drawIcon(
+                indicator.icon, drawList: drawList,
+                center: ImVec2(x: cx, y: centerY),
+                size: iconSize * 0.85, color: theme.textDim)
+        }
+
+        let nameColor: ImU32
+        if isActive {
+            nameColor = igGetColorU32_Vec4(theme.brandGold)
+        } else if !layer.isVisible {
+            nameColor = igGetColorU32_Vec4(theme.textDim)
+        } else {
+            nameColor = textColor
+        }
+        let nameMaxWidth = max(
+            0, propsMinX - indicatorsWidth - (rowMin.x + zones.nameStart) - 4)
         ImDrawListAddText(
             drawList,
-            ImVec2(x: rowMin.x + 58, y: textY),
-            textColor,
+            ImVec2(x: rowMin.x + zones.nameStart, y: textY),
+            nameColor,
             fittedName(layer.name, maxWidth: nameMaxWidth),
             nil)
-        ImDrawListAddText(
-            drawList,
-            ImVec2(x: rowMax.x - propsWidth - 12, y: textY),
-            textColor,
-            props,
-            nil)
+        PanelWidgets.drawIcon(
+            "props", drawList: drawList,
+            center: ImVec2(
+                x: propsMinX + zones.propsWidth * 0.5, y: centerY),
+            size: iconSize,
+            color: hovered ? theme.rowHoverText : theme.textDim)
 
-        if hovered && mouse.x < eyeMaxX {
+        if hovered && mouse.x < statusMaxX {
+            ImGuiBeginTooltip()
+            ImGuiTextV(isActive
+                ? "Current layer"
+                : "Double-click to make current")
+            ImGuiEndTooltip()
+        } else if hovered && mouse.x < eyeMaxX {
             ImGuiBeginTooltip()
             ImGuiTextV(layer.isVisible ? "Hide layer" : "Show layer")
             ImGuiEndTooltip()
@@ -420,6 +540,124 @@ struct LayerPanelUI {
             ImGuiBeginTooltip()
             ImGuiTextV("Edit properties")
             ImGuiEndTooltip()
+        } else if hovered && !indicators.isEmpty
+            && mouse.x >= propsMinX - indicatorsWidth {
+            ImGuiBeginTooltip()
+            ImGuiTextV(indicators.map(\.label).joined(separator: " · "))
+            ImGuiEndTooltip()
+        }
+
+        if igBeginPopupContextItem(
+            "##LayerRowCtx",
+            Int32(ImGuiPopupFlags_MouseButtonRight.rawValue)) {
+            // Right-clicking an unselected row selects it first, so
+            // Set Current and Rename act on the row under the cursor.
+            if !LayerManagerUI.selection.selected.contains(layer.handle) {
+                LayerManagerUI.selection.click(
+                    handle: layer.handle,
+                    in: LayerManagerUI.visibleOrder,
+                    ctrl: false, shift: false)
+            }
+            renderRowContextMenu(
+                engine: engine, document: document, layer: layer)
+            ImGuiEndPopup()
+        }
+    }
+
+    /// Eye click: toggles the whole selection in one undo step when the
+    /// row belongs to a multi-selection, else the single layer.
+    private static func toggleRowVisibility(
+        document doc: CADDocument, layer: Layer
+    ) {
+        let picked = LayerManagerUI.selection
+        guard picked.selected.contains(layer.handle),
+              picked.count > 1 else {
+            doc.setLayerVisible(layer.handle, visible: !layer.isVisible)
+            return
+        }
+        let target = LayerManagerUI.targetHandles(for: doc)
+        let handles: [UUID]
+        var skippedNote = ""
+        if layer.isVisible {
+            let part = LayerSelectionModel.partitionExcludingCurrent(
+                target.handles, current: doc.activeLayerID)
+            handles = part.targets
+            if part.skippedCurrent,
+               let current = doc.activeLayerID,
+               let name = doc.layer(for: current)?.name {
+                skippedNote = " · skipped current '\(name)'"
+            }
+        } else {
+            handles = target.handles
+        }
+        guard !handles.isEmpty else {
+            LayerManagerUI.notice =
+                "Bulk visibility: only the current layer selected."
+            return
+        }
+        switch LayerTransactionService().setVisibleBulk(
+            in: doc, handles: handles, visible: !layer.isVisible) {
+        case .success(let n):
+            LayerManagerUI.notice =
+                "Bulk visibility: \(n) layers\(skippedNote)."
+        case .failure(let error):
+            LayerManagerUI.notice = "Bulk visibility: \(error.description)"
+        }
+    }
+
+    /// Right-click menu for a layer row: Set Current, Rename, the
+    /// shared selection commands, bulk toggles, and bulk delete.
+    private static func renderRowContextMenu(
+        engine: PhrostEngine, document doc: CADDocument, layer: Layer
+    ) {
+        if igMenuItem_Bool("Set Current", nil, false, true) {
+            doc.activeLayerID = layer.handle
+            LayerManagerUI.notice = "Current layer: '\(layer.name)'."
+        }
+        if igMenuItem_Bool("Rename (F2)", nil, false, true) {
+            _editingLayerHandle = layer.handle
+            _editingDocumentID = ObjectIdentifier(doc)
+            _editingLayerNameBuf = []
+        }
+        ImGuiSeparator()
+        LayerManagerUI.renderSelectionMenu(document: doc)
+        ImGuiSeparator()
+        let service = LayerTransactionService()
+        if igMenuItem_Bool("On", nil, false, true) {
+            LayerManagerUI.applyTarget(doc, "Bulk On") {
+                service.setVisibleBulk(in: doc, handles: $0, visible: true)
+            }
+        }
+        if igMenuItem_Bool("Off", nil, false, true) {
+            LayerManagerUI.applyTargetExcludingCurrent(doc, "Bulk Off") {
+                service.setVisibleBulk(in: doc, handles: $0, visible: false)
+            }
+        }
+        if igMenuItem_Bool("Freeze", nil, false, true) {
+            LayerManagerUI.applyTargetExcludingCurrent(doc, "Bulk Freeze") {
+                service.setFrozenBulk(in: doc, handles: $0, frozen: true)
+            }
+        }
+        if igMenuItem_Bool("Thaw", nil, false, true) {
+            LayerManagerUI.applyTarget(doc, "Bulk Thaw") {
+                service.setFrozenBulk(in: doc, handles: $0, frozen: false)
+            }
+        }
+        if igMenuItem_Bool("Lock", nil, false, true) {
+            LayerManagerUI.applyTarget(doc, "Bulk Lock") {
+                service.setLockedBulk(in: doc, handles: $0, locked: true)
+            }
+        }
+        if igMenuItem_Bool("Unlock", nil, false, true) {
+            LayerManagerUI.applyTarget(doc, "Bulk Unlock") {
+                service.setLockedBulk(in: doc, handles: $0, locked: false)
+            }
+        }
+        ImGuiSeparator()
+        if igMenuItem_Bool(
+            "Delete Selected...", nil, false,
+            !LayerManagerUI.selection.isEmpty) {
+            ImGuiOpenPopup("##LPMDeleteConfirm", 0)
         }
     }
 
@@ -431,7 +669,7 @@ struct LayerPanelUI {
         var fitted = name
         while !fitted.isEmpty {
             fitted.removeLast()
-            let candidate = fitted + "\u{2026}"
+            let candidate = fitted + "..."
             if ImGuiCalcTextSize(candidate, nil, false, -1).x <= maxWidth {
                 return candidate
             }
@@ -457,7 +695,8 @@ struct LayerPanelUI {
             }()
         }
 
-        ImGuiSetCursorPosX(52)
+        let policy = LayerPanelPolicy(frameHeight: ImGuiGetFrameHeight())
+        ImGuiSetCursorPosX(policy.rowZones.nameStart - 4 * policy.scale)
         ImGuiPushItemWidth(-12)
         ImGuiSetKeyboardFocusHere(0)
         let submitted = _editingLayerNameBuf.withUnsafeMutableBufferPointer {

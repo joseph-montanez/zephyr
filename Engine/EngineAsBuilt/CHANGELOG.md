@@ -2,7 +2,28 @@
 
 ## Unreleased
 
+### Added
+- AutoCAD-style layer multi-selection in the Layers panel: Ctrl+Click
+  toggles, Shift+Click selects a range, Ctrl+A (panel focused) selects
+  all visible layers. Select All / Deselect All / Select All Except
+  Current / Invert / Select Current / Select Similar live in the Select
+  menu and a right-click row menu. All bulk operations now target the
+  selection when one exists (else the previous filter scope), bulk
+  Off/Freeze skip the current layer with a notice, and bulk delete has
+  a confirmation dialog listing skipped layers with reasons. Clicking a
+  row no longer changes the current layer: double-click, the Set
+  Current button, or the context menu makes a layer current (gold check
+  marker), and rename moved from double-click to F2 / right-click.
+
 ### Changed
+- Layers panel redesigned with ribbon-style procedural icons: grouped
+  wrapping icon toolbar with tooltips, search + sort on one row, scope
+  menu chips (the Unreconciled/VP-frozen checkboxes moved into the
+  Filter menu), and icon rows showing current/on/off/frozen/locked/
+  VP-frozen/no-plot at a glance. Rare actions (Walk, States, LAYERP,
+  Reconcile, Plot Style, Description) moved to a More menu. All symbols
+  are draw-list line art now; the previous Unicode glyphs rendered as
+  "?" in the UI font.
 - TRIM and EXTEND now default to Quick mode (TRIMEXTENDMODE=1, the current
   AutoCAD default): starting TRIM with nothing selected goes straight to
   click-to-trim with all objects acting as cutting edges. An empty-space
