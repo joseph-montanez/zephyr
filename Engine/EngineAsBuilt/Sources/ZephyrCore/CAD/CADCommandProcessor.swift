@@ -95,6 +95,13 @@ public protocol FeatureCommand: AnyObject {
     /// command can draw visual overlays (selection rectangle, rubber-band lines,
     /// custom cursors, etc.) onto the ImGui foreground draw list.
     /// Use `igGetForegroundDrawList_ViewportPtr(nil)` to draw.
+    /// The renderer clips this drawing to the drawing canvas (the area clear
+    /// of docked panels such as the ribbon), so overlays never paint over
+    /// docked UI. Keep drawing canvas-anchored; anything that must cover UI
+    /// belongs in `renderImGui`, not here.
+    /// Overlays that must also sit under floating panels (e.g. measurement
+    /// lines) may use `igGetBackgroundDrawList(nil)` instead, which renders
+    /// before UI windows and takes the same canvas clip.
     func renderOverlay(cam: CameraTransform, engine: PhrostEngine)
 
     /// Called during the main ImGui rendering phase, allowing the command to

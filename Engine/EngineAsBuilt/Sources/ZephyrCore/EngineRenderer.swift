@@ -1925,11 +1925,31 @@ public final class EngineRenderer {
 
         updateOSCursorVisibility()
 
-        // 1. Draw active command / interaction overlays on ImGui foreground draw list
+        // 1. Draw active command / interaction overlays on ImGui foreground draw list.
+        // Clip to the drawing canvas (last frame's rect — 1-frame lag on
+        // dock/resize, invisible in practice) so canvas-anchored overlays
+        // (measure lines, rubber bands, grips, crosshair) never paint over
+        // docked UI such as a top-docked ribbon. Float windows showing the
+        // active tab keep the legacy unclipped path: they borrow the
+        // main-window rect here, which is the wrong space to clip against.
         _foregroundVertexEstimate = 0
         refreshGripCache(transform: transform)
-        renderPrimaryVectorOverlays(transform: transform)
-        renderFeatureOverlay(transform: transform)
+        if target.isMain, let canvasF = engine.ui.drawingViewportRect {
+            let canvas = PaneRect(
+                x: canvasF.x, y: canvasF.y,
+                w: max(1, canvasF.w), h: max(1, canvasF.h))
+            pushLeafClip(canvas)
+            pushBackgroundClip(canvas)
+            pushForegroundClip(canvas)
+            renderPrimaryVectorOverlays(transform: transform)
+            renderFeatureOverlay(transform: transform)
+            popForegroundClip()
+            popBackgroundClip()
+            ImGuiPopClipRect()
+        } else {
+            renderPrimaryVectorOverlays(transform: transform)
+            renderFeatureOverlay(transform: transform)
+        }
 
         // 2. ImGui user panels/callbacks. Some controls (notably radial Pan)
         // mutate the camera here, so sprite transforms must be calculated after it.

@@ -16,9 +16,10 @@ import SwiftSDL
 //   - .area: Click inside enclosed region to detect boundary and compute area.
 //   - .angle: Stub — reserved for future three-click angle measurement.
 //
-// All visuals are drawn via ImGui foreground draw list (immediate-mode).
-// World coordinates are stored and projected to screen in renderOverlay each
-// frame so lines/labels stay pinned to geometry during pan/zoom.
+// All visuals are drawn via the ImGui background draw list (immediate-mode),
+// which renders before UI windows so floating panels cover the lines. World
+// coordinates are stored and projected to screen in renderOverlay each frame
+// so lines/labels stay pinned to geometry during pan/zoom.
 
 public enum MeasureMode: Sendable {
     case quick
@@ -200,7 +201,11 @@ public final class MeasureGeomTool: FeatureCommand {
     }
 
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {
-        let drawList = igGetForegroundDrawList_ViewportPtr(nil)
+        // Background list renders before ImGui windows, so docked AND floating
+        // panels cover these lines instead of the lines painting over them.
+        // The canvas itself is not a window (passthru + NoBackground), so the
+        // overlay stays visible there, bounded by the renderer canvas clip.
+        let drawList = igGetBackgroundDrawList(nil)
 
         switch currentMode {
         case .quick:
