@@ -245,6 +245,299 @@ public enum CADBoundaryDetector {
         epsilonSq: Double
     ) -> [Vector3]? {
         let startTime = SDL_GetTicks()
+        let tol = sqrt(epsilonSq)
+
+        // ----- Phase 0: collect every visible world edge once -----
+        // The legacy walker below only joins edges at shared endpoints, so a
+        // line crossing the middle of a circle was invisible to it and the
+        // hatch filled the whole circle. Node (split) all edges at every
+        // interior crossing first so intersections become real graph vertices.
+        var rawEdges: [Edge] = []
+        for entity in document.entitiesView {
+            guard let layer = document.layer(for: entity.layerID),
+                  layer.isEffectivelyVisible else { continue }
+            guard let geometry = document.resolvedGeometry(for: entity) else { continue }
+            rawEdges.append(contentsOf: collectWorldEdges(
+                from: geometry, transform: entity.transform, handle: entity.handle))
+        }
+        rawEdges = rawEdges.filter { ($0.b - $0.a).magnitudeSquared > 1e-18 }
+
+        if !rawEdges.isEmpty, rawEdges.count <= 3000,
+           let graph = nodeEdges(rawEdges, tol: tol, epsilonSq: epsilonSq,
+                                 startTime: startTime, timeoutMs: timeoutMs),
+           let face = seedFace(in: graph, seed: seed, maxEdgeCount: maxEdgeCount,
+                               startTime: startTime, timeoutMs: timeoutMs)
+        {
+            return face
+        }
+
+        // Fallback: vertex-to-vertex wall-following without intersection noding.
+        return legacyFindOuterEnclosingPolygon(
+            seed: seed, document: document,
+            maxEdgeCount: maxEdgeCount, timeoutMs: timeoutMs, epsilonSq: epsilonSq)
+    }
+
+    // MARK: - Noded boundary graph (crossing-aware face tracing)
+
+    /// Split every edge at each interior intersection so crossings become
+    /// shared vertices, then weld endpoints, drop duplicates and prune
+    /// dangling spurs. Returns nil on timeout or when nothing traceable
+    /// remains (the caller falls back to the legacy walker).
+    private static func nodeEdges(
+        _ edges: [Edge],
+        tol: Double,
+        epsilonSq: Double,
+        startTime: UInt64,
+        timeoutMs: UInt64
+    ) -> (points: [Vector3], segments: [(Int, Int)])? {
+        let n = edges.count
+        var splits = Array(repeating: [Double](), count: n)
+        func addParam(_ i: Int, _ t: Double) {
+            if t > 1e-9 && t < 1.0 - 1e-9 { splits[i].append(t) }
+        }
+        var pairChecks = 0
+        for i in 0..<n {
+            let a1 = edges[i].a, a2 = edges[i].b
+            let aMinX = min(a1.x, a2.x) - tol, aMaxX = max(a1.x, a2.x) + tol
+            let aMinY = min(a1.y, a2.y) - tol, aMaxY = max(a1.y, a2.y) + tol
+            let d1x = a2.x - a1.x, d1y = a2.y - a1.y
+            for j in (i + 1)..<n {
+                let b1 = edges[j].a, b2 = edges[j].b
+                if aMinX > max(b1.x, b2.x) + tol || aMaxX < min(b1.x, b2.x) - tol { continue }
+                if aMinY > max(b1.y, b2.y) + tol || aMaxY < min(b1.y, b2.y) - tol { continue }
+                pairChecks += 1
+                if pairChecks % 2048 == 0, SDL_GetTicks() - startTime > timeoutMs { return nil }
+                let d2x = b2.x - b1.x, d2y = b2.y - b1.y
+                let cross = d1x * d2y - d1y * d2x
+                if abs(cross) > 1e-12 {
+                    if let hit = CADGeometryMath.segmentSegmentIntersection(a: a1, b: a2, c: b1, d: b2) {
+                        addParam(i, hit.t)
+                        addParam(j, hit.u)
+                    }
+                    continue
+                }
+                // Parallel: only collinear overlaps matter.
+                let denom1 = d1x * d1x + d1y * d1y
+                let denom2 = d2x * d2x + d2y * d2y
+                guard denom1 > 1e-18, denom2 > 1e-18 else { continue }
+                let invLen1 = 1.0 / sqrt(denom1)
+                let distB1 = abs((b1.x - a1.x) * d1y - (b1.y - a1.y) * d1x) * invLen1
+                let distB2 = abs((b2.x - a1.x) * d1y - (b2.y - a1.y) * d1x) * invLen1
+                guard distB1 <= tol, distB2 <= tol else { continue }
+                let t0 = ((b1.x - a1.x) * d1x + (b1.y - a1.y) * d1y) / denom1
+                let t1 = ((b2.x - a1.x) * d1x + (b2.y - a1.y) * d1y) / denom1
+                let lo = max(0.0, min(t0, t1)), hi = min(1.0, max(t0, t1))
+                if hi < lo { continue }
+                addParam(i, lo)
+                addParam(i, hi)
+                let px1 = a1.x + d1x * lo, py1 = a1.y + d1y * lo
+                let px2 = a1.x + d1x * hi, py2 = a1.y + d1y * hi
+                addParam(j, ((px1 - b1.x) * d2x + (py1 - b1.y) * d2y) / denom2)
+                addParam(j, ((px2 - b1.x) * d2x + (py2 - b1.y) * d2y) / denom2)
+            }
+        }
+
+        // Split edges at the collected parameters.
+        var subA = [Vector3]()
+        var subB = [Vector3]()
+        for i in 0..<n {
+            let a1 = edges[i].a
+            let dx = edges[i].b.x - a1.x, dy = edges[i].b.y - a1.y, dz = edges[i].b.z - a1.z
+            if splits[i].isEmpty {
+                subA.append(a1)
+                subB.append(edges[i].b)
+                continue
+            }
+            let sorted = splits[i].sorted()
+            var uniq: [Double] = []
+            for t in sorted {
+                if let last = uniq.last, abs(t - last) <= 1e-9 { continue }
+                uniq.append(t)
+            }
+            var prevT = 0.0
+            for t in uniq + [1.0] {
+                let p1 = Vector3(x: a1.x + dx * prevT, y: a1.y + dy * prevT, z: a1.z + dz * prevT)
+                let p2 = Vector3(x: a1.x + dx * t, y: a1.y + dy * t, z: a1.z + dz * t)
+                if (p2 - p1).magnitudeSquared > 1e-18 {
+                    subA.append(p1)
+                    subB.append(p2)
+                }
+                prevT = t
+            }
+        }
+
+        // Weld endpoints within tolerance into shared nodes.
+        let cell = max(tol, 1e-9)
+        struct CellKey: Hashable { var ix: Int; var iy: Int }
+        var cellMap = [CellKey: [Int]]()
+        var points = [Vector3]()
+        func nodeID(for p: Vector3) -> Int {
+            let ix = Int(floor(p.x / cell)), iy = Int(floor(p.y / cell))
+            for ddx in -1...1 {
+                for ddy in -1...1 {
+                    if let list = cellMap[CellKey(ix: ix + ddx, iy: iy + ddy)] {
+                        for id in list {
+                            let q = points[id]
+                            let ex = q.x - p.x, ey = q.y - p.y
+                            if ex * ex + ey * ey <= epsilonSq { return id }
+                        }
+                    }
+                }
+            }
+            let id = points.count
+            points.append(p)
+            cellMap[CellKey(ix: ix, iy: iy), default: []].append(id)
+            return id
+        }
+        var segPairs = [(Int, Int)]()
+        for k in 0..<subA.count {
+            let na = nodeID(for: subA[k]), nb = nodeID(for: subB[k])
+            if na == nb { continue }
+            segPairs.append((min(na, nb), max(na, nb)))
+        }
+        var seen = Set<UInt64>()
+        var segs: [(Int, Int)] = []
+        for s in segPairs {
+            let key = (UInt64(s.0) << 32) | UInt64(s.1)
+            if seen.insert(key).inserted { segs.append(s) }
+        }
+        if segs.isEmpty { return nil }
+
+        // Prune dangling spurs (leaf nodes) so dead-end extensions cannot
+        // trap the face walk. Closed loops are unaffected.
+        var degree = Array(repeating: 0, count: points.count)
+        for s in segs { degree[s.0] += 1; degree[s.1] += 1 }
+        var nodeSegs = Array(repeating: [Int](), count: points.count)
+        for (idx, s) in segs.enumerated() { nodeSegs[s.0].append(idx); nodeSegs[s.1].append(idx) }
+        var active = Array(repeating: true, count: segs.count)
+        var queue = [Int]()
+        for v in 0..<points.count where degree[v] <= 1 { queue.append(v) }
+        var head = 0
+        while head < queue.count {
+            if SDL_GetTicks() - startTime > timeoutMs { return nil }
+            let v = queue[head]; head += 1
+            if degree[v] != 1 { continue }
+            var target = -1
+            for si in nodeSegs[v] where active[si] { target = si; break }
+            if target < 0 { continue }
+            active[target] = false
+            let s = segs[target]
+            let other = s.0 == v ? s.1 : s.0
+            degree[v] = 0
+            degree[other] -= 1
+            if degree[other] == 1 {
+                queue.append(other)
+            } else if degree[other] < 0 {
+                degree[other] = 0
+            }
+        }
+        var finalSegs: [(Int, Int)] = []
+        for (idx, s) in segs.enumerated() where active[idx] { finalSegs.append(s) }
+        if finalSegs.isEmpty { return nil }
+        return (points, finalSegs)
+    }
+
+    /// Trace the smallest face containing `seed` in a noded graph. The start
+    /// directed edge is picked from the nearest +X ray hit: the seed lies to
+    /// the left of an upward-going hit edge (right of a downward one), so the
+    /// keep-left walk from that directed edge is the seed's face.
+    private static func seedFace(
+        in graph: (points: [Vector3], segments: [(Int, Int)]),
+        seed: Vector3,
+        maxEdgeCount: Int,
+        startTime: UInt64,
+        timeoutMs: UInt64
+    ) -> [Vector3]? {
+        let points = graph.points
+        var adjacency = Array(repeating: [(neighbor: Int, angle: Double)](), count: points.count)
+        for s in graph.segments {
+            let a = points[s.0], b = points[s.1]
+            let ang = atan2(b.y - a.y, b.x - a.x)
+            var rev = ang + Double.pi
+            if rev > Double.pi { rev -= 2 * Double.pi }
+            adjacency[s.0].append((s.1, ang))
+            adjacency[s.1].append((s.0, rev))
+        }
+        for v in adjacency.indices { adjacency[v].sort { $0.angle < $1.angle } }
+
+        func chooseNext(prev: Int, curr: Int) -> Int? {
+            let outs = adjacency[curr]
+            if outs.isEmpty { return nil }
+            let rev = atan2(points[prev].y - points[curr].y, points[prev].x - points[curr].x)
+            let twoPi = 2.0 * Double.pi
+            var best: Int? = nil
+            var bestCW = Double.infinity
+            for o in outs {
+                if o.neighbor == prev { continue }
+                var cw = rev - o.angle
+                cw = cw.truncatingRemainder(dividingBy: twoPi)
+                if cw < 0 { cw += twoPi }
+                if cw < bestCW { bestCW = cw; best = o.neighbor }
+            }
+            return best ?? prev
+        }
+
+        func traceDirected(startU: Int, startV: Int) -> [Vector3]? {
+            var polyNodes = [startU]
+            var prev = startU, curr = startV
+            var visited = Set<UInt64>()
+            while true {
+                if SDL_GetTicks() - startTime > timeoutMs { return nil }
+                let key = (UInt64(prev) << 32) | UInt64(curr)
+                if !visited.insert(key).inserted { return nil }
+                polyNodes.append(curr)
+                if polyNodes.count > maxEdgeCount + 1 { return nil }
+                guard let nxt = chooseNext(prev: prev, curr: curr) else { return nil }
+                prev = curr
+                curr = nxt
+                if prev == startU && curr == startV { break }
+            }
+            let ids = Array(polyNodes.dropLast())
+            if ids.count < 3 { return nil }
+            return ids.map { points[$0] }
+        }
+
+        let rayDir = Vector3(x: 1, y: 0, z: 0)
+        var hits: [(dist: Double, a: Int, b: Int)] = []
+        for s in graph.segments {
+            if SDL_GetTicks() - startTime > timeoutMs { return nil }
+            let pa = points[s.0], pb = points[s.1]
+            if let pt = CADGeometryMath.intersectRayLine(
+                rayOrigin: seed, rayDir: rayDir, lineP1: pa, lineP2: pb)
+            {
+                let dist = seed.distance(to: pt)
+                if dist > 1e-9 { hits.append((dist, s.0, s.1)) }
+            }
+        }
+        hits.sort { $0.dist < $1.dist }
+        var traced = 0
+        for h in hits {
+            if traced >= 8 { break }
+            let pa = points[h.a], pb = points[h.b]
+            let dx = pb.x - pa.x, dy = pb.y - pa.y
+            if dx * dx + dy * dy < 1e-18 { continue }
+            // Grazing horizontal hits are owned by another edge at the crossing.
+            if abs(dy) <= 1e-12 * max(1.0, sqrt(dx * dx + dy * dy)) { continue }
+            traced += 1
+            if SDL_GetTicks() - startTime > timeoutMs { return nil }
+            let (u, v) = dy > 0 ? (h.a, h.b) : (h.b, h.a)
+            if let poly = traceDirected(startU: u, startV: v),
+               poly.count >= 3, pointInPolygon(seed, polygon: poly)
+            {
+                return poly
+            }
+        }
+        return nil
+    }
+
+    private static func legacyFindOuterEnclosingPolygon(
+        seed: Vector3,
+        document: CADDocument,
+        maxEdgeCount: Int,
+        timeoutMs: UInt64,
+        epsilonSq: Double
+    ) -> [Vector3]? {
+        let startTime = SDL_GetTicks()
 
         // ----- Phase 1: Ray-cast to find the first edge -----
         // Cast a ray in the +X direction to find the nearest intersecting edge.

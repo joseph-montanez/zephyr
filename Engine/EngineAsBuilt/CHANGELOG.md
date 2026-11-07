@@ -55,3 +55,4 @@
 - Hatch selection highlight now draws only the hatch boundary loops (outline)
   instead of re-tinting every pattern line in the selection color, matching
   AutoCAD behavior where the pattern keeps its own colors.
+- HATCH / BOUNDARY pick-point detection now nodes edges at interior crossings, so a line through a circle yields the seed's half instead of the whole circle; the legacy walker stays as fallback.
