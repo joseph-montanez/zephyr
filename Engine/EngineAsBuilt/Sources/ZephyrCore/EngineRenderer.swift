@@ -991,11 +991,10 @@ public final class EngineRenderer {
             let ft = engine.camera.transformForSubRect(
                 originX: Double(focusedLeaf.rect.x), originY: Double(focusedLeaf.rect.y),
                 width: Int32(focusedLeaf.rect.w), height: Int32(focusedLeaf.rect.h))
-            pushLeafClip(focusedLeaf.rect)
             // Overlays (selection/hover highlight, grips, ghosts, crosshair)
-            // draw into the background/foreground lists, whose clip stacks
-            // are independent of the window list clipped above — without
-            // these, highlight geometry spills across the divider.
+            // draw into the background/foreground lists, clipped here so
+            // highlight geometry does not spill across the divider.
+            // (Background/foreground lists keep independent clip stacks.)
             pushBackgroundClip(focusedLeaf.rect)
             pushForegroundClip(focusedLeaf.rect)
             refreshGripCache(transform: ft)
@@ -1005,7 +1004,6 @@ public final class EngineRenderer {
             renderFeatureOverlay(transform: ft)
             popForegroundClip()
             popBackgroundClip()
-            ImGuiPopClipRect()
             engine.restoreMetrics(saved)
         }
         // The cursor is global: it follows the mouse in whichever pane is
@@ -1049,14 +1047,12 @@ public final class EngineRenderer {
                 let ft = engine.camera.transformForSubRect(
                     originX: Double(focusedLeaf.rect.x), originY: Double(focusedLeaf.rect.y),
                     width: Int32(focusedLeaf.rect.w), height: Int32(focusedLeaf.rect.h))
-                pushLeafClip(focusedLeaf.rect)
                 pushBackgroundClip(focusedLeaf.rect)
                 renderPrimarySprites(
                     transform: ft, deltaSec: deltaSec,
                     viewportWidth: focusedLeaf.rect.w, viewportHeight: focusedLeaf.rect.h,
                     cullOrigin: (focusedLeaf.rect.x, focusedLeaf.rect.y))
                 popBackgroundClip()
-                ImGuiPopClipRect()
                 engine.restoreMetrics(saved)
             }
         }
@@ -1267,7 +1263,6 @@ public final class EngineRenderer {
         let st = (cameraOverride ?? ctx.camera).transformForSubRect(
             originX: Double(leaf.rect.x), originY: Double(leaf.rect.y),
             width: Int32(leaf.rect.w), height: Int32(leaf.rect.h))
-        pushLeafClip(leaf.rect)
         pushBackgroundClip(leaf.rect)
         if includeGrid {
             let vp = ctx.camera.worldViewportRect(
@@ -1287,16 +1282,8 @@ public final class EngineRenderer {
             spriteEstimate += 4
         }
         popBackgroundClip()
-        ImGuiPopClipRect()
     }
 
-    /// Push an ImGui clip rect for a leaf (intersected with the current one).
-    private func pushLeafClip(_ rect: PaneRect) {
-        ImGuiPushClipRect(
-            ImVec2(x: rect.x, y: rect.y),
-            ImVec2(x: rect.x + rect.w, y: rect.y + rect.h),
-            true)
-    }
 
     /// Push the leaf clip onto the BACKGROUND draw list. Sprites (TTF text,
     /// images) draw there, and draw lists keep independent clip stacks:
@@ -1938,14 +1925,12 @@ public final class EngineRenderer {
             let canvas = PaneRect(
                 x: canvasF.x, y: canvasF.y,
                 w: max(1, canvasF.w), h: max(1, canvasF.h))
-            pushLeafClip(canvas)
             pushBackgroundClip(canvas)
             pushForegroundClip(canvas)
             renderPrimaryVectorOverlays(transform: transform)
             renderFeatureOverlay(transform: transform)
             popForegroundClip()
             popBackgroundClip()
-            ImGuiPopClipRect()
         } else {
             renderPrimaryVectorOverlays(transform: transform)
             renderFeatureOverlay(transform: transform)

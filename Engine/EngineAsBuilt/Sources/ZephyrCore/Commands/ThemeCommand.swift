@@ -10,7 +10,7 @@ import SwiftSDL
 //
 // Bare `THEME` opens a sub-prompt instead of cycling:
 //
-//   Enter theme [Dark/Light/Latte/Frappe/Macchiato/Mocha/Next/?] <DARK>:
+//   Enter theme [Dark/Light/Latte/Frappe/Macchiato/Mocha/Candy/Next/?] <DARK>:
 //
 // Each Space/Enter submits exactly one token. `NEXT` cycles to the next
 // preset, `?` lists presets and re-prompts, an exact name or unique prefix
@@ -124,9 +124,9 @@ public final class ThemeCommand: FeatureCommand {
         let upper = trimmed.uppercased()
         if upper == "?" || upper == "LIST" || upper == "LS" { return .list }
         if upper == "NEXT" || upper == "N" { return .next }
-        if AppTheme.theme(named: trimmed) != nil,
+        if let resolvedTheme = AppTheme.theme(named: trimmed),
            let preset = AppTheme.allPresets.first(where: {
-               ThemeCommand.normalized($0.shortName) == ThemeCommand.normalized(trimmed)
+               $0.theme.id == resolvedTheme.id || ThemeCommand.normalized($0.shortName) == ThemeCommand.normalized(trimmed)
                    || ThemeCommand.normalized($0.id) == ThemeCommand.normalized(trimmed)
                    || ThemeCommand.normalized($0.displayName) == ThemeCommand.normalized(trimmed)
            }) {

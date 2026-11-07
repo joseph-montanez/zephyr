@@ -67,6 +67,9 @@ public final class EngineManagedWindow {
     /// Contexts share the engine's font atlas, which is rebuilt in place.
     public var imguiContext: UnsafeMutablePointer<ImGuiContext>?
     public var imguiIO: UnsafeMutablePointer<ImGuiIO>?
+    /// Theme revision last applied to this window's ImGui style. Starts at
+    /// -1 (never applied) so a fresh context is styled on its first frame.
+    public var appliedThemeRevision: Int = -1
 
     // MARK: Input state
 

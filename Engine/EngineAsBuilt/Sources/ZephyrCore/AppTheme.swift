@@ -396,6 +396,41 @@ public struct AppTheme {
         frameBg: vec4(0x11111b)          // Crust #11111b (deep recessed dark)
     )
 
+    /// Cotton Candy — Barbie-pink light mode with rainbow candy accents
+    public static let cottonCandy = AppTheme(
+        id: "cotton-candy",
+        name: "Cotton Candy",
+        isDark: false,
+        viewportBg: sdlColor(0xFDE7F3),
+        topChromeBg: vec4(0xF9C5E3),
+        tabBarBg: vec4(0xF9C5E3),
+        panelBg: vec4(0xFFF0F7),
+        panelBgDim: vec4(0xFFF0F7, 0.95),
+        windowBg: vec4(0xFFF0F7),
+        textPrimary: vec4(0x5C1031),
+        textDim: vec4(0x9A5C7E),
+        textIcon: vec4(0x6E2A4D),
+        textAccent: vec4(0xD8117A),
+        brandGold: vec4(0xFF2E93),
+        brandGoldHover: vec4(0xFF6EB5),
+        brandGoldActive: vec4(0xD8117A),
+        rowHoverText: vec4(0x5C1031),
+        border: vec4(0xE99AB8),
+        borderDim: vec4(0xE99AB8, 0.60),
+        macClose: vec4(0xFF5D8F),
+        macCloseHover: vec4(0xFF85A8),
+        macMin: vec4(0xE8A100),
+        macMinHover: vec4(0xFFC93C),
+        macMax: vec4(0x1FA37A),
+        macMaxHover: vec4(0x3ED6A4),
+        hoverBg: vec4(0xF8BBD8, 0.45),
+        activeBg: vec4(0xF5A9CC, 0.85),
+        commandRowHighlight: vec4(0xFF2E93, 0.16),
+        dangerBg: vec4(0xE0218A),
+        buttonBg: vec4(0xF9C5E3),
+        frameBg: vec4(0xFDE7F3, 0.85)
+    )
+
     // MARK: - Presets Registry
 
     public static let allPresets: [ThemePreset] = [
@@ -405,6 +440,7 @@ public struct AppTheme {
         ThemePreset(id: "catppuccin-frappe", displayName: "Catppuccin Frappe", shortName: "FRAPPE", isDark: true, theme: .catppuccinFrappe),
         ThemePreset(id: "catppuccin-macchiato", displayName: "Catppuccin Macchiato", shortName: "MACCHIATO", isDark: true, theme: .catppuccinMacchiato),
         ThemePreset(id: "catppuccin-mocha", displayName: "Catppuccin Mocha", shortName: "MOCHA", isDark: true, theme: .catppuccinMocha),
+        ThemePreset(id: "cotton-candy", displayName: "Cotton Candy", shortName: "CANDY", isDark: false, theme: .cottonCandy),
     ]
 
     /// Lookup an AppTheme by name or alias (case-insensitive).
@@ -426,6 +462,8 @@ public struct AppTheme {
             return .catppuccinFrappe
         case "macchiato", "catppuccinmacchiato":
             return .catppuccinMacchiato
+        case "candy", "cottoncandy", "barbie", "barbiecottoncandy", "rainbow":
+            return .cottonCandy
         case "mocha", "catppuccinmocha":
             return .catppuccinMocha
         default:

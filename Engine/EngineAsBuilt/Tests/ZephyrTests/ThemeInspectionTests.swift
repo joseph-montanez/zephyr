@@ -123,7 +123,7 @@ final class ThemeInspectionTests: XCTestCase {
         igImFontAtlasBuildMain(io.pointee.Fonts)
 
         // 1. Verify all presets are registered
-        XCTAssertEqual(AppTheme.allPresets.count, 6)
+        XCTAssertEqual(AppTheme.allPresets.count, 7)
         let presetIDs = AppTheme.allPresets.map(\.id)
         XCTAssertTrue(presetIDs.contains("dark"))
         XCTAssertTrue(presetIDs.contains("light"))
@@ -131,6 +131,7 @@ final class ThemeInspectionTests: XCTestCase {
         XCTAssertTrue(presetIDs.contains("catppuccin-frappe"))
         XCTAssertTrue(presetIDs.contains("catppuccin-macchiato"))
         XCTAssertTrue(presetIDs.contains("catppuccin-mocha"))
+        XCTAssertTrue(presetIDs.contains("cotton-candy"))
 
         // 2. Verify name resolution & aliases
         XCTAssertEqual(AppTheme.theme(named: "latte")?.id, "catppuccin-latte")
@@ -148,6 +149,11 @@ final class ThemeInspectionTests: XCTestCase {
 
         XCTAssertEqual(AppTheme.theme(named: "mocha")?.id, "catppuccin-mocha")
         XCTAssertEqual(AppTheme.theme(named: "Catppuccin Mocha")?.id, "catppuccin-mocha")
+        XCTAssertEqual(AppTheme.theme(named: "candy")?.id, "cotton-candy")
+        XCTAssertEqual(AppTheme.theme(named: "Cotton Candy")?.id, "cotton-candy")
+        XCTAssertEqual(AppTheme.theme(named: "barbie")?.id, "cotton-candy")
+        XCTAssertEqual(AppTheme.theme(named: "BARBIE")?.id, "cotton-candy")
+        XCTAssertEqual(AppTheme.theme(named: "rainbow")?.id, "cotton-candy")
 
         // 3. Test applying Catppuccin Mocha
         XCTAssertTrue(ui.setTheme(named: "mocha"))
@@ -182,6 +188,8 @@ final class ThemeInspectionTests: XCTestCase {
         ui.cycleTheme()
         XCTAssertEqual(ui.theme.id, "catppuccin-mocha")
         ui.cycleTheme()
+        XCTAssertEqual(ui.theme.id, "cotton-candy")
+        ui.cycleTheme()
         XCTAssertEqual(ui.theme.id, "dark")
     }
 
@@ -212,5 +220,95 @@ final class ThemeInspectionTests: XCTestCase {
             XCTAssertEqual(active.x, preset.theme.brandGold.x, accuracy: 0.001, "\(preset.id): SeparatorActive")
             ImGuiRender()
         }
+    }
+
+    func testCottonCandyTheme() {
+        let ctx = ImGuiCreateContext(nil)!
+        defer { ImGuiDestroyContext(ctx) }
+        let ui = EngineUIManager()
+        let io = ImGuiGetIO()!
+        io.pointee.DisplaySize = ImVec2(x: 1920, y: 1080)
+        io.pointee.DeltaTime = 1.0 / 60.0
+        _ = ImFontAtlas_AddFontDefault(io.pointee.Fonts, nil)
+        igImFontAtlasBuildMain(io.pointee.Fonts)
+
+        // Barbie / cotton-candy / rainbow aliases all resolve to the new preset.
+        XCTAssertEqual(AppTheme.theme(named: "barbie")?.id, "cotton-candy")
+        XCTAssertEqual(AppTheme.theme(named: "rainbow")?.id, "cotton-candy")
+        XCTAssertEqual(AppTheme.theme(named: "candy")?.id, "cotton-candy")
+        XCTAssertEqual(ThemeCommand.resolve("BARBIE"), .named("CANDY"))
+        XCTAssertEqual(ThemeCommand.resolve("rainbow"), .named("CANDY"))
+        XCTAssertEqual(ThemeCommand.resolve("CANDY"), .named("CANDY"))
+        XCTAssertTrue(ThemeCommand.promptText(currentName: "Cotton Candy").contains("CANDY"))
+        XCTAssertTrue(ThemeCommand.listLine().contains("CANDY"))
+
+        // Applying it works through the shared UI manager path.
+        XCTAssertTrue(ui.setTheme(named: "barbie"))
+        XCTAssertEqual(ui.theme.id, "cotton-candy")
+        XCTAssertFalse(ui.isDarkTheme)
+
+        // Deep-raspberry text on near-white pink keeps contrast high.
+        func luminance(_ col: ImVec4) -> Double {
+            return 0.2126 * Double(col.x) + 0.7152 * Double(col.y) + 0.0722 * Double(col.z)
+        }
+        let top = max(luminance(ui.theme.textPrimary), luminance(ui.theme.panelBg)) + 0.05
+        let bottom = min(luminance(ui.theme.textPrimary), luminance(ui.theme.panelBg)) + 0.05
+        XCTAssertGreaterThan(top / bottom, 3.0, "Cotton Candy must keep text readable on panelBg")
+
+        ImGuiNewFrame()
+        let candyWinBg = ImGuiGetStyleColorVec4(Int32(ImGuiCol_WindowBg.rawValue))!.pointee
+        XCTAssertEqual(candyWinBg.x, AppTheme.cottonCandy.panelBg.x, accuracy: 0.001)
+        ImGuiRender()
+
+        // Cotton Candy sits after Mocha in the cycle, then wraps to Dark.
+        ui.setTheme(AppTheme.catppuccinMocha)
+        ui.cycleTheme()
+        XCTAssertEqual(ui.theme.id, "cotton-candy")
+        ui.cycleTheme()
+        XCTAssertEqual(ui.theme.id, "dark")
+    }
+
+    func testThemeSyncsStaleWindowContexts() {
+        // Each OS window owns an ImGui context (and therefore a style). A
+        // switch made while window B is current styles only B; window A must
+        // heal on its next activation instead of rendering dropdowns and
+        // popups in the previous theme's colors.
+        let ctxA = ImGuiCreateContext(nil)!
+        defer { ImGuiDestroyContext(ctxA) }
+        let ctxB = ImGuiCreateContext(nil)!
+        defer { ImGuiDestroyContext(ctxB) }
+        let ui = EngineUIManager()
+        let manager = EngineWindowManager()
+        let winA = manager.register(handle: OpaquePointer(bitPattern: 0xA1)!, id: 101, isMain: true)
+        let winB = manager.register(handle: OpaquePointer(bitPattern: 0xB2)!, id: 102, isMain: false)
+        winA.imguiContext = ctxA
+        winB.imguiContext = ctxB
+
+        igSetCurrentContext(ctxA)
+        ui.setTheme(AppTheme.dark)
+        ui.syncThemeIfNeeded(for: winA)
+        XCTAssertEqual(winA.appliedThemeRevision, ui.themeRevision)
+
+        // Switch while B is current: only B's style updates eagerly.
+        igSetCurrentContext(ctxB)
+        ui.setTheme(AppTheme.light)
+        ui.syncThemeIfNeeded(for: winB)
+        XCTAssertEqual(winB.appliedThemeRevision, ui.themeRevision)
+        XCTAssertNotEqual(winA.appliedThemeRevision, ui.themeRevision)
+
+        // A still shows the old theme...
+        igSetCurrentContext(ctxA)
+        let staleBg = ImGuiGetStyleColorVec4(Int32(ImGuiCol_WindowBg.rawValue))!.pointee
+        XCTAssertEqual(staleBg.x, AppTheme.dark.panelBg.x, accuracy: 0.001)
+
+        // ...until the render path's activation-time sync heals it.
+        ui.syncThemeIfNeeded(for: winA)
+        let healedBg = ImGuiGetStyleColorVec4(Int32(ImGuiCol_WindowBg.rawValue))!.pointee
+        XCTAssertEqual(healedBg.x, AppTheme.light.panelBg.x, accuracy: 0.001)
+        XCTAssertEqual(winA.appliedThemeRevision, ui.themeRevision)
+
+        // A fresh window is a no-op.
+        ui.syncThemeIfNeeded(for: winA)
+        XCTAssertEqual(winA.appliedThemeRevision, ui.themeRevision)
     }
 }

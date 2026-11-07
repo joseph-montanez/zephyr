@@ -351,7 +351,7 @@ extension EngineRenderer {
         dashLength: Float = 6.0,
         gapLength: Float = 4.0,
         thickness: Float = 1.0,
-        drawList: UnsafeMutablePointer<ImDrawList>? = igGetWindowDrawList()
+        drawList: UnsafeMutablePointer<ImDrawList>?
     ) {
         guard let drawList = drawList else { return }
 
