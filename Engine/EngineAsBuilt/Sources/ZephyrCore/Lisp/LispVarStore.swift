@@ -116,6 +116,9 @@ final class LispVarStore: @unchecked Sendable {
         "SELECTSIMILARMODE": .int(130),
         "SKETCHINC": .real(0.1),
         "SNAPMODE": .int(0),
+        "SNAPUNIT": LispEntityAdapter.lispList([.real(10), .real(10)]),
+        "GRIDUNIT": LispEntityAdapter.lispList([.real(10), .real(10)]),
+        "GRIDMAJOR": .int(5),
         "SPLINESEGS": .int(8),
         "TEXTSTYLE": .string("Standard"),
         "TRIMEXTENDMODE": .int(1),
@@ -614,6 +617,20 @@ final class LispVarStore: @unchecked Sendable {
                 return "unknown text style \"\(style)\""
             }
             store(name, value)
+            return nil
+        case "GRIDMAJOR":
+            guard case let .int(i) = value, (1...100).contains(i) else {
+                return "GRIDMAJOR requires an integer 1..100"
+            }
+            store(name, value)
+            return nil
+        case "GRIDUNIT", "SNAPUNIT":
+            guard let items = value.properList, items.count == 2,
+                  let x = items[0].asDouble, let y = items[1].asDouble,
+                  x > 0, y > 0, x.isFinite, y.isFinite else {
+                return "\(name) requires a list of two positive numbers"
+            }
+            store(name, LispEntityAdapter.lispList([.real(x), .real(y)]))
             return nil
         default:
             let known = lock.withLock { memory[name] != nil } || name == "LASTPOINT"

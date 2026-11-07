@@ -99,12 +99,15 @@ public final class SnapEngine {
         originX: Double,
         originY: Double,
         spacing: Double,
+        spacingY: Double? = nil,
         threshold: Double
     ) -> SnapResult? {
-        guard spacing > 0 else { return nil }
+        let sx = spacing
+        let sy = spacingY ?? spacing
+        guard sx > 0, sy > 0 else { return nil }
         // Snap to nearest grid intersection
-        let gx = round((worldX - originX) / spacing) * spacing + originX
-        let gy = round((worldY - originY) / spacing) * spacing + originY
+        let gx = round((worldX - originX) / sx) * sx + originX
+        let gy = round((worldY - originY) / sy) * sy + originY
         let dx = gx - worldX
         let dy = gy - worldY
         let dist = sqrt(dx * dx + dy * dy)
@@ -498,6 +501,7 @@ public final class SnapEngine {
         gridOriginX: Double = 0,
         gridOriginY: Double = 0,
         gridSpacing: Double = 10,
+        gridSpacingY: Double? = nil,
         nearestOnCurveOverride: Bool? = nil,
         /// Skip Tier 2 anchors + intersection solving and evaluate only the
         /// fallback stages (extension/grid/nearest-on-curve). Lets per-frame
@@ -653,7 +657,7 @@ public final class SnapEngine {
             if let gridSnap = SnapEngine.nearestGridSnap(
                 worldX: worldX, worldY: worldY,
                 originX: gridOriginX, originY: gridOriginY,
-                spacing: gridSpacing, threshold: thresh)
+                spacing: gridSpacing, spacingY: gridSpacingY, threshold: thresh)
             {
                 return gridSnap
             }

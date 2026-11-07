@@ -552,7 +552,7 @@ public final class ZoomCommand: FeatureCommand {
 
         // Expand to include grid extents if grid is visible
         if engine.snap.gridVisible {
-            let gridSpacing = engine.snap.effectiveGridSpacing(
+            let gridSpacingXY = engine.snap.effectiveGridSpacingXY(
                 windowWidth: engine.windowWidth, cameraZoom: engine.camera.zoom)
             let gridOriginX = engine.snap.gridOriginX
             let gridOriginY = engine.snap.gridOriginY
@@ -560,12 +560,13 @@ public final class ZoomCommand: FeatureCommand {
             let vp = engine.camera.worldViewportRect(windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
             let vpW = vp.maxX - vp.minX
             let vpW2 = max(vpW, 100.0)
-            let gridExtent = gridSpacing * ceil(vpW2 / gridSpacing) * 2
+            let gridExtentX = gridSpacingXY.x * ceil(vpW2 / gridSpacingXY.x) * 2
+            let gridExtentY = gridSpacingXY.y * ceil(vpW2 / gridSpacingXY.y) * 2
 
-            let gMinX = gridOriginX - gridExtent
-            let gMaxX = gridOriginX + gridExtent
-            let gMinY = gridOriginY - gridExtent
-            let gMaxY = gridOriginY + gridExtent
+            let gMinX = gridOriginX - gridExtentX
+            let gMaxX = gridOriginX + gridExtentX
+            let gMinY = gridOriginY - gridExtentY
+            let gMaxY = gridOriginY + gridExtentY
 
             if hasObjects {
                 minX = min(minX, gMinX)

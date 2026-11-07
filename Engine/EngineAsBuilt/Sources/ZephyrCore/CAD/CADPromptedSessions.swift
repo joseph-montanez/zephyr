@@ -121,6 +121,14 @@ extension CADCommandProcessor {
             handleLaySortSubmit(text, phases: phases, engine: engine)
             return true
         }
+        if command == "SNAP" {
+            handleSnapSubmit(text, phases: phases, engine: engine)
+            return true
+        }
+        if command == "GRIDSPACING" {
+            handleGridSpacingSubmit(text, phases: phases, engine: engine)
+            return true
+        }
         let index = min(pendingPromptPhaseIndex, phases.count - 1)
         let phase = phases[index]
         let arg: String
@@ -485,10 +493,34 @@ extension CADCommandProcessor {
             return [PendingPromptPhase(
                 prompt: "Enter sheet list .dsd path (empty = none):",
                 kind: .line, emptyFinishes: true)]
-        case "GRIDSPACING":
+        case "SNAP":
+            return [
+                PendingPromptPhase(
+                    prompt: "Enter snap [ON/OFF/Aspect/<spacing>] (empty = toggle):",
+                    kind: .token, emptyFinishes: true),
+                PendingPromptPhase(
+                    prompt: "Enter snap X spacing:",
+                    kind: .token, emptyFinishes: false),
+                PendingPromptPhase(
+                    prompt: "Enter snap Y spacing:",
+                    kind: .token, emptyFinishes: false),
+            ]
+        case "GRIDMAJOR":
             return [PendingPromptPhase(
-                prompt: "Enter base grid spacing in world units:",
+                prompt: "Enter major grid line frequency:",
                 kind: .token, emptyFinishes: true)]
+        case "GRIDSPACING":
+            return [
+                PendingPromptPhase(
+                    prompt: "Enter grid spacing [Aspect/Snap/<value>/<n>X] (empty = show current):",
+                    kind: .token, emptyFinishes: true),
+                PendingPromptPhase(
+                    prompt: "Enter grid X spacing:",
+                    kind: .token, emptyFinishes: false),
+                PendingPromptPhase(
+                    prompt: "Enter grid Y spacing:",
+                    kind: .token, emptyFinishes: false),
+            ]
         case "GRIDORIGIN":
             return [
                 PendingPromptPhase(
@@ -586,6 +618,113 @@ extension CADCommandProcessor {
         clearCommand()
     }
 
+    // MARK: - SNAP (ON/OFF/Aspect/spacing; Aspect branches to X/Y phases)
+
+    private func handleSnapSubmit(
+        _ text: String,
+        phases: [PendingPromptPhase],
+        engine: PhrostEngine?
+    ) {
+        let arg = text.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
+        guard let engine else {
+            print("[CAD] SNAP needs an open drawing.")
+            clearCommand()
+            return
+        }
+        func positive(_ s: String) -> Double? {
+            guard let v = Double(s), v > 0, v.isFinite else { return nil }
+            return v
+        }
+        if pendingPromptPhaseIndex == 0 {
+            if arg.isEmpty {
+                applySnapTokens([], engine: engine)
+                return
+            }
+            if arg.uppercased() == "ASPECT" {
+                pendingPromptCollected.append("ASPECT")
+                pendingPromptPhaseIndex = 1
+                showPendingPhase(prompt: phases[1].prompt, kind: phases[1].kind)
+                return
+            }
+            applySnapTokens([arg], engine: engine)
+            return
+        }
+        if pendingPromptPhaseIndex == 1 {
+            guard positive(arg) != nil else {
+                print(arg.isEmpty
+                    ? "[CAD] A value is required here; press Esc to cancel."
+                    : "[CAD] Snap X spacing requires a positive number.")
+                showPendingPhase(prompt: phases[1].prompt, kind: phases[1].kind)
+                return
+            }
+            pendingPromptCollected.append(arg)
+            pendingPromptPhaseIndex = 2
+            showPendingPhase(prompt: phases[2].prompt, kind: phases[2].kind)
+            return
+        }
+        guard positive(arg) != nil else {
+            print(arg.isEmpty
+                ? "[CAD] A value is required here; press Esc to cancel."
+                : "[CAD] Snap Y spacing requires a positive number.")
+            showPendingPhase(prompt: phases[2].prompt, kind: phases[2].kind)
+            return
+        }
+        applySnapTokens(pendingPromptCollected + [arg], engine: engine)
+    }
+
+    // MARK: - GRIDSPACING (number/Snap/nX; Aspect branches to X/Y phases)
+
+    private func handleGridSpacingSubmit(
+        _ text: String,
+        phases: [PendingPromptPhase],
+        engine: PhrostEngine?
+    ) {
+        let arg = text.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
+        guard let engine else {
+            print("[CAD] GRIDSPACING needs an open drawing.")
+            clearCommand()
+            return
+        }
+        func positive(_ s: String) -> Double? {
+            guard let v = Double(s), v > 0, v.isFinite else { return nil }
+            return v
+        }
+        if pendingPromptPhaseIndex == 0 {
+            if arg.isEmpty {
+                applyGridSpacingTokens([], engine: engine)
+                return
+            }
+            if arg.uppercased() == "ASPECT" {
+                pendingPromptCollected.append("ASPECT")
+                pendingPromptPhaseIndex = 1
+                showPendingPhase(prompt: phases[1].prompt, kind: phases[1].kind)
+                return
+            }
+            applyGridSpacingTokens([arg], engine: engine)
+            return
+        }
+        if pendingPromptPhaseIndex == 1 {
+            guard positive(arg) != nil else {
+                print(arg.isEmpty
+                    ? "[CAD] A value is required here; press Esc to cancel."
+                    : "[CAD] Grid X spacing requires a positive number.")
+                showPendingPhase(prompt: phases[1].prompt, kind: phases[1].kind)
+                return
+            }
+            pendingPromptCollected.append(arg)
+            pendingPromptPhaseIndex = 2
+            showPendingPhase(prompt: phases[2].prompt, kind: phases[2].kind)
+            return
+        }
+        guard positive(arg) != nil else {
+            print(arg.isEmpty
+                ? "[CAD] A value is required here; press Esc to cancel."
+                : "[CAD] Grid Y spacing requires a positive number.")
+            showPendingPhase(prompt: phases[2].prompt, kind: phases[2].kind)
+            return
+        }
+        applyGridSpacingTokens(pendingPromptCollected + [arg], engine: engine)
+    }
     // MARK: - GRIDORIGIN (two plain numbers, never one spaced line)
 
     private func completeGridOrigin(args: [String], engine: PhrostEngine?) {

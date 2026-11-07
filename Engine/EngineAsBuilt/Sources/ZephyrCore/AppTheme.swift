@@ -87,6 +87,8 @@ public struct AppTheme {
     public let dangerBg: ImVec4 // For close buttons
     public let buttonBg: ImVec4
     public let frameBg: ImVec4
+    public let gridMinor: ImVec4
+    public let gridMajor: ImVec4
 
     public init(
         id: String = "custom",
@@ -119,7 +121,9 @@ public struct AppTheme {
         commandRowHighlight: ImVec4,
         dangerBg: ImVec4,
         buttonBg: ImVec4? = nil,
-        frameBg: ImVec4? = nil
+        frameBg: ImVec4? = nil,
+        gridMinor: ImVec4? = nil,
+        gridMajor: ImVec4? = nil
     ) {
         self.id = id
         self.name = name
@@ -152,6 +156,8 @@ public struct AppTheme {
         self.dangerBg = dangerBg
         self.buttonBg = buttonBg ?? (isDark ? border : ImVec4(x: 0.88, y: 0.92, z: 0.96, w: 1.00))
         self.frameBg = frameBg ?? (isDark ? ImVec4(x: 0.043, y: 0.098, z: 0.145, w: 1.00) : ImVec4(x: 0.88, y: 0.92, z: 0.96, w: 0.80))
+        self.gridMinor = gridMinor ?? (isDark ? ImVec4(x: 1.00, y: 1.00, z: 1.00, w: 0.38) : ImVec4(x: 0.16, y: 0.23, z: 0.31, w: 0.42))
+        self.gridMajor = gridMajor ?? (isDark ? ImVec4(x: 1.00, y: 1.00, z: 1.00, w: 0.62) : ImVec4(x: 0.10, y: 0.18, z: 0.28, w: 0.60))
     }
     
     // MARK: - Built-in Themes

@@ -17,7 +17,7 @@ public final class EngineSnapManager {
     // MARK: Grid Settings
     /// Whether the background grid is visible (toggled via "GRID" command).
     public var gridVisible: Bool = false
-    /// Whether snapping to grid intersections is enabled (toggled via "GRID SNAP" command).
+    /// Whether snapping to grid intersections is enabled (toggled via "SNAP" command ("GRIDSNAP" alias)).
     /// Independent from entity anchor snapping (gated by `objectSnapEnabled`).
     public var gridSnapEnabled: Bool = false
     /// Master switch for running object snaps (toggled via "OSNAP" / F3).
@@ -26,9 +26,17 @@ public final class EngineSnapManager {
     /// `OSMODE` is deliberately untouched: it selects *which* modes run,
     /// while this flag selects *whether* any run (AutoCAD F3 semantics).
     public var objectSnapEnabled: Bool = true
-    /// Base grid spacing in world units. The visual spacing adapts to zoom;
+    /// Display grid spacing floor (AutoCAD GRIDUNIT). The visual spacing adapts to zoom;
     /// this is the minimum (finest) grid step. Configured via "GRID SPACING".
-    public var gridBaseSpacing: Double = 10.0
+    public var gridSpacingX: Double = 10.0
+    public var gridSpacingY: Double = 10.0
+    public var snapSpacingX: Double = 10.0
+    public var snapSpacingY: Double = 10.0
+    public var gridMajor: Int = 5
+    public var gridBaseSpacing: Double {
+        get { gridSpacingX }
+        set { gridSpacingX = newValue; gridSpacingY = newValue }
+    }
     /// Grid origin X in world coordinates. Configured via "GRID ORIGIN".
     public var gridOriginX: Double = 0.0
     /// Grid origin Y in world coordinates. Configured via "GRID ORIGIN".
@@ -36,7 +44,7 @@ public final class EngineSnapManager {
 
     /// Computes the effective (visual) grid spacing at a given camera zoom,
     /// snapping to a "nice" number so that ~20-40 lines are visible horizontally.
-    /// Never goes below the user-configured `gridBaseSpacing`.
+    /// Never goes below the X-axis floor `gridSpacingX`.
     public func effectiveGridSpacing(windowWidth: Int32, cameraZoom zoom: Double) -> Double {
         let viewportWorldWidth = Double(windowWidth) / zoom
         let targetCells = 25.0
@@ -49,10 +57,20 @@ public final class EngineSnapManager {
             1000, 2000, 5000, 10000, 20000, 50000, 100000
         ]
         let effective = niceSpacings.first { $0 >= raw } ?? 100.0
-        return max(effective, gridBaseSpacing)
+        return max(effective, gridSpacingX)
     }
 
     /// Snap engine for precision drafting.
+    public func effectiveGridSpacingXY(windowWidth: Int32, cameraZoom zoom: Double) -> (x: Double, y: Double) {
+        let baseX = gridSpacingX > 0 ? gridSpacingX : 10.0
+        let baseY = gridSpacingY > 0 ? gridSpacingY : 10.0
+        let raw = Double(windowWidth) / max(zoom, 1e-9) / 25.0
+        guard raw > baseX else { return (baseX, baseY) }
+        let multipliers: [Double] = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000]
+        let m = multipliers.first { baseX * $0 >= raw } ?? 100000
+        return (baseX * m, baseY * m)
+    }
+
     public let snapEngine = SnapEngine()
     /// Object snap tracking (OTRACK) engine — acquires tracking points via hover dwell.
     public let snapTrackingEngine = SnapTrackingEngine()

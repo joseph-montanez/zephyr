@@ -453,6 +453,10 @@ public enum CADCommandAliasTable {
             canonicalName: "OSNAP", category: .settings,
             description: "Toggle running object snaps on/off (F3)"),
         CADCommandAliasEntry(
+            canonicalName: "SNAP", aliases: ["GRIDSNAP"], category: .settings,
+            syntax: "[ON|OFF|Aspect|<spacing>]",
+            description: "Toggle grid snap; set the exact snap spacing (F9)"),
+        CADCommandAliasEntry(
             canonicalName: "COMMANDLINE", aliases: ["CLI"], category: .view,
             description: "Show or hide the command line"),
         CADCommandAliasEntry(

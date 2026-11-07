@@ -813,6 +813,15 @@ public final class PhrostEngine {
             rotMode: settings.plotRotMode, transparency: settings.plotTransparencyOverride)
         // Seed the trim/extend registry sysvars (setters normalize 0/1).
         TrimSettings.trimExtendMode = settings.trimExtendMode
+        self.snap.gridVisible = settings.gridVisible
+        self.snap.gridSnapEnabled = settings.gridSnapEnabled
+        self.snap.gridSpacingX = settings.gridSpacingX
+        self.snap.gridSpacingY = settings.gridSpacingY
+        self.snap.snapSpacingX = settings.snapSpacingX
+        self.snap.snapSpacingY = settings.snapSpacingY
+        self.snap.gridOriginX = settings.gridOriginX
+        self.snap.gridOriginY = settings.gridOriginY
+        self.snap.gridMajor = settings.gridMajor
         PickFirstSettings.pickFirst = settings.pickFirst
         self.tabManager.autoOpenPageSetupForNewLayouts = settings.displayPageSetupForNewLayouts
         self.tabManager.onRequestPageSetup = { [weak self] in
@@ -1508,7 +1517,7 @@ public final class PhrostEngine {
         let plotRegs = commandProcessor.plotRegistrySnapshot()
         UserSettings.capture(ui: ui, plotOffset: plotRegs.0, paperUpdate: plotRegs.1,
                              plotRotMode: plotRegs.2,
-                             plotTransparencyOverride: plotRegs.3).save()
+                             plotTransparencyOverride: plotRegs.3, snap: snap).save()
         if let iniURL = UserSettings.imguiIniURL() {
             let dir = iniURL.deletingLastPathComponent()
             if !FileManager.default.fileExists(atPath: dir.path) {

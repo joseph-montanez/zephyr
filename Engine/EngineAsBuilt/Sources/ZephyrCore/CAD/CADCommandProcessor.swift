@@ -449,8 +449,9 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "AUTOCONTRAST", aliases: ["CONTRAST", "TRUECOLORCONTRAST"], category: .settings, syntax: "[ON|OFF]", description: "Toggle auto-contrast clamping for 24-bit TrueColors and gradients"),
         CommandDescriptor(canonicalName: "SET-BACKGROUND", aliases: ["SETBG", "BACKGROUND"], category: .settings, syntax: "<index|hex>", description: "Set viewport background color (ACI index 1-255 or hex RRGGBB)"),
         CommandDescriptor(canonicalName: "GRID",            aliases: [],                category: .settings, syntax: "", description: "Toggle the background grid on/off"),
-        CommandDescriptor(canonicalName: "GRIDSNAP",        aliases: [],                category: .settings, syntax: "", description: "Toggle snapping to grid intersections on/off"),
-        CommandDescriptor(canonicalName: "GRIDSPACING",     aliases: [],                category: .settings, syntax: "<value>", description: "Set the base grid spacing in world units"),
+        CommandDescriptor(canonicalName: "SNAP",            aliases: ["GRIDSNAP", "SNAPUNIT"], category: .settings, syntax: "[ON|OFF|Aspect|<spacing>]", description: "Toggle grid snap; set the exact snap spacing (F9)"),
+        CommandDescriptor(canonicalName: "GRIDSPACING",     aliases: ["GRIDUNIT"],    category: .settings, syntax: "[Aspect|Snap|<value>|<n>X]", description: "Set the display grid spacing; Aspect sets X/Y separately"),
+        CommandDescriptor(canonicalName: "GRIDMAJOR",        aliases: [],                category: .settings, syntax: "<n>", description: "Major grid line every N lines"),
         CommandDescriptor(canonicalName: "GRIDORIGIN",      aliases: [],                category: .settings, syntax: "<x> <y>", description: "Set the grid origin in world coordinates (two prompted numbers)"),
         CommandDescriptor(canonicalName: "SPLINETESS",  aliases: ["SPLINESEGS"],   category: .settings, syntax: "[value]", description: "Set or show the legacy spline fallback density divisor (higher = smoother, default 5000); interactive curves use automatic screen-space tessellation"),
         CommandDescriptor(canonicalName: "SIMPLIFY",        aliases: ["SIMP", "COMPLEX", "COMPLEXBLOCKS"], category: .settings, syntax: "[ON|OFF]", description: "Toggle or set the simplification of complex block references to bounding boxes on/off"),
@@ -729,10 +730,12 @@ public final class CADCommandProcessor {
     /// viewport from the first frame. Called once at startup.
     public func synchronizeToggleSysvars(engine: PhrostEngine) {
         syncToggleSysvar("GRIDMODE", on: engine.snap.gridVisible, engine: engine)
+        syncToggleSysvar("SNAPMODE", on: engine.snap.gridSnapEnabled, engine: engine)
         syncToggleSysvar(
             "ORTHOMODE", on: engine.snap.orthoEnabled, engine: engine)
         syncToggleSysvar(
             "POLARMODE", on: engine.snap.polarTrackingEnabled, engine: engine)
+        syncGridSysvars(engine: engine)
     }
 
     /// Every command a ribbon entry may reference: descriptor names and
@@ -789,6 +792,170 @@ public final class CADCommandProcessor {
                                     rotMode: rotMode, transparency: transparency)
     }
 
+    // MARK: - Grid / Snap option application (SNAP, GRIDSPACING, GRIDMAJOR)
+
+    /// Keeps GRIDUNIT / SNAPUNIT / GRIDMAJOR sysvars in step with snap state.
+    func syncGridSysvars(engine: PhrostEngine) {
+        _ = lispVars.set(
+            "GRIDUNIT",
+            LispEntityAdapter.lispList([.real(engine.snap.gridSpacingX), .real(engine.snap.gridSpacingY)]),
+            document: engine.document)
+        _ = lispVars.set(
+            "SNAPUNIT",
+            LispEntityAdapter.lispList([.real(engine.snap.snapSpacingX), .real(engine.snap.snapSpacingY)]),
+            document: engine.document)
+        _ = lispVars.set("GRIDMAJOR", .int(engine.snap.gridMajor), document: engine.document)
+    }
+
+    func snapSpacingStatus(engine: PhrostEngine) -> String {
+        "(\(engine.snap.snapSpacingX) x \(engine.snap.snapSpacingY))"
+    }
+
+    func gridSpacingStatus(engine: PhrostEngine) -> String {
+        "(\(engine.snap.gridSpacingX) x \(engine.snap.gridSpacingY))"
+    }
+
+    /// Tokenized SNAP args (AutoCAD SNAP prompts). Empty toggles; ON/OFF set
+    /// the mode; a number sets both axes and turns snap on; ASPECT x y sets
+    /// X/Y separately. Script and paste forms arrive here from prefix cases.
+    func applySnapTokens(_ args: [String], engine: PhrostEngine) {
+        let upper = args.map { $0.uppercased() }
+        func positive(_ s: String) -> Double? {
+            guard let v = Double(s), v > 0, v.isFinite else { return nil }
+            return v
+        }
+        func report() {
+            print("[CAD] Snap: \(engine.snap.gridSnapEnabled ? "ON" : "OFF") \(snapSpacingStatus(engine: engine))")
+            clearCommand()
+        }
+        switch upper.count {
+        case 0:
+            engine.snap.gridSnapEnabled.toggle()
+            syncToggleSysvar("SNAPMODE", on: engine.snap.gridSnapEnabled, engine: engine)
+            report()
+        case 1 where upper[0] == "ON":
+            engine.snap.gridSnapEnabled = true
+            syncToggleSysvar("SNAPMODE", on: true, engine: engine)
+            report()
+        case 1 where upper[0] == "OFF":
+            engine.snap.gridSnapEnabled = false
+            syncToggleSysvar("SNAPMODE", on: false, engine: engine)
+            report()
+        case 1:
+            guard let v = positive(args[0]) else {
+                print("[CAD] Usage: SNAP [ON|OFF|Aspect|<spacing>] (e.g. SNAP 5)")
+                clearCommand()
+                return
+            }
+            engine.snap.snapSpacingX = v
+            engine.snap.snapSpacingY = v
+            engine.snap.gridSnapEnabled = true
+            syncToggleSysvar("SNAPMODE", on: true, engine: engine)
+            syncGridSysvars(engine: engine)
+            print("[CAD] Snap spacing set to \(v); Snap: ON")
+            clearCommand()
+        case 3 where upper[0] == "ASPECT":
+            guard let x = positive(args[1]), let y = positive(args[2]) else {
+                print("[CAD] Usage: SNAP Aspect <x> <y> (two positive numbers)")
+                clearCommand()
+                return
+            }
+            engine.snap.snapSpacingX = x
+            engine.snap.snapSpacingY = y
+            engine.snap.gridSnapEnabled = true
+            syncToggleSysvar("SNAPMODE", on: true, engine: engine)
+            syncGridSysvars(engine: engine)
+            print("[CAD] Snap spacing set to (\(x) x \(y)); Snap: ON")
+            clearCommand()
+        default:
+            print("[CAD] Usage: SNAP [ON|OFF|Aspect|<spacing>] (e.g. SNAP 5, SNAP Aspect 2 5)")
+            clearCommand()
+        }
+    }
+
+    /// Tokenized GRIDSPACING args (AutoCAD GRID prompts). Empty reports;
+    /// SNAP copies the snap pair; a number sets both axes; nX sets a multiple
+    /// of the snap pair; ASPECT x y sets X/Y separately.
+    func applyGridSpacingTokens(_ args: [String], engine: PhrostEngine) {
+        let upper = args.map { $0.uppercased() }
+        func positive(_ s: String) -> Double? {
+            guard let v = Double(s), v > 0, v.isFinite else { return nil }
+            return v
+        }
+        func report() {
+            print("[CAD] Grid spacing: \(gridSpacingStatus(engine: engine))")
+            print("[CAD] Usage: GRIDSPACING [Aspect|Snap|<value>|<n>X]")
+            clearCommand()
+        }
+        switch upper.count {
+        case 0:
+            report()
+        case 1 where upper[0] == "SNAP":
+            engine.snap.gridSpacingX = engine.snap.snapSpacingX
+            engine.snap.gridSpacingY = engine.snap.snapSpacingY
+            syncGridSysvars(engine: engine)
+            print("[CAD] Grid spacing set to snap spacing \(gridSpacingStatus(engine: engine))")
+            clearCommand()
+        case 1 where upper[0] == "ASPECT":
+            print("[CAD] Usage: GRIDSPACING Aspect <x> <y> (two positive numbers)")
+            clearCommand()
+        case 1:
+            if upper[0].hasSuffix("X"), upper[0].count > 1,
+               let mult = positive(String(upper[0].dropLast())) {
+                let x = engine.snap.snapSpacingX * mult
+                let y = engine.snap.snapSpacingY * mult
+                engine.snap.gridSpacingX = x
+                engine.snap.gridSpacingY = y
+                syncGridSysvars(engine: engine)
+                print("[CAD] Grid spacing set to (\(x) x \(y))")
+                clearCommand()
+                return
+            }
+            guard let v = positive(args[0]) else { report(); return }
+            engine.snap.gridSpacingX = v
+            engine.snap.gridSpacingY = v
+            syncGridSysvars(engine: engine)
+            print("[CAD] Grid spacing set to \(v)")
+            clearCommand()
+        case 3 where upper[0] == "ASPECT":
+            guard let x = positive(args[1]), let y = positive(args[2]) else {
+                print("[CAD] Usage: GRIDSPACING Aspect <x> <y> (two positive numbers)")
+                clearCommand()
+                return
+            }
+            engine.snap.gridSpacingX = x
+            engine.snap.gridSpacingY = y
+            syncGridSysvars(engine: engine)
+            print("[CAD] Grid spacing set to (\(x) x \(y))")
+            clearCommand()
+        default:
+            report()
+        }
+    }
+
+    /// Tokenized GRIDMAJOR args (AutoCAD GRID Major). Empty reports; n sets
+    /// the major-line frequency (1-100).
+    func applyGridMajorTokens(_ args: [String], engine: PhrostEngine) {
+        switch args.count {
+        case 0:
+            print("[CAD] Major grid line every \(engine.snap.gridMajor) line(s)")
+            print("[CAD] Usage: GRIDMAJOR <n> (1-100)")
+            clearCommand()
+        case 1:
+            guard let n = Int(args[0]), (1...100).contains(n) else {
+                print("[CAD] GRIDMAJOR requires an integer 1-100")
+                clearCommand()
+                return
+            }
+            engine.snap.gridMajor = n
+            syncGridSysvars(engine: engine)
+            print("[CAD] Major grid line every \(n) line(s)")
+            clearCommand()
+        default:
+            print("[CAD] Usage: GRIDMAJOR <n> (1-100)")
+            clearCommand()
+        }
+    }
     // MARK: - Feature Command Registry
 
     /// Register a feature command factory under a canonical name and optional aliases.
@@ -2212,13 +2379,19 @@ public final class CADCommandProcessor {
                 "GRIDMODE", on: engine.snap.gridVisible, engine: engine)
             print("[CAD] Grid: \(engine.snap.gridVisible ? "ON" : "OFF")")
             clearCommand()
-        case "GRIDSNAP":
+        case "SNAP", "GRIDSNAP", "SNAPUNIT":
+            // Bare SNAP opens the prompted option flow (Space == Enter):
+            // reconstructed same-line forms arrive under _inPendingCompletion.
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "SNAP", engine: engine)
+                return
+            }
             guard let engine = engine else { clearCommand(); return }
-            engine.snap.gridSnapEnabled.toggle()
-            syncToggleSysvar(
-                "SNAPMODE", on: engine.snap.gridSnapEnabled, engine: engine)
-            print("[CAD] Grid Snap: \(engine.snap.gridSnapEnabled ? "ON" : "OFF")")
-            clearCommand()
+            applySnapTokens([], engine: engine)
+        case _ where upper.hasPrefix("SNAP ") || upper.hasPrefix("GRIDSNAP ") || upper.hasPrefix("SNAPUNIT "):
+            guard let engine = engine else { clearCommand(); return }
+            let parts = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            applySnapTokens(Array(parts.dropFirst()), engine: engine)
         case "OSNAP":
             guard let engine = engine else { clearCommand(); return }
             // Master running-osnap switch (F3). OSMODE is untouched: it
@@ -2252,27 +2425,29 @@ public final class CADCommandProcessor {
             print("[CAD] Clean screen off.")
             clearCommand()
         // Spaced `GRID ...` names are retired (Space submits): single-token
-        // GRIDSNAP / GRIDSPACING / GRIDORIGIN take prompted input instead.
-        case "GRIDSPACING":
+        // GRIDSPACING / GRIDORIGIN take prompted input instead.
+        case "GRIDSPACING", "GRIDUNIT":
             if !_inPendingCompletion {
                 startPendingPrompt(command: "GRIDSPACING", engine: engine)
                 return
             }
             guard let engine = engine else { clearCommand(); return }
-            print("[CAD] Grid spacing: \(engine.snap.gridBaseSpacing)")
-            print("[CAD] Usage: GRIDSPACING <value>")
-            clearCommand()
-        case _ where upper.hasPrefix("GRIDSPACING "):
+            applyGridSpacingTokens([], engine: engine)
+        case _ where upper.hasPrefix("GRIDSPACING ") || upper.hasPrefix("GRIDUNIT "):
             guard let engine = engine else { clearCommand(); return }
-            let arg = String(text.dropFirst(12)).trimmingCharacters(in: .whitespaces)
-            guard let val = Double(arg), val > 0 else {
-                print("[CAD] GRIDSPACING requires a positive number (e.g. 'GRIDSPACING 5')")
-                clearCommand()
+            let parts = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            applyGridSpacingTokens(Array(parts.dropFirst()), engine: engine)
+        case "GRIDMAJOR":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "GRIDMAJOR", engine: engine)
                 return
             }
-            engine.snap.gridBaseSpacing = val
-            print("[CAD] Grid spacing set to \(val)")
-            clearCommand()
+            guard let engine = engine else { clearCommand(); return }
+            applyGridMajorTokens([], engine: engine)
+        case _ where upper.hasPrefix("GRIDMAJOR "):
+            guard let engine = engine else { clearCommand(); return }
+            let parts = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+            applyGridMajorTokens(Array(parts.dropFirst()), engine: engine)
         case "GRIDORIGIN":
             if !_inPendingCompletion {
                 startPendingPrompt(command: "GRIDORIGIN", engine: engine)

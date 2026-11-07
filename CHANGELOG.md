@@ -21,6 +21,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **STRETCH (`S`)** — crossing window/polygon picks objects whose defining points inside move while the rest holds; base/second points with live ghost, direct-distance and `Displacement` entry; zero displacement exits with no undo
 - **BREAK (`BR`) / BREAKATPOINT** — `BREAK` erases the span between two points on one object (`F` re-prompts the first point); `BREAKATPOINT` splits at one point and repeats until Enter; one undo entry per applied break
 - **EXTEND (`EX`)** — extend open objects to boundary edges (Standard pick loop or Quick mode) with Fence, Crossing, Mode, Project, Edge, and in-session Undo; ships with TRIM on the Modify ribbon with scripted `(command ...)` forms
+- **SNAP grid snap with Aspect spacing (AutoCAD parity)** - new `SNAP` command (F9, `GRIDSNAP` alias) with ON/OFF/Aspect/<spacing> prompts plus `SNAPUNIT`; `GRIDSPACING`/`GRIDUNIT` gain Aspect (separate X/Y), Snap (copy snap spacing), and `nX` multiples; new `GRIDMAJOR` major-line frequency; grid/snap state shows in the status bar and persists across restarts
 
 ### Improvements
 - **Space == Enter command input (AutoCAD parity)** — Space submits exactly like Enter: one token per keypress, so `UCS Z 45` is typed stepwise; prompts accepting blanks keep Space literal; spaced command names retired for canonical spellings
@@ -55,6 +56,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Hatch selection highlight** - selection, hover, rect-preview, and collaborator highlights now draw only the hatch boundary loops (outline) instead of re-tinting every pattern line in the selection color, matching AutoCAD where the pattern keeps its own colors
 - **Measurement overlays clipped to the canvas** — `MEASUREGEOM` lines/labels no longer paint over the ribbon and docked panels; primary-window overlays clip to the canvas and floating panels cover them
 - **HATCH respects crossing edges (AutoCAD parity)** - Pick Points in HATCH (and BOUNDARY) now splits edges at interior crossings before tracing the boundary, so a line through a circle hatches only the seed's half instead of the whole circle; the legacy vertex-only walk remains as fallback
+- **Grid visibility and snap interval** - grid lines use per-theme minor/major colors with stronger major lines every `GRIDMAJOR` steps instead of near-invisible grays, following the effective pane/paper/custom background; grid snap (F9) uses the exact `SNAPUNIT` interval at every zoom instead of the zoom-adaptive display spacing
 
 ### Performance
 - **Parallel curve-only zoom settle** — band-crossing refresh fans curve entities across a task group at 4-7% of full-regen cost, reproducing full-regen tessellation point-for-point

@@ -78,6 +78,18 @@ public struct UserSettings: Codable, Sendable {
     public var trimExtendMode: Int
     public var pickFirst: Int
 
+    // MARK: - Grid / Snap (GRIDMODE / SNAPMODE / GRIDUNIT / SNAPUNIT / GRIDMAJOR).
+    // App-global drafting aids that survive restarts.
+    public var gridVisible: Bool
+    public var gridSnapEnabled: Bool
+    public var gridSpacingX: Double
+    public var gridSpacingY: Double
+    public var snapSpacingX: Double
+    public var snapSpacingY: Double
+    public var gridOriginX: Double
+    public var gridOriginY: Double
+    public var gridMajor: Int
+
     // MARK: - Initialization
 
     /// Memberwise initializer (explicit: the custom Decodable init
@@ -112,6 +124,15 @@ public struct UserSettings: Codable, Sendable {
         displayPageSetupForNewLayouts: Bool = false,
         trimExtendMode: Int = 1,
         pickFirst: Int = 1,
+        gridVisible: Bool = false,
+        gridSnapEnabled: Bool = false,
+        gridSpacingX: Double = 10,
+        gridSpacingY: Double = 10,
+        snapSpacingX: Double = 10,
+        snapSpacingY: Double = 10,
+        gridOriginX: Double = 0,
+        gridOriginY: Double = 0,
+        gridMajor: Int = 5,
         blockRecent: [BlockLibraryRef] = [],
         blockFavorites: [BlockLibraryRef] = [],
         blockLibraryFolders: [String] = [],
@@ -154,6 +175,15 @@ public struct UserSettings: Codable, Sendable {
         self.blockInsertPromptAttributes = blockInsertPromptAttributes
         self.trimExtendMode = (trimExtendMode == 0) ? 0 : 1
         self.pickFirst = (pickFirst == 0) ? 0 : 1
+        self.gridVisible = gridVisible
+        self.gridSnapEnabled = gridSnapEnabled
+        self.gridSpacingX = gridSpacingX > 0 ? gridSpacingX : 10
+        self.gridSpacingY = gridSpacingY > 0 ? gridSpacingY : 10
+        self.snapSpacingX = snapSpacingX > 0 ? snapSpacingX : 10
+        self.snapSpacingY = snapSpacingY > 0 ? snapSpacingY : 10
+        self.gridOriginX = gridOriginX
+        self.gridOriginY = gridOriginY
+        self.gridMajor = (1...100).contains(gridMajor) ? gridMajor : 5
     }
 
     // MARK: - Default instance
@@ -243,6 +273,24 @@ public struct UserSettings: Codable, Sendable {
             ?? fallback.blockInsertRepeat
         blockInsertPromptAttributes = try box.decodeIfPresent(Bool.self, forKey: .blockInsertPromptAttributes)
             ?? fallback.blockInsertPromptAttributes
+        gridVisible = try box.decodeIfPresent(Bool.self, forKey: .gridVisible)
+            ?? fallback.gridVisible
+        gridSnapEnabled = try box.decodeIfPresent(Bool.self, forKey: .gridSnapEnabled)
+            ?? fallback.gridSnapEnabled
+        gridSpacingX = try box.decodeIfPresent(Double.self, forKey: .gridSpacingX)
+            ?? fallback.gridSpacingX
+        gridSpacingY = try box.decodeIfPresent(Double.self, forKey: .gridSpacingY)
+            ?? fallback.gridSpacingY
+        snapSpacingX = try box.decodeIfPresent(Double.self, forKey: .snapSpacingX)
+            ?? fallback.snapSpacingX
+        snapSpacingY = try box.decodeIfPresent(Double.self, forKey: .snapSpacingY)
+            ?? fallback.snapSpacingY
+        gridOriginX = try box.decodeIfPresent(Double.self, forKey: .gridOriginX)
+            ?? fallback.gridOriginX
+        gridOriginY = try box.decodeIfPresent(Double.self, forKey: .gridOriginY)
+            ?? fallback.gridOriginY
+        gridMajor = try box.decodeIfPresent(Int.self, forKey: .gridMajor)
+            ?? fallback.gridMajor
         pickFirst = try box.decodeIfPresent(Int.self, forKey: .pickFirst)
             ?? fallback.pickFirst
     }
@@ -259,7 +307,8 @@ public struct UserSettings: Codable, Sendable {
                                plotRotMode: Int = 1,
                                plotTransparencyOverride: Int = 1,
                                trimExtendMode: Int = TrimSettings.trimExtendMode,
-                               pickFirst: Int = PickFirstSettings.pickFirst) -> UserSettings {
+                               pickFirst: Int = PickFirstSettings.pickFirst,
+                               snap: EngineSnapManager? = nil) -> UserSettings {
         UserSettings(
             isDarkTheme: ui.isDarkTheme,
             themeName: ui.theme.id,
@@ -289,6 +338,15 @@ public struct UserSettings: Codable, Sendable {
             plotTransparencyOverride: plotTransparencyOverride,
             trimExtendMode: trimExtendMode,
             pickFirst: pickFirst,
+            gridVisible: snap?.gridVisible ?? false,
+            gridSnapEnabled: snap?.gridSnapEnabled ?? false,
+            gridSpacingX: snap?.gridSpacingX ?? 10,
+            gridSpacingY: snap?.gridSpacingY ?? 10,
+            snapSpacingX: snap?.snapSpacingX ?? 10,
+            snapSpacingY: snap?.snapSpacingY ?? 10,
+            gridOriginX: snap?.gridOriginX ?? 0,
+            gridOriginY: snap?.gridOriginY ?? 0,
+            gridMajor: snap?.gridMajor ?? 5,
             blockRecent: ui.blockRecent,
             blockFavorites: ui.blockFavorites,
             blockLibraryFolders: ui.blockLibraryFolders,

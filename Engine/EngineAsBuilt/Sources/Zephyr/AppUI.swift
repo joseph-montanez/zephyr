@@ -554,7 +554,7 @@ struct AppUI {
         let regs = engine.commandProcessor.plotRegistrySnapshot()
         UserSettings.capture(ui: engine.ui, plotOffset: regs.0, paperUpdate: regs.1,
                              plotRotMode: regs.2,
-                             plotTransparencyOverride: regs.3).save()
+                             plotTransparencyOverride: regs.3, snap: engine.snap).save()
     }
 
     private static func renderTabCloseConfirmation(engine: PhrostEngine, dw: Float) {

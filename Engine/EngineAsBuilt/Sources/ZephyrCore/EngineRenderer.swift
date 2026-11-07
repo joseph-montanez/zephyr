@@ -3336,24 +3336,27 @@ public final class EngineRenderer {
         let gridW = viewportWidth ?? Float(engine.windowWidth)
         let gridH = viewportHeight ?? Float(engine.windowHeight)
         let zoom = cameraZoom ?? engine.camera.zoom
-        let spacing = engine.snap.effectiveGridSpacing(windowWidth: Int32(gridW), cameraZoom: zoom)
+        let displaySpacing = engine.snap.effectiveGridSpacingXY(windowWidth: Int32(gridW), cameraZoom: zoom)
+        let spacingX = displaySpacing.x
+        let spacingY = displaySpacing.y
         let ox = engine.snap.gridOriginX
         let oy = engine.snap.gridOriginY
 
         let vp = viewport ?? engine.camera.worldViewportRect(
             windowWidth: Int32(gridW), windowHeight: Int32(gridH))
         // Expand viewport slightly so lines don't pop in/out at edges
-        let margin = spacing
-        let vpMinX = vp.minX - margin
-        let vpMinY = vp.minY - margin
-        let vpMaxX = vp.maxX + margin
-        let vpMaxY = vp.maxY + margin
+        let vpMinX = vp.minX - spacingX
+        let vpMinY = vp.minY - spacingY
+        let vpMaxX = vp.maxX + spacingX
+        let vpMaxY = vp.maxY + spacingY
 
         let drawList = igGetBackgroundDrawList(nil)
-        // Subtle gray, semi-transparent, selected from the effective viewport background.
-        let gridCol = (useLightPalette ?? engine.ui.isViewportBackgroundLight)
-            ? makeImCol32(r: 180, g: 180, b: 180, a: 60)
-            : makeImCol32(r: 80, g: 80, b: 80, a: 50)
+        // Grid colors follow the effective viewport background (per-pane, paper,
+        // custom SET-BACKGROUND), tinted by the active theme; major lines draw
+        // stronger every GRIDMAJOR steps.
+        let isGridLight = useLightPalette ?? engine.ui.isViewportBackgroundLight
+        let gridCols = gridLineColors(isLight: isGridLight)
+        let gridMajorEvery = max(engine.snap.gridMajor, 1)
         let lineThickness: Float = 1.0
 
         // Helper: world coordinate to screen point
@@ -3361,38 +3364,65 @@ public final class EngineRenderer {
             EngineCameraManager.worldToScreen(worldX: wx, worldY: wy, cam: cam)
         }
 
-        // Determine first/last grid line indices
-        let firstIX = Int(ceil((vpMinX - ox) / spacing))
-        let lastIX  = Int(floor((vpMaxX - ox) / spacing))
-        let firstIY = Int(ceil((vpMinY - oy) / spacing))
-        let lastIY  = Int(floor((vpMaxY - oy) / spacing))
+        // Determine first/last grid line indices (per axis: Aspect preserved).
+        let firstIX = Int(ceil((vpMinX - ox) / spacingX))
+        let lastIX  = Int(floor((vpMaxX - ox) / spacingX))
+        let firstIY = Int(ceil((vpMinY - oy) / spacingY))
+        let lastIY  = Int(floor((vpMaxY - oy) / spacingY))
 
         // Cap grid lines to avoid overflowing ImGui's 16-bit foreground draw list.
         // 2 verts per thin line; safe upper bound leaves room for other overlays.
         let maxGridLines = (_foregroundVertexLimit - _foregroundVertexEstimate) / 2
         guard maxGridLines > 0 else { return }
 
-        // Vertical grid lines
+        // Vertical grid lines (major every GRIDMAJOR steps, anchored at origin).
         var drawn = 0
         for i in firstIX...lastIX {
             if drawn >= maxGridLines { break }
-            let worldX = ox + Double(i) * spacing
+            let worldX = ox + Double(i) * spacingX
             let p1 = worldToScreen(worldX, vpMinY)
             let p2 = worldToScreen(worldX, vpMaxY)
-            ImDrawListAddLine(drawList, ImVec2(x: p1.x, y: p1.y), ImVec2(x: p2.x, y: p2.y), gridCol, lineThickness)
+            let col = (gridMajorEvery > 1 && i % gridMajorEvery == 0) ? gridCols.major : gridCols.minor
+            ImDrawListAddLine(drawList, ImVec2(x: p1.x, y: p1.y), ImVec2(x: p2.x, y: p2.y), col, lineThickness)
             drawn += 1
         }
 
-        // Horizontal grid lines
+        // Horizontal grid lines.
         for i in firstIY...lastIY {
             if drawn >= maxGridLines { break }
-            let worldY = oy + Double(i) * spacing
+            let worldY = oy + Double(i) * spacingY
             let p1 = worldToScreen(vpMinX, worldY)
             let p2 = worldToScreen(vpMaxX, worldY)
-            ImDrawListAddLine(drawList, ImVec2(x: p1.x, y: p1.y), ImVec2(x: p2.x, y: p2.y), gridCol, lineThickness)
+            let col = (gridMajorEvery > 1 && i % gridMajorEvery == 0) ? gridCols.major : gridCols.minor
+            ImDrawListAddLine(drawList, ImVec2(x: p1.x, y: p1.y), ImVec2(x: p2.x, y: p2.y), col, lineThickness)
             drawn += 1
         }
         _foregroundVertexEstimate += drawn * 2
+    }
+
+    /// Grid minor/major line colors for an effective background lightness.
+    /// Prefers the active theme's tuned pair when the background agrees with
+    /// the theme; otherwise derives from luminance so paper sheets, split
+    /// panes, and custom SET-BACKGROUND colors keep contrast.
+    private func gridLineColors(isLight: Bool) -> (minor: UInt32, major: UInt32) {
+        let theme = engine.ui.theme
+        let minorV: ImVec4
+        let majorV: ImVec4
+        if isLight != theme.isDark {
+            minorV = theme.gridMinor
+            majorV = theme.gridMajor
+        } else if isLight {
+            minorV = ImVec4(x: 0.16, y: 0.23, z: 0.31, w: 0.42)
+            majorV = ImVec4(x: 0.10, y: 0.18, z: 0.28, w: 0.60)
+        } else {
+            minorV = ImVec4(x: 1.00, y: 1.00, z: 1.00, w: 0.38)
+            majorV = ImVec4(x: 1.00, y: 1.00, z: 1.00, w: 0.62)
+        }
+        func col(_ v: ImVec4) -> UInt32 {
+            func byte(_ f: Float) -> UInt8 { UInt8(min(max(f, 0), 1) * 255) }
+            return makeImCol32(r: byte(v.x), g: byte(v.y), b: byte(v.z), a: byte(v.w))
+        }
+        return (col(minorV), col(majorV))
     }
 
     // MARK: - Paper Sheet Overlay

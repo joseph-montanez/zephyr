@@ -1287,7 +1287,7 @@ public final class EngineLoopController {
                 if let gridSnap = SnapEngine.nearestGridSnap(
                     worldX: worldX, worldY: worldY,
                     originX: engine.snap.gridOriginX, originY: engine.snap.gridOriginY,
-                    spacing: engine.snap.effectiveGridSpacing(windowWidth: engine.windowWidth, cameraZoom: engine.camera.zoom),
+                    spacing: engine.snap.snapSpacingX, spacingY: engine.snap.snapSpacingY,
                     threshold: acquireThreshold)
                 {
                     snapMgr.currentSnapResult = gridSnap
@@ -1530,7 +1530,7 @@ public final class EngineLoopController {
                 if let gridSnap = SnapEngine.nearestGridSnap(
                     worldX: worldX, worldY: worldY,
                     originX: engine.snap.gridOriginX, originY: engine.snap.gridOriginY,
-                    spacing: engine.snap.effectiveGridSpacing(windowWidth: engine.windowWidth, cameraZoom: engine.camera.zoom),
+                    spacing: engine.snap.snapSpacingX, spacingY: engine.snap.snapSpacingY,
                     threshold: acquireThreshold)
                 {
                     snapMgr.currentSnapResult = gridSnap
@@ -1673,7 +1673,7 @@ public final class EngineLoopController {
                 snapMgr.currentSnapResult = SnapEngine.nearestGridSnap(
                     worldX: worldX, worldY: worldY,
                     originX: engine.snap.gridOriginX, originY: engine.snap.gridOriginY,
-                    spacing: engine.snap.effectiveGridSpacing(windowWidth: engine.windowWidth, cameraZoom: engine.camera.zoom),
+                    spacing: engine.snap.snapSpacingX, spacingY: engine.snap.snapSpacingY,
                     threshold: acquireThreshold)
             }
 
@@ -1787,14 +1787,12 @@ public final class EngineLoopController {
         var constrainedSnapX = lockHorizontal ? cursorSnap.x : referenceSnap.x
         var constrainedSnapY = lockHorizontal ? referenceSnap.y : cursorSnap.y
         if snapMgr.gridSnapEnabled {
-            let spacing = snapMgr.effectiveGridSpacing(
-                windowWidth: engine.windowWidth,
-                cameraZoom: engine.camera.zoom
-            )
+            let spacingX = snapMgr.snapSpacingX > 0 ? snapMgr.snapSpacingX : 10.0
+            let spacingY = snapMgr.snapSpacingY > 0 ? snapMgr.snapSpacingY : 10.0
             if lockHorizontal {
-                constrainedSnapX = round(constrainedSnapX / spacing) * spacing
+                constrainedSnapX = round(constrainedSnapX / spacingX) * spacingX
             } else {
-                constrainedSnapY = round(constrainedSnapY / spacing) * spacing
+                constrainedSnapY = round(constrainedSnapY / spacingY) * spacingY
             }
         }
 

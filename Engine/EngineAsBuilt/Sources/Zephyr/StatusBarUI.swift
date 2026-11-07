@@ -50,6 +50,14 @@ struct StatusBarUI {
         } else {
             // Build snap tracking indicators (app-global snap settings).
             var trackingParts: [String] = []
+            if engine.snap.gridVisible {
+                trackingParts.append("GRID")
+            }
+            if engine.snap.gridSnapEnabled {
+                let sx = String(format: "%g", engine.snap.snapSpacingX)
+                let sy = String(format: "%g", engine.snap.snapSpacingY)
+                trackingParts.append(sx == sy ? "SNAP(\(sx))" : "SNAP(\(sx)x\(sy))")
+            }
             if engine.snap.polarTrackingEnabled {
                 trackingParts.append("POLAR(\(Int(engine.snap.polarAngleIncrement))°)")
             }
