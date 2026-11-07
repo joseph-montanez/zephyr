@@ -83,6 +83,30 @@ final class GridSnapCommandTests: XCTestCase {
         }
     }
 
+    // MARK: - Escape cancels the pending session
+
+    func testCancellingPendingPromptClearsSession() {
+        // Regression: Escape used to hide only the command line, leaving the
+        // SNAP session behind — its prompt pill reappeared and the next
+        // keystroke dropped back into the stuck session, so only Space/Enter
+        // could get out. The cascade now runs this same cancel path.
+        let processor = CADCommandProcessor()
+        processor.executeCommand("SNAP")
+        XCTAssertEqual(processor.pendingPromptCommand, "SNAP")
+        processor.commandLineActive = false
+        processor.commandBuffer = ""
+        processor.commandSelectionIndex = 0
+        processor.commandPrompt = nil
+        processor.finishPendingPrompt()
+        XCTAssertNil(processor.pendingPromptCommand)
+        XCTAssertTrue(processor.pendingPromptCollected.isEmpty)
+        XCTAssertEqual(processor.pendingPromptPhaseIndex, 0)
+        XCTAssertNil(processor.commandPrompt)
+        // A later submit starts a fresh command, never the stale session.
+        processor.executeCommand("GRID")
+        XCTAssertNil(processor.pendingPromptCommand)
+    }
+
     // MARK: - Persistence defaults
 
     func testLegacySettingsDecodeWithGridDefaults() throws {

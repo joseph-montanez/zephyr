@@ -1044,6 +1044,12 @@ internal final class EngineInputHandler {
             processor.commandLineActive = false
             processor.commandBuffer = ""
             processor.commandSelectionIndex = 0
+            processor.commandPrompt = nil
+            processor.finishPendingPrompt()
+            // A pending prompted session (SNAP, GRIDSPACING, LAYERSORT, …)
+            // owns the open line: hiding only the line leaves the session
+            // behind, so its prompt pill reappears and the next keystroke
+            // drops straight back into the stuck session.
             processor._lastMatchInput = ""
             processor._cachedMatches = []
             return
