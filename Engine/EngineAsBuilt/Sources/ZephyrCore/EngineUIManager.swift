@@ -381,6 +381,17 @@ public final class EngineUIManager {
     public var xrefMaxPrimitives: Int = 5_000_000
     public var xrefFadePercent: Int = 50
     public var xrefBindType: Int = 0
+    // MARK: - Blocks palette (BLOCKSPALETTE)
+    /// Recent insert sources, most-recent first (cap 50).
+    public var blockRecent: [BlockLibraryRef] = []
+    /// Pinned library sources.
+    public var blockFavorites: [BlockLibraryRef] = []
+    /// Library folders for the Libraries tab.
+    public var blockLibraryFolders: [String] = []
+    /// Insertion defaults (palette bottom bar).
+    public var blockInsertExplode: Bool = false
+    public var blockInsertRepeat: Bool = false
+    public var blockInsertPromptAttributes: Bool = false
 
     /// Whether the Data Tables panel is visible (toggled via "TABLE" command).
     public var dataTablePanelVisible: Bool = false
@@ -540,9 +551,19 @@ public final class EngineUIManager {
     
     // MARK: - Theme State
     
+    /// Monotonic theme revision, bumped on every assignment; each window
+    /// owns its own ImGui context (and therefore its own style), so the
+    /// renderer re-applies the theme to any context that missed a switch
+    /// made while another window was current (`appliedThemeRevision` stamps
+    /// what each window applied; background windows would otherwise keep
+    /// rendering dropdowns, popups, and panels in the previous theme's colors.
+
+    public private(set) var themeRevision: Int = 0
+
     /// The currently active AppTheme instance.
     public var currentTheme: AppTheme = AppTheme.dark {
         didSet {
+            themeRevision &+= 1
             if igGetCurrentContext() != nil {
                 applyTheme()
             }
@@ -803,6 +824,17 @@ public final class EngineUIManager {
                 colors[Int(ImGuiCol_CheckMark.rawValue)]     = theme.brandGold
             }
         }
+    }
+
+    /// Re-apply the current theme to the caller's ImGui context when it
+    /// missed a switch made while another window's context was current.
+    /// The caller must have already made `window`'s context current (as
+    /// `activateImGuiContext(for:)` does); otherwise this styles the wrong
+    /// context but still stamps the window. Cheap no-op when fresh.
+    public func syncThemeIfNeeded(for window: EngineManagedWindow) {
+        guard window.appliedThemeRevision != themeRevision else { return }
+        applyTheme()
+        window.appliedThemeRevision = themeRevision
     }
 
     /// Switch to a theme by name/identifier, returning true if found.

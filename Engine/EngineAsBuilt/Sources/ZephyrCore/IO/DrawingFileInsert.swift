@@ -21,7 +21,7 @@ public enum DrawingFileInsert {
         public var description: String {
             switch self {
             case .fileNotFound(let path): return "File not found: \(path)"
-            case .unsupportedFile(let path): return "Only .dxf and .dwg files can be inserted: \(path)"
+            case .unsupportedFile(let path): return "Only .dxf, .dwg and .eab files can be inserted: \(path)"
             case .blockAlreadyExists(let name): return "Block \"\(name)\" already exists"
             case .emptyDrawing(let path): return "Drawing has no model-space geometry: \(path)"
             case .importFailed(let message): return message
@@ -101,26 +101,20 @@ public enum DrawingFileInsert {
         if document.allBlocks.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
             throw InsertError.blockAlreadyExists(name)
         }
-        let (baked, imported) = try loadModelSpace(fromFile: path)
+        let baked: CADModelSpaceBaker.Baked
+        let bundle: ContainerBundle
+        if (path as NSString).pathExtension.lowercased() == "eab" {
+            let eab = try loadModelSpaceEAB(fromFile: path)
+            baked = eab.baked
+            bundle = eab.bundle
+        } else {
+            let (modelBaked, imported) = try loadModelSpace(fromFile: path)
+            baked = modelBaked
+            bundle = ContainerBundle(imported: imported)
+        }
 
         // Merge missing named objects so baked styles resolve in the host.
-        let hostLayerNames = Set(document.allLayers.map { $0.name.uppercased() })
-        let newLayers = imported.layers.filter { !hostLayerNames.contains($0.name.uppercased()) }
-        if !newLayers.isEmpty {
-            document.importLayersBlocksEntities(layers: newLayers, blocks: [], entities: [])
-        }
-        for (key, value) in imported.textStyles where document.textStyles[key] == nil {
-            document.textStyles[key] = value
-        }
-        for (key, value) in imported.linetypePatterns where document.linetypePatterns[key] == nil {
-            document.linetypePatterns[key] = value
-        }
-        for (key, value) in imported.dimensionStyles where document.dimensionStyles[key] == nil {
-            document.dimensionStyles[key] = value
-        }
-        for (key, value) in imported.leaderStyles where document.leaderStyles[key] == nil {
-            document.leaderStyles[key] = value
-        }
+        mergeBundleSymbols(bundle, into: document)
 
         var block = CADBlock(
             name: name, geometry: baked.geometry,
@@ -128,7 +122,7 @@ public enum DrawingFileInsert {
             primitiveXData: baked.primitiveXData)
         block.updateBoundingBox()
         document.addBlock(block)
-        let scale = CADModelSpaceBaker.unitScale(from: imported.sourceUnit, to: document.unit)
+        let scale = CADModelSpaceBaker.unitScale(from: bundle.sourceUnit, to: document.unit)
         return (block, scale)
     }
 

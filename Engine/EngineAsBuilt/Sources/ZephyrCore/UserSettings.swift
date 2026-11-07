@@ -64,6 +64,14 @@ public struct UserSettings: Codable, Sendable {
     /// Page Setup Manager "Display when creating a new layout" checkbox.
     public var displayPageSetupForNewLayouts: Bool
 
+    // MARK: - Blocks palette
+    public var blockRecent: [BlockLibraryRef]
+    public var blockFavorites: [BlockLibraryRef]
+    public var blockLibraryFolders: [String]
+    public var blockInsertExplode: Bool
+    public var blockInsertRepeat: Bool
+    public var blockInsertPromptAttributes: Bool
+
     // MARK: - Trim/Extend registry (TRIMEXTENDMODE / PICKFIRST).
     // Registry-type sysvars that survive restarts (current AutoCAD defaults
     // to Quick mode with noun/verb selection on).
@@ -103,7 +111,13 @@ public struct UserSettings: Codable, Sendable {
         plotTransparencyOverride: Int = 1,
         displayPageSetupForNewLayouts: Bool = false,
         trimExtendMode: Int = 1,
-        pickFirst: Int = 1
+        pickFirst: Int = 1,
+        blockRecent: [BlockLibraryRef] = [],
+        blockFavorites: [BlockLibraryRef] = [],
+        blockLibraryFolders: [String] = [],
+        blockInsertExplode: Bool = false,
+        blockInsertRepeat: Bool = false,
+        blockInsertPromptAttributes: Bool = false
     ) {
         self.isDarkTheme = isDarkTheme
         self.themeName = themeName ?? (isDarkTheme ? "dark" : "light")
@@ -132,6 +146,12 @@ public struct UserSettings: Codable, Sendable {
         self.plotRotMode = plotRotMode
         self.plotTransparencyOverride = plotTransparencyOverride
         self.displayPageSetupForNewLayouts = displayPageSetupForNewLayouts
+        self.blockRecent = blockRecent
+        self.blockFavorites = blockFavorites
+        self.blockLibraryFolders = blockLibraryFolders
+        self.blockInsertExplode = blockInsertExplode
+        self.blockInsertRepeat = blockInsertRepeat
+        self.blockInsertPromptAttributes = blockInsertPromptAttributes
         self.trimExtendMode = (trimExtendMode == 0) ? 0 : 1
         self.pickFirst = (pickFirst == 0) ? 0 : 1
     }
@@ -211,6 +231,18 @@ public struct UserSettings: Codable, Sendable {
             ?? fallback.displayPageSetupForNewLayouts
         trimExtendMode = try box.decodeIfPresent(Int.self, forKey: .trimExtendMode)
             ?? fallback.trimExtendMode
+        blockRecent = try box.decodeIfPresent([BlockLibraryRef].self, forKey: .blockRecent)
+            ?? fallback.blockRecent
+        blockFavorites = try box.decodeIfPresent([BlockLibraryRef].self, forKey: .blockFavorites)
+            ?? fallback.blockFavorites
+        blockLibraryFolders = try box.decodeIfPresent([String].self, forKey: .blockLibraryFolders)
+            ?? fallback.blockLibraryFolders
+        blockInsertExplode = try box.decodeIfPresent(Bool.self, forKey: .blockInsertExplode)
+            ?? fallback.blockInsertExplode
+        blockInsertRepeat = try box.decodeIfPresent(Bool.self, forKey: .blockInsertRepeat)
+            ?? fallback.blockInsertRepeat
+        blockInsertPromptAttributes = try box.decodeIfPresent(Bool.self, forKey: .blockInsertPromptAttributes)
+            ?? fallback.blockInsertPromptAttributes
         pickFirst = try box.decodeIfPresent(Int.self, forKey: .pickFirst)
             ?? fallback.pickFirst
     }
@@ -256,7 +288,13 @@ public struct UserSettings: Codable, Sendable {
             plotRotMode: plotRotMode,
             plotTransparencyOverride: plotTransparencyOverride,
             trimExtendMode: trimExtendMode,
-            pickFirst: pickFirst
+            pickFirst: pickFirst,
+            blockRecent: ui.blockRecent,
+            blockFavorites: ui.blockFavorites,
+            blockLibraryFolders: ui.blockLibraryFolders,
+            blockInsertExplode: ui.blockInsertExplode,
+            blockInsertRepeat: ui.blockInsertRepeat,
+            blockInsertPromptAttributes: ui.blockInsertPromptAttributes
         )
     }
 

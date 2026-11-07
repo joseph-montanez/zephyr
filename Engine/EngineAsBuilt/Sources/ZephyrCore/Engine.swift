@@ -791,6 +791,12 @@ public final class PhrostEngine {
         self.ui.xrefMaxPrimitives = settings.xrefMaxPrimitives
         self.ui.xrefFadePercent = settings.xrefFadePercent
         self.ui.xrefBindType = settings.xrefBindType
+        self.ui.blockRecent = settings.blockRecent
+        self.ui.blockFavorites = settings.blockFavorites
+        self.ui.blockLibraryFolders = settings.blockLibraryFolders
+        self.ui.blockInsertExplode = settings.blockInsertExplode
+        self.ui.blockInsertRepeat = settings.blockInsertRepeat
+        self.ui.blockInsertPromptAttributes = settings.blockInsertPromptAttributes
         self.ui.dataTablePanelVisible = settings.dataTablePanelVisible
         self.ui.showPropertiesPanel = settings.showPropertiesPanel
         self.ui.showFPS = settings.showFPS
@@ -997,6 +1003,10 @@ public final class PhrostEngine {
         if igGetCurrentContext() != ctx {
             igSetCurrentContext(ctx)
         }
+        // The theme may have changed while another window's context was current
+        // (e.g. THEME typed in a float window); heal this window's style now,
+        // before its frame, so dropdowns and popups never render stale.
+        ui.syncThemeIfNeeded(for: window)
         if io != windowIO {
             io = windowIO
         }

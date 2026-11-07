@@ -1361,7 +1361,8 @@ enum LispScriptedCommands {
         let blockID: UUID
         var defaultScale = 1.0
         if let existing = document.allBlocks.first(where: {
-            $0.name.caseInsensitiveCompare(rawName) == .orderedSame && !$0.name.hasPrefix("*")
+            $0.name.caseInsensitiveCompare(rawName) == .orderedSame
+                && BlockLibraryPolicy.isUserInsertable($0)
         }) {
             blockID = existing.handle
         } else {

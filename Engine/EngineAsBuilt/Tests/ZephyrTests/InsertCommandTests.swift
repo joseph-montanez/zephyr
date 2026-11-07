@@ -263,4 +263,20 @@ final class InsertCommandTests: XCTestCase {
         XCTAssertTrue(
             CommandDescriptor.allCommands.contains { $0.canonicalName == "INSERT" })
     }
+
+    func testTypedPointParsing() {
+        // Interactive INSERT accepts x,y[,z] at the point prompt
+        // (scripted `(command ...)` points stay point lists).
+        let two = InsertCommand.parsePoint("10,20")
+        XCTAssertEqual(two?.x, 10)
+        XCTAssertEqual(two?.y, 20)
+        XCTAssertEqual(two?.z ?? -1, 0)
+        let three = InsertCommand.parsePoint("10, 20, 5")
+        XCTAssertEqual(three?.x, 10)
+        XCTAssertEqual(three?.y, 20)
+        XCTAssertEqual(three?.z ?? -1, 5)
+        XCTAssertNil(InsertCommand.parsePoint("abc"))
+        XCTAssertNil(InsertCommand.parsePoint("10"))
+        XCTAssertNil(InsertCommand.parsePoint(""))
+    }
 }

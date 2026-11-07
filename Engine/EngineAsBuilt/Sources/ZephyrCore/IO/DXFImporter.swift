@@ -1047,10 +1047,9 @@ public enum DXFImporter {
                     guard !child.isEmpty else { continue }
                     let columns = max(1, insert.colCount)
                     let rows = max(1, insert.rowCount)
-                    let base = blockBaseByName[insert.name] ?? .zero
                     for row in 0..<rows {
                         for column in 0..<columns {
-                            let transform = Self.insertTransform(insert, blockBase: base, column: column, row: row)
+                            let transform = Self.insertTransform(insert, column: column, row: row)
                             geometry.append(contentsOf: Self.transformStyledPrimitives(
                                 child,
                                 by: transform,
@@ -1081,7 +1080,18 @@ public enum DXFImporter {
 
                 if let dimension = entity as? DXFDimensionEntity,
                    blockByName[dimension.name] != nil {
-                    geometry.append(contentsOf: convertBlockGeometry(named: dimension.name, visited: nextVisited))
+                    // Cached geometry below is pre-rebased; dimension references were
+                    // historically baked verbatim, so un-shift to preserve exact output.
+                    let childGeometry = convertBlockGeometry(named: dimension.name, visited: nextVisited)
+                    let childBase = blockBaseByName[dimension.name] ?? .zero
+                    if childBase.x == 0 && childBase.y == 0 && childBase.z == 0 {
+                        geometry.append(contentsOf: childGeometry)
+                    } else {
+                        let unrebase = Transform3D.translated(by: childBase)
+                        geometry.append(contentsOf: childGeometry.map {
+                            StyledPrimitive(primitive: Self.transformPrimitive($0.primitive, by: unrebase), style: $0.style, xdata: Self.transformedPrimitiveXData($0.xdata, by: unrebase))
+                        })
+                    }
                     continue
                 }
 
@@ -1098,6 +1108,19 @@ public enum DXFImporter {
                 geometry.append(contentsOf: primitives.map {
                     StyledPrimitive(primitive: $0, style: style, xdata: xdata)
                 })
+            }
+
+            // Rebase-at-import: store every definition (0,0)-based so INSERT
+            // transforms need no base compensation. Nested inserts above already
+            // baked with the base-free transform; shift the assembled own-frame
+            // geometry by -ownBase. Hatch pattern caches follow the standard
+            // transform rule (stripped; regenerated downstream from geometry).
+            let ownBase = blockBaseByName[name] ?? .zero
+            if ownBase.x != 0 || ownBase.y != 0 || ownBase.z != 0 {
+                let rebase = Transform3D.translated(by: Vector3(x: -ownBase.x, y: -ownBase.y, z: -ownBase.z))
+                geometry = geometry.map {
+                    StyledPrimitive(primitive: Self.transformPrimitive($0.primitive, by: rebase), style: $0.style, xdata: Self.transformedPrimitiveXData($0.xdata, by: rebase))
+                }
             }
 
             blockGeometryCache[name] = geometry
@@ -1142,7 +1165,7 @@ public enum DXFImporter {
                     }),
                 dxfFlags: block.flags,
                 isInternalTableDisplayBlock: block.name.hasPrefix("*T"),
-                attributeDefinitions: Self.attributeDefinitions(in: block))
+                attributeDefinitions: Self.attributeDefinitions(in: block, base: blockBaseByName[block.name] ?? .zero))
             blocks.append(cadBlock)
             blockByID[handle] = cadBlock
         }
@@ -1617,9 +1640,8 @@ public enum DXFImporter {
                    let block = blockByID[blockID] {
                     let columns = max(1, insert.colCount)
                     let rows = max(1, insert.rowCount)
-                    let blockBase = blockBaseByName[insert.name] ?? .zero
                     let insertAttributeValues = Self.attributeValues(
-                        from: insert, block: block, blockBase: blockBase)
+                        from: insert, block: block)
                     let arrayXData = Self.arrayXData(from: insert)
                     if let groupID = arrayXData.groupID {
                         if arrayXData.role == "I" || seenArrayGroups.contains(groupID) {
@@ -1655,9 +1677,7 @@ public enum DXFImporter {
                         let sx = abs(insert.xScale) > 1e-12 ? insert.xScale : 1.0
                         let rawSY = abs(insert.yScale) > 1e-12 ? insert.yScale : 1.0
                         let effectiveSY = insert.haveExtrusion && insert.extrusion.z < 0 ? -rawSY : rawSY
-                        let transform = Self.insertTransform(
-                            insert,
-                            blockBase: blockBase)
+                        let transform = Self.insertTransform(insert)
                         let arrayData = CADArrayData.rectangular(
                             columns: columns,
                             rows: rows,
@@ -1687,9 +1707,7 @@ public enum DXFImporter {
                             layerID: layerID(for: entity),
                             blockID: blockID,
                             localGeometry: nil,
-                            transform: Self.insertTransform(
-                                insert,
-                                blockBase: blockBase),
+                            transform: Self.insertTransform(insert),
                             xdata: Self.entityStyleXData(
                                 from: entity,
                                 globalLineTypeScale: globalLineTypeScale),
@@ -2579,23 +2597,23 @@ public enum DXFImporter {
     /// extracted regardless of the invisible flag (ATTSYNC still manages
     /// invisible tags); rendering skips them later.
     private static func attributeDefinitions(
-        in block: DXFBlockEntity
+        in block: DXFBlockEntity, base: Vector3
     ) -> [CADAttributeDefinition] {
         var defs: [CADAttributeDefinition] = []
         for entity in block.entities {
             guard let attdef = entity as? DXFTextEntity,
                   attdef.eType == .aTTDEF,
                   !attdef.attributeTag.isEmpty else { continue }
-            defs.append(attributeDefinition(from: attdef))
+            defs.append(attributeDefinition(from: attdef, base: base))
         }
         return defs
     }
 
     private static func attributeDefinition(
-        from attdef: DXFTextEntity
+        from attdef: DXFTextEntity, base: Vector3
     ) -> CADAttributeDefinition {
         var position = Vector3(
-            x: attdef.basePoint.x, y: -attdef.basePoint.y, z: attdef.basePoint.z)
+            x: attdef.basePoint.x - base.x, y: -attdef.basePoint.y - base.y, z: attdef.basePoint.z - base.z)
         var height = attdef.height > 0 ? attdef.height : 2.5
         var rotation = -attdef.angle_p * .pi / 180.0
         var style: String? = attdef.style.isEmpty ? nil : attdef.style
@@ -2611,7 +2629,7 @@ public enum DXFImporter {
            case .text(
             let pos, let cleaned, let h, let rot, let st, let ah, let av, _, _
            ) = first {
-            position = pos
+            position = Vector3(x: pos.x - base.x, y: pos.y - base.y, z: pos.z - base.z)
             if h > 0 { height = h }
             rotation = rot
             style = st
@@ -2639,8 +2657,7 @@ public enum DXFImporter {
     /// their full placement so no imported content is lost.
     private static func attributeValues(
         from insert: DXFInsertEntity,
-        block: CADBlock,
-        blockBase: Vector3
+        block: CADBlock
     ) -> [String: CADAttributeValue] {
         let isArray = max(1, insert.colCount) > 1 || max(1, insert.rowCount) > 1
         let mirrored = insert.haveExtrusion && insert.extrusion.z < 0
@@ -2670,8 +2687,7 @@ public enum DXFImporter {
                ) = first {
                 placed.value = cleaned
                 if !isArray && !mirrored {
-                    let local = Self.insertTransform(
-                        insert, blockBase: blockBase).inverse().transformPoint(pos)
+                    let local = Self.insertTransform(insert).inverse().transformPoint(pos)
                     if let def = defsByKey[key] {
                         if abs(local.x - def.position.x) > 1e-6
                             || abs(local.y - def.position.y) > 1e-6
@@ -3295,7 +3311,7 @@ public enum DXFImporter {
             backDepth: filter.backDistance)
     }
 
-    private static func insertTransform(_ insert: DXFInsertEntity, blockBase: Vector3, column: Int = 0, row: Int = 0) -> Transform3D {
+    private static func insertTransform(_ insert: DXFInsertEntity, column: Int = 0, row: Int = 0) -> Transform3D {
         let sx = insert.xScale == 0 ? 1.0 : insert.xScale
         let sy = insert.yScale == 0 ? 1.0 : insert.yScale
         let sz = insert.zScale == 0 ? 1.0 : insert.zScale
@@ -3327,12 +3343,11 @@ public enum DXFImporter {
             y: -Double(row) * insert.rowSpace,
             z: 0))
         let scale = Transform3D.scaled(by: scaleVector)
-        let base = Transform3D.translated(by: Vector3(x: -blockBase.x, y: -blockBase.y, z: -blockBase.z))
+        // Rebase-at-import: definitions are stored (0,0)-based, so no base term.
         return translate
             .multiplying(by: rotate)
             .multiplying(by: arrayOffset)
             .multiplying(by: scale)
-            .multiplying(by: base)
     }
 
     private static func isDefaultExtrusion(_ n: Vector3) -> Bool {

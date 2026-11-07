@@ -130,6 +130,8 @@ final class LispVarStore: @unchecked Sendable {
         "SSMPOLLTIME": .int(60),
         "SSMSHEETSTATUS": .int(2),
         "UPDATETHUMBNAIL": .int(1),
+        "ATTREQ": .int(0),
+        "BLOCKSLIBRARYPATH": .string(""),
     ]
 
     private static let readOnly: Set<String> = [

@@ -400,6 +400,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "BEDIT",      aliases: ["EDITBLOCK", "BE"], category: .block,  syntax: "", description: "Edit the selected block reference in-place"),
         CommandDescriptor(canonicalName: "BCLOSE",     aliases: [],                category: .block,   syntax: "", description: "Close the block editor and save changes"),
         CommandDescriptor(canonicalName: "BLOCKS",     aliases: ["BLOCKPANEL"],    category: .block,   syntax: "", description: "Show/hide the block panel"),
+        CommandDescriptor(canonicalName: "BLOCKSPALETTE", aliases: [], category: .block, syntax: "", description: "Show the Blocks palette"),
+        CommandDescriptor(canonicalName: "BLOCKSPALETTECLOSE", aliases: [], category: .block, syntax: "", description: "Hide the Blocks palette"),
         CommandDescriptor(canonicalName: "INSERT",     aliases: ["I", "-I", "-INSERT"], category: .block, syntax: "", description: "Insert a block or drawing file as a block reference"),
         CommandDescriptor(canonicalName: "XATTACH",    aliases: ["XA"],            category: .block,   syntax: "", description: "Attach a drawing as an external reference"),
         CommandDescriptor(canonicalName: "XREF",       aliases: ["XR", "ER", "EXTERNALREFERENCES"], category: .block, syntax: "", description: "Show/hide the External References palette"),
@@ -440,7 +442,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "STYLESMANAGER", aliases: [], category: .settings, syntax: "", description: "Open the plot styles folder"),
         CommandDescriptor(canonicalName: "PLOTTERMANAGER", aliases: [], category: .settings, syntax: "", description: "Open the plotters folder"),
         CommandDescriptor(canonicalName: "MLEADERSTYLE", aliases: ["MLS"], category: .settings, syntax: "", description: "Create and edit multileader styles"),
-        CommandDescriptor(canonicalName: "THEME",      aliases: [], category: .settings, syntax: "[Dark/Light/Latte/Frappe/Macchiato/Mocha/Next/?]", description: "Choose the UI theme at a sub-prompt (bare THEME opens it; DARKMODE/LIGHTMODE are direct)"),
+        CommandDescriptor(canonicalName: "THEME",      aliases: [], category: .settings, syntax: "[Dark/Light/Latte/Frappe/Macchiato/Mocha/Candy/Next/?]", description: "Choose the UI theme at a sub-prompt (bare THEME opens it; DARKMODE/LIGHTMODE are direct)"),
         CommandDescriptor(canonicalName: "DARKMODE",   aliases: [], category: .settings, syntax: "", description: "Switch to the dark UI theme"),
         CommandDescriptor(canonicalName: "LIGHTMODE",  aliases: [], category: .settings, syntax: "", description: "Switch to the light UI theme"),
         CommandDescriptor(canonicalName: "FPS",        aliases: [],                        category: .settings, syntax: "", description: "Toggle FPS counter in the title bar"),
@@ -1722,6 +1724,16 @@ public final class CADCommandProcessor {
         case "BLOCKS", "BLOCKPANEL":
             if let engine = engine {
                 engine.ui.blockPanelVisible.toggle()
+            }
+            clearCommand()
+        case "BLOCKSPALETTE":
+            if let engine = engine {
+                engine.ui.blockPanelVisible = true
+            }
+            clearCommand()
+        case "BLOCKSPALETTECLOSE":
+            if let engine = engine {
+                engine.ui.blockPanelVisible = false
             }
             clearCommand()
         case "XREF", "XR", "ER", "EXTERNALREFERENCES":
