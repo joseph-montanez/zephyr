@@ -107,6 +107,104 @@ final class GridSnapCommandTests: XCTestCase {
         XCTAssertNil(processor.pendingPromptCommand)
     }
 
+    func testEmptySubmitWithNoSessionRunsNothing() {
+        // Regression: empty Enter ran palette row zero (+PUBLISH). The
+        // palette only runs a match for non-empty input now; empty input
+        // reaches the processor as a no-op that opens no session.
+        let processor = CADCommandProcessor()
+        processor.executeCommand("")
+        XCTAssertNil(processor.pendingPromptCommand)
+    }
+
+    // MARK: - Pending option lists
+
+    func testSnapPromptListsToggleOptions() {
+        let processor = CADCommandProcessor()
+        processor.executeCommand("SNAP")
+        XCTAssertEqual(
+            processor.pendingPromptOptions(for: "").map { $0.value },
+            ["ON", "OFF", "Aspect"])
+    }
+
+    func testSnapPromptOptionsFilterByInput() {
+        let processor = CADCommandProcessor()
+        processor.executeCommand("SNAP")
+        XCTAssertEqual(
+            processor.pendingPromptOptions(for: "off").map { $0.value },
+            ["OFF"])
+        XCTAssertTrue(processor.pendingPromptOptions(for: "5").isEmpty)
+    }
+
+    func testGridSpacingPromptListsAspectAndSnap() {
+        let processor = CADCommandProcessor()
+        processor.executeCommand("GRIDSPACING")
+        XCTAssertEqual(
+            processor.pendingPromptOptions(for: "").map { $0.value },
+            ["Aspect", "Snap"])
+    }
+
+    func testNumericPhasesAndIdleListNoOptions() {
+        let processor = CADCommandProcessor()
+        XCTAssertTrue(processor.pendingPromptOptions(for: "").isEmpty)
+        processor.pendingPromptCommand = "SNAP"
+        processor.pendingPromptPhaseIndex = 1
+        XCTAssertTrue(processor.pendingPromptOptions(for: "").isEmpty)
+        processor.pendingPromptCommand = "GRIDORIGIN"
+        processor.pendingPromptPhaseIndex = 0
+        XCTAssertTrue(processor.pendingPromptOptions(for: "").isEmpty)
+    }
+
+    func testUnitsPromptListsUnits() {
+        let processor = CADCommandProcessor()
+        processor.executeCommand("UNITS")
+        let options = processor.pendingPromptOptions(for: "")
+        XCTAssertEqual(options.map { $0.value }, ["mm", "cm", "m", "in", "ft", "yd"])
+        XCTAssertFalse(options.contains { $0.isActive })
+    }
+
+    func testRibbonModePromptListsModes() {
+        let processor = CADCommandProcessor()
+        processor.pendingPromptCommand = "RIBBONMODE"
+        let options = processor.pendingPromptOptions(for: "")
+        XCTAssertEqual(options.map { $0.value }, ["menu", "labels", "full"])
+        XCTAssertFalse(options.contains { $0.isActive })
+    }
+
+    func testSetUiScaleAndDxfVersionAndVportsLists() {
+        let processor = CADCommandProcessor()
+        processor.pendingPromptCommand = "SETUISCALE"
+        XCTAssertEqual(processor.pendingPromptOptions(for: "").map { $0.value }, ["AUTO"])
+        processor.pendingPromptCommand = "DXFVERSION"
+        XCTAssertEqual(
+            processor.pendingPromptOptions(for: "").map { $0.value },
+            ["2018", "2013", "2010", "2007", "2004", "2000", "R14", "R13", "R12", "R10"])
+        processor.pendingPromptCommand = "VPORTS"
+        XCTAssertEqual(
+            processor.pendingPromptOptions(for: "").map { $0.value },
+            ["2V", "2H", "Single", "Join", "Toggle"])
+    }
+
+    func testLayerSortListsKeysAndDirections() {
+        let saved = LayerSortSettings.load()
+        defer { saved.save() }
+        LayerSortSettings(key: .color, ascending: false).save()
+        let processor = CADCommandProcessor()
+        processor.pendingPromptCommand = "LAYERSORT"
+        let options = processor.pendingPromptOptions(for: "")
+        XCTAssertTrue(options.contains { $0.value == "COLOR" && $0.isActive })
+        XCTAssertTrue(options.contains { $0.value == "DESC" && $0.isActive })
+        processor.pendingPromptPhaseIndex = 1
+        let directions = processor.pendingPromptOptions(for: "")
+        XCTAssertEqual(directions.map { $0.value }, ["ASC", "DESC", "Reverse"])
+        XCTAssertTrue(directions.contains { $0.value == "DESC" && $0.isActive })
+    }
+
+    func testDefaultActiveOptionValuesEmpty() {
+        let processor = CADCommandProcessor()
+        processor.pendingPromptCommand = "SETUISCALE"
+        XCTAssertFalse(processor.pendingPromptOptions(for: "").contains { $0.isActive })
+    }
+
     // MARK: - Persistence defaults
 
     func testLegacySettingsDecodeWithGridDefaults() throws {

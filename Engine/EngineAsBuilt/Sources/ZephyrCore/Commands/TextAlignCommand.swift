@@ -149,6 +149,15 @@ public final class TextAlignCommand: FeatureCommand {
         }
     }
 
+    /// Chips for the align/distribute question, gated on `.option`.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        guard phase == .option else { return [] }
+        return [
+            FeatureCommandTextOption(value: "Align", title: "Align", aliases: ["A"], description: "Align text to a baseline"),
+            FeatureCommandTextOption(value: "Distribute", title: "Distribute", aliases: ["D"], description: "Distribute text along a baseline"),
+        ].filter { $0.matches(input) }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 
     // MARK: - Pure alignment math (nonisolated: no actor state, test-callable)

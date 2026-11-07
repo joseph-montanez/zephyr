@@ -55,14 +55,7 @@ public final class DViewCommand: FeatureCommand {
 
         case .chooseOption:
             // Click while choosing option — default to TWist
-            let currentRotation = engine.camera.rotation
-            phase = .twist(
-                anchorAngleRad: currentRotation,
-                anchorMouseX: engine.interaction.lastMouseX,
-                anchorMouseY: engine.interaction.lastMouseY
-            )
-            let currentDeg = currentRotation * 180.0 / .pi
-            processor.commandPrompt = "Specify view twist angle <\(String(format: "%.2f", currentDeg))>:"
+            beginTwist(engine: engine, processor: processor)
             return .continue
 
         case .twist:
@@ -96,14 +89,7 @@ public final class DViewCommand: FeatureCommand {
         case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER:
             switch phase {
             case .pickObjects, .chooseOption:
-                let currentRotation = engine.camera.rotation
-                phase = .twist(
-                    anchorAngleRad: currentRotation,
-                    anchorMouseX: engine.interaction.lastMouseX,
-                    anchorMouseY: engine.interaction.lastMouseY
-                )
-                let currentDeg = currentRotation * 180.0 / .pi
-                processor.commandPrompt = "Specify view twist angle <\(String(format: "%.2f", currentDeg))>:"
+                beginTwist(engine: engine, processor: processor)
                 return .continue
             case .twist:
                 return .finished
@@ -112,20 +98,48 @@ public final class DViewCommand: FeatureCommand {
         case SDL_SCANCODE_T:
             // T = TWist shortcut from option phase
             if case .chooseOption = phase {
-                let currentRotation = engine.camera.rotation
-                phase = .twist(
-                    anchorAngleRad: currentRotation,
-                    anchorMouseX: engine.interaction.lastMouseX,
-                    anchorMouseY: engine.interaction.lastMouseY
-                )
-                let currentDeg = currentRotation * 180.0 / .pi
-                processor.commandPrompt = "Specify view twist angle <\(String(format: "%.2f", currentDeg))>:"
+                beginTwist(engine: engine, processor: processor)
             }
             return .continue
 
         default:
             return .continue
         }
+    }
+
+    public func handleCommandText(
+        _ text: String, engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult {
+        guard case .chooseOption = phase else { return .continue }
+        switch text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+        case "T", "TW", "TWIST":
+            beginTwist(engine: engine, processor: processor)
+            return .continue
+        default:
+            return .continue
+        }
+    }
+
+    /// Chip for the TWist option while choosing; other phases take
+    /// picks, drags, or numeric angle input.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        guard case .chooseOption = phase else { return [] }
+        return [
+            FeatureCommandTextOption(value: "TWist", title: "TWist", aliases: ["T", "TW"], description: "Twist the view (default)"),
+        ].filter { $0.matches(input) }
+    }
+
+    /// Shared TWist entry: the canvas-click default, the Enter default,
+    /// the T hotkey, and the TWist chip all run this one path.
+    private func beginTwist(engine: PhrostEngine, processor: CADCommandProcessor) {
+        let currentRotation = engine.camera.rotation
+        phase = .twist(
+            anchorAngleRad: currentRotation,
+            anchorMouseX: engine.interaction.lastMouseX,
+            anchorMouseY: engine.interaction.lastMouseY
+        )
+        let currentDeg = currentRotation * 180.0 / .pi
+        processor.commandPrompt = "Specify view twist angle <\(String(format: "%.2f", currentDeg))>:"
     }
 
     public var isSnappingEnabled: Bool { false }

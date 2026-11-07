@@ -148,6 +148,26 @@ public final class PdfAdjustCommand: FeatureCommand {
         }
     }
 
+    /// Chips for the adjustment choice (`.option`) and the monochrome
+    /// confirmation (`.value` after Monochrome).
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        switch phase {
+        case .option:
+            return [
+                FeatureCommandTextOption(value: "Contrast", title: "Contrast", aliases: ["C"], description: "Adjust contrast (20-100)"),
+                FeatureCommandTextOption(value: "Fade", title: "Fade", aliases: ["F"], description: "Adjust fade (0-80)"),
+                FeatureCommandTextOption(value: "Monochrome", title: "Monochrome", aliases: ["M"], description: "Convert to monochrome"),
+            ].filter { $0.matches(input) }
+        case .value where option == "Monochrome":
+            return [
+                FeatureCommandTextOption(value: "Yes", title: "Yes", aliases: ["Y"], description: "Convert to monochrome"),
+                FeatureCommandTextOption(value: "No", title: "No", aliases: ["N"], description: "Leave unchanged"),
+            ].filter { $0.matches(input) }
+        default:
+            return []
+        }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 
     // MARK: - Private

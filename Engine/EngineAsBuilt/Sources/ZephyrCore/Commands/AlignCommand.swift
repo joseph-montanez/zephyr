@@ -238,6 +238,16 @@ public final class AlignCommand: FeatureCommand {
         }
     }
 
+    /// Chips for the scale question: the same Y/N tokens the prompt
+    /// accepts, gated on `.askScale`.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        guard step == .askScale else { return [] }
+        return [
+            FeatureCommandTextOption(value: "Yes", title: "Yes", aliases: ["Y"], description: "Scale objects with the alignment"),
+            FeatureCommandTextOption(value: "No", title: "No", aliases: ["N"], description: "Keep original size (default)"),
+        ].filter { $0.matches(input) }
+    }
+
     public var isSnappingEnabled: Bool {
         step != .selectObjects && step != .askScale
     }

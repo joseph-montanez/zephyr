@@ -175,21 +175,15 @@ public final class MeasureGeomTool: FeatureCommand {
             return .continue
 
         case SDL_SCANCODE_Q:
-            currentMode = .quick
-            resetModeState()
-            processor.commandPrompt = "Quick Measure — move between geometry, or touch a corner to show its angle"
+            selectMode(.quick, processor: processor)
             return .continue
 
         case SDL_SCANCODE_D:
-            currentMode = .distance
-            resetModeState()
-            processor.commandPrompt = "Distance — click first point"
+            selectMode(.distance, processor: processor)
             return .continue
 
         case SDL_SCANCODE_A:
-            currentMode = .area
-            resetModeState()
-            processor.commandPrompt = "Area — click inside enclosed region"
+            selectMode(.area, processor: processor)
             return .continue
 
         case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER, SDL_SCANCODE_ESCAPE:
@@ -197,6 +191,54 @@ public final class MeasureGeomTool: FeatureCommand {
 
         default:
             return .continue
+        }
+    }
+
+    public func handleCommandText(
+        _ text: String, engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult {
+        switch text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() {
+        case "Q", "QUICK":
+            selectMode(.quick, processor: processor)
+            return .continue
+        case "D", "DISTANCE":
+            selectMode(.distance, processor: processor)
+            return .continue
+        case "A", "AREA":
+            selectMode(.area, processor: processor)
+            return .continue
+        case "X", "EXIT":
+            return .finished
+        default:
+            return .continue
+        }
+    }
+
+    /// Mode chips mirror the prompt tokens; the active mode stays
+    /// filled. Hotkeys, chips, and typed words share `selectMode`.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        return [
+            FeatureCommandTextOption(value: "Distance", title: "[D] Distance", aliases: ["D"], description: "Measure point-to-point distance", isActive: currentMode == .distance),
+            FeatureCommandTextOption(value: "Area", title: "[A] Area", aliases: ["A"], description: "Measure enclosed area", isActive: currentMode == .area),
+            FeatureCommandTextOption(value: "Quick", title: "[Q] Quick", aliases: ["Q"], description: "Quick measure (default)", isActive: currentMode == .quick),
+            FeatureCommandTextOption(value: "Exit", title: "Exit", aliases: ["X"], description: "Exit measure"),
+        ].filter { $0.matches(input) }
+    }
+
+    /// Shared mode entry: the Q/D/A hotkeys and the mode chips/words
+    /// run this one path with the same prompts.
+    private func selectMode(_ mode: MeasureMode, processor: CADCommandProcessor) {
+        currentMode = mode
+        resetModeState()
+        switch mode {
+        case .quick:
+            processor.commandPrompt = "Quick Measure — move between geometry, or touch a corner to show its angle"
+        case .distance:
+            processor.commandPrompt = "Distance — click first point"
+        case .area:
+            processor.commandPrompt = "Area — click inside enclosed region"
+        case .angle:
+            processor.commandPrompt = "Angle - pick vertex point"
         }
     }
 

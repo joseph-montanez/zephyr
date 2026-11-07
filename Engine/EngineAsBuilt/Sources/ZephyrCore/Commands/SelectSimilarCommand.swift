@@ -118,6 +118,15 @@ public final class SelectSimilarCommand: FeatureCommand {
         }
     }
 
+    /// Chip for the Settings gateway while picking the reference object;
+    /// the mode value itself is free numeric input.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        guard phase == .pickReference else { return [] }
+        return [
+            FeatureCommandTextOption(value: "Settings", title: "Settings", aliases: ["S"], description: "Edit selection matching settings"),
+        ].filter { $0.matches(input) }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 
     // MARK: - Private

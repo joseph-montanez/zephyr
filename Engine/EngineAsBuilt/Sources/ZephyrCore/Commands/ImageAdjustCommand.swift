@@ -146,5 +146,15 @@ public final class ImageAdjustCommand: FeatureCommand {
         }
     }
 
+    /// Chips for the adjustment choice, gated on `.option`.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        guard phase == .option else { return [] }
+        return [
+            FeatureCommandTextOption(value: "Fade", title: "Fade", aliases: ["F"], description: "Fade images (0-100)"),
+            FeatureCommandTextOption(value: "Contrast", title: "Contrast", aliases: ["C"], description: "Adjust contrast (0-100)"),
+            FeatureCommandTextOption(value: "Brightness", title: "Brightness", aliases: ["B"], description: "Adjust brightness (0-100)"),
+        ].filter { $0.matches(input) }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 }

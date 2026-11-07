@@ -225,6 +225,73 @@ public final class SelectFilterCommand: FeatureCommand {
         }
     }
 
+    /// Chips mirror each prompted phase. Values stay single tokens so a
+    /// chip submits exactly what typing the word would; titles carry the
+    /// display form ("Not equals" submits "NOTEQUALS"). Free-input phases
+    /// (values for non-type properties) offer none.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        switch phase {
+        case .type:
+            return ([FeatureCommandTextOption(value: "All", title: "All", aliases: ["A"], description: "Any object type")]
+                + EntityFilter.knownTypes.map {
+                    FeatureCommandTextOption(value: $0, title: $0, description: "Only \($0) objects")
+                }).filter { $0.matches(input) }
+        case .property:
+            var options = [
+                FeatureCommandTextOption(value: "Layer", title: "Layer", description: "Layer name"),
+                FeatureCommandTextOption(value: "Color", title: "Color", description: "Color index"),
+                FeatureCommandTextOption(value: "Linetype", title: "Linetype", description: "Linetype name"),
+                FeatureCommandTextOption(value: "Lineweight", title: "Lineweight", description: "Lineweight"),
+                FeatureCommandTextOption(value: "Handle", title: "Handle", description: "Entity handle"),
+            ]
+            if mode == .filter {
+                options.insert(FeatureCommandTextOption(value: "ObjectType", title: "ObjectType", aliases: ["TYPE"], description: "DXF object type"), at: 0)
+            }
+            return options.filter { $0.matches(input) }
+        case .op:
+            var options = [
+                FeatureCommandTextOption(value: "Equals", title: "Equals", aliases: ["E", "="], description: "Exactly matches"),
+                FeatureCommandTextOption(value: "NotEquals", title: "Not equals", aliases: ["NE"], description: "Does not match"),
+            ]
+            if EntityFilter.isNumericProperty(pendingProperty) {
+                options += [
+                    FeatureCommandTextOption(value: "LessThan", title: "Less than", aliases: ["LT", "<"], description: "Numeric less-than"),
+                    FeatureCommandTextOption(value: "LessOrEqual", title: "Less or equal", aliases: ["LE", "<="], description: "Numeric less-or-equal"),
+                    FeatureCommandTextOption(value: "GreaterThan", title: "Greater than", aliases: ["GT", ">"], description: "Numeric greater-than"),
+                    FeatureCommandTextOption(value: "GreaterOrEqual", title: "Greater or equal", aliases: ["GE", ">="], description: "Numeric greater-or-equal"),
+                ]
+            }
+            return options.filter { $0.matches(input) }
+        case .value:
+            // Only the object-type value has a fixed vocabulary.
+            guard pendingProperty == .objectType else { return [] }
+            return EntityFilter.knownTypes.map {
+                FeatureCommandTextOption(value: $0, title: $0, description: "Match \($0) objects")
+            }.filter { $0.matches(input) }
+        case .more:
+            return [
+                FeatureCommandTextOption(value: "Yes", title: "Yes", aliases: ["Y"], description: "Add another criterion"),
+                FeatureCommandTextOption(value: "No", title: "No", aliases: ["N"], description: "Finish criteria"),
+            ].filter { $0.matches(input) }
+        case .combine:
+            return [
+                FeatureCommandTextOption(value: "And", title: "And", description: "All criteria must match"),
+                FeatureCommandTextOption(value: "Or", title: "Or", description: "Any criterion matches"),
+                FeatureCommandTextOption(value: "Not", title: "Not", description: "Negate the criteria"),
+            ].filter { $0.matches(input) }
+        case .applyTo:
+            return [
+                FeatureCommandTextOption(value: "All", title: "All", aliases: ["A"], description: "Apply to the whole drawing"),
+                FeatureCommandTextOption(value: "Current", title: "Current", aliases: ["C"], description: "Apply to the current selection"),
+            ].filter { $0.matches(input) }
+        case .howTo:
+            return [
+                FeatureCommandTextOption(value: "Include", title: "Include", aliases: ["I"], description: "Select matching objects"),
+                FeatureCommandTextOption(value: "Exclude", title: "Exclude", aliases: ["E"], description: "Remove matching objects"),
+            ].filter { $0.matches(input) }
+        }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 
     // MARK: - Pure prompt parsing (nonisolated: test-callable)

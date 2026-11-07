@@ -145,6 +145,33 @@ public final class FindCommand: FeatureCommand {
         }
     }
 
+    /// Chips for the Yes/No questions and the replace review. The review
+    /// set follows the replace mode: find-only offers Done, replace mode
+    /// offers Yes/No/All/Done.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        switch phase {
+        case .caseOption, .wholeWordOption:
+            return [
+                FeatureCommandTextOption(value: "Yes", title: "Yes", aliases: ["Y"], description: "Enable this option"),
+                FeatureCommandTextOption(value: "No", title: "No", aliases: ["N"], description: "Default", isActive: true),
+            ].filter { $0.matches(input) }
+        case .review:
+            if replaceText.isEmpty {
+                return [
+                    FeatureCommandTextOption(value: "Done", title: "Done", aliases: ["D"], description: "Finish reviewing"),
+                ].filter { $0.matches(input) }
+            }
+            return [
+                FeatureCommandTextOption(value: "Yes", title: "Yes", aliases: ["Y"], description: "Replace this match"),
+                FeatureCommandTextOption(value: "No", title: "No", aliases: ["N"], description: "Skip this match"),
+                FeatureCommandTextOption(value: "All", title: "All", aliases: ["A"], description: "Replace all remaining matches"),
+                FeatureCommandTextOption(value: "Done", title: "Done", aliases: ["D"], description: "Finish with replacements made"),
+            ].filter { $0.matches(input) }
+        default:
+            return []
+        }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 
     // MARK: - Pure search/replace (nonisolated: no actor state, test-callable)

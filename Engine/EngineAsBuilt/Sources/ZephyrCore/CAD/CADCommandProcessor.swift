@@ -26,6 +26,11 @@ import ZephyrLisp
 public struct FeatureCommandTextOption: Sendable, Hashable {
     public let value: String
     public let title: String
+    /// Marks the option that represents the live current value (e.g. the
+    /// active theme or the ON row of an enabled toggle). The option list
+    /// renders active rows with a marker distinct from the keyboard
+    /// highlight. Action rows (gateways like "Aspect") are never active.
+    public let isActive: Bool
     public let aliases: [String]
     public let description: String
 
@@ -33,10 +38,12 @@ public struct FeatureCommandTextOption: Sendable, Hashable {
         value: String,
         title: String,
         aliases: [String] = [],
-        description: String = ""
+        description: String = "",
+        isActive: Bool = false
     ) {
         self.value = value
         self.title = title
+        self.isActive = isActive
         self.aliases = aliases
         self.description = description
     }
@@ -120,6 +127,11 @@ public protocol FeatureCommand: AnyObject {
     /// `.continue` if the text was consumed but the command is still active.
     func handleCommandText(_ text: String, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult
 
+    /// Command-line option values that represent the live current setting
+    /// (e.g. "ON" for an enabled toggle), used to mark the active row in
+    /// the option list. Default empty.
+    func activeOptionValues(engine: PhrostEngine) -> Set<String>
+
     /// Context-sensitive command-line options shown while this feature command
     /// owns the input field.
     func commandTextOptions(for input: String) -> [FeatureCommandTextOption]
@@ -142,6 +154,7 @@ public extension FeatureCommand {
     func handleCommandText(_ text: String, engine: PhrostEngine, processor: CADCommandProcessor) -> CommandResult { .continue }
 
     func commandTextOptions(for input: String) -> [FeatureCommandTextOption] { [] }
+    func activeOptionValues(engine: PhrostEngine) -> Set<String> { [] }
 }
 
 // =========================================================================

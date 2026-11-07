@@ -172,6 +172,26 @@ public final class WblockCommand: FeatureCommand {
         }
     }
 
+    /// Chips for the source question (`.source`) and the retain
+    /// confirmation (`.retain`); name/path phases take free input.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        switch phase {
+        case .source:
+            return [
+                FeatureCommandTextOption(value: "Block", title: "Block", aliases: ["B"], description: "Write a block definition"),
+                FeatureCommandTextOption(value: "Objects", title: "Objects", aliases: ["O"], description: "Write selected objects (default)"),
+                FeatureCommandTextOption(value: "Entire", title: "Entire drawing", aliases: ["E"], description: "Write the entire drawing"),
+            ].filter { $0.matches(input) }
+        case .retain:
+            return [
+                FeatureCommandTextOption(value: "Yes", title: "Yes", aliases: ["Y"], description: "Retain source objects (default)"),
+                FeatureCommandTextOption(value: "No", title: "No", aliases: ["N"], description: "Delete source objects after writing"),
+            ].filter { $0.matches(input) }
+        default:
+            return []
+        }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 
     // MARK: - Private

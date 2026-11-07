@@ -655,8 +655,8 @@ public final class RevCloudCommand: FeatureCommand {
             ]
         case .selectingStyle:
             options = [
-                .init(value: "Normal", title: "Normal", aliases: ["N"]),
-                .init(value: "Calligraphy", title: "Calligraphy", aliases: ["C"])
+                .init(value: "Normal", title: "Normal", aliases: ["N"], isActive: RevCloudSettings.style == .normal),
+                .init(value: "Calligraphy", title: "Calligraphy", aliases: ["C"], isActive: RevCloudSettings.style == .calligraphy)
             ]
         case .reverse:
             options = [

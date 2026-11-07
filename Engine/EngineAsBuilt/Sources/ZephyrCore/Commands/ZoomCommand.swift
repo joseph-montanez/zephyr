@@ -107,6 +107,114 @@ public final class ZoomCommand: FeatureCommand {
             onConfirm(value)
             return .finished
 
+        case .prompting:
+            return applyZoomToken(text, engine: engine, processor: processor)
+
+        default:
+            return .continue
+        }
+    }
+
+    // MARK: - Prompt Tokens & Option Chips
+
+    /// Selectable keywords for the prompting phase. Values are the full
+    /// words chips submit; single-letter aliases document the hotkeys.
+    /// Gated on `.prompting` so other phases (window picks, scale input)
+    /// offer no chips.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        guard case .prompting = subMode else { return [] }
+        let options = [
+            FeatureCommandTextOption(value: "All", title: "[A] All", aliases: ["A"], description: "Show all geometry"),
+            FeatureCommandTextOption(value: "Center", title: "[C] Center", aliases: ["C"], description: "Center on a picked point"),
+            FeatureCommandTextOption(value: "Dynamic", title: "[D] Dynamic", aliases: ["D"], description: "Pan and zoom a viewfinder box"),
+            FeatureCommandTextOption(value: "Extents", title: "[E] Extents", aliases: ["E"], description: "Fit all geometry to the view"),
+            FeatureCommandTextOption(value: "Left", title: "[L] Left", aliases: ["L"], description: "Center on the lower-left corner"),
+            FeatureCommandTextOption(value: "Previous", title: "[P] Previous", aliases: ["P"], description: "Restore the previous view"),
+            FeatureCommandTextOption(value: "Right", title: "[R] Right", aliases: ["R"], description: "Center on the lower-right corner"),
+            FeatureCommandTextOption(value: "Scale", title: "[S] Scale", aliases: ["S"], description: "Enter a scale factor"),
+            FeatureCommandTextOption(value: "Object", title: "[O] Object", aliases: ["O"], description: "Fit selected objects"),
+            FeatureCommandTextOption(value: "Window", title: "[W] Window", aliases: ["W"], description: "Zoom to a picked window (default)"),
+        ]
+        return options.filter { $0.matches(input) }
+    }
+
+    /// Canonical ZOOM keyword for a hotkey letter, full word, or pasted
+    /// bracket token ("E", "Extents", "[E]" all map to "EXTENTS").
+    /// Nil for unknown input. Hotkeys, chips, and typed text share this
+    /// so all three execute identical branches in `applyZoomToken`.
+    static func canonicalZoomToken(_ raw: String) -> String? {
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "[]<>"))
+        switch cleaned {
+        case "A", "ALL": return "ALL"
+        case "C", "CENTER": return "CENTER"
+        case "D", "DYNAMIC": return "DYNAMIC"
+        case "E", "EXTENTS": return "EXTENTS"
+        case "L", "LEFT": return "LEFT"
+        case "O", "OBJECT": return "OBJECT"
+        case "P", "PREVIOUS": return "PREVIOUS"
+        case "R", "RIGHT": return "RIGHT"
+        case "S", "SCALE": return "SCALE"
+        case "W", "WINDOW": return "WINDOW"
+        default: return nil
+        }
+    }
+
+    /// Runs one prompting-phase token from a hotkey, chip, or typed word.
+    /// Only acts while prompting; anything else re-prompts or no-ops with
+    /// `.continue` so the command stays alive.
+    private func applyZoomToken(
+        _ raw: String, engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult {
+        guard case .prompting = subMode else { return .continue }
+        guard let token = Self.canonicalZoomToken(raw) else {
+            processor.commandPrompt = "Unknown option. [All/Center/Dynamic/Extents/Left/Previous/Right/Scale/Object/Window]"
+            return .continue
+        }
+        switch token {
+        case "ALL":
+            executeAll(engine: engine, processor: processor)
+            return .finished
+        case "CENTER":
+            subMode = .center(.waitingForPoint)
+            processor.commandPrompt = "Specify center point"
+            return .continue
+        case "DYNAMIC":
+            executeDynamic(engine: engine, processor: processor)
+            return .continue
+        case "EXTENTS":
+            executeExtents(engine: engine, processor: processor)
+            return .finished
+        case "LEFT":
+            subMode = .left(.waitingForPoint)
+            processor.commandPrompt = "Specify lower-left corner"
+            return .continue
+        case "OBJECT":
+            executeObject(engine: engine, processor: processor)
+            return .continue
+        case "PREVIOUS":
+            let restored = engine.camera.popViewState()
+            if restored {
+                processor.commandPrompt = "Restored previous view"
+            } else {
+                processor.commandPrompt = "No previous view saved"
+            }
+            return .finished
+        case "RIGHT":
+            subMode = .right(.waitingForPoint)
+            processor.commandPrompt = "Specify lower-right corner"
+            return .continue
+        case "SCALE":
+            subMode = .scale
+            processor.commandPrompt = "Enter scale factor (n, nX, nXP):"
+            processor.commandLineActive = true
+            processor.commandBuffer = ""
+            return .continue
+        case "WINDOW":
+            subMode = .window(.waitingForFirstCorner)
+            processor.commandPrompt = "Specify first corner"
+            return .continue
         default:
             return .continue
         }
@@ -316,67 +424,25 @@ public final class ZoomCommand: FeatureCommand {
         // ── Sub-mode key dispatch (when prompting or mid-command) ──
         switch scancode {
         case SDL_SCANCODE_A:
-            if case .prompting = subMode {
-                executeAll(engine: engine, processor: processor)
-                return .finished
-            }
+            return applyZoomToken("A", engine: engine, processor: processor)
         case SDL_SCANCODE_C:
-            if case .prompting = subMode {
-                subMode = .center(.waitingForPoint)
-                processor.commandPrompt = "Specify center point"
-                return .continue
-            }
+            return applyZoomToken("C", engine: engine, processor: processor)
         case SDL_SCANCODE_D:
-            if case .prompting = subMode {
-                executeDynamic(engine: engine, processor: processor)
-                return .continue
-            }
+            return applyZoomToken("D", engine: engine, processor: processor)
         case SDL_SCANCODE_E:
-            if case .prompting = subMode {
-                executeExtents(engine: engine, processor: processor)
-                return .finished
-            }
+            return applyZoomToken("E", engine: engine, processor: processor)
         case SDL_SCANCODE_L:
-            if case .prompting = subMode {
-                subMode = .left(.waitingForPoint)
-                processor.commandPrompt = "Specify lower-left corner"
-                return .continue
-            }
+            return applyZoomToken("L", engine: engine, processor: processor)
         case SDL_SCANCODE_O:
-            if case .prompting = subMode {
-                executeObject(engine: engine, processor: processor)
-                return .continue
-            }
+            return applyZoomToken("O", engine: engine, processor: processor)
         case SDL_SCANCODE_P:
-            if case .prompting = subMode {
-                let restored = engine.camera.popViewState()
-                if restored {
-                    processor.commandPrompt = "Restored previous view"
-                } else {
-                    processor.commandPrompt = "No previous view saved"
-                }
-                return .finished
-            }
+            return applyZoomToken("P", engine: engine, processor: processor)
         case SDL_SCANCODE_R:
-            if case .prompting = subMode {
-                subMode = .right(.waitingForPoint)
-                processor.commandPrompt = "Specify lower-right corner"
-                return .continue
-            }
+            return applyZoomToken("R", engine: engine, processor: processor)
         case SDL_SCANCODE_S:
-            if case .prompting = subMode {
-                subMode = .scale
-                processor.commandPrompt = "Enter scale factor (n, nX, nXP):"
-                processor.commandLineActive = true
-                processor.commandBuffer = ""
-                return .continue
-            }
+            return applyZoomToken("S", engine: engine, processor: processor)
         case SDL_SCANCODE_W:
-            if case .prompting = subMode {
-                subMode = .window(.waitingForFirstCorner)
-                processor.commandPrompt = "Specify first corner"
-                return .continue
-            }
+            return applyZoomToken("W", engine: engine, processor: processor)
 
         // ── Dynamic: Enter to commit ──
         case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER:

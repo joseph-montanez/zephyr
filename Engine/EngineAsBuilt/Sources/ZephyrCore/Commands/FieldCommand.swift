@@ -381,6 +381,34 @@ public final class FieldCommand: FeatureCommand {
         }
     }
 
+    /// Chips for the field-code question (`.code`) and the sheet-field
+    /// follow-up (`.sheetCode`); other phases take free input or picks.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        switch phase {
+        case .code:
+            return [
+                FeatureCommandTextOption(value: "Date", title: "Date", aliases: ["D"], description: "Current date field"),
+                FeatureCommandTextOption(value: "Filename", title: "Filename", aliases: ["F"], description: "Drawing filename field"),
+                FeatureCommandTextOption(value: "Tabname", title: "Tabname", aliases: ["T"], description: "Layout tab name field"),
+                FeatureCommandTextOption(value: "Area", title: "Area", aliases: ["A"], description: "Area of a picked object"),
+                FeatureCommandTextOption(value: "Length", title: "Length", aliases: ["L"], description: "Length of a picked object"),
+                FeatureCommandTextOption(value: "Sheet", title: "Sheet", aliases: ["S"], description: "Sheet-set field"),
+            ].filter { $0.matches(input) }
+        case .sheetCode:
+            return [
+                FeatureCommandTextOption(value: "Number", title: "Number", aliases: ["N"], description: "Sheet number"),
+                FeatureCommandTextOption(value: "Title", title: "Title", aliases: ["T"], description: "Sheet title"),
+                FeatureCommandTextOption(value: "Description", title: "Description", aliases: ["D", "DESC"], description: "Sheet description"),
+                FeatureCommandTextOption(value: "Setname", title: "Setname", aliases: ["SN"], description: "Sheet-set name"),
+                FeatureCommandTextOption(value: "Setdesc", title: "Setdesc", aliases: ["SD"], description: "Sheet-set description"),
+                FeatureCommandTextOption(value: "Custom", title: "Custom", aliases: ["C"], description: "Custom sheet property"),
+                FeatureCommandTextOption(value: "Setcustom", title: "Setcustom", aliases: ["SC"], description: "Custom sheet-set property"),
+            ].filter { $0.matches(input) }
+        default:
+            return []
+        }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 
     // MARK: - Private

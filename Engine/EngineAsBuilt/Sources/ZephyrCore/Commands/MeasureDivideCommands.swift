@@ -252,6 +252,24 @@ public final class MeasureDivideCommand: FeatureCommand {
         }
     }
 
+    /// Chips for the Block gateway (`.valueOrBlock`) and the alignment
+    /// confirmation (`.blockAlignment`); other steps take free input.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        switch step {
+        case .valueOrBlock:
+            return [
+                FeatureCommandTextOption(value: "Block", title: "Block", aliases: ["B"], description: "Insert a block at each point"),
+            ].filter { $0.matches(input) }
+        case .blockAlignment:
+            return [
+                FeatureCommandTextOption(value: "Yes", title: "Yes", aliases: ["Y"], description: "Align blocks (default)"),
+                FeatureCommandTextOption(value: "No", title: "No", aliases: ["N"], description: "Keep block rotation"),
+            ].filter { $0.matches(input) }
+        default:
+            return []
+        }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
     public var isSnappingEnabled: Bool { false }
     public func getDrawingSnapPoints() -> [Vector3] { [] }

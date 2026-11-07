@@ -562,6 +562,96 @@ extension CADCommandProcessor {
         return buffer
     }
 
+    // MARK: - Pending option lists (theme-style picking for prompts)
+
+    /// Selectable options for the open pending session, filtered by the
+    /// current input (empty input lists all). Powers the up/down option list
+    /// for prompts with a fixed vocabulary (SNAP, GRIDSPACING); numeric and
+    /// free-text phases report no options. Structural rows are engine-free;
+    /// `isActive` flags read live state from the processor's own engine
+    /// reference and degrade to all-inactive when none is attached.
+    public func pendingPromptOptions(for input: String, engine: PhrostEngine? = nil) -> [FeatureCommandTextOption] {
+        var all: [FeatureCommandTextOption]
+        switch (pendingPromptCommand, pendingPromptPhaseIndex) {
+        case ("SNAP", 0):
+            all = [
+                .init(value: "ON", title: "On", description: "Turn grid snap on (F9)"),
+                .init(value: "OFF", title: "Off", description: "Turn grid snap off"),
+                .init(value: "Aspect", title: "Aspect", description: "Set X and Y snap spacing separately"),
+            ]
+        case ("GRIDSPACING", 0):
+            all = [
+                .init(value: "Aspect", title: "Aspect", description: "Set X and Y grid spacing separately"),
+                .init(value: "Snap", title: "Snap", description: "Copy the snap spacing to the grid"),
+            ]
+        case ("UNITS", 0):
+            let unit = engine?.document.unit
+            all = [
+                .init(value: "mm", title: "Millimeters (mm)", description: "Set drawing unit to millimeters", isActive: unit == .millimeter),
+                .init(value: "cm", title: "Centimeters (cm)", description: "Set drawing unit to centimeters", isActive: unit == .centimeter),
+                .init(value: "m", title: "Meters (m)", description: "Set drawing unit to meters", isActive: unit == .meter),
+                .init(value: "in", title: "Inches (in)", description: "Set drawing unit to inches", isActive: unit == .inch),
+                .init(value: "ft", title: "Feet (ft)", description: "Set drawing unit to feet", isActive: unit == .foot),
+                .init(value: "yd", title: "Yards (yd)", description: "Set drawing unit to yards", isActive: unit == .yard),
+            ]
+        case ("RIBBONMODE", 0):
+            let mode = engine?.ui.ribbonMode
+            all = [
+                .init(value: "menu", title: "Menu", description: "Compact menu ribbon", isActive: mode == .menu),
+                .init(value: "labels", title: "Labels", description: "Labeled compact ribbon", isActive: mode == .labels),
+                .init(value: "full", title: "Full", description: "Full ribbon", isActive: mode == .full),
+            ]
+        case ("SETUISCALE", 0):
+            let isAuto = (engine != nil && engine?.uiScaleOverride == nil)
+            all = [.init(value: "AUTO", title: "AUTO", description: "Reset UI scale to system DPI", isActive: isAuto)]
+        case ("DXFVERSION", 0):
+            let version = engine?.tabManager.activeTab?.dxfVersion
+            all = ["2018", "2013", "2010", "2007", "2004", "2000", "R14", "R13", "R12", "R10"].map { v in
+                .init(value: v, title: v, description: "Save DXF/DWG as \(v)",
+                      isActive: version != nil && DXFVersion.parseExportArgument(v) == version)
+            }
+        case ("VPORTS", 0):
+            let isSplit = engine.map { $0.mainPanes.isSplit } ?? false
+            all = [
+                .init(value: "2V", title: "2 Vertical", description: "Split side by side"),
+                .init(value: "2H", title: "2 Horizontal", description: "Split stacked"),
+                .init(value: "Single", title: "Single", description: "Remove all splits", isActive: !isSplit),
+                .init(value: "Join", title: "Join", description: "Close the focused pane"),
+                .init(value: "Toggle", title: "Toggle", description: "Toggle the split arrangement"),
+            ]
+        case ("LAYERSORT", 0):
+            let current = LayerSortSettings.load()
+            all = LayerSortKey.allCases.map { key in
+                .init(value: key.rawValue.uppercased(), title: key.displayName,
+                      description: "Sort by \(key.displayName)", isActive: key == current.key)
+            }
+            if let picked = pendingPromptCollected.first,
+               let key = LayerSortSettings.key(forCommandToken: picked) {
+                all += [
+                    .init(value: "ASC", title: "Ascending", description: "Sort \(key.displayName) ascending", isActive: key == current.key && current.ascending),
+                    .init(value: "DESC", title: "Descending", description: "Sort \(key.displayName) descending", isActive: key == current.key && !current.ascending),
+                    .init(value: "Reverse", title: "Reverse", description: "Reverse direction"),
+                ]
+            } else {
+                all += [
+                    .init(value: "ASC", title: "Ascending", description: "Sort \(current.key.displayName) ascending", isActive: current.ascending),
+                    .init(value: "DESC", title: "Descending", description: "Sort \(current.key.displayName) descending", isActive: !current.ascending),
+                    .init(value: "Reverse", title: "Reverse", description: "Reverse direction"),
+                ]
+            }
+        case ("LAYERSORT", 1):
+            let current = LayerSortSettings.load()
+            all = [
+                .init(value: "ASC", title: "Ascending", description: "Sort ascending", isActive: current.ascending),
+                .init(value: "DESC", title: "Descending", description: "Sort descending", isActive: !current.ascending),
+                .init(value: "Reverse", title: "Reverse", description: "Reverse direction"),
+            ]
+        default:
+            return []
+        }
+        return all.filter { $0.matches(input) }
+    }
+
     // MARK: - LAYERSORT (validate early, finish like the one-line form)
 
     private func handleLaySortSubmit(

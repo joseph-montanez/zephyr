@@ -207,6 +207,16 @@ public final class DimBreakCommand: FeatureCommand {
         }
     }
 
+    /// Chips for the break-mode question, gated on `.option`.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        guard phase == .option else { return [] }
+        return [
+            FeatureCommandTextOption(value: "Manual", title: "Manual", aliases: ["M"], description: "Pick two break points"),
+            FeatureCommandTextOption(value: "Auto", title: "Auto", aliases: ["A"], description: "Break around selected objects"),
+            FeatureCommandTextOption(value: "Remove", title: "Remove", aliases: ["R"], description: "Remove all breaks"),
+        ].filter { $0.matches(input) }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {}
 
     // MARK: - Pure break math (nonisolated: no actor state, test-callable)

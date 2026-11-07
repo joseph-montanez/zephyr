@@ -81,6 +81,11 @@ public final class ThemeCommand: FeatureCommand {
         return options.filter { $0.matches(input) }
     }
 
+    public func activeOptionValues(engine: PhrostEngine) -> Set<String> {
+        guard let preset = AppTheme.allPresets.first(where: { $0.id == engine.ui.theme.id }) else { return [] }
+        return [preset.shortName]
+    }
+
     // MARK: - Command text handling
 
     public func handleCommandText(

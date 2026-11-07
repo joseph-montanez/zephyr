@@ -32,6 +32,7 @@ struct CommandLineUI {
     /// Tracks previous frame's command line state to detect when it just opened.
     static var _wasCommandLineActive: Bool = false
     static var _needsFocus: Bool = false
+    static var _lastOptionListKey: String? = nil
 
     /// Renders the command line at the bottom of the screen.
     /// - Parameters:
@@ -43,9 +44,12 @@ struct CommandLineUI {
 
         if !isCommandLineActive {
             _wasCommandLineActive = false
+            _lastOptionListKey = nil
             if let prompt = engine.commandProcessor.commandPrompt,
                !prompt.isEmpty {
-                renderPassiveFeaturePrompt(engine: engine, prompt: prompt, dw: dw)
+                let chips = engine.commandProcessor.activeFeatureCommand?.commandTextOptions(
+                    for: engine.commandProcessor.commandBuffer) ?? []
+                renderPassiveFeaturePrompt(engine: engine, prompt: prompt, dw: dw, chips: chips)
             }
             return
         }
@@ -91,10 +95,21 @@ struct CommandLineUI {
         let newText = engine.commandProcessor.commandBuffer
         let activeFeatureCommand = engine.commandProcessor.activeFeatureCommand
         let featureInputActive = activeFeatureCommand != nil
-        let featureOptions = activeFeatureCommand?.commandTextOptions(for: newText) ?? []
+        // While a pending prompted session owns the line (SNAP, GRIDSPACING,
+        // …), the user is answering it — not picking a command.
+        let pendingSessionActive = !featureInputActive
+            && engine.commandProcessor.pendingPromptCommand != nil
+        let featureOptions = stampActive(activeFeatureCommand?.commandTextOptions(for: newText) ?? [],
+                                         activeValues: activeFeatureCommand?.activeOptionValues(engine: engine) ?? [])
         let inputMatches = featureInputActive
             ? []
             : engine.commandProcessor.matchCommands(input: newText)
+        let pendingOptions = pendingSessionActive
+            ? engine.commandProcessor.pendingPromptOptions(for: newText, engine: engine)
+            : []
+        let pendingClampedIndex = !pendingOptions.isEmpty
+            ? max(0, min(engine.commandProcessor.commandSelectionIndex, pendingOptions.count - 1))
+            : 0
         let selIndex = engine.commandProcessor.commandSelectionIndex
         _cmdAutoMatches = inputMatches
         
@@ -104,7 +119,7 @@ struct CommandLineUI {
             : 0
         let showPalette = featureInputActive
             ? !featureOptions.isEmpty
-            : !inputMatches.isEmpty
+            : !pendingOptions.isEmpty || (!pendingSessionActive && !inputMatches.isEmpty)
         
         var currentY = winY
         
@@ -221,20 +236,28 @@ struct CommandLineUI {
                 engine.commandProcessor.commandBuffer = featureOptions[featureClampedIndex].value
                 engine.commandProcessor.commandSelectionIndex = featureClampedIndex
                 CommandLineUI._needsClearSelection = true
-            } else if !inputMatches.isEmpty && ImGuiIsKeyPressed(ImGuiKey_Tab, false) {
+            } else if pendingSessionActive, !pendingOptions.isEmpty, ImGuiIsKeyPressed(ImGuiKey_Tab, false) {
+                engine.commandProcessor.commandBuffer = pendingOptions[pendingClampedIndex].value
+                engine.commandProcessor.commandSelectionIndex = pendingClampedIndex
+                CommandLineUI._needsClearSelection = true
+            } else if !pendingSessionActive && !inputMatches.isEmpty && ImGuiIsKeyPressed(ImGuiKey_Tab, false) {
                 engine.commandProcessor.commandBuffer = inputMatches[0].descriptor.canonicalName
                 engine.commandProcessor.commandSelectionIndex = 0
                 CommandLineUI._needsClearSelection = true
             }
 
             if featureInputActive {
+                seedActiveSelection(options: featureOptions, engine: engine)
                 updateSelection(engine: engine, itemCount: featureOptions.count)
+            } else if pendingSessionActive {
+                seedActiveSelection(options: pendingOptions, engine: engine)
+                updateSelection(engine: engine, itemCount: pendingOptions.count)
             } else {
                 updateSelection(engine: engine, matches: inputMatches)
             }
 
             // One submit path for Enter and Space alike: the selected
-            // autocomplete match runs, otherwise the buffer goes through
+            // autocomplete match runs for non-empty input, otherwise the buffer
             // `executeCommand`, which replays multi-token input stepwise.
             if submitted || spaceSubmit {
                 if featureInputActive {
@@ -255,10 +278,12 @@ struct CommandLineUI {
                         _needsFocus = true
                     }
                 } else if engine.commandProcessor.pendingPromptCommand == nil,
+                          !submitText.isEmpty,
                           !inputMatches.isEmpty && clampedIndex >= 0 && clampedIndex < inputMatches.count {
-                    // No pending session: Enter and Space both run the
+                    // No pending session and non-empty input: Enter and Space run the
                     // selected autocomplete match. While a pending session
-                    // is open the text below goes to it instead (modal).
+                    // is open the text below goes to it instead (modal). Empty input with
+                    // no session just dismisses the line instead of running row zero.
                     let desc = inputMatches[clampedIndex].descriptor
                     engine.commandProcessor.commandLineActive = false
                     engine.commandProcessor.commandBuffer = ""
@@ -270,11 +295,31 @@ struct CommandLineUI {
                 } else {
                     engine.commandProcessor.commandLineActive = false
                     engine.commandProcessor.commandBuffer = ""
-                    engine.commandProcessor.executeCommand(submitText)
+                    let pendingSubmit = engine.commandProcessor.pendingPromptCommand != nil
+                    ? CADCommandProcessor.featureSubmitText(
+                        buffer: submitText,
+                        options: pendingOptions,
+                        selectedIndex: pendingClampedIndex)
+                    : submitText
+                    engine.commandProcessor.executeCommand(pendingSubmit)
                     if engine.commandProcessor.commandLineActive {
                         _needsClearSelection = true
                         _needsFocus = true
                     }
+                }
+            }
+
+            if pendingSessionActive,
+               !pendingOptions.isEmpty,
+               let picked = renderOptionChips(engine: engine, options: pendingOptions, idPrefix: "PendingChip") {
+                // A chip answers the pending session exactly as typing
+                // the token would (shared executeCommand route).
+                engine.commandProcessor.commandLineActive = false
+                engine.commandProcessor.commandBuffer = ""
+                engine.commandProcessor.executeCommand(picked)
+                if engine.commandProcessor.commandLineActive {
+                    _needsClearSelection = true
+                    _needsFocus = true
                 }
             }
 
@@ -287,7 +332,7 @@ struct CommandLineUI {
         currentY += inputHeight + 8.0
 
         // 2. PALETTE WINDOW
-        if showPalette || (!featureInputActive && !newText.isEmpty) {
+        if showPalette || (!featureInputActive && !pendingSessionActive && !newText.isEmpty) {
             ImGuiSetNextWindowPos(ImVec2(x: winX, y: currentY), Int32(ImGuiCond_Always.rawValue), ImVec2(x: 0, y: 0))
             ImGuiSetNextWindowSizeConstraints(ImVec2(x: cmdW, y: 0), ImVec2(x: cmdW, y: dh * 0.6), { _ in }, nil)
             
@@ -295,14 +340,21 @@ struct CommandLineUI {
             igBringWindowToDisplayFront(igGetCurrentWindow())
             if enteredPalette {
                 if featureInputActive {
-                    let currentOptions = activeFeatureCommand?.commandTextOptions(
-                        for: engine.commandProcessor.commandBuffer) ?? []
+                    let currentOptions = stampActive(
+                        activeFeatureCommand?.commandTextOptions(
+                        for: engine.commandProcessor.commandBuffer) ?? [],
+                        activeValues: activeFeatureCommand?.activeOptionValues(engine: engine) ?? [])
                     renderFeatureOptions(
                         engine: engine,
                         options: currentOptions,
                         selectedIndex: currentOptions.isEmpty
                             ? 0
                             : max(0, min(engine.commandProcessor.commandSelectionIndex, currentOptions.count - 1)))
+                } else if pendingSessionActive {
+                    renderFeatureOptions(
+                        engine: engine,
+                        options: pendingOptions,
+                        selectedIndex: pendingClampedIndex)
                 } else if !inputMatches.isEmpty {
                     CommandAutocompleteUI.renderMatches(
                         engine: engine,
@@ -324,12 +376,16 @@ struct CommandLineUI {
     private static func renderPassiveFeaturePrompt(
         engine: PhrostEngine,
         prompt: String,
-        dw: Float
+        dw: Float,
+        chips: [FeatureCommandTextOption]
     ) {
         let promptW = min(Float(1000), max(Float(320), dw - 40))
         let x = (dw - promptW) * 0.5
         let y = AppLayout.belowTabBarY + 8
-        let flags: Int32 = 1 | 2 | 4 | 8 | 64 | 256 | 512 | 4096 | 8192
+        // 512 (NoMouseInputs) stays OFF so chips are clickable; the pill
+        // rect is a small canvas dead zone while a prompt is up. 4096
+        // (NoFocusOnAppearing) keeps raw keys on the canvas/command input.
+        let flags: Int32 = 1 | 2 | 4 | 8 | 64 | 256 | 4096 | 8192
 
         ImGuiSetNextWindowPos(
             ImVec2(x: x, y: y),
@@ -337,7 +393,7 @@ struct CommandLineUI {
             ImVec2(x: 0, y: 0))
         ImGuiSetNextWindowSizeConstraints(
             ImVec2(x: promptW, y: 0),
-            ImVec2(x: promptW, y: 120),
+            ImVec2(x: promptW, y: chips.isEmpty ? 120 : 200),
             { _ in }, nil)
 
         ImGuiPushStyleVarX(Int32(ImGuiStyleVar_WindowPadding.rawValue), 14)
@@ -357,6 +413,12 @@ struct CommandLineUI {
             ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textPrimary)
             ImGuiTextWrappedV(prompt)
             ImGuiPopStyleColor(1)
+            if !chips.isEmpty {
+                ImGuiDummy(ImVec2(x: 0, y: 6))
+                if let picked = renderOptionChips(engine: engine, options: chips, idPrefix: "PromptChip") {
+                    _ = engine.commandProcessor.submitTextToActiveFeatureCommand(picked, engine: engine)
+                }
+            }
         }
         igEnd()
 
@@ -368,6 +430,30 @@ struct CommandLineUI {
     // (or a feature command) instead of prefilling `"NAME "` into the
     // buffer. Space submits exactly like Enter, so a buffer can never hold
     // a same-line `"CMD arg"` tail.
+
+    /// Clickable pill chips for prompt options — the pointer surface.
+    /// Keyboard focus, hotkeys, and typed input route exactly as before.
+    /// Wraps with the shared flow helper; returns the picked value, if any.
+    private static func renderOptionChips(
+        engine: PhrostEngine,
+        options: [FeatureCommandTextOption],
+        idPrefix: String
+    ) -> String? {
+        let chipH: Float = 26
+        var picked: String? = nil
+        for (index, option) in options.enumerated() {
+            let width = PanelWidgets.labelButtonWidth(
+                icon: nil, label: option.title, size: chipH, chevron: false)
+            if index > 0 { PanelWidgets.flow(itemWidth: width, gap: 6) }
+            if PanelWidgets.labelButton(
+                id: "\(idPrefix)\(index)", icon: nil, label: option.title,
+                tooltip: option.description, theme: engine.ui.theme,
+                size: chipH, checked: option.isActive) {
+                picked = option.value
+            }
+        }
+        return picked
+    }
 
     private static func renderFeatureOptions(
         engine: PhrostEngine,
@@ -383,6 +469,7 @@ struct CommandLineUI {
         let rowH = ImGuiGetTextLineHeightWithSpacing()
         let padX = ImGuiGetStyle()?.pointee.FramePadding.x ?? 4.0
         let transparent = ImVec4(x: 0, y: 0, z: 0, w: 0)
+        let markerColumnWidth: Float = 14
 
         for (index, option) in options.enumerated() {
             let aliasText = option.aliases.isEmpty
@@ -428,12 +515,24 @@ struct CommandLineUI {
 
             // Label re-drawn on top of the tint: gold when highlighted,
             // primary otherwise — same pairing as the command palette.
-            igSetCursorScreenPos(ImVec2(x: rowStart.x + padX, y: rowStart.y))
+            if option.isActive {
+                igSetCursorScreenPos(ImVec2(x: rowStart.x + padX, y: rowStart.y))
+                ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textPrimary)
+                ImGuiTextV("●")
+                ImGuiPopStyleColor(1)
+            }
+            igSetCursorScreenPos(ImVec2(x: rowStart.x + padX + markerColumnWidth, y: rowStart.y))
             ImGuiPushStyleColor(
                 Int32(ImGuiCol_Text.rawValue),
                 highlighted ? engine.ui.theme.brandGold : engine.ui.theme.textPrimary)
             ImGuiTextV(aliasText)
             ImGuiPopStyleColor(1)
+            if option.isActive {
+                ImGuiSameLine(0, 6)
+                ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textDim)
+                ImGuiTextV("— current")
+                ImGuiPopStyleColor(1)
+            }
             if !option.description.isEmpty {
                 ImGuiSameLine(260, 0)
                 ImGuiPushStyleColor(Int32(ImGuiCol_Text.rawValue), engine.ui.theme.textDim)
@@ -443,6 +542,22 @@ struct CommandLineUI {
             // Pin the cursor to the next row; the SameLine above leaves it
             // mid-row.
             igSetCursorScreenPos(ImVec2(x: rowStart.x, y: rowStart.y + rowH))
+        }
+    }
+
+    private static func stampActive(_ options: [FeatureCommandTextOption], activeValues: Set<String>) -> [FeatureCommandTextOption] {
+        guard !activeValues.isEmpty else { return options }
+        return options.map {
+            FeatureCommandTextOption(value: $0.value, title: $0.title, aliases: $0.aliases, description: $0.description, isActive: activeValues.contains($0.value))
+        }
+    }
+
+    private static func seedActiveSelection(options: [FeatureCommandTextOption], engine: PhrostEngine) {
+        let key = options.map(\.value).joined(separator: "\u{1F}")
+        defer { _lastOptionListKey = key }
+        guard _lastOptionListKey != key else { return }
+        if let activeIndex = options.firstIndex(where: { $0.isActive }) {
+            engine.commandProcessor.commandSelectionIndex = activeIndex
         }
     }
 

@@ -83,4 +83,8 @@ public final class AutoContrastCommand: FeatureCommand {
             .init(value: "OFF", title: "OFF", description: "Disable auto-contrast for TrueColor values (render exact RGB)")
         ].filter { $0.matches(input) }
     }
+
+    public func activeOptionValues(engine: PhrostEngine) -> Set<String> {
+        [engine.tabManager.activeDocument.autoContrastTrueColor ? "ON" : "OFF"]
+    }
 }

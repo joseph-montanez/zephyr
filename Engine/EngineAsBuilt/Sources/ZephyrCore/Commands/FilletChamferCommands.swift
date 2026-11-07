@@ -1572,6 +1572,32 @@ public final class FilletCommand: FeatureCommand {
         return .handled
     }
 
+    /// Chips for the fillet keywords while no value entry is open;
+    /// numeric phases (radius) and the trim question offer their own
+    /// sets, and Undo only appears once there is something to undo.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        switch inputMode {
+        case .none:
+            var options = [
+                FeatureCommandTextOption(value: "Radius", title: "Radius", aliases: ["R"], description: "Set the fillet radius"),
+                FeatureCommandTextOption(value: "Trim", title: "Trim", aliases: ["T"], description: "Choose trim mode"),
+                FeatureCommandTextOption(value: "Multiple", title: "Multiple", aliases: ["M"], description: "Repeat fillet"),
+                FeatureCommandTextOption(value: "Polyline", title: "Polyline", aliases: ["P"], description: "Fillet a polyline"),
+            ]
+            if operationsInSession > 0 {
+                options.append(FeatureCommandTextOption(value: "Undo", title: "Undo", aliases: ["U"], description: "Undo the last fillet"))
+            }
+            return options.filter { $0.matches(input) }
+        case .trim:
+            return [
+                FeatureCommandTextOption(value: "Trim", title: "Trim", aliases: ["T", "Y"], description: "Trim to the fillet", isActive: Self.trimEnabled),
+                FeatureCommandTextOption(value: "NoTrim", title: "No trim", aliases: ["N"], description: "Keep original segments", isActive: !Self.trimEnabled),
+            ].filter { $0.matches(input) }
+        default:
+            return []
+        }
+    }
+
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {
         guard case .waitingForSecond(let first) = state,
               let second = CornerPicker.pick(at: currentMouse, engine: engine, lineOnly: false)
@@ -1936,6 +1962,39 @@ public final class ChamferCommand: FeatureCommand {
             processor.commandPrompt = "CHAMFER options: Undo, Polyline, Distance, Angle, Trim, Method, Multiple."
         }
         return .handled
+    }
+
+    /// Chips for the chamfer keywords while no value entry is open;
+    /// numeric phases take direct input, while the method and trim
+    /// questions offer their own sets.
+    public func commandTextOptions(for input: String) -> [FeatureCommandTextOption] {
+        switch inputMode {
+        case .none:
+            var options = [
+                FeatureCommandTextOption(value: "Distance", title: "Distance", aliases: ["D"], description: "Set chamfer distances", isActive: Self.method == .distance),
+                FeatureCommandTextOption(value: "Angle", title: "Angle", aliases: ["A"], description: "Set chamfer by angle", isActive: Self.method == .angle),
+                FeatureCommandTextOption(value: "Trim", title: "Trim", aliases: ["T"], description: "Choose trim mode"),
+                FeatureCommandTextOption(value: "Method", title: "Method", aliases: ["E"], description: "Choose distance or angle method"),
+                FeatureCommandTextOption(value: "Multiple", title: "Multiple", aliases: ["M"], description: "Repeat chamfer"),
+                FeatureCommandTextOption(value: "Polyline", title: "Polyline", aliases: ["P"], description: "Chamfer a polyline"),
+            ]
+            if operationsInSession > 0 {
+                options.append(FeatureCommandTextOption(value: "Undo", title: "Undo", aliases: ["U"], description: "Undo the last chamfer"))
+            }
+            return options.filter { $0.matches(input) }
+        case .trim:
+            return [
+                FeatureCommandTextOption(value: "Trim", title: "Trim", aliases: ["T", "Y"], description: "Trim to the chamfer", isActive: Self.trimEnabled),
+                FeatureCommandTextOption(value: "NoTrim", title: "No trim", aliases: ["N"], description: "Keep original segments", isActive: !Self.trimEnabled),
+            ].filter { $0.matches(input) }
+        case .method:
+            return [
+                FeatureCommandTextOption(value: "Distance", title: "Distance", aliases: ["D"], description: "Distance method", isActive: Self.method == .distance),
+                FeatureCommandTextOption(value: "Angle", title: "Angle", aliases: ["A"], description: "Angle method", isActive: Self.method == .angle),
+            ].filter { $0.matches(input) }
+        default:
+            return []
+        }
     }
 
     public func renderOverlay(cam: CameraTransform, engine: PhrostEngine) {
