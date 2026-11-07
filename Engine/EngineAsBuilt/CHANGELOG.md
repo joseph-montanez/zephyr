@@ -3,17 +3,6 @@
 ## Unreleased
 
 ### Added
-- Blocks palette (`BLOCKSPALETTE`): tabbed Current / Recent / Favorites /
-  Libraries panel with vector thumbnails, search, pinning, and Explode /
-  Repeat / Prompt-attributes insertion options. Libraries browse folders of
-  `.dxf` / `.dwg` / `.eab` files and per-block container contents with
-  background parsing; Recent / Favorites, library folders, and insertion
-  defaults persist across restarts. `INSERT` accepts typed `x,y[,z]` points,
-  previews the true-size ghost at the cursor, clones container blocks at
-  commit (single undo, Esc leaves no residue), and prompts for attributes
-  when `ATTREQ=1`. New `BLOCKSPALETTECLOSE` command and `BLOCKSLIBRARYPATH`
-  sysvar; block definitions import (0,0)-based so non-zero `BLOCK` base
-  points place correctly by name.
 - AutoCAD-style layer multi-selection in the Layers panel: Ctrl+Click
   toggles, Shift+Click selects a range, Ctrl+A (panel focused) selects
   all visible layers. Select All / Deselect All / Select All Except
