@@ -63,6 +63,9 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **HATCH respects crossing edges (AutoCAD parity)** - Pick Points in HATCH (and BOUNDARY) now splits edges at interior crossings before tracing the boundary, so a line through a circle hatches only the seed's half instead of the whole circle; the legacy vertex-only walk remains as fallback
 - **Grid visibility and snap interval** - grid lines use per-theme minor/major colors with stronger major lines every `GRIDMAJOR` steps instead of near-invisible grays, following the effective pane/paper/custom background; grid snap (F9) uses the exact `SNAPUNIT` interval at every zoom instead of the zoom-adaptive display spacing
 
+### Maintenance
+- **RevCloud and dimension-command internals (DRY/SOLID, no behavior change)** — split the 1600-line `REVCLOUD` command file into settings, geometry, and command files behind one shared UserDefaults helper, and moved the duplicated two-point picking flow out of `DIMLINEAR` into a shared `TwoPointDimensionCommand` base
+
 ### Performance
 - **Parallel curve-only zoom settle** — band-crossing refresh fans curve entities across a task group at 4-7% of full-regen cost, reproducing full-regen tessellation point-for-point
 - **Snap and trim responsiveness** — fallback snap passes skip the computed discrete stage, intersection snap exits early, trims splice only changed entities and rebuild the entity grid; no geometry behavior changed
