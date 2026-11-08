@@ -1,4 +1,5 @@
 import XCTest
+import ImGui
 @testable import ZephyrCore
 
 @MainActor
@@ -101,5 +102,61 @@ final class RadialNavCaptureTests: XCTestCase {
             sdlReportsRelative: false, radialCapturing: false, panActive: false))
         XCTAssertFalse(RadialNavCapture.shouldForceClear(
             sdlReportsRelative: false, radialCapturing: true, panActive: true))
+    }
+    func testRawPositionPrefersActiveMoveDrag() {
+        // Zone-1 move drag: the nav follows the cursor minus the grab point,
+        // ignoring any remembered spot. This is the drag that used to mirror
+        // across windows when the offset was shared.
+        let p = RadialNavCapture.resolveRawPosition(
+            dragOffset: ImVec2(x: 10, y: 20),
+            pinned: ImVec2(x: 1, y: 1),
+            justShown: false,
+            mousePos: ImVec2(x: 100, y: 120),
+            defaultPosition: ImVec2(x: 0, y: 0))
+        XCTAssertEqual(p.x, 90)
+        XCTAssertEqual(p.y, 100)
+    }
+
+    func testRawPositionFallsBackToRememberedSpot() {
+        let p = RadialNavCapture.resolveRawPosition(
+            dragOffset: nil,
+            pinned: ImVec2(x: 7, y: 9),
+            justShown: false,
+            mousePos: ImVec2(x: 100, y: 120),
+            defaultPosition: ImVec2(x: 0, y: 0))
+        XCTAssertEqual(p.x, 7)
+        XCTAssertEqual(p.y, 9)
+    }
+
+    func testRawPositionIgnoresStaleSpotWhenJustReshown() {
+        // A reopened nav re-seats at the default even with a remembered spot
+        // (e.g. from a larger window), which the clamp then keeps on-screen.
+        let p = RadialNavCapture.resolveRawPosition(
+            dragOffset: nil,
+            pinned: ImVec2(x: 7, y: 9),
+            justShown: true,
+            mousePos: ImVec2(x: 100, y: 120),
+            defaultPosition: ImVec2(x: 5, y: 6))
+        XCTAssertEqual(p.x, 5)
+        XCTAssertEqual(p.y, 6)
+    }
+
+    func testRawPositionDefaultIsLazy() {
+        // The default is an autoclosure: a drag or remembered spot must not
+        // pay for the pane walk.
+        var evaluated = false
+        func fallback() -> ImVec2 {
+            evaluated = true
+            return ImVec2(x: 0, y: 0)
+        }
+        let p = RadialNavCapture.resolveRawPosition(
+            dragOffset: ImVec2(x: 1, y: 1),
+            pinned: nil,
+            justShown: false,
+            mousePos: ImVec2(x: 10, y: 10),
+            defaultPosition: fallback())
+        XCTAssertEqual(p.x, 9)
+        XCTAssertEqual(p.y, 9)
+        XCTAssertFalse(evaluated)
     }
 }

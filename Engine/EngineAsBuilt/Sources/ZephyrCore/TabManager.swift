@@ -1060,7 +1060,7 @@ public final class TabManager {
         guard switchToView(at: newIndex) else { return false }
         if autoOpenPageSetupForNewLayouts { onRequestPageSetup?() }
         // Full-sheet frame in paper units (mm); fits model extents.
-        createSheetViewport(
+        _ = createSheetViewport(
             paperX1: 0, paperY1: 0,
             paperX2: settings.paperWidthMM, paperY2: settings.paperHeightMM)
         return true
@@ -1392,8 +1392,6 @@ public final class TabManager {
         let paperHeight = abs(paperY2 - paperY1)
         guard paperWidth > 1e-9, paperHeight > 1e-9 else { return nil }
         guard let modelView = tab.drawingViews.first(where: { $0.kind == .model }) else { return nil }
-        var viewports = sheetViewports(for: view.document)
-        let nextID = (viewports.map(\.id).max() ?? 1) + 1
         // Fit current model extents into the new frame.
         var modelBounds: BoundingBox3D? = nil
         for entity in modelView.document.entitiesView {
@@ -2749,6 +2747,7 @@ public final class TabManager {
         case cannotSaveWhileInBlockEditor
     }
 }
+
 
 
 

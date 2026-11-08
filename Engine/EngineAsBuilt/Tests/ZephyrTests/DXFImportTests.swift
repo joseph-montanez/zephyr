@@ -2754,7 +2754,7 @@ final class DXFImportTests: XCTestCase {
 
         for entity in entities {
             let typeStr: String
-            if let bid = entity.blockID {
+            if entity.blockID != nil {
                 typeStr = "INSERT(block)"
             } else if let geom = entity.localGeometry {
                 typeStr = "LOOSE(\(geom.map { "\($0)" }.joined(separator: ",")))"

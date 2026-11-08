@@ -734,7 +734,7 @@ public final class PhrostEngine {
         // SSLOCATE/SSMAUTOOPEN: opening a member drawing auto-opens its set.
         // The hop is async because the store lives on the command processor.
         tabManager.onDrawingOpened = { [weak self] path in
-            Task { await self?.commandProcessor.autoOpenSheetSet(for: path) }
+            Task { self?.commandProcessor.autoOpenSheetSet(for: path) }
         }
         // Save-time stamp: a member drawing saved to DXF/DWG carries its
         // set association (`AcSheetSetData`) so LT sees it on open.
@@ -1573,10 +1573,19 @@ public final class PhrostEngine {
             if !FileManager.default.fileExists(atPath: dir.path) {
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             }
+            let previouslyCurrentContext = igGetCurrentContext()
             for window in windowManager.windows where window.imguiContext != nil {
                 activateImGuiContext(for: window)
                 let slotURL = UserSettings.imguiIniURL(slot: window.slotID) ?? iniURL
                 ImGuiSaveIniSettingsToDisk(slotURL.path)
+            }
+            if let owner = windowManager.windows.first(where: {
+                guard let ctx = $0.imguiContext else { return false }
+                return ctx == previouslyCurrentContext
+            }) {
+                activateImGuiContext(for: owner)
+            } else {
+                igSetCurrentContext(previouslyCurrentContext)
             }
         }
         self.running = false
@@ -1847,3 +1856,4 @@ public final class PhrostEngine {
     }
 
 }
+

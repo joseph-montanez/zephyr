@@ -7,7 +7,7 @@ final class TabManagerMoveTests: XCTestCase {
     private func makeManager(tabCount: Int) -> TabManager {
         let manager = TabManager()
         for _ in 0..<tabCount {
-            manager.newTab()
+            _ = manager.newTab()
         }
         return manager
     }

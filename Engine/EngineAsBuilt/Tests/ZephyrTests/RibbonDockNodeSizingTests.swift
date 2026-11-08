@@ -102,7 +102,7 @@ final class RibbonDockNodeSizingTests: XCTestCase {
                 // ImGuiDockNodeFlags_DockSpace (1 << 10) is a private flag
                 // with no Swift binding; the raw bit is what the builder
                 // needs to keep treating this node as a dockspace.
-                ImGuiDockBuilderAddNode(dockID, 1 << 10)
+                _ = ImGuiDockBuilderAddNode(dockID, 1 << 10)
                 ImGuiDockBuilderSetNodeSize(
                     dockID, ImVec2(x: 1280, y: 800))
                 var main: ImGuiID = dockID
@@ -294,7 +294,7 @@ final class RibbonDockNodeSizingTests: XCTestCase {
             host()
             if dockID != 0 {
                 ImGuiDockBuilderRemoveNode(dockID)
-                ImGuiDockBuilderAddNode(dockID, 1 << 10)
+                _ = ImGuiDockBuilderAddNode(dockID, 1 << 10)
                 ImGuiDockBuilderSetNodeSize(
                     dockID, ImVec2(x: 1280, y: 800))
                 var main: ImGuiID = dockID
@@ -382,7 +382,7 @@ final class RibbonDockNodeSizingTests: XCTestCase {
             host()
             if dockID != 0 {
                 ImGuiDockBuilderRemoveNode(dockID)
-                ImGuiDockBuilderAddNode(dockID, 1 << 10)
+                _ = ImGuiDockBuilderAddNode(dockID, 1 << 10)
                 ImGuiDockBuilderSetNodeSize(
                     dockID, ImVec2(x: 1280, y: 800))
                 var main: ImGuiID = dockID
@@ -659,3 +659,4 @@ final class RibbonDockNodeSizingTests: XCTestCase {
                 + "\(availY) of window \(windowY)")
     }
 }
+

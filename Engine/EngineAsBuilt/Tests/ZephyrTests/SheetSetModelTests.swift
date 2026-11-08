@@ -32,7 +32,7 @@ final class SheetSetModelTests: XCTestCase {
     }
 
     func testAutoNumberingScopeSkipsExcluded() {
-        var set = sample()
+        let set = sample()
         XCTAssertEqual(set.autoNumberingScope.map(\.number), ["A100", "A101", "A102"])
         var excluded = set
         excluded.subsets[0].sheets[0].includeForAutoNumbering = false
@@ -59,3 +59,4 @@ final class SheetSetModelTests: XCTestCase {
         XCTAssertEqual(set.allSheetsInOrder.count, 1)
     }
 }
+

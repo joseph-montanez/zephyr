@@ -389,8 +389,10 @@ struct AppUI {
             renderSetupIfNeeded(engine: engine, dw: dw)
         }
 
-        // 12. Radial Navigation Tool (Artrage style)
-        if showsActiveTab && engine.ui.radialNavVisible {
+        // 12. Radial Navigation Tool (Artrage style). Unlike the modal
+        // UIs above it renders in every OS window while visible, one per
+        // window slot, so it stays up on all monitors.
+        if engine.ui.radialNavVisible {
             RadialNavUI.render(engine: engine, dw: dw, dh: dh)
         }
     }

@@ -5,7 +5,7 @@ import XCTest
 final class BlockEditorExitTests: XCTestCase {
     func testDiscardExitRestoresParentDocumentAndRequestsRegeneration() {
         let manager = TabManager()
-        manager.newTab()
+        _ = manager.newTab()
         let parent = manager.activeDocument
         let block = CADBlock(
             name: "ExitBlock",

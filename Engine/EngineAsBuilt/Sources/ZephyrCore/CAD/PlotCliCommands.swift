@@ -430,7 +430,7 @@ public final class PlotCliSession {
                 writePlotToFile(ctx: ctx) { [weak self] in
                     self?.plotted = true
                     self?.step = 17
-                    if let self { ctx.printLine("Save changes to page setup [Yes/No]? <N>") }
+                    if self != nil { ctx.printLine("Save changes to page setup [Yes/No]? <N>") }
                 }
                 return // async continuation re-prompts
             }

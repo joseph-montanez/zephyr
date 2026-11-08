@@ -75,7 +75,7 @@ final class PlotSettingsValidatorTests: XCTestCase {
         XCTAssertTrue(PlotSettingsValidator.isFitEnabled(plotType: 1))
         XCTAssertTrue(PlotSettingsValidator.isOffsetEditable(plotType: 1, centered: false))
         XCTAssertFalse(PlotSettingsValidator.isOffsetEditable(plotType: 1, centered: true))
-        var ps = CADPlotSettings(plotFlags: 4, plotType: 5, standardScaleType: 0)
+        let ps = CADPlotSettings(plotFlags: 4, plotType: 5, standardScaleType: 0)
         let enforced = PlotSettingsValidator.enforcePlotTypeRules(settings: ps)
         XCTAssertEqual(enforced.plotFlags & 4, 0)
         XCTAssertEqual(enforced.standardScaleType, 16)

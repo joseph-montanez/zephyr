@@ -152,7 +152,7 @@ final class PaperSheetGeometryTests: XCTestCase {
                 DrawingView(name: "Layout1", kind: .sheet, document: sheetDoc),
             ]))
         XCTAssertTrue(manager.switchToView(at: 1))
-        var a3 = CADPlotSettings(
+        let a3 = CADPlotSettings(
             paperWidthMM: 420, paperHeightMM: 297,
             marginLM: 10, marginBM: 10, marginRM: 10, marginTM: 10,
             plotPaperUnits: 1, plotRotation: 1)

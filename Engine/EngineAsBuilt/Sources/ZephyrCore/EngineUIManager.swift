@@ -307,6 +307,26 @@ public enum RadialNavCapture {
         }
     }
 
+    /// Which origin the nav window takes this frame: an in-progress move
+    /// drag wins, then the window's remembered spot (unless just reshown),
+    /// else the pane-aware default. Pure so the precedence is
+    /// unit-testable; callers feed it their own window's drag/pinned state,
+    /// which is what keeps a drag in one window from moving the nav in
+    /// another. `defaultPosition` is an autoclosure so the fallback is only
+    /// computed when the first two miss.
+    public static func resolveRawPosition(
+        dragOffset: ImVec2?, pinned: ImVec2?, justShown: Bool,
+        mousePos: ImVec2, defaultPosition: @autoclosure () -> ImVec2
+    ) -> ImVec2 {
+        if let offset = dragOffset {
+            return ImVec2(x: mousePos.x - offset.x, y: mousePos.y - offset.y)
+        } else if !justShown, let pinned {
+            return pinned
+        } else {
+            return defaultPosition()
+        }
+    }
+
     /// Clamp a nav origin into the current window so the whole nav stays
     /// visible. A remembered spot from a larger window (or a drag) would
     /// otherwise end up off-screen after a resize.

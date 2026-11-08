@@ -110,20 +110,20 @@ final class MirrorReflectionRoundTripTests: XCTestCase {
             // Round trip back through the bridge: the CW world arc must
             // come back as the same point set (CCW from the mirrored end
             // angle with the restored positive sweep), not its complement.
-            guard case let .arc(back) = CADPrimitive.fromKernelCurve(
+            guard case let .arc(center: rebuiltCenter, radius: rebuiltRadius, startAngle: rebuiltStart, endAngle: rebuiltEnd, color: _) = CADPrimitive.fromKernelCurve(
                 curves[0], preservingColorFrom: prim) else {
                 XCTFail("expected rebuilt arc")
                 continue
             }
-            XCTAssertEqual(back.center.x, expectCenter.x, accuracy: 1e-9)
-            XCTAssertEqual(back.center.y, expectCenter.y, accuracy: 1e-9)
-            XCTAssertEqual(back.radius, radius, accuracy: 1e-9)
-            XCTAssertEqual(back.endAngle - back.startAngle, endAngle - startAngle, accuracy: 1e-9)
+            XCTAssertEqual(rebuiltCenter.x, expectCenter.x, accuracy: 1e-9)
+            XCTAssertEqual(rebuiltCenter.y, expectCenter.y, accuracy: 1e-9)
+            XCTAssertEqual(rebuiltRadius, radius, accuracy: 1e-9)
+            XCTAssertEqual(rebuiltEnd - rebuiltStart, endAngle - startAngle, accuracy: 1e-9)
             let worldEnd = transform.transformPoint(localEnd)
             let expectStartAngle = atan2(worldEnd.y - expectCenter.y, worldEnd.x - expectCenter.x)
             let expectEndAngle = atan2(worldStart.y - expectCenter.y, worldStart.x - expectCenter.x)
-            XCTAssertEqual(back.startAngle, expectStartAngle, accuracy: 1e-9)
-            XCTAssertEqual(back.endAngle, expectEndAngle, accuracy: 1e-9)
+            XCTAssertEqual(rebuiltStart, expectStartAngle, accuracy: 1e-9)
+            XCTAssertEqual(rebuiltEnd, expectEndAngle, accuracy: 1e-9)
         }
     }
 

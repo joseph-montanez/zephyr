@@ -461,9 +461,9 @@ final class BlockLibraryTests: XCTestCase {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try doorDXF().write(
             to: folder.appendingPathComponent("door.dxf"), atomically: true, encoding: .utf8)
-        FileManager.default.createFile(
+        _ = FileManager.default.createFile(
             atPath: folder.appendingPathComponent("plan.dwg").path, contents: Data())
-        FileManager.default.createFile(
+        _ = FileManager.default.createFile(
             atPath: folder.appendingPathComponent("notes.txt").path, contents: Data())
         return folder
     }
@@ -513,7 +513,7 @@ final class BlockLibraryTests: XCTestCase {
     func testResolveLocalURLRejectsUnsupported() async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("blocklib-note-\(UUID().uuidString).txt")
-        FileManager.default.createFile(atPath: url.path, contents: Data())
+        _ = FileManager.default.createFile(atPath: url.path, contents: Data())
         defer { try? FileManager.default.removeItem(at: url) }
         do {
             _ = try await BlockLibraryService.resolveBundle(sourcePath: url.path)
@@ -636,3 +636,4 @@ final class BlockLibraryTests: XCTestCase {
         XCTAssertFalse(doc.allBlocks.contains { $0.name == "Chair" })
     }
 }
+

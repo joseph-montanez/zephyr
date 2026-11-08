@@ -730,7 +730,7 @@ public extension LayerTransactionService {
     // MARK: Layer states
 
     /// Restore options overriding the stored state flags for one restore.
-    public struct LayerStateRestoreOptions: Equatable, Sendable {
+    struct LayerStateRestoreOptions: Equatable, Sendable {
         public var maskOverride: LayerStatePropertyMask?
         public var turnOffMissing: Bool?
 
@@ -745,7 +745,7 @@ public extension LayerTransactionService {
 
     /// Outcome of a state restore: layers updated, layers turned off by
     /// the missing-layer option, and state entries with no live layer.
-    public struct LayerStateRestoreReport: Equatable, Sendable {
+    struct LayerStateRestoreReport: Equatable, Sendable {
         public let applied: Int
         public let turnedOff: Int
         public let missing: Int
@@ -763,7 +763,7 @@ public extension LayerTransactionService {
     }
 
     /// Capture the current table as a named state (one undo step).
-    public func saveLayerState(
+    func saveLayerState(
         in primary: CADDocument,
         name: String,
         stateDescription: String = "",
@@ -789,7 +789,7 @@ public extension LayerTransactionService {
     /// Restore a named state onto the live table (one undo step).
     /// Unknown state names fail with no state change. State entries
     /// without a live layer are counted as missing and ignored.
-    public func restoreLayerState(
+    func restoreLayerState(
         in primary: CADDocument,
         siblings: [CADDocument] = [],
         named name: String,
@@ -837,7 +837,7 @@ public extension LayerTransactionService {
     }
 
     /// Delete a named state (one undo step).
-    public func deleteLayerState(
+    func deleteLayerState(
         in primary: CADDocument, named name: String
     ) -> Result<Void, LayerStateError> {
         let key = Self.settingsKey(name)
@@ -873,7 +873,7 @@ public extension LayerTransactionService {
     }
 
     /// Sorted state names for UI / LIST output.
-    public func layerStateNames(in primary: CADDocument) -> [String] {
+    func layerStateNames(in primary: CADDocument) -> [String] {
         primary.layerStates.values.map(\.name).sorted {
             $0.caseInsensitiveCompare($1) == .orderedAscending
         }
@@ -1116,7 +1116,7 @@ public extension LayerTransactionService {
     /// Restore the most recent LAYERP checkpoint in one undo step.
     /// False (and no undo) when the stack is empty.
     @discardableResult
-    public func restoreLayerPrevious(
+    func restoreLayerPrevious(
         in primary: CADDocument,
         siblings: [CADDocument] = []
     ) -> Bool {
@@ -1141,7 +1141,7 @@ public extension LayerTransactionService {
     /// Mark every layer reconciled in one undo step and refresh the
     /// notification baseline. Returns the reconciled count.
     @discardableResult
-    public func reconcileAllLayers(
+    func reconcileAllLayers(
         in primary: CADDocument,
         siblings: [CADDocument] = []
     ) -> Int {

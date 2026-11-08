@@ -10,7 +10,7 @@ final class SelectionPersistenceTests: XCTestCase {
 
     private func makeManager(tabCount: Int) -> TabManager {
         let manager = TabManager()
-        for _ in 0..<tabCount { manager.newTab() }
+        for _ in 0..<tabCount { _ = manager.newTab() }
         return manager
     }
 

@@ -786,7 +786,7 @@ public final class StretchCommand: FeatureCommand {
             for primitive in previewGeometry {
                 for strip in Self.tessellatedWorldStrips(
                     primitive, transform: previewTransform) {
-                    var points = strip.map(screen)
+                    let points = strip.map(screen)
                     guard points.count >= 2 else { continue }
                     points.withUnsafeBufferPointer { buffer in
                         ImDrawListAddPolyline(

@@ -6,99 +6,99 @@ import XCTest
 /// test methods); every broker call hops with await.
 final class LispBrokerTests: XCTestCase {
     func testRequestOfferValue() async throws {
-        let broker = await LispInputBroker()
+        let broker = LispInputBroker()
         async let answer = broker.requestCancellable(.line(prompt: "p", allowSpaces: false))
-        await broker.offer(.line("hi"))
+        broker.offer(.line("hi"))
         let event = try await answer
         XCTAssertEqual(event, .line("hi"))
-        let settles = await broker.settleCount
+        let settles = broker.settleCount
         XCTAssertEqual(settles, 1)
-        let pending = await broker.hasPending
+        let pending = broker.hasPending
         XCTAssertFalse(pending)
     }
 
     func testOfferBeforeRequestDrains() async throws {
-        let broker = await LispInputBroker()
+        let broker = LispInputBroker()
         // grread pattern: events arrive before anyone awaits.
-        await broker.offer(.device(LispValue(list: [.int(3)])))
-        let queued = await broker.queuedCount
+        broker.offer(.device(LispValue(list: [.int(3)])))
+        let queued = broker.queuedCount
         XCTAssertEqual(queued, 1)
         let event = try await broker.requestCancellable(.device)
         XCTAssertEqual(event, .device(LispValue(list: [.int(3)])))
-        let settles = await broker.settleCount
+        let settles = broker.settleCount
         XCTAssertEqual(settles, 1)
     }
 
     func testMismatchedOfferIsStale() async throws {
-        let broker = await LispInputBroker()
+        let broker = LispInputBroker()
         async let answer = broker.requestCancellable(.point(prompt: "p"))
         // Wait until the request is provably suspended (no queue shortcut).
         for _ in 0..<10_000 {
-            if await broker.hasPending { break }
+            if broker.hasPending { break }
             await Task.yield()
         }
-        let suspended = await broker.hasPending
+        let suspended = broker.hasPending
         XCTAssertTrue(suspended)
-        await broker.offer(.line("wrong kind"))
-        let stale = await broker.staleCount
+        broker.offer(.line("wrong kind"))
+        let stale = broker.staleCount
         XCTAssertEqual(stale, 1)
-        let pending = await broker.hasPending
+        let pending = broker.hasPending
         XCTAssertTrue(pending, "mismatched offer must not settle")
-        await broker.offer(.point([1, 2]))
+        broker.offer(.point([1, 2]))
         let event = try await answer
         XCTAssertEqual(event, .point([1, 2]))
-        let settles = await broker.settleCount
+        let settles = broker.settleCount
         XCTAssertEqual(settles, 1)
     }
 
     func testCancelPendingThrowsUserCancel() async throws {
-        let broker = await LispInputBroker()
+        let broker = LispInputBroker()
         async let answer = broker.requestCancellable(.entity(prompt: "p"))
         // Wait until the request is provably suspended, then cancel it.
         var suspended = false
         for _ in 0..<10_000 {
-            if await broker.hasPending {
+            if broker.hasPending {
                 suspended = true
                 break
             }
             await Task.yield()
         }
         XCTAssertTrue(suspended, "request never suspended")
-        await broker.cancelPending()
+        broker.cancelPending()
         do {
             _ = try await answer
             XCTFail("expected cancel")
         } catch let error as LispError {
             XCTAssertEqual(error, .userCancel)
         }
-        let settles = await broker.settleCount
+        let settles = broker.settleCount
         XCTAssertEqual(settles, 1)
     }
 
     func testIdleCancelArmsNextRequest() async throws {
-        let broker = await LispInputBroker()
+        let broker = LispInputBroker()
         // Cancel with nothing outstanding arms the flag (a cancel racing
         // request startup wins): the next request throws without suspending.
-        await broker.cancelPending()
+        broker.cancelPending()
         do {
             _ = try await broker.requestCancellable(.line(prompt: "p", allowSpaces: false))
             XCTFail("expected cancel")
         } catch let error as LispError {
             XCTAssertEqual(error, .userCancel)
         }
-        let pending = await broker.hasPending
+        let pending = broker.hasPending
         XCTAssertFalse(pending)
     }
 
     func testTaskCancelSettlesOnce() async throws {
-        let broker = await LispInputBroker()
+        let broker = LispInputBroker()
         let task = Task {
             try await broker.requestCancellable(.line(prompt: "p", allowSpaces: false))
         }
         // Wait until the request is provably suspended, then cancel it.
         var suspended = false
         for _ in 0..<10_000 {
-            if await broker.hasPending {
+            if broker.hasPending {
                 suspended = true
                 break
             }
@@ -112,42 +112,42 @@ final class LispBrokerTests: XCTestCase {
         } catch let error as LispError {
             XCTAssertEqual(error, .userCancel)
         }
-        let settles = await broker.settleCount
+        let settles = broker.settleCount
         XCTAssertEqual(settles, 1)
-        let pending = await broker.hasPending
+        let pending = broker.hasPending
         XCTAssertFalse(pending)
     }
 
     func testPostSettleOfferIgnored() async throws {
-        let broker = await LispInputBroker()
+        let broker = LispInputBroker()
         async let answer = broker.requestCancellable(.line(prompt: "p", allowSpaces: false))
-        await broker.offer(.line("first"))
+        broker.offer(.line("first"))
         _ = try await answer
         // Slot is idle now: the late offer queues (harmless), never resumes.
-        await broker.offer(.line("late"))
-        let settles = await broker.settleCount
+        broker.offer(.line("late"))
+        let settles = broker.settleCount
         XCTAssertEqual(settles, 1)
-        let queued = await broker.queuedCount
+        let queued = broker.queuedCount
         XCTAssertEqual(queued, 1)
     }
 
     func testQueueBound() async throws {
-        let broker = await LispInputBroker()
+        let broker = LispInputBroker()
         for _ in 0..<(LispInputBroker.queueBound + 10) {
-            await broker.offer(.line("x"))
+            broker.offer(.line("x"))
         }
-        let queued = await broker.queuedCount
+        let queued = broker.queuedCount
         XCTAssertEqual(queued, LispInputBroker.queueBound)
     }
 
     func testSpamFuzzSettlesExactlyOnce() async throws {
-        let broker = await LispInputBroker()
+        let broker = LispInputBroker()
         async let answer = broker.requestCancellable(.point(prompt: "p"))
         // Wait until the request is provably suspended: without the wait,
         // offers race request startup and the winner is timing-dependent.
         var suspended = false
         for _ in 0..<10_000 {
-            if await broker.hasPending {
+            if broker.hasPending {
                 suspended = true
                 break
             }
@@ -158,25 +158,26 @@ final class LispBrokerTests: XCTestCase {
         // and only the first of those.
         for index in 0..<200 {
             if index % 3 == 0 {
-                await broker.offer(.line("noise"))
+                broker.offer(.line("noise"))
             } else {
-                await broker.offer(.point([Double(index)]))
+                broker.offer(.point([Double(index)]))
             }
         }
         let event = try await answer
         // First point offer wins (index 1).
         XCTAssertEqual(event, .point([1.0]))
-        let settles = await broker.settleCount
+        let settles = broker.settleCount
         XCTAssertEqual(settles, 1)
-        let pending = await broker.hasPending
+        let pending = broker.hasPending
         XCTAssertFalse(pending)
     }
 
     func testDrainQueueDisarms() async throws {
-        let broker = await LispInputBroker()
-        await broker.offer(.line("stale"))
-        await broker.drainQueue()
-        let queued = await broker.queuedCount
+        let broker = LispInputBroker()
+        broker.offer(.line("stale"))
+        broker.drainQueue()
+        let queued = broker.queuedCount
         XCTAssertEqual(queued, 0)
     }
 }
+

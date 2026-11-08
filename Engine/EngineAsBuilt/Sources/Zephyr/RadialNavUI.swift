@@ -20,19 +20,19 @@ import SwiftSDL
 @MainActor
 struct RadialNavUI {
     static var lastRotationMouseAngle: Double? = nil
-    static var activeZone: Int? = nil
-    static var wasDragged: Bool = false
-    static var wasActive: Bool = false
+    static var activeZoneBySlot: [WindowSlotID: Int] = [:]
+    static var wasDraggedBySlot: [WindowSlotID: Bool] = [:]
+    static var wasActiveBySlot: [WindowSlotID: Bool] = [:]
     static var openRotationPopup: Bool = false
     static var targetRotationDeg: Float = 0
     static var isDoubleClicked: Bool = false
-    static var popupRotationDeg: Float = 0.0
-    static var dragOffset: ImVec2? = nil
-    static var dragStartMousePos: ImVec2? = nil
-    static var wasVisible: Bool = false
+    static var popupRotationDegBySlot: [WindowSlotID: Float] = [:]
+    static var dragOffsetBySlot: [WindowSlotID: ImVec2] = [:]
+    static var dragStartMousePosBySlot: [WindowSlotID: ImVec2] = [:]
+    static var wasVisibleBySlot: [WindowSlotID: Bool] = [:]
     /// Last rendered nav origin, fed back in so a resize clamps the
     /// remembered (or dragged) spot into the current window.
-    static var pinnedPos: ImVec2? = nil
+    static var pinnedPosBySlot: [WindowSlotID: ImVec2] = [:]
     /// SDL window that owns the in-progress relative-mouse capture. The
     /// release-side relative-mode-off + warp must go to this same window,
     /// never implicitly to the main window.
@@ -63,6 +63,10 @@ struct RadialNavUI {
     }
 
     static func render(engine: PhrostEngine, dw: Float, dh: Float) {
+        // This frame renders into one OS window: all nav state below is
+        // keyed by that window's slot so a drag in one window never moves
+        // the nav in another.
+        let slot = engine.ui.frameSlot
         // Per-frame stray-capture reconcile (runs whether or not the nav is
         // visible): relative mode centers and hides the cursor, so a mode
         // with no live claimant — no radial zone drag, no middle-button pan —
@@ -81,23 +85,23 @@ struct RadialNavUI {
         guard engine.ui.radialNavVisible else {
             // Hidden mid-drag (e.g. active window changed): never leave
             // relative mouse mode dangling on the capture window.
-            if wasActive, let handle = activeWindowHandle {
+            if wasActiveBySlot[slot] ?? false, let handle = activeWindowHandle {
                 _ = SDL_SetWindowRelativeMouseMode(handle, false)
             }
-            if wasActive {
+            if wasActiveBySlot[slot] ?? false {
                 engine.interaction.forceHideOSCursor = false
                 engine.interaction.radialPanActive = false
             }
-            wasActive = false
+            wasActiveBySlot[slot] = false
             activeWindowHandle = nil
-            dragStartMousePos = nil
-            dragOffset = nil
-            activeZone = nil
-            wasVisible = false
+            dragStartMousePosBySlot[slot] = nil
+            dragOffsetBySlot[slot] = nil
+            activeZoneBySlot[slot] = nil
+            wasVisibleBySlot[slot] = false
             return
         }
-        let justShown = !wasVisible
-        wasVisible = true
+        let justShown = !(wasVisibleBySlot[slot] ?? false)
+        wasVisibleBySlot[slot] = true
         let navWindow = targetWindowHandle(engine: engine)
 
         let size: Float = 320
@@ -106,19 +110,16 @@ struct RadialNavUI {
         // Own the position every frame so the nav can never end up off
         // screen: a remembered spot from a larger window (or a drag) is
         // clamped into the current window, keeping the nav visible across
-        // resizes. `pinnedPos` feeds the last rendered position back in; a
+        // resizes. `pinnedPosBySlot` feeds the last rendered position back in; a
         // fresh show with no pinned spot uses the pane-aware default.
         let frameIO = ImGuiGetIO()!
-        let rawPos: ImVec2
-        if let offset = dragOffset {
-            rawPos = ImVec2(
-                x: frameIO.pointee.MousePos.x - offset.x,
-                y: frameIO.pointee.MousePos.y - offset.y)
-        } else if !justShown, let pinned = pinnedPos {
-            rawPos = pinned
-        } else {
-            rawPos = defaultPosition(engine: engine, dw: dw, dh: dh, size: size, padding: padding)
-        }
+        let rawPos = RadialNavCapture.resolveRawPosition(
+            dragOffset: dragOffsetBySlot[slot],
+            pinned: pinnedPosBySlot[slot],
+            justShown: justShown,
+            mousePos: frameIO.pointee.MousePos,
+            defaultPosition: defaultPosition(
+                engine: engine, dw: dw, dh: dh, size: size, padding: padding))
         ImGuiSetNextWindowPos(
             RadialNavCapture.clampedPosition(
                 x: rawPos.x, y: rawPos.y, dw: dw, dh: dh, size: size),
@@ -141,7 +142,7 @@ struct RadialNavUI {
         if igBegin("RadialNavUI", &open, flags) {
             let drawList = ImGuiGetWindowDrawList()!
             let winPos = ImGuiGetWindowPos()
-            pinnedPos = winPos
+            pinnedPosBySlot[slot] = winPos
             let center = ImVec2(x: winPos.x + size / 2, y: winPos.y + size / 2)
             
             let io = ImGuiGetIO()!
@@ -187,11 +188,11 @@ struct RadialNavUI {
                 }
             }
             
-            if isActive && activeZone == nil {
-                activeZone = hoveredZone
+            if isActive && activeZoneBySlot[slot] == nil {
+                activeZoneBySlot[slot] = hoveredZone
             }
             
-            let currentZone = activeZone ?? hoveredZone
+            let currentZone = activeZoneBySlot[slot] ?? hoveredZone
 
             // Colors (using explicit engine theme)
             let bgVec = engine.ui.theme.panelBg
@@ -294,13 +295,13 @@ struct RadialNavUI {
             // The physical button is the backstop: hardware already up while
             // the item still reads active means the up event never arrived.
             var itemActive = isActive
-            if wasActive && isActive {
+            if (wasActiveBySlot[slot] ?? false) && isActive {
                 var physicalX: Float = 0
                 var physicalY: Float = 0
                 let buttons = SDL_GetMouseState(&physicalX, &physicalY)
                 // Bit 0 is the left-button mask (SDL_BUTTON_MASK(LEFT)).
                 if RadialNavCapture.shouldForceRelease(
-                    wasActive: wasActive, isActive: isActive,
+                    wasActive: wasActiveBySlot[slot] ?? false, isActive: isActive,
                     physicalLeftDown: (buttons & 0x01) != 0
                 ) {
                     itemActive = false
@@ -308,9 +309,9 @@ struct RadialNavUI {
             }
             engine.interaction.radialPanActive = itemActive && currentZone == 3
             if itemActive {
-                if !wasActive {
-                    wasDragged = false
-                    dragStartMousePos = mousePos
+                if !(wasActiveBySlot[slot] ?? false) {
+                    wasDraggedBySlot[slot] = false
+                    dragStartMousePosBySlot[slot] = mousePos
                     // Only pan/zoom/rotate need relative deltas. Moving the
                     // nav itself (zone 1) is an absolute drag: capturing for
                     // it parks the cursor mid-window and, with no warp-back
@@ -327,8 +328,8 @@ struct RadialNavUI {
                 let dx = Double(relX)
                 let dy = Double(relY)
 
-                if dx != 0 || dy != 0 { wasDragged = true }
-                wasActive = true
+                if dx != 0 || dy != 0 { wasDraggedBySlot[slot] = true }
+                wasActiveBySlot[slot] = true
                 
                 // Absolute drags (nav move, clicks) never captured, so the
                 // OS cursor stays visible for them.
@@ -342,13 +343,13 @@ struct RadialNavUI {
 
                 if currentZone == 6 {
                     // Rotate
-                    if !isHugeDelta && wasDragged {
+                    if !isHugeDelta && (wasDraggedBySlot[slot] ?? false) {
                         let rotSensitivity: Double = 0.005
                         engine.camera.rotation -= dx * rotSensitivity
                     }
                 } else if currentZone == 3 {
                     // Pan
-                    if !isHugeDelta && wasDragged {
+                    if !isHugeDelta && (wasDraggedBySlot[slot] ?? false) {
                         // Pan in the currently displayed (rotated) view axes.
                         // The camera manager owns the screen→world delta transform so
                         // NAV behaves identically to middle-mouse, touch, and PAN.
@@ -356,45 +357,45 @@ struct RadialNavUI {
                     }
                 } else if currentZone == 2 {
                     // Right - Zoom In
-                    if !isHugeDelta && wasDragged {
+                    if !isHugeDelta && (wasDraggedBySlot[slot] ?? false) {
                         let zoomFactor = 1.0 - dy * 0.01 + dx * 0.01
                         engine.camera.zoomViewCentered(factor: zoomFactor)
                     }
                 } else if currentZone == 4 {
                     // Left - Zoom Out
-                    if !isHugeDelta && wasDragged {
+                    if !isHugeDelta && (wasDraggedBySlot[slot] ?? false) {
                         let zoomFactor = 1.0 + dy * 0.01 - dx * 0.01
                         engine.camera.zoomViewCentered(factor: zoomFactor)
                     }
                 } else if currentZone == 1 {
-                    if !isHugeDelta && wasDragged {
-                        if dragOffset == nil {
+                    if !isHugeDelta && (wasDraggedBySlot[slot] ?? false) {
+                        if dragOffsetBySlot[slot] == nil {
                             let io = ImGuiGetIO()!
-                            dragOffset = ImVec2(
+                            dragOffsetBySlot[slot] = ImVec2(
                                 x: io.pointee.MousePos.x - winPos.x,
                                 y: io.pointee.MousePos.y - winPos.y)
                         }
                     }
                 }
             } else {
-                if wasActive {
+                if wasActiveBySlot[slot] ?? false {
                     engine.interaction.forceHideOSCursor = false
                     // Only a relative-capture drag parked the cursor: plain
                     // absolute drags (nav move, clicks) never captured, so
                     // there is nothing to release or warp back.
                     if let captureWindow = activeWindowHandle {
                         _ = SDL_SetWindowRelativeMouseMode(captureWindow, false)
-                        if let startPos = dragStartMousePos,
+                        if let startPos = dragStartMousePosBySlot[slot],
                            RadialNavCapture.wantsWarpBack(
-                               activeZone: activeZone, wasDragged: wasDragged
+                               activeZone: activeZoneBySlot[slot], wasDragged: wasDraggedBySlot[slot] ?? false
                            ) {
                             SDL_WarpMouseInWindow(captureWindow, startPos.x, startPos.y)
                         }
                     }
-                    dragOffset = nil
-                    dragStartMousePos = nil
+                    dragOffsetBySlot[slot] = nil
+                    dragStartMousePosBySlot[slot] = nil
                     activeWindowHandle = nil
-                    if !wasDragged {
+                    if !(wasDraggedBySlot[slot] ?? false) {
                         if currentZone == 1 {
                             engine.ui.radialNavVisible = false
                         } else if currentZone == 5 {
@@ -402,8 +403,8 @@ struct RadialNavUI {
                         }
                     }
                 }
-                wasActive = false
-                activeZone = nil
+                wasActiveBySlot[slot] = false
+                activeZoneBySlot[slot] = nil
                 lastRotationMouseAngle = nil
             }
 
@@ -442,16 +443,18 @@ struct RadialNavUI {
 
             // Double click for precise rotation
             if isHovered && hoveredZone == 6 && ImGuiIsMouseDoubleClicked(ImGuiMouseButton(ImGuiMouseButton_Left.rawValue)) {
-                popupRotationDeg = Float(-engine.camera.rotation * 180 / .pi)
+                popupRotationDegBySlot[slot] = Float(-engine.camera.rotation * 180 / .pi)
                 igOpenPopup_Str("SetRotationPopup", 0)
             }
 
             if igBeginPopup("SetRotationPopup", 0) {
                 igTextUnformatted("Set Precise Rotation", nil)
-                if igInputFloat("Degrees", &popupRotationDeg, 0, 0, "%.2f", Int32(ImGuiInputTextFlags_EnterReturnsTrue.rawValue)) {
-                    engine.camera.rotation = Double(-popupRotationDeg) * .pi / 180.0
+                var popupDeg = popupRotationDegBySlot[slot] ?? 0.0
+                if igInputFloat("Degrees", &popupDeg, 0, 0, "%.2f", Int32(ImGuiInputTextFlags_EnterReturnsTrue.rawValue)) {
+                    engine.camera.rotation = Double(-popupDeg) * .pi / 180.0
                     igCloseCurrentPopup()
                 }
+                popupRotationDegBySlot[slot] = popupDeg
                 igEndPopup()
             }
         }

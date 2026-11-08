@@ -468,7 +468,9 @@ public enum PDFExporter {
                 // Mirrors resolveTextPlotColor's display preservation.
                 var rgb: (UInt8, UInt8, UInt8)
                 switch pen?.colorPolicy {
-                case 5, 0 where pen?.colorARGB != nil:
+                case 5:
+                    rgb = (resolved.r, resolved.g, resolved.b)
+                case 0 where pen?.colorARGB != nil:
                     rgb = (resolved.r, resolved.g, resolved.b)
                 case 3:
                     rgb = (resolved.r, resolved.g, resolved.b)

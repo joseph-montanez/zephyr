@@ -102,7 +102,7 @@ final class LispVarStoreSharingTests: XCTestCase {
         // must answer without an evaluator or a host.
         let processor = CADCommandProcessor()
         let document = makeDocument()
-        processor.lispVars.set(
+        _ = processor.lispVars.set(
             "GRIDMODE", .int(1), document: document)
         XCTAssertEqual(
             processor.lispVars.get(

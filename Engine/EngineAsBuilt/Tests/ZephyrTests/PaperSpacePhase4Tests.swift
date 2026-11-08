@@ -181,7 +181,7 @@ final class PaperSpacePhase4Tests: XCTestCase {
         try DXFExporter.export(views: views, to: url, tileMode: 0)
         let reimported = try DXFImporter.importDXFViews(filePath: url.path)
         XCTAssertEqual(reimported.views.count, 2)
-        let modelView = try XCTUnwrap(reimported.views.first(where: { $0.kind == .model }))
+        _ = try XCTUnwrap(reimported.views.first(where: { $0.kind == .model }))
         let sheetView = try XCTUnwrap(reimported.views.first(where: { $0.kind == .sheet }))
         // Model groups stay on the model view; paper groups on the sheet.
         // Groups travel on the result + per-view payloads.
