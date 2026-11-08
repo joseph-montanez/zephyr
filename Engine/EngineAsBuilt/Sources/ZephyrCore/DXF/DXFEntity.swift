@@ -1447,6 +1447,8 @@ public class DXFTableEntity: DXFEntity {
     public var insertion: Vector3
     public var horizontal: Vector3
     public var data: DataTableData
+    public var titleSuppressedOverride: Bool = false
+    public var headerSuppressedOverride: Bool = false
 
     public override init(eType: DXFEType = .tABLE) {
         self.blockName = ""

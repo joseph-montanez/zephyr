@@ -2103,6 +2103,8 @@ extension DXFReader {
         var insertion = Vector3.zero
         var horizontal = Vector3(x: 1, y: 0, z: 0)
         var tableStyleHandle: String?
+        var tableTitleSuppressed = false
+        var tableHeaderSuppressed = false
         var blockRecordHandle: String?
         var tableGroups: [(Int, String)] = []
         var subclass = ""
@@ -2159,6 +2161,13 @@ extension DXFReader {
         table.blockName = blockName
         table.insertion = insertion
         table.horizontal = horizontal
+        for (code, value) in tableGroups {
+            if code == 171 { break }
+            if code == 280 { tableTitleSuppressed = i(value) != 0 }
+            else if code == 281 { tableHeaderSuppressed = i(value) != 0 }
+        }
+        table.titleSuppressedOverride = tableTitleSuppressed
+        table.headerSuppressedOverride = tableHeaderSuppressed
 
         var rowCount = 0
         var columnCount = 0
@@ -3265,11 +3274,13 @@ extension DXFReader {
 
         func applyStyleAlignment(_ style: TableStyleInfo, to table: DXFTableEntity) {
             // Row 0 is the title row and the next row the column-heading
-            // row, unless the style suppresses either; all other rows
+            // row, unless the style or the table entity suppresses either; all other rows
             // take the data row style. Only cells with no explicit
             // group-170 override inherit (parseTable leaves those nil).
-            let titleRow = style.suppressTitle ? nil : 0
-            let headerRow = style.suppressHeader ? nil : (style.suppressTitle ? 0 : 1)
+            let titleSuppressed = style.suppressTitle || table.titleSuppressedOverride
+            let headerSuppressed = style.suppressHeader || table.headerSuppressedOverride
+            let titleRow: Int? = titleSuppressed ? nil : 0
+            let headerRow: Int? = headerSuppressed ? nil : (titleSuppressed ? 0 : 1)
             for rowIndex in table.data.rows.indices {
                 let code: Int?
                 if rowIndex == titleRow {

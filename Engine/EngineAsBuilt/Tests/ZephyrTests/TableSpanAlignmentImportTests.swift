@@ -85,6 +85,74 @@ final class TableSpanAlignmentImportTests: XCTestCase {
     }
 
     @MainActor
+    private func makeSuppressedTitleBlockDXF() -> String {
+        var dxf = ""
+        func pair(_ code: Int, _ value: String) { dxf += "\(code)\n\(value)\n" }
+        pair(0, "SECTION"); pair(2, "HEADER")
+        pair(9, "$ACADVER"); pair(1, "AC1032")
+        pair(0, "ENDSEC")
+        pair(0, "SECTION"); pair(2, "ENTITIES")
+        pair(0, "ACAD_TABLE")
+        pair(5, "FE96")
+        pair(100, "AcDbEntity"); pair(8, "CADdetails-6-HEAVY")
+        pair(100, "AcDbBlockReference")
+        pair(2, "*T2"); pair(10, "0.0"); pair(20, "0.0"); pair(30, "0.0")
+        pair(100, "AcDbTable")
+        pair(280, "0")
+        pair(342, "FE4C")
+        pair(11, "1.0"); pair(21, "0.0"); pair(31, "0.0")
+        pair(90, "22"); pair(91, "1"); pair(92, "1")
+        pair(93, "3"); pair(94, "0"); pair(95, "0"); pair(96, "0")
+        pair(280, "1"); pair(281, "1")
+        pair(141, "7.0"); pair(142, "165.65")
+        pair(171, "1"); pair(172, "0"); pair(173, "0"); pair(174, "0")
+        pair(175, "1"); pair(176, "1"); pair(145, "0.0")
+        pair(140, "2.0")
+        pair(301, "CELL_VALUE"); pair(93, "6"); pair(90, "512"); pair(94, "0")
+        pair(300, ""); pair(302, "PLAY SYSTEMS: SHIPS & CASTLES"); pair(304, "ACVALUE_END")
+        pair(0, "ENDSEC")
+        pair(0, "SECTION"); pair(2, "OBJECTS")
+        pair(0, "TABLESTYLE")
+        pair(5, "FE4C"); pair(330, "0")
+        pair(100, "AcDbTableStyle")
+        pair(3, "Standard"); pair(70, "0"); pair(71, "0")
+        pair(40, "0.06"); pair(41, "0.06")
+        pair(280, "0"); pair(281, "0")
+        for alignment in [4, 5, 5] {
+            pair(7, "Standard"); pair(140, "0.18"); pair(170, "\(alignment)")
+        }
+        pair(0, "ENDSEC")
+        pair(0, "EOF")
+        return dxf
+    }
+
+    @MainActor
+    func testTableEntitySuppressionFallsBackToDataAlignment() throws {
+        let dxfURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tablesuppress_\(UUID().uuidString).dxf")
+        defer { try? FileManager.default.removeItem(at: dxfURL) }
+        try makeSuppressedTitleBlockDXF().write(to: dxfURL, atomically: true, encoding: .utf8)
+        let imported = try DXFImporter.importDXF(filePath: dxfURL.path)
+        let tableEntity = try XCTUnwrap(imported.entities.first)
+        let tablePrim = try XCTUnwrap((tableEntity.localGeometry ?? []).first)
+        guard case .table(let data, _, _) = tablePrim else {
+            return XCTFail("ACAD_TABLE should import as a native table, got \(tablePrim)")
+        }
+        XCTAssertEqual(data.rows.count, 1)
+        XCTAssertEqual(data.columns.count, 1)
+        let cell = data.rows[0].cells[0]
+        XCTAssertEqual(cell.horizontalAlignment, .left)
+        XCTAssertEqual(cell.verticalAlignment, .middle)
+        let visuals = DataTableTessellator.generateVisualPrimitives(data: data, origin: .zero)
+        let text = try XCTUnwrap(visuals.compactMap { prim -> (Vector3, Int)? in
+            guard case .text(let pos, let value, _, _, _, let alignH, _, _, _) = prim,
+                  value == "PLAY SYSTEMS: SHIPS & CASTLES" else { return nil }
+            return (pos, alignH)
+        }.first)
+        XCTAssertEqual(text.1, 0)
+        XCTAssertEqual(text.0.x, 0.06, accuracy: 1e-9)
+    }
+
     func testTitleSpanAndStyleAlignmentSurviveImport() throws {
         let dxfURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("tablespan_\(UUID().uuidString).dxf")
