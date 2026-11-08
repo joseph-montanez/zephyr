@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "zephyr": {
+      "command": "python",
+      "args": [
+        "Tools/mcp-bridge.py",
+        "--port",
+        "17813"
+      ]
+    }
+  }
+}

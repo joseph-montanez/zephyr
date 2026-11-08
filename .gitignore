@@ -15,6 +15,9 @@ profile.trace
 # this exemption the fixtures are missing from a clean checkout and the gate
 # reports "no .dxf fixtures found".
 !Engine/EngineAsBuilt/Tools/bench/golden/*.dxf
+# Committed Lisp dimension sweep fixtures (hand-authored per-type DIMENSION
+# records; DimFixtureSweepTests imports them, so they must survive checkout).
+!Engine/EngineAsBuilt/Tests/ZephyrTests/Fixtures/*.dxf
 *.eab
 *.obj
 repomix-output.*

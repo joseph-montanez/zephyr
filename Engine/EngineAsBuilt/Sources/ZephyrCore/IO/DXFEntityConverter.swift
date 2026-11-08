@@ -2188,11 +2188,13 @@ public enum DXFEntityConverter {
         return yflip(ocsToWcs(point, extrusion: extrusion))
     }
 
-    private static func isDefaultExtrusion(_ n: Vector3) -> Bool {
+    /// Shared with the Lisp dimension builder (group 210): same OCS math as
+    /// import, minus the file-only Y-flip. Zero extrusion defaults to +Z.
+    static func isDefaultExtrusion(_ n: Vector3) -> Bool {
         abs(n.x) < 1e-12 && abs(n.y) < 1e-12 && abs(n.z - 1.0) < 1e-12
     }
 
-    private static func ocsToWcs(_ point: Vector3, extrusion n: Vector3) -> Vector3 {
+    static func ocsToWcs(_ point: Vector3, extrusion n: Vector3) -> Vector3 {
         var az = n
         var mag = sqrt(az.x * az.x + az.y * az.y + az.z * az.z)
         if mag < 1e-12 {

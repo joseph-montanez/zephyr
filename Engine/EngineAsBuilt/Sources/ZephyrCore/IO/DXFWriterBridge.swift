@@ -869,6 +869,80 @@ public enum DXFWriterBridge {
                     continue
                 }
 
+                // Dimensions export as native DIMENSION records (never the
+                // baked-block INSERT). Group assignment mirrors the
+                // importer's reading per type, flipped via toDXF; the
+                // writer serializes the DTO as-is. Jogged degrades to
+                // radius + group-12 jog point: group 70 has no jogged code
+                // (file value 8 is this engine's arcLength extension), and
+                // re-import restores an equivalent radius.
+                if let box = entity.dimensionMetadata {
+                    let dim = box.value
+                    let exportType = dim.type == .jogged ? CADDimensionType.radius : dim.type
+                    let record = DXFDimensionEntity()
+                    record.layer = layerName
+                    record.space = isPaperSpace ? 1 : 0
+                    if let blockID = entity.blockID {
+                        record.name = blockNameByID[blockID] ?? ""
+                    }
+                    record.style = dim.styleName
+                    // File value 8 is this engine's arcLength extension;
+                    // CADDimensionType.arcLength itself is rawValue 7.
+                    let fileType = exportType == .arcLength ? 8 : exportType.rawValue
+                    record.type = fileType + 32 + dim.flags
+                    record.textPoint = toDXF(dim.textMidpoint)
+                    record.measurement = dim.measurement
+                    record.text = dim.textOverride ?? ""
+                    record.angle_p = -dim.rotationAngle * 180.0 / .pi
+                    if let textRotation = dim.textRotationAngle {
+                        record.rot = -textRotation * 180.0 / .pi
+                        record.hasTextRotation = true
+                    }
+                    if let oblique = dim.obliqueAngle {
+                        record.oblique = -oblique * 180.0 / .pi
+                    }
+                    switch exportType {
+                    case .linearOrRotated, .aligned, .ordinate:
+                        record.defPoint = toDXF(dim.defPoint)
+                        record.def1 = toDXF(dim.defPoint2)
+                        if let p3 = dim.defPoint3 { record.def2 = toDXF(p3) }
+                    case .arcLength:
+                        record.defPoint = toDXF(dim.defPoint)
+                        record.def1 = toDXF(dim.defPoint2)
+                        if let p3 = dim.defPoint3 { record.def2 = toDXF(p3) }
+                        if let c = dim.defPoint4 { record.circlePoint = toDXF(c) }
+                        if let a = dim.defPoint5 { record.arcPoint = toDXF(a) }
+                    case .angular:
+                        // Importer reads 14/16/15 for angular (not 13).
+                        record.defPoint = toDXF(dim.defPoint)
+                        record.def2 = toDXF(dim.defPoint2)
+                        record.arcPoint = toDXF(dim.defPoint3 ?? dim.defPoint2)
+                        if let center = dim.defPoint4 { record.circlePoint = toDXF(center) }
+                        // Group 13 keeps re-import on the center: the
+                        // importer intersects lines (13,14)x(15,16), and a
+                        // 13 on line 1 through the center pins it exactly.
+                        if let center = dim.defPoint4 { record.def1 = toDXF(center) }
+                    case .angular3Point:
+                        record.defPoint = toDXF(dim.defPoint)
+                        record.def1 = toDXF(dim.defPoint2)
+                        if let p3 = dim.defPoint3 { record.def2 = toDXF(p3) }
+                        if let center = dim.defPoint4 { record.circlePoint = toDXF(center) }
+                    case .diameter:
+                        record.defPoint = toDXF(dim.defPoint)
+                        record.circlePoint = toDXF(dim.defPoint2)
+                    case .radius:
+                        record.defPoint = toDXF(dim.defPoint2)
+                        record.circlePoint = toDXF(dim.defPoint)
+                    case .jogged:
+                        break
+                    }
+                    if dim.type == .jogged, let jog = dim.defPoint3 {
+                        record.clonePoint = toDXF(jog)
+                    }
+                    applyEntityStyle(entity.xdata, to: record)
+                    writer.addEntity(record, ownerBlockName: ownerBlockName)
+                    continue
+                }
                 if let blockID = entity.blockID,
                    let blockName = blockNameByID[blockID] {
                     if let array = entity.arrayData {

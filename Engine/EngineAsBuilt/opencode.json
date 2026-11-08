@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "zephyr": {
+        "type": "local",
+        "command": ["python", "Tools/mcp-bridge.py", "--port", "17813"]
+      }
+    }
+  }
+}

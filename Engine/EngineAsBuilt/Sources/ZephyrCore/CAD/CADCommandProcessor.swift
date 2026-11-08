@@ -279,7 +279,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "DIVIDE",     aliases: ["DIV"], category: .draw, syntax: "", description: "Place points or blocks at equal divisions along an object"),
         CommandDescriptor(canonicalName: "MEASUREGEOM", aliases: ["MEASUREGEOMETRY", "MEA", "MG"], category: .draw, syntax: "", description: "Measure geometry: quick measure, distance, area, and angle"),
         CommandDescriptor(canonicalName: "DIMLINEAR",  aliases: ["DLI", "DIMLIN"], category: .draw, syntax: "", description: "Horizontal or vertical dimension between two points"),
-        CommandDescriptor(canonicalName: "DIMALIGNED", aliases: ["DAL", "DIMALIGN"], category: .draw, syntax: "", description: "Dimension parallel to measured distance"),
+        CommandDescriptor(canonicalName: "DIMALIGNED", aliases: ["DAL", "DIMALI", "DIMALIGN"], category: .draw, syntax: "", description: "Dimension parallel to measured distance"),
         CommandDescriptor(canonicalName: "DIMRADIUS",  aliases: ["DRA", "DIMRAD"], category: .draw, syntax: "", description: "Radius dimension for arcs/circles"),
         CommandDescriptor(canonicalName: "DIMDIAMETER",aliases: ["DDI", "DIMDIA"], category: .draw, syntax: "", description: "Diameter dimension for arcs/circles"),
         CommandDescriptor(canonicalName: "DIMANGULAR", aliases: ["DAN", "DIMANG"], category: .draw, syntax: "", description: "Angle dimension between two lines or an arc"),

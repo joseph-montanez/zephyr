@@ -481,6 +481,9 @@ final class LispCADHostTests: XCTestCase {
             LispScriptedCommands.scripted,
             ["LINE", "CIRCLE", "PLINE", "ARC",
              "COPY", "ROTATE", "MOVE", "ERASE", "MIRROR", "STRETCH", "BREAK", "BREAKATPOINT", "EXTEND", "SELECT",
+             "DIMLINEAR", "DLI", "DIMLIN", "DIMALIGNED", "DAL", "DIMALI", "DIMANGULAR", "DAN", "DIMANG",
+             "DIMDIAMETER", "DDI", "DIMDIA", "DIMRADIUS", "DRA", "DIMRAD", "DIMARC", "DAR",
+             "DIMORDINATE", "DOR", "DIMORD", "DIMJOGGED", "DJO", "DIMJOG",
              "UNDO", "U", "REDRAW", "REGEN", "INSERT", "-INSERT", "-ATTACH",
              "RECTANG", "RECTANGLE", "CHPROP", "CHANGE", "-HATCH", "HATCH", "TEXT", "-TEXT", "DTEXT", "AUTOCONTRAST",
              "-LAYER", "-LA", "LAYERSTATE", "-LAYERSTATE", "LAYERP"])

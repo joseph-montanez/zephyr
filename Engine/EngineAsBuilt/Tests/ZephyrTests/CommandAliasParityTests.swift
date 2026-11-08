@@ -38,6 +38,7 @@ final class CommandAliasParityTests: XCTestCase {
         ("EPDF", "EXPORTPDF"), ("PDFEXPORT", "EXPORTPDF"),
         ("EXPORTPDF", "EXPORTPDF"),
         ("ME", "MEASURE"), ("JOG", "DIMJOGGED"),
+        ("DIMALI", "DIMALIGNED"), ("DAL", "DIMALIGNED"),
         ("DCO", "DIMCONTINUE"), ("DIMCONTINUE", "DIMCONTINUE"),
         ("DBA", "DIMBASELINE"), ("DIMBASELINE", "DIMBASELINE"),
         ("DIM", "DIM"),

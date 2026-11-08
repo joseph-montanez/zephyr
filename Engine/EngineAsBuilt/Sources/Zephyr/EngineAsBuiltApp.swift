@@ -88,9 +88,33 @@ struct ZephyrApp {
         // Apply the default dark/light theme styling to all ImGui windows.
         engine.ui.applyTheme()
 
+        // Optional in-process MCP server for AI-driven CAD work. The server
+        // speaks HTTP JSON-RPC on localhost; the frame hook below drains
+        // its loop-thread tasks every iteration (rendered or idle).
+        let mcpPort = Self.mcpPortFlag()
+        if let mcpPort {
+            do {
+                try MCPServer.shared.attachAndStart(port: mcpPort, engine: engine)
+            } catch {
+                print("MCP server failed to start on port \(mcpPort): \(error)")
+            }
+        }
+
         print("Starting render loop...")
-        engine.loopController.run()
+        engine.loopController.run(updateBlock: mcpPort != nil ? {
+            MCPServer.shared.drainFrame()
+        } : nil)
         print("Engine shut down.")
+    }
+
+    /// Reads `--mcp-port N` from the command line (nil = MCP server off).
+    private static func mcpPortFlag() -> Int? {
+        let args = CommandLine.arguments
+        guard let flag = args.firstIndex(of: "--mcp-port"),
+              flag + 1 < args.count,
+              let port = Int(args[flag + 1]), (1...65535).contains(port)
+        else { return nil }
+        return port
     }
 
     /// Attaches the loader that owns the live ribbon model.

@@ -181,7 +181,10 @@ final class RibbonShippedDefinitionTests: XCTestCase {
             .appendingPathComponent("Sources/Zephyr/RibbonIcon.swift")
         let iconSource = try String(contentsOf: iconURL, encoding: .utf8)
         var painted = Set<String>()
-        for rawLine in iconSource.split(separator: "\n") {
+        // Unit-based split: Character-split compares grapheme clusters,
+        // so a CRLF checkout yields zero lines (CR+LF is one cluster).
+        // NSString split is line-ending agnostic.
+        for rawLine in (iconSource as NSString).components(separatedBy: "\n") {
             let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
             guard trimmed.hasPrefix("\""),
                   let close = trimmed.dropFirst().firstIndex(of: "\"")

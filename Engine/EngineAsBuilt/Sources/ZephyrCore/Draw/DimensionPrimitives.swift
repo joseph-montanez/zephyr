@@ -5,7 +5,7 @@ import Foundation
 public enum DimensionPrimitives {
     
     /// Generates AutoCAD-compatible dimension arrowhead primitives.
-    public static func arrowhead(
+    public nonisolated static func arrowhead(
         tip: Vector3,
         direction: Vector3,
         size: Double,
@@ -130,7 +130,7 @@ public enum DimensionPrimitives {
         }
     }
 
-    public static func tickMark(
+    public nonisolated static func tickMark(
         at: Vector3,
         direction: Vector3,
         size: Double,
@@ -280,7 +280,7 @@ public enum DimensionPrimitives {
     }
     
     /// Generates dimension line with arrows/ticks.
-    public static func dimensionLine(from: Vector3, to: Vector3, arrowAtStart: Bool, arrowAtEnd: Bool, style: CADDimensionStyle, color: ColorRGBA, gaps: [(Double, Double)] = []) -> [CADPrimitive] {
+    public nonisolated static func dimensionLine(from: Vector3, to: Vector3, arrowAtStart: Bool, arrowAtEnd: Bool, style: CADDimensionStyle, color: ColorRGBA, gaps: [(Double, Double)] = []) -> [CADPrimitive] {
         var primitives: [CADPrimitive] = []
         let dir = Vector3(x: to.x - from.x, y: to.y - from.y, z: to.z - from.z).normalized
         
@@ -316,7 +316,7 @@ public enum DimensionPrimitives {
     }
     
     /// Generates dimension text primitive.
-    public static func dimensionText(position: Vector3, value: String, rotation: Double, style: CADDimensionStyle, color: ColorRGBA) -> CADPrimitive {
+    public nonisolated static func dimensionText(position: Vector3, value: String, rotation: Double, style: CADDimensionStyle, color: ColorRGBA) -> CADPrimitive {
         return .text(
             position: position,
             text: value,
@@ -330,7 +330,8 @@ public enum DimensionPrimitives {
         )
     }
     
-    private static func primitiveStyles(
+    /// Internal (not private): the Lisp dimension builder shares it.
+    nonisolated static func primitiveStyles(
         for primitives: [CADPrimitive],
         dimensionStyle: CADDimensionStyle
     ) -> [Int: CADPrimitiveStyle] {
@@ -367,7 +368,7 @@ public enum DimensionPrimitives {
         document.addEntities([entity])
     }
     
-    public static func resolvedColor(for entity: CADEntity, in document: CADDocument) -> ColorRGBA {
+    public nonisolated static func resolvedColor(for entity: CADEntity, in document: CADDocument) -> ColorRGBA {
         if case .string(let hex) = entity.xdata["dxf.color"],
            let color = ColorRGBA(hex: hex) {
             return color
@@ -375,7 +376,7 @@ public enum DimensionPrimitives {
         return document.layer(for: entity.layerID)?.color ?? .white
     }
 
-    private static func readableTextRotation(_ angle: Double) -> Double {
+    private nonisolated static func readableTextRotation(_ angle: Double) -> Double {
         var normalized = angle.truncatingRemainder(dividingBy: 2.0 * .pi)
         if normalized > .pi { normalized -= 2.0 * .pi }
         if normalized <= -.pi { normalized += 2.0 * .pi }
@@ -384,12 +385,12 @@ public enum DimensionPrimitives {
         return normalized
     }
 
-    private static func textRotation(for metadata: CADDimensionMetadata, fallback: Double) -> Double {
+    private nonisolated static func textRotation(for metadata: CADDimensionMetadata, fallback: Double) -> Double {
         metadata.textRotationAngle ?? readableTextRotation(fallback)
     }
 
     /// Re-generates all primitives for a dimension based on its metadata and style.
-    public static func generatePrimitives(for metadata: CADDimensionMetadata, style: CADDimensionStyle, color: ColorRGBA) -> [CADPrimitive] {
+    public nonisolated static func generatePrimitives(for metadata: CADDimensionMetadata, style: CADDimensionStyle, color: ColorRGBA) -> [CADPrimitive] {
         var primitives: [CADPrimitive] = []
         let valueStr: String
         if let override = metadata.textOverride {
@@ -444,7 +445,7 @@ public enum DimensionPrimitives {
             primitives.append(contentsOf: dimensionLine(from: dimStart, to: dimEnd, arrowAtStart: true, arrowAtEnd: true, style: style, color: color, gaps: gaps(for: .dimension, in: metadata.dimBreaks)))
             primitives.append(dimensionText(position: metadata.textMidpoint, value: valueStr, rotation: textRotation(for: metadata, fallback: angle), style: style, color: color))
 
-        case .angular:
+        case .angular, .angular3Point:
             guard let p2 = metadata.defPoint3, let center = metadata.defPoint4 else { return [] }
             let p1 = metadata.defPoint2
             let dimPos = metadata.defPoint
@@ -547,6 +548,50 @@ public enum DimensionPrimitives {
             
             return primitives
             
+        case .ordinate:
+            // Ordinate: leader from the feature point through the elbow
+            // to the text. The value is the X or Y coordinate, chosen at
+            // build time (flags bit 6 = X-type, mirroring DimOrdinateCommand).
+            let feature = metadata.defPoint
+            let end = metadata.textMidpoint
+            if let elbow = metadata.defPoint3 {
+                primitives.append(.line(start: feature, end: elbow, color: color))
+                primitives.append(.line(start: elbow, end: end, color: color))
+            } else {
+                primitives.append(.line(start: feature, end: end, color: color))
+            }
+            let tick = style.arrowSize
+            primitives.append(.line(
+                start: Vector3(x: feature.x - tick, y: feature.y, z: 0),
+                end: Vector3(x: feature.x + tick, y: feature.y, z: 0),
+                color: color))
+            primitives.append(dimensionText(position: end, value: valueStr, rotation: textRotation(for: metadata, fallback: 0), style: style, color: color))
+        case .jogged:
+            // Jogged radius: leader from the center through the jog point
+            // to the text, zigzag at the jog, arrow at the arc. Mirrors
+            // DimJoggedCommand with scale-aware jog size.
+            let center = metadata.defPoint
+            let arcPoint = metadata.defPoint2
+            let jog = metadata.defPoint3 ?? metadata.textMidpoint
+            let end = metadata.textMidpoint
+            let dx = arcPoint.x - center.x
+            let dy = arcPoint.y - center.y
+            let length = (dx * dx + dy * dy).squareRoot()
+            if length > 1e-9 {
+                let ux = dx / length
+                let uy = dy / length
+                let size = style.arrowSize
+                let j1 = Vector3(x: jog.x - uy * size, y: jog.y + ux * size, z: 0)
+                let j2 = Vector3(x: jog.x + uy * size + ux * size, y: jog.y - ux * size + uy * size, z: 0)
+                let j3 = Vector3(x: jog.x + ux * size, y: jog.y + uy * size, z: 0)
+                primitives.append(.line(start: center, end: jog, color: color))
+                primitives.append(.line(start: jog, end: j1, color: color))
+                primitives.append(.line(start: j1, end: j2, color: color))
+                primitives.append(.line(start: j2, end: j3, color: color))
+                primitives.append(.line(start: j3, end: end, color: color))
+                primitives.append(contentsOf: arrowhead(tip: arcPoint, direction: Vector3(x: ux, y: uy, z: 0), size: style.arrowSize, color: color, type: style.resolvedSecondArrowhead))
+            }
+            primitives.append(dimensionText(position: end, value: valueStr, rotation: textRotation(for: metadata, fallback: 0), style: style, color: color))
         default:
             // Fallback just draws text
             primitives.append(dimensionText(position: metadata.textMidpoint, value: valueStr, rotation: textRotation(for: metadata, fallback: metadata.rotationAngle), style: style, color: color))

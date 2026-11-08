@@ -76,6 +76,21 @@ public final class LispInputBroker: @unchecked Sendable {
     /// would queue the losers as stale input after the first settles).
     public var pendingKind: RequestKind? { lock.withLock { slot?.kind } }
 
+    /// Fires on wait-state transitions: non-nil when evaluation parks for
+    /// input, nil when the wait settles. Set by drivers (e.g. the MCP
+    /// server) that must react the instant evaluation blocks instead of
+    /// polling. Invoked outside the lock on the settling thread.
+    public var waitObserver: (@Sendable (RequestKind?) -> Void)? {
+        get { lock.withLock { _waitObserver } }
+        set { lock.withLock { _waitObserver = newValue } }
+    }
+    private var _waitObserver: (@Sendable (RequestKind?) -> Void)?
+
+    private func notifyWait(_ kind: RequestKind?) {
+        let observer = lock.withLock { _waitObserver }
+        observer?(kind)
+    }
+
     public init() {}
 
     // MARK: - Await side (evaluator, via the host)
@@ -145,10 +160,12 @@ public final class LispInputBroker: @unchecked Sendable {
         }
         switch fill {
         case .filled:
-            break
+            notifyWait(kind)
         case .drained(let event):
+            notifyWait(nil)
             continuation.resume(returning: event)
         case .cancelled:
+            notifyWait(nil)
             continuation.resume(throwing: LispError.userCancel)
         }
     }
@@ -170,6 +187,7 @@ public final class LispInputBroker: @unchecked Sendable {
             _settleCount += 1
             return current.continuation
         }
+        if continuation != nil { notifyWait(nil) }
         continuation?.resume(throwing: LispError.userCancel)
     }
 
@@ -201,6 +219,7 @@ public final class LispInputBroker: @unchecked Sendable {
             _settleCount += 1
             return cont
         }
+        notifyWait(nil)
         continuation?.resume(returning: event)
     }
 

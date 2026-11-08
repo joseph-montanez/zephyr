@@ -1,0 +1,90 @@
+  0
+SECTION
+  2
+HEADER
+  9
+$ACADVER
+  1
+AC1024
+  0
+ENDSEC
+  0
+SECTION
+  2
+TABLES
+  0
+TABLE
+  2
+LAYER
+ 70
+     1
+  0
+LAYER
+  2
+0
+ 70
+     0
+ 62
+     7
+  6
+CONTINUOUS
+  0
+ENDTAB
+  0
+ENDSEC
+  0
+SECTION
+  2
+BLOCKS
+  0
+ENDSEC
+  0
+SECTION
+  2
+ENTITIES
+  0
+DIMENSION
+  5
+1A
+100
+AcDbEntity
+  8
+0
+100
+AcDbDimension
+  2
+*D1
+  3
+Standard
+ 10
+1.0
+ 20
+0.5
+ 30
+0.0
+ 11
+3.5
+ 21
+0.5
+ 31
+0.0
+ 13
+1.0
+ 23
+2.0
+ 33
+0.0
+ 14
+6.0
+ 24
+2.0
+ 34
+0.0
+ 42
+5.0
+ 70
+0
+  0
+ENDSEC
+  0
+EOF

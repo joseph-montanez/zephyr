@@ -12,6 +12,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Sheet sets** — organize drawings (`.dst`) with `NEWSHEETSET`/`OPENSHEETSET`, manage from the `SHEETSET` palette, drop views with `PLACEVIEW` (live ghost), publish with `-PUBLISHSET`
 - **Callouts and transmit** — tag sheets with `PLACECALLOUT`, and package a whole sheet set for sharing with `-TRANSMITSET`, which gathers the set file plus its drawings into one archive folder
 - **Galactic Purple theme with viewport starfield** - deep-space dark theme (`GALAXY`, with galactic/purple/space aliases) whose canvas shows blinking X-sparkle stars in real stellar colors; the panorama drifts with time, responds to zoom (star size, drift speed, and a fly-through fade of near/far stars), and follows the mouse opposite its direction with depth-scaled parallax; selecting Galactic auto-enables the stars and leaving it turns them off
+- **Live-app MCP server for AI driving** - in-process localhost server (`--mcp-port`) with Lisp eval, scripted commands, input handoff, doc/batch summaries, pinned camera, CPU-raster thumbnails with grid ticks, and reference overlays; stdio bridge plus configs for Muse, pi, OpenCode, Cursor, and VS Code (`docs/mcp.md`)
+- **Native dimensions from Lisp** - `entmake` creates all nine `DIMENSION` types and reads/creates `DIMSTYLE` (40/41 scale arrows, 210 orients text via shared OCS math); eight scripted `DIM*` commands with aliases; native `DIMENSION` export records; DXF fixture sweep locks import/entmake/re-export agreement
 
 ### New Commands
 - **PUBLISH / +PUBLISH / -PUBLISH** — publish dialog workflow, preload the dialog from a sheet list, and foreground command-line publishing with a CSV log beside the `.dsd` file
@@ -65,6 +67,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 
 ### Maintenance
 - **RevCloud and dimension-command internals (DRY/SOLID, no behavior change)** — split the 1600-line `REVCLOUD` command file into settings, geometry, and command files behind one shared UserDefaults helper, and moved the duplicated two-point picking flow out of `DIMLINEAR` into a shared `TwoPointDimensionCommand` base
+- **Windows CRLF-safe ribbon icon test** - painter-name scan splits unit-wise so CRLF checkouts no longer report zero painted icons
 
 ### Performance
 - **Parallel curve-only zoom settle** — band-crossing refresh fans curve entities across a task group at 4-7% of full-regen cost, reproducing full-regen tessellation point-for-point

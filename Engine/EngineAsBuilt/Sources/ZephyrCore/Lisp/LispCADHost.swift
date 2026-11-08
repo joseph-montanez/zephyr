@@ -307,6 +307,20 @@ final class LispCADHost: LispHost, @unchecked Sendable {
 
     func entMake(_ dxfList: LispValue) async throws -> LispValue {
         let assoc = try LispEntityAdapter.parseAssoc(dxfList, name: "entmake")
+        if let typeName = assoc.string(0), typeName.uppercased() == "DIMENSION" {
+            let (metadata, layerID) = try LispDimensionBuilder.metadataFromAssoc(assoc, document: document, name: "entmake")
+            let entity = LispDimensionBuilder.commit(metadata: metadata, layerID: layerID, color: nil, document: document)
+            lastCreated = entity.handle
+            return LispEntityAdapter.entityName(for: entity.handle)
+        }
+        if let typeName = assoc.string(0), typeName.uppercased() == "DIMSTYLE" {
+            // Documented AutoCAD deviation: table creation via entmake is
+            // the only Lisp path that creates a dimstyle. Returns the style
+            // name (there is no entity name to return).
+            let style = try LispDimensionBuilder.styleFromAssoc(assoc, name: "entmake")
+            _ = document.applyDimensionStyle(style)
+            return .string(style.name)
+        }
         let entity = try LispEntityAdapter.makeEntity(from: assoc, document: document, name: "entmake")
         document.addEntity(entity)
         lastCreated = entity.handle
@@ -391,7 +405,7 @@ final class LispCADHost: LispHost, @unchecked Sendable {
     private var tableCursors: [String: Int] = [:]
 
     /// Tables served from the drawing (APPID is session-local in the env).
-    private static let servedTables: Set<String> = ["LAYER", "LTYPE", "STYLE", "BLOCK"]
+    private static let servedTables: Set<String> = ["LAYER", "LTYPE", "STYLE", "BLOCK", "DIMSTYLE"]
 
     private func tableEntries(_ table: String) throws -> [(name: String, list: LispValue)] {
         switch table {
@@ -411,6 +425,10 @@ final class LispCADHost: LispHost, @unchecked Sendable {
             return document.allBlocks
                 .sorted { $0.name.uppercased() < $1.name.uppercased() }
                 .map { ($0.name, blockEntry($0)) }
+        case "DIMSTYLE":
+            return document.dimensionStyles.values
+                .sorted { $0.name.uppercased() < $1.name.uppercased() }
+                .map { ($0.name, LispDimensionBuilder.dimstyleEntry(name: $0.name, style: $0)) }
         default:
             throw LispError.hostError("unknown table \"\(table)\"")
         }

@@ -37,6 +37,9 @@ enum LispScriptedCommands {
     static let scripted: Set<String> = [
         "LINE", "CIRCLE", "PLINE", "ARC",
         "COPY", "ROTATE", "MOVE", "ERASE", "MIRROR", "STRETCH", "BREAK", "BREAKATPOINT", "EXTEND", "SELECT",
+        "DIMLINEAR", "DLI", "DIMLIN", "DIMALIGNED", "DAL", "DIMALI", "DIMANGULAR", "DAN", "DIMANG",
+        "DIMDIAMETER", "DDI", "DIMDIA", "DIMRADIUS", "DRA", "DIMRAD", "DIMARC", "DAR",
+        "DIMORDINATE", "DOR", "DIMORD", "DIMJOGGED", "DJO", "DIMJOG",
         "-LAYER", "-LA", "LAYERSTATE", "-LAYERSTATE", "LAYERP",
         "UNDO", "U", "REDRAW", "REGEN", "INSERT", "-INSERT", "-ATTACH",
         "RECTANG", "RECTANGLE", "CHPROP", "CHANGE", "-HATCH", "HATCH", "TEXT", "-TEXT", "DTEXT", "AUTOCONTRAST",
@@ -181,6 +184,14 @@ enum LispScriptedCommands {
         case "BREAKATPOINT": try runBreakAtPoint(&operands, host: host)
         case "EXTEND": try await runExtend(&operands, host: host)
         case "SELECT": try runSelect(&operands, host: host)
+        case "DIMLINEAR", "DLI", "DIMLIN": try await runDimLinear(&operands, host: host)
+        case "DIMALIGNED", "DAL", "DIMALI": try await runDimAligned(&operands, host: host)
+        case "DIMANGULAR", "DAN", "DIMANG": try await runDimAngular(&operands, host: host)
+        case "DIMDIAMETER", "DDI", "DIMDIA": try await runDimDiameter(&operands, host: host)
+        case "DIMRADIUS", "DRA", "DIMRAD": try await runDimRadius(&operands, host: host)
+        case "DIMARC", "DAR": try await runDimArc(&operands, host: host)
+        case "DIMORDINATE", "DOR", "DIMORD": try await runDimOrdinate(&operands, host: host)
+        case "DIMJOGGED", "DJO", "DIMJOG": try await runDimJogged(&operands, host: host)
         case "INSERT", "-INSERT": try await runInsert(&operands, host: host)
         case "-ATTACH": try runAttach(&operands, host: host)
         case "UNDO": try await runUndo(&operands, host: host)
@@ -198,6 +209,152 @@ enum LispScriptedCommands {
         return .nilValue
     }
 
+    // MARK: - Scripted dimensions (all via LispDimensionBuilder)
+
+    /// Peeks the next point operand without consuming keywords or numbers.
+    private static func tryTakeScriptPoint(_ operands: inout [LispValue]) -> Vector3? {
+        guard let first = operands.first,
+              let coords = first.asPoint, coords.count >= 2
+        else { return nil }
+        operands.removeFirst()
+        return Vector3(
+            x: coords[0], y: coords[1],
+            z: coords.count > 2 ? coords[2] : 0)
+    }
+
+    /// Peeks the next bare number operand.
+    private static func tryTakeScriptNumber(_ operands: inout [LispValue]) -> Double? {
+        guard let first = operands.first, let value = first.asDouble else { return nil }
+        operands.removeFirst()
+        return value
+    }
+
+    private static func commitScriptDimension(
+        _ points: LispDimensionBuilder.DimPoints, command: String, host: LispCADHost
+    ) async throws {
+        var points = points
+        points.styleName = host.document.currentDimensionStyleName
+        let layerID = try activeLayerID(host)
+        let color = await currentColor(host)
+        let metadata = try LispDimensionBuilder.metadataFromPoints(
+            points, document: host.document, name: "command: \(command)")
+        _ = LispDimensionBuilder.commit(
+            metadata: metadata, layerID: layerID, color: color, document: host.document)
+    }
+
+    private static func runDimLinear(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let p1 = try takePoint(&operands, command: "DIMLINEAR", what: "first extension origin")
+        let p2 = try takePoint(&operands, command: "DIMLINEAR", what: "second extension origin")
+        let dimPos = tryTakeScriptPoint(&operands)
+        let rotation = tryTakeScriptNumber(&operands)
+        var points = LispDimensionBuilder.DimPoints(type: .linearOrRotated)
+        points.p13 = p1
+        points.p14 = p2
+        points.p10 = dimPos
+        points.rotationDeg = rotation
+        try await commitScriptDimension(points, command: "DIMLINEAR", host: host)
+        try consumeOptionalEnter(&operands, command: "DIMLINEAR")
+    }
+
+    private static func runDimAligned(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let p1 = try takePoint(&operands, command: "DIMALIGNED", what: "first extension origin")
+        let p2 = try takePoint(&operands, command: "DIMALIGNED", what: "second extension origin")
+        let dimPos = tryTakeScriptPoint(&operands)
+        var points = LispDimensionBuilder.DimPoints(type: .aligned)
+        points.p13 = p1
+        points.p14 = p2
+        points.p10 = dimPos
+        try await commitScriptDimension(points, command: "DIMALIGNED", host: host)
+        try consumeOptionalEnter(&operands, command: "DIMALIGNED")
+    }
+
+    private static func runDimAngular(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let center = try takePoint(&operands, command: "DIMANGULAR", what: "angle vertex")
+        let p1 = try takePoint(&operands, command: "DIMANGULAR", what: "first line point")
+        let p2 = try takePoint(&operands, command: "DIMANGULAR", what: "second line point")
+        let dimPos = tryTakeScriptPoint(&operands)
+        var points = LispDimensionBuilder.DimPoints(type: .angular)
+        points.p15 = center
+        points.p14 = p1
+        points.p16 = p2
+        points.p10 = dimPos
+        try await commitScriptDimension(points, command: "DIMANGULAR", host: host)
+        try consumeOptionalEnter(&operands, command: "DIMANGULAR")
+    }
+
+    private static func runDimDiameter(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let p1 = try takePoint(&operands, command: "DIMDIAMETER", what: "first diameter endpoint")
+        let p2 = try takePoint(&operands, command: "DIMDIAMETER", what: "second diameter endpoint")
+        let textPos = tryTakeScriptPoint(&operands)
+        var points = LispDimensionBuilder.DimPoints(type: .diameter)
+        points.p10 = p1
+        points.p15 = p2
+        points.p11 = textPos
+        try await commitScriptDimension(points, command: "DIMDIAMETER", host: host)
+        try consumeOptionalEnter(&operands, command: "DIMDIAMETER")
+    }
+
+    private static func runDimRadius(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let center = try takePoint(&operands, command: "DIMRADIUS", what: "center point")
+        let arc = try takePoint(&operands, command: "DIMRADIUS", what: "arc point")
+        let textPos = tryTakeScriptPoint(&operands)
+        var points = LispDimensionBuilder.DimPoints(type: .radius)
+        points.p15 = center
+        points.p10 = arc
+        points.p11 = textPos
+        try await commitScriptDimension(points, command: "DIMRADIUS", host: host)
+        try consumeOptionalEnter(&operands, command: "DIMRADIUS")
+    }
+
+    private static func runDimArc(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let center = try takePoint(&operands, command: "DIMARC", what: "arc center point")
+        let start = try takePoint(&operands, command: "DIMARC", what: "arc start point")
+        let end = try takePoint(&operands, command: "DIMARC", what: "arc end point")
+        let dimPos = tryTakeScriptPoint(&operands)
+        var points = LispDimensionBuilder.DimPoints(type: .arcLength)
+        points.p15 = center
+        points.p13 = start
+        points.p14 = end
+        points.p10 = dimPos
+        try await commitScriptDimension(points, command: "DIMARC", host: host)
+        try consumeOptionalEnter(&operands, command: "DIMARC")
+    }
+
+    private static func runDimOrdinate(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let feature = try takePoint(&operands, command: "DIMORDINATE", what: "feature point")
+        let end = tryTakeScriptPoint(&operands)
+        var xType = false
+        if let keyword = takeKeyword(&operands) {
+            switch keyword {
+            case .word("X"): xType = true
+            case .word("Y"): break
+            case .enter: break
+            case .word(let word):
+                throw LispError.hostError(
+                    "command: DIMORDINATE does not support keyword \"" + word + "\"")
+            }
+        }
+        var points = LispDimensionBuilder.DimPoints(type: .ordinate)
+        points.p10 = feature
+        // Leader endpoint is optional on the scripted path: it defaults
+        // to the feature point (entmake still requires group 13).
+        points.p13 = end ?? feature
+        if xType { points.flags |= 64 }
+        try await commitScriptDimension(points, command: "DIMORDINATE", host: host)
+        try consumeOptionalEnter(&operands, command: "DIMORDINATE")
+    }
+
+    private static func runDimJogged(_ operands: inout [LispValue], host: LispCADHost) async throws {
+        let center = try takePoint(&operands, command: "DIMJOGGED", what: "center point")
+        let arc = try takePoint(&operands, command: "DIMJOGGED", what: "arc point")
+        let textPos = tryTakeScriptPoint(&operands)
+        var points = LispDimensionBuilder.DimPoints(type: .jogged)
+        points.p10 = arc
+        points.p15 = center
+        points.p11 = textPos
+        try await commitScriptDimension(points, command: "DIMJOGGED", host: host)
+        try consumeOptionalEnter(&operands, command: "DIMJOGGED")
+    }
     // MARK: - Operand cursor
 
     /// Consumes and returns the next string keyword (uppercased,
