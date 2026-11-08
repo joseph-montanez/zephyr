@@ -123,7 +123,7 @@ final class ThemeInspectionTests: XCTestCase {
         igImFontAtlasBuildMain(io.pointee.Fonts)
 
         // 1. Verify all presets are registered
-        XCTAssertEqual(AppTheme.allPresets.count, 7)
+        XCTAssertEqual(AppTheme.allPresets.count, 8)
         let presetIDs = AppTheme.allPresets.map(\.id)
         XCTAssertTrue(presetIDs.contains("dark"))
         XCTAssertTrue(presetIDs.contains("light"))
@@ -132,6 +132,7 @@ final class ThemeInspectionTests: XCTestCase {
         XCTAssertTrue(presetIDs.contains("catppuccin-macchiato"))
         XCTAssertTrue(presetIDs.contains("catppuccin-mocha"))
         XCTAssertTrue(presetIDs.contains("cotton-candy"))
+        XCTAssertTrue(presetIDs.contains("galactic-purple"))
 
         // 2. Verify name resolution & aliases
         XCTAssertEqual(AppTheme.theme(named: "latte")?.id, "catppuccin-latte")
@@ -154,6 +155,11 @@ final class ThemeInspectionTests: XCTestCase {
         XCTAssertEqual(AppTheme.theme(named: "barbie")?.id, "cotton-candy")
         XCTAssertEqual(AppTheme.theme(named: "BARBIE")?.id, "cotton-candy")
         XCTAssertEqual(AppTheme.theme(named: "rainbow")?.id, "cotton-candy")
+
+        XCTAssertEqual(AppTheme.theme(named: "galaxy")?.id, "galactic-purple")
+        XCTAssertEqual(AppTheme.theme(named: "Galactic Purple")?.id, "galactic-purple")
+        XCTAssertEqual(AppTheme.theme(named: "GALACTIC")?.id, "galactic-purple")
+        XCTAssertEqual(ThemeCommand.resolve("GALAXY"), .named("GALAXY"))
 
         // 3. Test applying Catppuccin Mocha
         XCTAssertTrue(ui.setTheme(named: "mocha"))
@@ -189,6 +195,8 @@ final class ThemeInspectionTests: XCTestCase {
         XCTAssertEqual(ui.theme.id, "catppuccin-mocha")
         ui.cycleTheme()
         XCTAssertEqual(ui.theme.id, "cotton-candy")
+        ui.cycleTheme()
+        XCTAssertEqual(ui.theme.id, "galactic-purple")
         ui.cycleTheme()
         XCTAssertEqual(ui.theme.id, "dark")
     }
@@ -260,12 +268,293 @@ final class ThemeInspectionTests: XCTestCase {
         XCTAssertEqual(candyWinBg.x, AppTheme.cottonCandy.panelBg.x, accuracy: 0.001)
         ImGuiRender()
 
-        // Cotton Candy sits after Mocha in the cycle, then wraps to Dark.
+        // Cotton Candy sits after Mocha, Galactic after Candy, then wraps to Dark.
         ui.setTheme(AppTheme.catppuccinMocha)
         ui.cycleTheme()
         XCTAssertEqual(ui.theme.id, "cotton-candy")
         ui.cycleTheme()
+        XCTAssertEqual(ui.theme.id, "galactic-purple")
+        ui.cycleTheme()
         XCTAssertEqual(ui.theme.id, "dark")
+    }
+
+    func testGalacticPurpleThemeAndStarfield() {
+        let ctx = ImGuiCreateContext(nil)!
+        defer { ImGuiDestroyContext(ctx) }
+        let ui = EngineUIManager()
+        let io = ImGuiGetIO()!
+        io.pointee.DisplaySize = ImVec2(x: 1920, y: 1080)
+        io.pointee.DeltaTime = 1.0 / 60.0
+        _ = ImFontAtlas_AddFontDefault(io.pointee.Fonts, nil)
+        igImFontAtlasBuildMain(io.pointee.Fonts)
+
+        // Aliases resolve to the new preset.
+        XCTAssertEqual(AppTheme.theme(named: "galaxy")?.id, "galactic-purple")
+        XCTAssertEqual(AppTheme.theme(named: "purple")?.id, "galactic-purple")
+        XCTAssertEqual(AppTheme.theme(named: "space")?.id, "galactic-purple")
+        XCTAssertTrue(ThemeCommand.promptText(currentName: "Galactic Purple").contains("GALAXY"))
+        XCTAssertTrue(ThemeCommand.listLine().contains("GALAXY"))
+
+        // Fresh manager: stars off and inactive.
+        XCTAssertFalse(ui.starfieldPanoramaEnabled)
+        XCTAssertFalse(ui.isStarfieldActive)
+
+        // Entering Galactic Purple auto-enables the panorama.
+        XCTAssertTrue(ui.setTheme(named: "galaxy"))
+        XCTAssertEqual(ui.theme.id, "galactic-purple")
+        XCTAssertTrue(ui.isDarkTheme)
+        XCTAssertTrue(ui.starfieldPanoramaEnabled)
+        XCTAssertTrue(ui.isStarfieldActive)
+
+        // Leaving Galactic disables it again.
+        ui.setTheme(AppTheme.dark)
+        XCTAssertFalse(ui.starfieldPanoramaEnabled)
+        XCTAssertFalse(ui.isStarfieldActive)
+
+        // Manual toggle within Galactic; re-selecting keeps it.
+        ui.setTheme(AppTheme.galacticPurple)
+        XCTAssertTrue(ui.isStarfieldActive)
+        ui.starfieldPanoramaEnabled = false
+        XCTAssertFalse(ui.isStarfieldActive)
+        XCTAssertEqual(ui.theme.id, "galactic-purple")
+        ui.setTheme(AppTheme.galacticPurple)
+        XCTAssertFalse(ui.starfieldPanoramaEnabled)
+
+        // Starlight text stays readable on the deep-space panel and button.
+        func luminance(_ col: ImVec4) -> Double {
+            return 0.2126 * Double(col.x) + 0.7152 * Double(col.y) + 0.0722 * Double(col.z)
+        }
+        func contrast(_ c1: ImVec4, _ c2: ImVec4) -> Double {
+            return (max(luminance(c1), luminance(c2)) + 0.05) / (min(luminance(c1), luminance(c2)) + 0.05)
+        }
+        XCTAssertGreaterThan(contrast(ui.theme.textPrimary, ui.theme.panelBg), 3.0)
+        XCTAssertGreaterThan(contrast(ui.theme.textPrimary, ui.theme.buttonBg), 3.0)
+
+        ImGuiNewFrame()
+        let galacticWinBg = ImGuiGetStyleColorVec4(Int32(ImGuiCol_WindowBg.rawValue))!.pointee
+        XCTAssertEqual(galacticWinBg.x, AppTheme.galacticPurple.panelBg.x, accuracy: 0.001)
+        ImGuiRender()
+
+        // Starfield math: twinkle stays in range, positions stay in bounds.
+        for index in [0, 1, 7, 42, 159] {
+            for t in [0.0, 0.5, 1.7, 30.0] {
+                let a = GalacticStarfield.twinkleAlpha(index: index, timeSec: t)
+                XCTAssertGreaterThanOrEqual(a, 0.30)
+                XCTAssertLessThanOrEqual(a, 1.00)
+                let p = GalacticStarfield.screenPosition(index: index, timeSec: t, width: 1920, height: 1080)
+                XCTAssertGreaterThanOrEqual(p.x, 0.0)
+                XCTAssertLessThan(p.x, 1920.0)
+                XCTAssertGreaterThanOrEqual(p.y, 0.0)
+                XCTAssertLessThan(p.y, 1080.0)
+            }
+            let r = GalacticStarfield.radius(index: index)
+            XCTAssertGreaterThanOrEqual(r, 1.0)
+            XCTAssertLessThanOrEqual(r, 3.5)
+        }
+
+        // Panorama drifts left at constant height and wraps after one sweep.
+        var driftIndex = 0
+        for i in 0..<GalacticStarfield.starCount {
+            if GalacticStarfield.basePosition(index: i, width: 1000, height: 800).x > 500 {
+                driftIndex = i
+                break
+            }
+        }
+        let e0 = GalacticStarfield.screenPosition(index: driftIndex, timeSec: 0, width: 1000, height: 800)
+        let e1 = GalacticStarfield.screenPosition(index: driftIndex, timeSec: 1, width: 1000, height: 800)
+        XCTAssertLessThan(e1.x, e0.x, "panorama drifts left")
+        XCTAssertEqual(e0.y, e1.y, accuracy: 0.001, "panorama holds height")
+        let par = Double(GalacticStarfield.parallax(index: 5))
+        let period = Double(1000) / (Double(GalacticStarfield.baseSpeed) * par)
+        let w0 = GalacticStarfield.screenPosition(index: 5, timeSec: 0, width: 1000, height: 800)
+        let w1 = GalacticStarfield.screenPosition(index: 5, timeSec: period, width: 1000, height: 800)
+        XCTAssertEqual(w0.x, w1.x, accuracy: 0.001, "panorama wraps")
+
+        // Clock clamps spikes, ignores rewind, wraps hourly.
+        XCTAssertEqual(GalacticStarfield.advance(current: 10, by: -5), 10, "negative delta holds")
+        XCTAssertEqual(GalacticStarfield.advance(current: 10, by: 100), 10.25, accuracy: 0.001, "large delta clamps")
+        XCTAssertEqual(
+            GalacticStarfield.advance(current: 3599.9, by: 0.25),
+            3599.9 + 0.25 - 3600.0, accuracy: 0.001, "clock wraps")
+
+        // Time advances through the manager.
+        ui.advanceStarfield(by: 1.0 / 60.0)
+        XCTAssertGreaterThan(ui.starfieldTimeSec, 0.0)
+    }
+
+    func testStarfieldZoomFlyThrough() {
+        // Zoom scale: unity at the reference zoom, clamped at extremes.
+        XCTAssertEqual(GalacticStarfield.zoomScale(zoom: 2, referenceZoom: 2), 1.0)
+        XCTAssertEqual(GalacticStarfield.zoomScale(zoom: 4, referenceZoom: 2), 2.0)
+        XCTAssertEqual(GalacticStarfield.zoomScale(zoom: 0, referenceZoom: 0), 1.0)
+        XCTAssertEqual(GalacticStarfield.zoomScale(zoom: 100, referenceZoom: 1), 6.0)
+        XCTAssertEqual(GalacticStarfield.zoomScale(zoom: 0.001, referenceZoom: 1), 0.25)
+
+        // At the reference zoom the field matches the unzoomed panorama.
+        for index in [0, 5, 42] {
+            let plain = GalacticStarfield.screenPosition(index: index, timeSec: 1.7, width: 1000, height: 800)
+            let zoomed = GalacticStarfield.screenPosition(
+                index: index, timeSec: 1.7, width: 1000, height: 800,
+                speed: GalacticStarfield.baseSpeed, zoom: 3, referenceZoom: 3)
+            XCTAssertEqual(plain.x, zoomed.x, accuracy: 0.01)
+            XCTAssertEqual(plain.y, zoomed.y, accuracy: 0.01)
+        }
+
+        // Screenspace at every zoom: stars span the full viewport, and drift
+        // runs faster zoomed in (fly-through) while positions never clump.
+        for (z, ref) in [(0.25, 1.0), (6.0, 1.0)] {
+            var minX: Float = 1000
+            var maxX: Float = -1000
+            for i in 0..<GalacticStarfield.starCount {
+                let p = GalacticStarfield.screenPosition(
+                    index: i, timeSec: 3.7, width: 1000, height: 800,
+                    speed: GalacticStarfield.baseSpeed, zoom: z, referenceZoom: ref)
+                minX = min(minX, p.x)
+                maxX = max(maxX, p.x)
+                XCTAssertGreaterThanOrEqual(p.y, 0.0)
+                XCTAssertLessThan(p.y, 800.0)
+            }
+            XCTAssertLessThan(minX, 100.0, "stars reach the left edge")
+            XCTAssertGreaterThan(maxX, 900.0, "stars reach the right edge")
+        }
+
+        // Drift speed scales with zoom over the same time span.
+        var driftStar: Int? = nil
+        for i in 0..<GalacticStarfield.starCount {
+            let bx = GalacticStarfield.basePosition(index: i, width: 1000, height: 800).x
+            if bx > 100 && bx < 900 { driftStar = i; break }
+        }
+        XCTAssertNotNil(driftStar)
+        if let s = driftStar {
+            func travel(zoom: Double) -> Double {
+                let a = Double(GalacticStarfield.screenPosition(
+                    index: s, timeSec: 0, width: 1000, height: 800,
+                    speed: GalacticStarfield.baseSpeed, zoom: zoom, referenceZoom: 1).x)
+                let b = Double(GalacticStarfield.screenPosition(
+                    index: s, timeSec: 1, width: 1000, height: 800,
+                    speed: GalacticStarfield.baseSpeed, zoom: zoom, referenceZoom: 1).x)
+                return a - b
+            }
+            XCTAssertEqual(travel(zoom: 4) / travel(zoom: 1), 4.0, accuracy: 0.05)
+            XCTAssertGreaterThan(
+                GalacticStarfield.scaledRadius(index: s, zoom: 4, referenceZoom: 1),
+                GalacticStarfield.scaledRadius(index: s, zoom: 1, referenceZoom: 1))
+        }
+        // Radius follows zoom exactly at unity and clamps at extremes.
+        XCTAssertEqual(
+            GalacticStarfield.scaledRadius(index: 9, zoom: 2, referenceZoom: 2),
+            GalacticStarfield.radius(index: 9))
+        XCTAssertLessThanOrEqual(GalacticStarfield.scaledRadius(index: 9, zoom: 100, referenceZoom: 1), 7.0)
+
+        // Fly-through fade: exact expectations from each star's size.
+        var bigIndex = 0
+        var bigRadius: Float = 0
+        var smallIndex = 0
+        var smallRadius: Float = .greatestFiniteMagnitude
+        for i in 0..<GalacticStarfield.starCount {
+            let r = GalacticStarfield.radius(index: i)
+            if r > bigRadius { bigRadius = r; bigIndex = i }
+            if r < smallRadius { smallRadius = r; smallIndex = i }
+        }
+        let bigNorm = (Double(bigRadius) - 1.0) / 2.3
+        XCTAssertEqual(
+            GalacticStarfield.zoomFade(index: bigIndex, zoom: 8, referenceZoom: 1),
+            1.0 - 0.9 * bigNorm, accuracy: 0.001,
+            "big stars dissolve zoomed in")
+        XCTAssertEqual(GalacticStarfield.zoomFade(index: bigIndex, zoom: 1, referenceZoom: 1), 1.0, accuracy: 0.001)
+        let smallNorm = (Double(smallRadius) - 1.0) / 2.3
+        XCTAssertEqual(
+            GalacticStarfield.zoomFade(index: smallIndex, zoom: 0.125, referenceZoom: 1),
+            1.0 - 0.7 * (1.0 - smallNorm), accuracy: 0.001,
+            "small stars dissolve zoomed far out")
+        for z in [0.05, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 32.0] {
+            for i in [0, 3, 77, 159] {
+                let f = GalacticStarfield.zoomFade(index: i, zoom: z, referenceZoom: 1)
+                XCTAssertGreaterThanOrEqual(f, 0.0)
+                XCTAssertLessThanOrEqual(f, 1.0)
+            }
+        }
+
+        // Reference zoom resets when leaving Galactic.
+        let ui = EngineUIManager()
+        ui.setTheme(AppTheme.galacticPurple)
+        ui.starfieldReferenceZoom = 2.5
+        ui.setTheme(AppTheme.dark)
+        XCTAssertNil(ui.starfieldReferenceZoom)
+    }
+
+    func testStarfieldMouseParallax() {
+        // Opposite the mouse: mouse right/below center pushes stars left/up.
+        XCTAssertLessThan(
+            GalacticStarfield.mouseParallaxTarget(delta: -100, halfExtent: 500, parallax: 1), 0.0)
+        XCTAssertGreaterThan(
+            GalacticStarfield.mouseParallaxTarget(delta: 100, halfExtent: 500, parallax: 1), 0.0)
+        XCTAssertEqual(
+            GalacticStarfield.mouseParallaxTarget(delta: 0, halfExtent: 500, parallax: 1), 0.0)
+        // Clamped at the edges and scaled by depth.
+        XCTAssertEqual(
+            GalacticStarfield.mouseParallaxTarget(delta: -5000, halfExtent: 500, parallax: 1),
+            -GalacticStarfield.mouseParallaxStrength)
+        XCTAssertEqual(
+            GalacticStarfield.mouseParallaxTarget(delta: 250, halfExtent: 500, parallax: 0.5),
+            GalacticStarfield.mouseParallaxTarget(delta: 250, halfExtent: 500, parallax: 1) * 0.5,
+            accuracy: 0.001)
+        XCTAssertEqual(GalacticStarfield.mouseParallaxTarget(delta: 100, halfExtent: 0, parallax: 1), 0.0)
+
+        // Smoothing converges monotonically and holds without time.
+        let first = GalacticStarfield.smoothOffset(current: 0, target: -20, deltaSec: 1.0 / 60.0)
+        XCTAssertLessThan(first, 0.0)
+        XCTAssertGreaterThan(first, -20.0)
+        let second = GalacticStarfield.smoothOffset(current: first, target: -20, deltaSec: 1.0 / 60.0)
+        XCTAssertLessThan(second, first)
+        XCTAssertEqual(GalacticStarfield.smoothOffset(current: 5, target: -20, deltaSec: 0), 5.0)
+        XCTAssertEqual(GalacticStarfield.smoothOffset(current: 5, target: -20, deltaSec: -1), 5.0)
+
+        // Wrapped application stays in bounds.
+        let shifted = GalacticStarfield.applyMouseParallax(
+            x: 5, y: 5, offsetX: -30, offsetY: 900, parallax: 1, width: 1000, height: 800)
+        XCTAssertGreaterThanOrEqual(shifted.x, 0.0)
+        XCTAssertLessThan(shifted.x, 1000.0)
+        XCTAssertGreaterThanOrEqual(shifted.y, 0.0)
+        XCTAssertLessThan(shifted.y, 800.0)
+        XCTAssertEqual(shifted.x, 975.0, accuracy: 0.001)
+        XCTAssertEqual(shifted.y, 105.0, accuracy: 0.001)
+
+        // Manager: offset moves opposite the mouse, decays when invalid.
+        let ui = EngineUIManager()
+        ui.updateStarfieldMouse(
+            mouseX: 1400, mouseY: 200, valid: true,
+            centerX: 960, centerY: 540, halfW: 960, halfH: 540, deltaSec: 1.0 / 60.0)
+        XCTAssertLessThan(ui.starfieldMouseOffset.x, 0.0, "mouse right pushes stars left")
+        XCTAssertGreaterThan(ui.starfieldMouseOffset.y, 0.0, "mouse above center pushes stars down")
+        ui.updateStarfieldMouse(
+            mouseX: 1400, mouseY: 200, valid: true,
+            centerX: 960, centerY: 540, halfW: 960, halfH: 540, deltaSec: 1.0 / 60.0)
+        XCTAssertLessThan(ui.starfieldMouseOffset.x, -0.1, "offset keeps easing while held")
+        ui.starfieldMouseOffset = (x: 10, y: -8)
+        ui.updateStarfieldMouse(
+            mouseX: 0, mouseY: 0, valid: false,
+            centerX: 960, centerY: 540, halfW: 960, halfH: 540, deltaSec: 1.0 / 60.0)
+        XCTAssertLessThan(abs(ui.starfieldMouseOffset.x), 10.0)
+        XCTAssertLessThan(abs(ui.starfieldMouseOffset.y), 8.0)
+        XCTAssertGreaterThan(
+            abs(GalacticStarfield.mouseParallaxTarget(delta: 500, halfExtent: 500, parallax: 1)),
+            GalacticStarfield.baseSpeed,
+            "mouse response outweighs one second of ambient drift")
+    }
+
+    func testStarfieldRealStarColors() {
+        // Real stars are never green and are always bright: no tint may peak
+        // in green, and every tint peaks at a high channel value.
+        var seen = Set<String>()
+        for i in 0..<GalacticStarfield.starCount {
+            let t = GalacticStarfield.tint(index: i)
+            XCTAssertFalse(t.g > t.r && t.g > t.b, "stars cannot peak in green")
+            XCTAssertGreaterThanOrEqual(max(t.r, max(t.g, t.b)), 200, "stars are bright")
+            seen.insert("\(t.r),\(t.g),\(t.b)")
+        }
+        // A spread of spectral classes, not a single white.
+        XCTAssertGreaterThan(seen.count, 3)
     }
 
     func testThemeSyncsStaleWindowContexts() {

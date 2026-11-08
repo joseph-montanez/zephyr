@@ -11,6 +11,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Save As DWG** — Save/Save As offer DWG via internal DXF export plus ODA conversion; the tab stays associated for later saves and the version follows `DXFVERSION` (default 2018)
 - **Sheet sets** — organize drawings (`.dst`) with `NEWSHEETSET`/`OPENSHEETSET`, manage from the `SHEETSET` palette, drop views with `PLACEVIEW` (live ghost), publish with `-PUBLISHSET`
 - **Callouts and transmit** — tag sheets with `PLACECALLOUT`, and package a whole sheet set for sharing with `-TRANSMITSET`, which gathers the set file plus its drawings into one archive folder
+- **Galactic Purple theme with viewport starfield** - deep-space dark theme (`GALAXY`, with galactic/purple/space aliases) whose canvas shows blinking X-sparkle stars in real stellar colors; the panorama drifts with time, responds to zoom (star size, drift speed, and a fly-through fade of near/far stars), and follows the mouse opposite its direction with depth-scaled parallax; selecting Galactic auto-enables the stars and leaving it turns them off
 
 ### New Commands
 - **PUBLISH / +PUBLISH / -PUBLISH** — publish dialog workflow, preload the dialog from a sheet list, and foreground command-line publishing with a CSV log beside the `.dsd` file
@@ -22,6 +23,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **BREAK (`BR`) / BREAKATPOINT** — `BREAK` erases the span between two points on one object (`F` re-prompts the first point); `BREAKATPOINT` splits at one point and repeats until Enter; one undo entry per applied break
 - **EXTEND (`EX`)** — extend open objects to boundary edges (Standard pick loop or Quick mode) with Fence, Crossing, Mode, Project, Edge, and in-session Undo; ships with TRIM on the Modify ribbon with scripted `(command ...)` forms
 - **SNAP grid snap with Aspect spacing (AutoCAD parity)** - new `SNAP` command (F9, `GRIDSNAP` alias) with ON/OFF/Aspect/<spacing> prompts plus `SNAPUNIT`; `GRIDSPACING`/`GRIDUNIT` gain Aspect (separate X/Y), Snap (copy snap spacing), and `nX` multiples; new `GRIDMAJOR` major-line frequency; grid/snap state shows in the status bar and persists across restarts
+- **STARFIELD (`STARS`)** - toggle the Galactic Purple starfield panorama, with optional `ON`/`OFF`; takes effect while Galactic Purple is active
 
 ### Improvements
 - **Space == Enter command input (AutoCAD parity)** — Space submits exactly like Enter: one token per keypress, so `UCS Z 45` is typed stepwise; prompts accepting blanks keep Space literal; spaced command names retired for canonical spellings
@@ -40,6 +42,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Shifted-frame spline intersection polish** — bounding-box-center origin with knot-clamped damped Newton cuts the polish regression from ~827s to ~1.8s at sub-1e-9 residuals
 - **Zoom-independent trim** — trim tolerances no longer depend on zoom; the tolerance is `max(kernel linear, localDiagonal * 1e-9)` so trim results are identical at every zoom level
 - **Layers panel multi-selection and redesign** — Ctrl+Click toggles, Shift+Click ranges, Ctrl+A selects all; Select menu plus right-click row menu; bulk ops target the selection with skips noticed; double-click no longer changes current layer (F2/right-click renames); grouped icon toolbar, search + sort, scope chips, glanceable icon rows; rare actions in a More menu
+- **Cotton Candy vibrancy** - saturated the pink palette: hotter chrome, bubblegum panels, vivid violet-pink accents and borders, and stronger hover states
 
 ### DXF & File Formats
 - **Mirrored geometry round-trips** — `$MIRRTEXT` writes the stored header value, mirrored inserts export negative-Y scale so reimport rebuilds the reflection, and mirrored arcs emit matching sweeps; one canonical determinant check shared by all mirror paths

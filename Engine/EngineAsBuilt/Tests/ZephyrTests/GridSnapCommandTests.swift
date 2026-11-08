@@ -220,7 +220,7 @@ final class GridSnapCommandTests: XCTestCase {
     // MARK: - Theme grid colors
 
     func testGridLineAlphaVisibleInEveryTheme() {
-        XCTAssertEqual(AppTheme.allPresets.count, 7)
+        XCTAssertEqual(AppTheme.allPresets.count, 8)
         for preset in AppTheme.allPresets {
             XCTAssertGreaterThan(
                 preset.theme.gridMinor.w, 0.3,

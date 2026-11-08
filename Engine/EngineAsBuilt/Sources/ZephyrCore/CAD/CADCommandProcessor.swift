@@ -455,13 +455,14 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "STYLESMANAGER", aliases: [], category: .settings, syntax: "", description: "Open the plot styles folder"),
         CommandDescriptor(canonicalName: "PLOTTERMANAGER", aliases: [], category: .settings, syntax: "", description: "Open the plotters folder"),
         CommandDescriptor(canonicalName: "MLEADERSTYLE", aliases: ["MLS"], category: .settings, syntax: "", description: "Create and edit multileader styles"),
-        CommandDescriptor(canonicalName: "THEME",      aliases: [], category: .settings, syntax: "[Dark/Light/Latte/Frappe/Macchiato/Mocha/Candy/Next/?]", description: "Choose the UI theme at a sub-prompt (bare THEME opens it; DARKMODE/LIGHTMODE are direct)"),
+        CommandDescriptor(canonicalName: "THEME",      aliases: [], category: .settings, syntax: "[Dark/Light/Latte/Frappe/Macchiato/Mocha/Candy/Galaxy/Next/?]", description: "Choose the UI theme at a sub-prompt (bare THEME opens it; DARKMODE/LIGHTMODE are direct)"),
         CommandDescriptor(canonicalName: "DARKMODE",   aliases: [], category: .settings, syntax: "", description: "Switch to the dark UI theme"),
         CommandDescriptor(canonicalName: "LIGHTMODE",  aliases: [], category: .settings, syntax: "", description: "Switch to the light UI theme"),
         CommandDescriptor(canonicalName: "FPS",        aliases: [],                        category: .settings, syntax: "", description: "Toggle FPS counter in the title bar"),
         CommandDescriptor(canonicalName: "AUTOCONTRAST", aliases: ["CONTRAST", "TRUECOLORCONTRAST"], category: .settings, syntax: "[ON|OFF]", description: "Toggle auto-contrast clamping for 24-bit TrueColors and gradients"),
         CommandDescriptor(canonicalName: "SET-BACKGROUND", aliases: ["SETBG", "BACKGROUND"], category: .settings, syntax: "<index|hex>", description: "Set viewport background color (ACI index 1-255 or hex RRGGBB)"),
         CommandDescriptor(canonicalName: "GRID",            aliases: [],                category: .settings, syntax: "", description: "Toggle the background grid on/off"),
+        CommandDescriptor(canonicalName: "STARFIELD",     aliases: ["STARS"],       category: .settings, syntax: "[ON|OFF]", description: "Toggle the Galactic Purple starfield panorama (blinking stars that drift like a panorama)"),
         CommandDescriptor(canonicalName: "SNAP",            aliases: ["GRIDSNAP", "SNAPUNIT"], category: .settings, syntax: "[ON|OFF|Aspect|<spacing>]", description: "Toggle grid snap; set the exact snap spacing (F9)"),
         CommandDescriptor(canonicalName: "GRIDSPACING",     aliases: ["GRIDUNIT"],    category: .settings, syntax: "[Aspect|Snap|<value>|<n>X]", description: "Set the display grid spacing; Aspect sets X/Y separately"),
         CommandDescriptor(canonicalName: "GRIDMAJOR",        aliases: [],                category: .settings, syntax: "<n>", description: "Major grid line every N lines"),
@@ -2391,6 +2392,25 @@ public final class CADCommandProcessor {
             syncToggleSysvar(
                 "GRIDMODE", on: engine.snap.gridVisible, engine: engine)
             print("[CAD] Grid: \(engine.snap.gridVisible ? "ON" : "OFF")")
+            clearCommand()
+        case "STARFIELD", "STARS":
+            guard let engine = engine else { clearCommand(); return }
+            engine.ui.starfieldPanoramaEnabled.toggle()
+            print("[CAD] Starfield: \(engine.ui.starfieldPanoramaEnabled ? "ON" : "OFF")\(engine.ui.currentTheme.id == AppTheme.galacticPurple.id ? "" : " (visible in Galactic Purple)")")
+            clearCommand()
+        case _ where upper.hasPrefix("STARFIELD ") || upper.hasPrefix("STARS "):
+            guard let engine = engine else { clearCommand(); return }
+            let arg = String(upper.split(separator: " ").last ?? "").trimmingCharacters(in: .whitespaces)
+            switch arg {
+            case "ON", "1", "TRUE":
+                engine.ui.starfieldPanoramaEnabled = true
+                print("[CAD] Starfield: ON")
+            case "OFF", "0", "FALSE":
+                engine.ui.starfieldPanoramaEnabled = false
+                print("[CAD] Starfield: OFF")
+            default:
+                print("[CAD] Usage: STARFIELD [ON|OFF]")
+            }
             clearCommand()
         case "SNAP", "GRIDSNAP", "SNAPUNIT":
             // Bare SNAP opens the prompted option flow (Space == Enter):

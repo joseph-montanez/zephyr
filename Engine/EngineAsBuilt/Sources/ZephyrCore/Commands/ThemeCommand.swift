@@ -10,7 +10,7 @@ import SwiftSDL
 //
 // Bare `THEME` opens a sub-prompt instead of cycling:
 //
-//   Enter theme [Dark/Light/Latte/Frappe/Macchiato/Mocha/Candy/Next/?] <DARK>:
+//   Enter theme [Dark/Light/Latte/Frappe/Macchiato/Mocha/Candy/Galaxy/Next/?] <DARK>:
 //
 // Each Space/Enter submits exactly one token. `NEXT` cycles to the next
 // preset, `?` lists presets and re-prompts, an exact name or unique prefix

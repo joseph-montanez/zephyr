@@ -538,6 +538,8 @@ public final class EngineRenderer {
         engine.windowHeight = windowHeight
         engine.pixelWidth = pixelWidth
         engine.pixelHeight = pixelHeight
+        engine.ui.advanceStarfield(by: deltaSec)
+        engine.ui.lastFrameDeltaSec = min(max(deltaSec, 0.0), 0.25)
 
         let newScaleX = Float(pixelWidth) / Float(windowWidth)
         let newScaleY = Float(pixelHeight) / Float(windowHeight)
@@ -774,6 +776,7 @@ public final class EngineRenderer {
         if includeCrosshair {
             renderCrosshairCursor(cam: transform, origin: origin)
         }
+        renderStarfieldPanorama(camZoom: transform.camZoom)
         renderSheetOverlay(cam: transform)
         renderGrid(cam: transform)
         renderSnapIndicator(cam: transform)
@@ -1265,6 +1268,9 @@ public final class EngineRenderer {
             width: Int32(leaf.rect.w), height: Int32(leaf.rect.h))
         pushBackgroundClip(leaf.rect)
         if includeGrid {
+            if engine.ui.isStarfieldActive {
+                renderStarfield(in: SDL_FRect(x: leaf.rect.x, y: leaf.rect.y, w: leaf.rect.w, h: leaf.rect.h), zoom: ctx.camera.zoom)
+            }
             let vp = ctx.camera.worldViewportRect(
                 windowWidth: Int32(leaf.rect.w), windowHeight: Int32(leaf.rect.h))
             renderGrid(
@@ -3323,6 +3329,76 @@ public final class EngineRenderer {
     /// making them non-selectable (not part of the CAD vertex buffer or ID-buffer pick pass).
     /// The visual spacing adapts to the current zoom level so a consistent density
     /// of lines is visible at all zoom levels.
+    /// Galactic starfield panorama: blinking stars drifting behind the grid.
+    /// Active only for the Galactic Purple theme with the flag on. Drawn on
+    /// the background list before the sheet/grid so CAD stays on top.
+    private func renderStarfieldPanorama(camZoom: Double) {
+        guard engine.ui.isStarfieldActive else { return }
+        let rect: SDL_FRect
+        if let vp = engine.ui.drawingViewportRect {
+            rect = vp
+        } else {
+            rect = SDL_FRect(
+                x: 0, y: 0,
+                w: Float(max(engine.windowWidth, 1)),
+                h: Float(max(engine.windowHeight, 1)))
+        }
+        renderStarfield(in: rect, zoom: camZoom)
+    }
+
+    /// Starfield for one rect (main viewport or a clipped split pane).
+    private func renderStarfield(in rect: SDL_FRect, zoom: Double) {
+        guard rect.w > 1.0, rect.h > 1.0 else { return }
+        if engine.ui.starfieldReferenceZoom == nil, zoom > 0 {
+            engine.ui.starfieldReferenceZoom = zoom
+        }
+        let reference = engine.ui.starfieldReferenceZoom ?? zoom
+        var mouseX: Float = 0
+        var mouseY: Float = 0
+        var mouseValid = false
+        if let io = ImGuiGetIO() {
+            let m = io.pointee.MousePos
+            mouseValid = m.x >= -256000 && m.y >= -256000
+            mouseX = m.x
+            mouseY = m.y
+        }
+        engine.ui.updateStarfieldMouse(
+            mouseX: mouseX, mouseY: mouseY, valid: mouseValid,
+            centerX: rect.x + rect.w * 0.5, centerY: rect.y + rect.h * 0.5,
+            halfW: rect.w * 0.5, halfH: rect.h * 0.5,
+            deltaSec: engine.ui.lastFrameDeltaSec)
+        let mox = engine.ui.starfieldMouseOffset.x
+        let moy = engine.ui.starfieldMouseOffset.y
+        guard let drawList = igGetBackgroundDrawList(nil) else { return }
+        let time = engine.ui.starfieldTimeSec
+        let speed = engine.ui.starfieldPanoramaSpeed
+        for index in 0..<GalacticStarfield.starCount {
+            let pos = GalacticStarfield.screenPosition(
+                index: index, timeSec: time,
+                width: rect.w, height: rect.h, speed: speed, zoom: zoom, referenceZoom: reference)
+            let tint = GalacticStarfield.tint(index: index)
+            let alpha = GalacticStarfield.twinkleAlpha(index: index, timeSec: time)
+                * Float(GalacticStarfield.zoomFade(index: index, zoom: zoom, referenceZoom: reference))
+            guard alpha > 0.02 else { continue }
+            let col = makeImCol32(
+                r: tint.r, g: tint.g, b: tint.b,
+                a: UInt8(min(max(alpha, 0), 1) * 255))
+            let coreCol = makeImCol32(r: 255, g: 255, b: 255, a: UInt8(min(max(alpha, 0), 1) * 255))
+            let par = GalacticStarfield.parallax(index: index)
+            let shifted = GalacticStarfield.applyMouseParallax(
+                x: pos.x, y: pos.y, offsetX: mox, offsetY: moy,
+                parallax: par, width: rect.w, height: rect.h)
+            let cx = rect.x + shifted.x
+            let cy = rect.y + shifted.y
+            let r = GalacticStarfield.scaledRadius(index: index, zoom: zoom, referenceZoom: reference)
+            let arm = r * 2.0 + 2.0
+            ImDrawListAddLine(drawList, ImVec2(x: cx - arm, y: cy - arm), ImVec2(x: cx + arm, y: cy + arm), col, 1.0)
+            ImDrawListAddLine(drawList, ImVec2(x: cx + arm, y: cy - arm), ImVec2(x: cx - arm, y: cy + arm), col, 1.0)
+            let hs = max(1.5, r * 0.9)
+            ImDrawListAddRectFilled(drawList, ImVec2(x: cx - hs, y: cy - hs), ImVec2(x: cx + hs, y: cy + hs), coreCol, 0.0, 0)
+        }
+    }
+
     private func renderGrid(
         cam: CameraTransform,
         viewportWidth: Float? = nil,

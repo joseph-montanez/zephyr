@@ -560,9 +560,64 @@ public final class EngineUIManager {
 
     public private(set) var themeRevision: Int = 0
 
+    /// Starfield panorama mode for the Galactic Purple theme: blinking
+    /// stars that drift horizontally like a panorama behind the CAD grid.
+    public var starfieldPanoramaEnabled: Bool = false
+    /// Panorama clock in seconds; advanced once per frame by the renderer.
+    public var starfieldTimeSec: Double = 0
+    /// Panorama drift speed in points/sec at parallax 1.
+    public var starfieldPanoramaSpeed: Float = 14.0
+    /// Camera zoom the starfield scale is relative to, captured on the
+    /// first active frame; cleared when leaving Galactic Purple.
+    public var starfieldReferenceZoom: Double? = nil
+    /// Smoothed mouse parallax offset in points (opposite the mouse).
+    public var starfieldMouseOffset: (x: Float, y: Float) = (0, 0)
+    /// Last frame delta, stored for starfield mouse smoothing.
+    public var lastFrameDeltaSec: Double = 1.0 / 60.0
+
+    /// Eases the starfield mouse offset toward the opposite of the mouse
+    /// position (or back to zero when the mouse position is invalid).
+    public func updateStarfieldMouse(
+        mouseX: Float, mouseY: Float, valid: Bool,
+        centerX: Float, centerY: Float,
+        halfW: Float, halfH: Float,
+        deltaSec: Double
+    ) {
+        let tx: Float
+        let ty: Float
+        if valid {
+            tx = GalacticStarfield.mouseParallaxTarget(delta: centerX - mouseX, halfExtent: halfW, parallax: 1)
+            ty = GalacticStarfield.mouseParallaxTarget(delta: centerY - mouseY, halfExtent: halfH, parallax: 1)
+        } else {
+            tx = 0
+            ty = 0
+        }
+        starfieldMouseOffset = (
+            x: GalacticStarfield.smoothOffset(current: starfieldMouseOffset.x, target: tx, deltaSec: deltaSec),
+            y: GalacticStarfield.smoothOffset(current: starfieldMouseOffset.y, target: ty, deltaSec: deltaSec)
+        )
+    }
+
+    /// True when stars should render: flag on + Galactic Purple active.
+    public var isStarfieldActive: Bool {
+        starfieldPanoramaEnabled && currentTheme.id == AppTheme.galacticPurple.id
+    }
+
+    /// Advance the panorama clock (clamped + wrapped; see `GalacticStarfield`).
+    public func advanceStarfield(by deltaSec: Double) {
+        starfieldTimeSec = GalacticStarfield.advance(current: starfieldTimeSec, by: deltaSec)
+    }
+
     /// The currently active AppTheme instance.
     public var currentTheme: AppTheme = AppTheme.dark {
+        // Starfield auto-toggles on galactic transitions (see didSet).
+        // (setTheme routes through currentTheme).
         didSet {
+            let wasGalactic = oldValue.id == AppTheme.galacticPurple.id
+            let isGalactic = currentTheme.id == AppTheme.galacticPurple.id
+            if isGalactic && !wasGalactic { starfieldPanoramaEnabled = true }
+            else if !isGalactic && wasGalactic { starfieldPanoramaEnabled = false }
+            if !isGalactic { starfieldReferenceZoom = nil }
             themeRevision &+= 1
             if igGetCurrentContext() != nil {
                 applyTheme()
@@ -849,6 +904,7 @@ public final class EngineUIManager {
 
     /// Switch to a specific AppTheme instance.
     public func setTheme(_ newTheme: AppTheme) {
+        // Starfield auto-toggle handled in currentTheme.didSet.
         currentTheme = newTheme
         displayPaletteGeneration &+= 1
         applyTheme()

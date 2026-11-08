@@ -402,39 +402,82 @@ public struct AppTheme {
         frameBg: vec4(0x11111b)          // Crust #11111b (deep recessed dark)
     )
 
+    /// Galactic Purple — Deep-space dark mode with neon violet/cyan accents.
+    /// Pairs with the viewport starfield panorama (see `GalacticStarfield`).
+    public static let galacticPurple = AppTheme(
+        id: "galactic-purple",
+        name: "Galactic Purple",
+        isDark: true,
+        viewportBg: sdlColor(0x160A2E), // vivid deep space #160A2E
+        topChromeBg: vec4(0x4A1D96),    // electric nebula violet
+        tabBarBg: vec4(0x2A1257),
+        panelBg: vec4(0x2C1660),        // vibrant starship panel
+        panelBgDim: vec4(0x2C1660, 0.95),
+        windowBg: vec4(0x2C1660),
+
+        textPrimary: vec4(0xF1E8FF),    // starlight lavender
+        textDim: vec4(0xC9B8E8),
+        textIcon: vec4(0xD5C8F0),
+        textAccent: vec4(0x8AF3FF),     // ion cyan
+
+        brandGold: vec4(0xD040FF),      // electric nova violet
+        brandGoldHover: vec4(0xE38DFF),
+        brandGoldActive: vec4(0xB020FF),
+        rowHoverText: vec4(0x160A2E),
+
+        border: vec4(0x8B5CF6),
+        borderDim: vec4(0x8B5CF6, 0.60),
+
+        macClose: vec4(0xFF6B9D),
+        macCloseHover: vec4(0xFF8FB5),
+        macMin: vec4(0xFFD166),
+        macMinHover: vec4(0xFFE08A),
+        macMax: vec4(0x4DE3C2),
+        macMaxHover: vec4(0x7DF0D4),
+
+        hoverBg: vec4(0x9D6BFF, 0.32),
+        activeBg: vec4(0x6D28D9, 0.85),
+        commandRowHighlight: vec4(0xD040FF, 0.25),
+        dangerBg: vec4(0xFF3D81),
+        buttonBg: vec4(0x3A2068),
+        frameBg: vec4(0x160A2E),
+        gridMinor: vec4(0xC4B5FD, 0.40),
+        gridMajor: vec4(0xDDD0FF, 0.65)
+    )
+
     /// Cotton Candy — Barbie-pink light mode with rainbow candy accents
     public static let cottonCandy = AppTheme(
         id: "cotton-candy",
         name: "Cotton Candy",
         isDark: false,
-        viewportBg: sdlColor(0xFDE7F3),
-        topChromeBg: vec4(0xF9C5E3),
-        tabBarBg: vec4(0xF9C5E3),
-        panelBg: vec4(0xFFF0F7),
-        panelBgDim: vec4(0xFFF0F7, 0.95),
-        windowBg: vec4(0xFFF0F7),
+        viewportBg: sdlColor(0xFFC9DD),
+        topChromeBg: vec4(0xFF6FA9),
+        tabBarBg: vec4(0xFF6FA9),
+        panelBg: vec4(0xFFD9E8),
+        panelBgDim: vec4(0xFFD9E8, 0.95),
+        windowBg: vec4(0xFFD9E8),
         textPrimary: vec4(0x5C1031),
-        textDim: vec4(0x9A5C7E),
-        textIcon: vec4(0x6E2A4D),
-        textAccent: vec4(0xD8117A),
-        brandGold: vec4(0xFF2E93),
-        brandGoldHover: vec4(0xFF6EB5),
-        brandGoldActive: vec4(0xD8117A),
+        textDim: vec4(0x9C3D6E),
+        textIcon: vec4(0x7A1F4B),
+        textAccent: vec4(0xE6007E),
+        brandGold: vec4(0xFF1E8C),
+        brandGoldHover: vec4(0xFF5DAC),
+        brandGoldActive: vec4(0xC90076),
         rowHoverText: vec4(0x5C1031),
-        border: vec4(0xE99AB8),
-        borderDim: vec4(0xE99AB8, 0.60),
-        macClose: vec4(0xFF5D8F),
-        macCloseHover: vec4(0xFF85A8),
-        macMin: vec4(0xE8A100),
+        border: vec4(0xF44A9B),
+        borderDim: vec4(0xF44A9B, 0.60),
+        macClose: vec4(0xFF2F7A),
+        macCloseHover: vec4(0xFF6E9C),
+        macMin: vec4(0xFF9E00),
         macMinHover: vec4(0xFFC93C),
-        macMax: vec4(0x1FA37A),
-        macMaxHover: vec4(0x3ED6A4),
-        hoverBg: vec4(0xF8BBD8, 0.45),
-        activeBg: vec4(0xF5A9CC, 0.85),
-        commandRowHighlight: vec4(0xFF2E93, 0.16),
-        dangerBg: vec4(0xE0218A),
-        buttonBg: vec4(0xF9C5E3),
-        frameBg: vec4(0xFDE7F3, 0.85)
+        macMax: vec4(0x12C98A),
+        macMaxHover: vec4(0x35E0A5),
+        hoverBg: vec4(0xFF9CC4, 0.55),
+        activeBg: vec4(0xFF7EB0, 0.90),
+        commandRowHighlight: vec4(0xFF1E8C, 0.22),
+        dangerBg: vec4(0xE6007E),
+        buttonBg: vec4(0xFF8ABB),
+        frameBg: vec4(0xFFC9DD, 0.90)
     )
 
     // MARK: - Presets Registry
@@ -447,6 +490,7 @@ public struct AppTheme {
         ThemePreset(id: "catppuccin-macchiato", displayName: "Catppuccin Macchiato", shortName: "MACCHIATO", isDark: true, theme: .catppuccinMacchiato),
         ThemePreset(id: "catppuccin-mocha", displayName: "Catppuccin Mocha", shortName: "MOCHA", isDark: true, theme: .catppuccinMocha),
         ThemePreset(id: "cotton-candy", displayName: "Cotton Candy", shortName: "CANDY", isDark: false, theme: .cottonCandy),
+        ThemePreset(id: "galactic-purple", displayName: "Galactic Purple", shortName: "GALAXY", isDark: true, theme: .galacticPurple),
     ]
 
     /// Lookup an AppTheme by name or alias (case-insensitive).
@@ -472,6 +516,8 @@ public struct AppTheme {
             return .cottonCandy
         case "mocha", "catppuccinmocha":
             return .catppuccinMocha
+        case "galaxy", "galactic", "galacticpurple", "purple", "space":
+            return .galacticPurple
         default:
             return nil
         }
