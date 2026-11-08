@@ -58,7 +58,7 @@ internal final class EngineInputHandler {
 
     private func focusedPaneLeaf() -> (id: UUID, tabID: UUID?, rect: PaneRect)? {
         guard engine.mainPanes.isSplit,
-              let canvasF = engine.ui.drawingViewportRect else { return nil }
+              let canvasF = engine.ui.mainViewportRect() else { return nil }
         let canvas = PaneRect(x: canvasF.x, y: canvasF.y, w: canvasF.w, h: canvasF.h)
         let leaves = engine.mainPanes.leafRects(canvas: canvas)
         return leaves.first(where: { $0.id == engine.mainPanes.focusedLeafID })

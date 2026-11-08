@@ -13,7 +13,7 @@ struct LayerPanelUI {
     static var _editingLayerHandle: UUID? = nil
     static var _editingDocumentID: ObjectIdentifier? = nil
     static var _editingLayerNameBuf: [CChar] = []
-    static var _isDocked: Bool = false
+    static var _isDockedBySlot: [WindowSlotID: Bool] = [:]
     static var _searchText: String = ""
     static var _searchBuf: [CChar] = []
     static var _cachedCountsDocumentID: ObjectIdentifier? = nil
@@ -128,7 +128,7 @@ struct LayerPanelUI {
             ImVec2(x: panelW, y: max(panelH, 80)),
             Int32(ImGuiCond_FirstUseEver.rawValue))
 
-        let wasDocked = _isDocked
+        let wasDocked = _isDockedBySlot[engine.ui.frameSlot] ?? false
         ImGuiPushStyleColor(
             Int32(ImGuiCol_WindowBg.rawValue),
             wasDocked ? engine.ui.theme.panelBg : engine.ui.theme.panelBgDim)
@@ -149,7 +149,7 @@ struct LayerPanelUI {
         let entered = wasDocked
             ? igBegin("Layers##LayersPanel", nil, flags)
             : igBegin("Layers##LayersPanel", &opened, flags)
-        _isDocked = ImGuiIsWindowDocked()
+        _isDockedBySlot[engine.ui.frameSlot] = ImGuiIsWindowDocked()
         AppLayout.reportCurrentDockedPanel(engine: engine)
 
         if entered {

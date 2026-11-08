@@ -37,7 +37,7 @@ extension CADCommandProcessor {
             showSheetSetManager(engine: engine)
         case "SHEETSETHIDE":
             SheetSetSysvars.managerOpen = false
-            if let engine { engine.ui.sheetSetManagerActive = false }
+            if let engine { engine.setPanel(\.sheetSetManagerActive, to: false) }
             print("[SheetSet] Sheet Set Manager hidden.")
         case "-PUBLISHSET":
             publishSet(arg: arg, engine: engine)
@@ -269,7 +269,7 @@ extension CADCommandProcessor {
     private func showSheetSetManager(engine: PhrostEngine?) {
         SheetSetSysvars.managerOpen = true
         if let engine {
-            engine.ui.sheetSetManagerActive = true
+            engine.setPanel(\.sheetSetManagerActive, to: true)
             return
         }
         guard let set = sheetSetStore.current else {

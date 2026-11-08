@@ -50,7 +50,7 @@ struct RadialNavUI {
     /// split (the remembered full-window spot may sit in another pane or
     /// outside what's visible), else bottom-right of the window.
     static func defaultPosition(engine: PhrostEngine, dw: Float, dh: Float, size: Float, padding: Float) -> ImVec2 {
-        if engine.mainPanes.isSplit, let canvasF = engine.ui.drawingViewportRect {
+        if engine.mainPanes.isSplit, let canvasF = engine.ui.mainViewportRect() {
             let canvas = PaneRect(x: canvasF.x, y: canvasF.y, w: canvasF.w, h: canvasF.h)
             if let leaf = engine.mainPanes.leafRects(canvas: canvas)
                 .first(where: { $0.id == engine.mainPanes.focusedLeafID }) {

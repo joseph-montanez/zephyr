@@ -10,7 +10,7 @@ import ImGui
 
 @MainActor
 struct XrefPaletteUI {
-    static var _isDocked: Bool = false
+    static var _isDockedBySlot: [WindowSlotID: Bool] = [:]
     // Cache rows against document revisions (single O(entities) pass).
     private static var cachedRevision: (edit: UInt64, render: UInt64) = (0, 0)
     private static var cachedRows: [XrefPalettePolicy.Row] = []
@@ -30,7 +30,7 @@ struct XrefPaletteUI {
             ImVec2(x: ImGuiGetFontSize() * 30, y: ImGuiGetFontSize() * 26),
             Int32(ImGuiCond_FirstUseEver.rawValue))
 
-        let isDocked = _isDocked
+        let isDocked = _isDockedBySlot[engine.ui.frameSlot] ?? false
         var flags = Int32(0)
         if isDocked { flags |= Int32(ImGuiWindowFlags_NoTitleBar.rawValue) }
         var opened = true
@@ -44,7 +44,7 @@ struct XrefPaletteUI {
             ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowBorderSize.rawValue), 1.0)
             entered = igBegin("External References##XrefPalette", &opened, flags)
         }
-        _isDocked = ImGuiIsWindowDocked()
+        _isDockedBySlot[engine.ui.frameSlot] = ImGuiIsWindowDocked()
         AppLayout.reportCurrentDockedPanel(engine: engine)
         guard entered else {
             ImGuiEnd(); ImGuiPopStyleVar(1); ImGuiPopStyleColor(1)

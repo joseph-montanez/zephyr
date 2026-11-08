@@ -30,9 +30,9 @@ import SwiftSDL
 @MainActor
 struct PropertiesPanelUI {
     /// Track docking state of this window.
-    static var _isDocked: Bool = false
+    static var _isDockedBySlot: [WindowSlotID: Bool] = [:]
     /// Tracks previous frame's showPropertiesPanel flag to detect re-open.
-    static var _wasVisible: Bool = false
+    static var _wasVisibleBySlot: [WindowSlotID: Bool] = [:]
     /// Cached picker list, rebuilt only when the selection or document
     /// moves (see `PropertiesPanelUIPolicy.pickerCacheStale`). Rebuilding
     /// per frame made large selections pay entity copies + label
@@ -57,7 +57,7 @@ struct PropertiesPanelUI {
         // Panel toggled off: nothing renders (same early return as the
         // content == .hidden guard below, without touching the picker).
         guard engine.ui.showPropertiesPanel else {
-            _wasVisible = false
+            _wasVisibleBySlot[engine.ui.frameSlot] = false
             return
         }
         // Stable, labeled view of the selection for the multi-select
@@ -119,7 +119,7 @@ struct PropertiesPanelUI {
             isVisible: engine.ui.showPropertiesPanel,
             hasSelectedEntity: entity != nil)
         guard content != .hidden else {
-            _wasVisible = false
+            _wasVisibleBySlot[engine.ui.frameSlot] = false
             return
         }
 
@@ -135,12 +135,12 @@ struct PropertiesPanelUI {
 
         // When the panel is re-opened after being closed, reset docking state
         // so it doesn't get stuck in an invisible docked tab.
-        if !_wasVisible {
-            _isDocked = false
+        if !(_wasVisibleBySlot[engine.ui.frameSlot] ?? false) {
+            _isDockedBySlot[engine.ui.frameSlot] = false
         }
-        _wasVisible = true
+        _wasVisibleBySlot[engine.ui.frameSlot] = true
 
-        let isDocked = _isDocked
+        let isDocked = _isDockedBySlot[engine.ui.frameSlot] ?? false
         var flags = Int32(0)
         if isDocked {
             flags |= Int32(ImGuiWindowFlags_NoTitleBar.rawValue)
@@ -157,7 +157,7 @@ struct PropertiesPanelUI {
             ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowBorderSize.rawValue), 1.0)
             entered = igBegin("Properties##PropsPanel", &opened, flags)
         }
-        _isDocked = ImGuiIsWindowDocked()
+        _isDockedBySlot[engine.ui.frameSlot] = ImGuiIsWindowDocked()
         AppLayout.reportCurrentDockedPanel(engine: engine)
 
         guard entered else {
@@ -1532,3 +1532,4 @@ struct PropertiesPanelUI {
     }
 
 }
+

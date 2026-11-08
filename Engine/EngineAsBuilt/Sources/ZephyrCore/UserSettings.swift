@@ -23,6 +23,7 @@ public struct UserSettings: Codable, Sendable {
     public var blockPanelVisible: Bool
     public var dataTablePanelVisible: Bool
     public var showPropertiesPanel: Bool
+    public var windowPanelLayouts: [String: WindowPanelLayout]
 
     // MARK: - Misc UI
     public var showFPS: Bool
@@ -138,7 +139,8 @@ public struct UserSettings: Codable, Sendable {
         blockLibraryFolders: [String] = [],
         blockInsertExplode: Bool = false,
         blockInsertRepeat: Bool = false,
-        blockInsertPromptAttributes: Bool = false
+        blockInsertPromptAttributes: Bool = false,
+        windowPanelLayouts: [String: WindowPanelLayout] = [:]
     ) {
         self.isDarkTheme = isDarkTheme
         self.themeName = themeName ?? (isDarkTheme ? "dark" : "light")
@@ -173,6 +175,7 @@ public struct UserSettings: Codable, Sendable {
         self.blockInsertExplode = blockInsertExplode
         self.blockInsertRepeat = blockInsertRepeat
         self.blockInsertPromptAttributes = blockInsertPromptAttributes
+        self.windowPanelLayouts = windowPanelLayouts
         self.trimExtendMode = (trimExtendMode == 0) ? 0 : 1
         self.pickFirst = (pickFirst == 0) ? 0 : 1
         self.gridVisible = gridVisible
@@ -291,6 +294,17 @@ public struct UserSettings: Codable, Sendable {
             ?? fallback.gridOriginY
         gridMajor = try box.decodeIfPresent(Int.self, forKey: .gridMajor)
             ?? fallback.gridMajor
+        windowPanelLayouts = try box.decodeIfPresent([String: WindowPanelLayout].self, forKey: .windowPanelLayouts) ?? [:]
+        if windowPanelLayouts[WindowSlotID.main.key] == nil {
+            windowPanelLayouts[WindowSlotID.main.key] = WindowPanelLayout(
+                layersPanelVisible: layersPanelVisible,
+                drawPaletteVisible: drawPaletteVisible,
+                blockPanelVisible: blockPanelVisible,
+                dataTablePanelVisible: dataTablePanelVisible,
+                showPropertiesPanel: showPropertiesPanel,
+                xrefPanelVisible: xrefPanelVisible,
+                sheetSetManagerActive: sheetSetManagerActive)
+        }
         pickFirst = try box.decodeIfPresent(Int.self, forKey: .pickFirst)
             ?? fallback.pickFirst
     }
@@ -309,22 +323,23 @@ public struct UserSettings: Codable, Sendable {
                                trimExtendMode: Int = TrimSettings.trimExtendMode,
                                pickFirst: Int = PickFirstSettings.pickFirst,
                                snap: EngineSnapManager? = nil) -> UserSettings {
-        UserSettings(
+        let mainLayout = ui.panelStore.peek(.main)
+        return UserSettings(
             isDarkTheme: ui.isDarkTheme,
             themeName: ui.theme.id,
-            layersPanelVisible: ui.layersPanelVisible,
-            drawPaletteVisible: ui.drawPaletteVisible,
-            blockPanelVisible: ui.blockPanelVisible,
-            dataTablePanelVisible: ui.dataTablePanelVisible,
-            showPropertiesPanel: ui.showPropertiesPanel,
+            layersPanelVisible: mainLayout?.layersPanelVisible ?? ui.layersPanelVisible,
+            drawPaletteVisible: mainLayout?.drawPaletteVisible ?? ui.drawPaletteVisible,
+            blockPanelVisible: mainLayout?.blockPanelVisible ?? ui.blockPanelVisible,
+            dataTablePanelVisible: mainLayout?.dataTablePanelVisible ?? ui.dataTablePanelVisible,
+            showPropertiesPanel: mainLayout?.showPropertiesPanel ?? ui.showPropertiesPanel,
             showFPS: ui.showFPS,
             radialNavVisible: ui.radialNavVisible,
             hasCompletedSetup: ui.hasCompletedSetup,
             ribbonVisible: ui.ribbonVisible,
             ribbonMode: ui.ribbonMode.rawValue,
             activeRibbonTab: ui.activeRibbonTab,
-            xrefPanelVisible: ui.xrefPanelVisible,
-            sheetSetManagerActive: ui.sheetSetManagerActive,
+            xrefPanelVisible: mainLayout?.xrefPanelVisible ?? ui.xrefPanelVisible,
+            sheetSetManagerActive: mainLayout?.sheetSetManagerActive ?? ui.sheetSetManagerActive,
             xrefRefPathType: ui.xrefRefPathType,
             xrefSearchPaths: ui.xrefSearchPaths,
             xrefMaxLoaded: ui.xrefMaxLoaded,
@@ -352,7 +367,8 @@ public struct UserSettings: Codable, Sendable {
             blockLibraryFolders: ui.blockLibraryFolders,
             blockInsertExplode: ui.blockInsertExplode,
             blockInsertRepeat: ui.blockInsertRepeat,
-            blockInsertPromptAttributes: ui.blockInsertPromptAttributes
+            blockInsertPromptAttributes: ui.blockInsertPromptAttributes,
+            windowPanelLayouts: ui.panelStore.layouts
         )
     }
 
@@ -372,8 +388,11 @@ public struct UserSettings: Codable, Sendable {
     }
 
     /// Path to the ImGui docking ini file.
-    public static func imguiIniURL() -> URL? {
-        appSupportDirectory()?.appendingPathComponent("imgui.ini")
+    public static func imguiIniURL(slot: WindowSlotID = .main) -> URL? {
+        guard slot.isMain else {
+            return appSupportDirectory()?.appendingPathComponent("imgui-\(slot.key).ini")
+        }
+        return appSupportDirectory()?.appendingPathComponent("imgui.ini")
     }
 
     /// Load settings from disk, returning the default if no file exists.

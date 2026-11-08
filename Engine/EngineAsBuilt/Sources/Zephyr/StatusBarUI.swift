@@ -127,7 +127,7 @@ struct StatusBarUI {
             // Right side: Coordinates (focused pane's transform while split).
             let coordCam: CameraTransform = {
                 guard engine.mainPanes.isSplit,
-                      let canvasF = engine.ui.drawingViewportRect else {
+                      let canvasF = engine.ui.mainViewportRect() else {
                     return engine.camera.currentTransform(windowWidth: Int32(dw), windowHeight: Int32(dh))
                 }
                 let canvas = PaneRect(x: canvasF.x, y: canvasF.y, w: canvasF.w, h: canvasF.h)

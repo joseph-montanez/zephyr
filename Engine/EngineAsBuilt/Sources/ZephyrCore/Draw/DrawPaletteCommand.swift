@@ -13,8 +13,8 @@ public final class DrawPaletteCommand: FeatureCommand {
     public init() {}
 
     public func start(engine: PhrostEngine, processor: CADCommandProcessor) {
-        engine.ui.drawPaletteVisible.toggle()
-        if engine.ui.drawPaletteVisible {
+        engine.togglePanel(\.drawPaletteVisible)
+        if engine.isPanel(\.drawPaletteVisible) {
             processor.commandPrompt = "Draw tools palette opened. Click a tool to start drawing."
         } else {
             processor.commandPrompt = nil

@@ -4,7 +4,7 @@ import ImGui
 
 @MainActor
 struct DataTablePanelUI {
-    static var _isDocked: Bool = false
+    static var _isDockedBySlot: [WindowSlotID: Bool] = [:]
     private static var metadataTableHandle: UUID?
     private static var titleEditBuffer = ""
     private static var editingColumnIndex: Int?
@@ -16,7 +16,7 @@ struct DataTablePanelUI {
             ImVec2(x: ImGuiGetFontSize() * 42, y: ImGuiGetFontSize() * 38),
             Int32(ImGuiCond_FirstUseEver.rawValue))
 
-        let isDocked = _isDocked
+        let isDocked = _isDockedBySlot[engine.ui.frameSlot] ?? false
         var flags = Int32(0)
         if isDocked { flags |= Int32(ImGuiWindowFlags_NoTitleBar.rawValue) }
 
@@ -31,7 +31,7 @@ struct DataTablePanelUI {
         } else {
             entered = igBegin("Data Tables##DataTablePanel", &opened, flags)
         }
-        _isDocked = ImGuiIsWindowDocked()
+        _isDockedBySlot[engine.ui.frameSlot] = ImGuiIsWindowDocked()
         AppLayout.reportCurrentDockedPanel(engine: engine)
 
         guard entered else {

@@ -459,7 +459,7 @@ public final class EngineLoopController {
                 } else {
                     interaction.selectTable(handle: handle)
                     if isDoubleClick {
-                        engine.ui.dataTablePanelVisible = true
+                        engine.setPanel(\.dataTablePanelVisible, to: true)
                     }
                 }
 
@@ -485,7 +485,7 @@ public final class EngineLoopController {
                         engine.commandProcessor.executeCommand("DDEDIT")
                     } else {
                         engine.cadSelection.select(handle)
-                        engine.ui.showPropertiesPanel = true
+                        engine.setPanel(\.showPropertiesPanel, to: true)
                     }
                     return
                 }

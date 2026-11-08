@@ -864,8 +864,9 @@ public final class EngineRenderer {
     ) {
         engine.activateImGuiContext(for: target)
         engine.ui.frameRole = .mainWindow
+        engine.ui.frameSlot = target.slotID
         // Layout from last frame's canvas (1-frame lag on resize — invisible).
-        let canvasF = engine.ui.drawingViewportRect
+        let canvasF = engine.ui.mainViewportRect()
             ?? SDL_FRect(x: 0, y: 0, w: Float(engine.windowWidth), h: Float(engine.windowHeight))
         let canvas = PaneRect(
             x: canvasF.x, y: canvasF.y,

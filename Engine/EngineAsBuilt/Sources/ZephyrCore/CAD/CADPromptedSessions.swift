@@ -704,7 +704,7 @@ extension CADCommandProcessor {
             msg += " (toggled)"
         }
         print(msg)
-        engine?.ui.layersPanelVisible = true
+        engine?.setPanel(\.layersPanelVisible, to: true)
         clearCommand()
     }
 

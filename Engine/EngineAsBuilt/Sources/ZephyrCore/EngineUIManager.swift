@@ -359,21 +359,38 @@ public final class EngineUIManager {
     
     public var radialNavVisible: Bool = false
     public var showFPS: Bool = false
+    public var panelStore = WindowPanelLayoutStore()
+    public var frameSlot: WindowSlotID = .main
 
     /// Whether the properties panel is visible (toggled via "props" command).
-    public var showPropertiesPanel: Bool = false
+    public var showPropertiesPanel: Bool {
+        get { panelStore.layout(for: frameSlot).showPropertiesPanel }
+        set { panelStore.update(slot: frameSlot) { $0.showPropertiesPanel = newValue } }
+    }
     
     /// Whether the Draw Tools palette is visible (toggled via "DRAW" command).
-    public var drawPaletteVisible: Bool = false
+    public var drawPaletteVisible: Bool {
+        get { panelStore.layout(for: frameSlot).drawPaletteVisible }
+        set { panelStore.update(slot: frameSlot) { $0.drawPaletteVisible = newValue } }
+    }
 
     /// Whether the Blocks panel is visible (toggled via "BLOCKS" command).
-    public var blockPanelVisible: Bool = false
+    public var blockPanelVisible: Bool {
+        get { panelStore.layout(for: frameSlot).blockPanelVisible }
+        set { panelStore.update(slot: frameSlot) { $0.blockPanelVisible = newValue } }
+    }
 
     /// Whether the External References palette is visible ("XREF").
-    public var xrefPanelVisible: Bool = false
+    public var xrefPanelVisible: Bool {
+        get { panelStore.layout(for: frameSlot).xrefPanelVisible }
+        set { panelStore.update(slot: frameSlot) { $0.xrefPanelVisible = newValue } }
+    }
     /// Whether the Sheet Set Manager palette is visible ("SHEETSET").
     /// Persisted in UserSettings like the other palette flags.
-    public var sheetSetManagerActive: Bool = false
+    public var sheetSetManagerActive: Bool {
+        get { panelStore.layout(for: frameSlot).sheetSetManagerActive }
+        set { panelStore.update(slot: frameSlot) { $0.sheetSetManagerActive = newValue } }
+    }
     public var xrefRefPathType: Int = 1
     public var xrefSearchPaths: [String] = []
     public var xrefMaxLoaded: Int = 32
@@ -394,7 +411,10 @@ public final class EngineUIManager {
     public var blockInsertPromptAttributes: Bool = false
 
     /// Whether the Data Tables panel is visible (toggled via "TABLE" command).
-    public var dataTablePanelVisible: Bool = false
+    public var dataTablePanelVisible: Bool {
+        get { panelStore.layout(for: frameSlot).dataTablePanelVisible }
+        set { panelStore.update(slot: frameSlot) { $0.dataTablePanelVisible = newValue } }
+    }
 
     public var styleManagerActive: Bool = false
     public var leaderStyleManagerActive: Bool = false
@@ -424,7 +444,10 @@ public final class EngineUIManager {
     public var pageSetupEditIsSetup: Bool = false
 
     /// Whether the Layers panel is visible (toggled via "LA"/"LAYER" command). Default true.
-    public var layersPanelVisible: Bool = false
+    public var layersPanelVisible: Bool {
+        get { panelStore.layout(for: frameSlot).layersPanelVisible }
+        set { panelStore.update(slot: frameSlot) { $0.layersPanelVisible = newValue } }
+    }
 
     /// Whether the file tab bar is visible (toggled via "FILETAB"/"FILETABCLOSE").
     public var fileTabsVisible: Bool = true
@@ -435,8 +458,16 @@ public final class EngineUIManager {
     public var ribbonVisible: Bool = true
     /// Clean-screen mode (CLEANSCREENON/OFF, Ctrl+0): chrome hidden to
     /// maximize the canvas, with the pre-hide state saved for restore.
-    public var cleanScreenActive: Bool = false
-    private var savedChromeForCleanScreen: CleanScreenChrome?
+    public var cleanScreenActive: Bool {
+        get { cleanScreenBySlot[frameSlot] ?? false }
+        set { cleanScreenBySlot[frameSlot] = newValue }
+    }
+    private var cleanScreenBySlot: [WindowSlotID: Bool] = [:]
+    private var savedChromeBySlot: [WindowSlotID: CleanScreenChrome] = [:]
+    private var savedChromeForCleanScreen: CleanScreenChrome? {
+        get { savedChromeBySlot[frameSlot] }
+        set { savedChromeBySlot[frameSlot] = newValue }
+    }
 
     /// Snapshot of hideable chrome, for CLEANSCREENON → CLEANSCREENOFF.
     public struct CleanScreenChrome: Sendable {
@@ -530,14 +561,32 @@ public final class EngineUIManager {
         case floatWindow(hostedTabID: UUID?)
     }
     public var frameRole: UIFrameRole = .mainWindow
+    public func viewportRect(for slot: WindowSlotID) -> SDL_FRect? {
+        viewportBySlot[slot]
+    }
+    public func mainViewportRect() -> SDL_FRect? {
+        viewportBySlot[.main]
+    }
     public var isFloatFrame: Bool {
         if case .floatWindow = frameRole { return true }
         return false
     }
 
-    public private(set) var drawingViewportRect: SDL_FRect? = nil
-    private var drawingViewportBaseRect: SDL_FRect? = nil
-    private var dockedPanelRects: [SDL_FRect] = []
+    public var drawingViewportRect: SDL_FRect? {
+        get { viewportBySlot[frameSlot] }
+        set { viewportBySlot[frameSlot] = newValue }
+    }
+    private var viewportBaseBySlot: [WindowSlotID: SDL_FRect] = [:]
+    private var viewportBySlot: [WindowSlotID: SDL_FRect] = [:]
+    private var dockedRectsBySlot: [WindowSlotID: [SDL_FRect]] = [:]
+    private var drawingViewportBaseRect: SDL_FRect? {
+        get { viewportBaseBySlot[frameSlot] }
+        set { viewportBaseBySlot[frameSlot] = newValue }
+    }
+    private var dockedPanelRects: [SDL_FRect] {
+        get { dockedRectsBySlot[frameSlot] ?? [] }
+        set { dockedRectsBySlot[frameSlot] = newValue }
+    }
 
     
     public var boldFont: UnsafeMutablePointer<ImFont>? = nil
@@ -705,7 +754,7 @@ public final class EngineUIManager {
             w: max(width, 1.0),
             h: max(height, 1.0))
         drawingViewportBaseRect = rect
-        dockedPanelRects.removeAll(keepingCapacity: true)
+        dockedRectsBySlot[frameSlot] = []
         drawingViewportRect = rect
     }
 
@@ -713,12 +762,12 @@ public final class EngineUIManager {
     /// restore them afterwards. The main window recomputes them every frame,
     /// but poll-time readers (zoom-to-fit) must see main-window values.
     internal func snapshotDrawingViewport() -> (base: SDL_FRect?, current: SDL_FRect?) {
-        (drawingViewportBaseRect, drawingViewportRect)
+        (viewportBaseBySlot[.main], viewportBySlot[.main])
     }
 
     internal func restoreDrawingViewport(base: SDL_FRect?, current: SDL_FRect?) {
-        drawingViewportBaseRect = base
-        drawingViewportRect = current
+        viewportBaseBySlot[.main] = base
+        viewportBySlot[.main] = current
     }
 
     public func excludeDockedPanelRect(
@@ -1255,3 +1304,5 @@ public final class EngineUIManager {
         }
     }
 }
+
+

@@ -1,6 +1,13 @@
 import Foundation
 import SwiftSDL
 import ImGui
+#if os(Windows)
+import WinSDK
+#elseif canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 // =========================================================================
 // MARK: - WindowImGuiInputEvent
@@ -39,6 +46,8 @@ public final class EngineManagedWindow {
     /// The tab this window shows. Set for float windows; nil for the main
     /// window (which follows `mainShownTabID`) and debug windows.
     public var hostedTabID: UUID? = nil
+    public var slotID: WindowSlotID = .main
+    internal var iniPathStorage: UnsafeMutablePointer<CChar>?
     /// Last OS title pushed (float windows sync name + dirty dot per frame).
     public var lastTitle: String? = nil
 
@@ -132,6 +141,7 @@ public final class EngineWindowManager {
             return existing
         }
         let window = EngineManagedWindow(handle: handle, id: id, isMain: isMain)
+        window.slotID = isMain ? .main : lowestFreeFloatSlot()
         if isMain {
             windows.insert(window, at: 0)
         } else {
@@ -142,7 +152,20 @@ public final class EngineWindowManager {
 
     /// Remove a window from the registry. The main window is never removed.
     public func unregister(id: SDL_WindowID) {
+        if let doomed = window(for: id), let stored = doomed.iniPathStorage {
+            free(stored)
+            doomed.iniPathStorage = nil
+        }
         windows.removeAll(where: { $0.id == id && !$0.isMain })
+    }
+
+    public func lowestFreeFloatSlot() -> WindowSlotID {
+        let used = Set(windows.filter { !$0.isMain }.map(\.slotID))
+        for n in 1...64 {
+            let candidate = WindowSlotID.float(n)
+            if !used.contains(candidate) { return candidate }
+        }
+        return .float(65)
     }
 
     public func window(for id: SDL_WindowID) -> EngineManagedWindow? {

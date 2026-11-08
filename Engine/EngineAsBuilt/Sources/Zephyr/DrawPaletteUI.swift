@@ -14,7 +14,7 @@ import ImGui
 @MainActor
 struct DrawPaletteUI {
     /// Track docking state of this window.
-    static var _isDocked: Bool = false
+    static var _isDockedBySlot: [WindowSlotID: Bool] = [:]
     static func render(engine: PhrostEngine) {
         // Tool definitions: (display label, canonical command name)
         let tools: [(String, String)] = [
@@ -54,7 +54,7 @@ struct DrawPaletteUI {
             ImVec2(x: panelW, y: panelH),
             Int32(ImGuiCond_FirstUseEver.rawValue))
 
-        let isDocked = _isDocked
+        let isDocked = _isDockedBySlot[engine.ui.frameSlot] ?? false
         var flags: Int32 = 0
         if isDocked {
             flags |= Int32(ImGuiWindowFlags_NoTitleBar.rawValue)
@@ -71,7 +71,7 @@ struct DrawPaletteUI {
             ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowBorderSize.rawValue), 1.0)
             entered = igBegin("Draw Tools##DrawPalette", &opened, flags)
         }
-        _isDocked = ImGuiIsWindowDocked()
+        _isDockedBySlot[engine.ui.frameSlot] = ImGuiIsWindowDocked()
         AppLayout.reportCurrentDockedPanel(engine: engine)
 
         if entered {

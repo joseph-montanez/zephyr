@@ -1839,7 +1839,7 @@ public final class CADCommandProcessor {
             // Like BLOCKS/LAYER, toggles regardless of selection: an open
             // panel with nothing selected shows its empty state.
             if let engine = engine {
-                engine.ui.showPropertiesPanel.toggle()
+                engine.togglePanel(\.showPropertiesPanel)
             }
             clearCommand()
         case "NAV", "RADIALNAV":
@@ -1904,22 +1904,22 @@ public final class CADCommandProcessor {
         // submit through the active-BLOCK branch above (Space == Enter).
         case "BLOCKS", "BLOCKPANEL":
             if let engine = engine {
-                engine.ui.blockPanelVisible.toggle()
+                engine.togglePanel(\.blockPanelVisible)
             }
             clearCommand()
         case "BLOCKSPALETTE":
             if let engine = engine {
-                engine.ui.blockPanelVisible = true
+                engine.setPanel(\.blockPanelVisible, to: true)
             }
             clearCommand()
         case "BLOCKSPALETTECLOSE":
             if let engine = engine {
-                engine.ui.blockPanelVisible = false
+                engine.setPanel(\.blockPanelVisible, to: false)
             }
             clearCommand()
         case "XREF", "XR", "ER", "EXTERNALREFERENCES":
             if let engine = engine {
-                engine.ui.xrefPanelVisible.toggle()
+                engine.togglePanel(\.xrefPanelVisible)
             }
             clearCommand()
         // --- Layer commands ---
@@ -1971,7 +1971,7 @@ public final class CADCommandProcessor {
             clearCommand()
         case "LA", "LAYER":
             if let engine = engine {
-                engine.ui.layersPanelVisible.toggle()
+                engine.togglePanel(\.layersPanelVisible)
             }
             clearCommand()
         case "LAYERSORT", "LASORT":

@@ -15,7 +15,7 @@ import ImGui
 @MainActor
 struct BlockPanelUI {
     /// Track docking state of this window.
-    static var _isDocked: Bool = false
+    static var _isDockedBySlot: [WindowSlotID: Bool] = [:]
 
     // MARK: - Panel state (MainActor)
 
@@ -50,7 +50,7 @@ struct BlockPanelUI {
             ImVec2(x: ImGuiGetFontSize() * 24, y: ImGuiGetFontSize() * 32),
             Int32(ImGuiCond_FirstUseEver.rawValue))
 
-        let isDocked = _isDocked
+        let isDocked = _isDockedBySlot[engine.ui.frameSlot] ?? false
         var flags = Int32(0)
         if isDocked {
             flags |= Int32(ImGuiWindowFlags_NoTitleBar.rawValue)
@@ -67,7 +67,7 @@ struct BlockPanelUI {
             ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowBorderSize.rawValue), 1.0)
             entered = igBegin("Blocks##BlockPanel", &opened, flags)
         }
-        _isDocked = ImGuiIsWindowDocked()
+        _isDockedBySlot[engine.ui.frameSlot] = ImGuiIsWindowDocked()
         AppLayout.reportCurrentDockedPanel(engine: engine)
 
         guard entered else {

@@ -12,11 +12,11 @@ import ImGui
 
 @MainActor
 struct SheetSetManagerUI {
-    static var _isDocked: Bool = false
+    static var _isDockedBySlot: [WindowSlotID: Bool] = [:]
     static var selectedSheetID: String? = nil
 
     static func render(engine: PhrostEngine) {
-        let isDocked = _isDocked
+        let isDocked = _isDockedBySlot[engine.ui.frameSlot] ?? false
         var flags = Int32(0)
         if isDocked { flags |= Int32(ImGuiWindowFlags_NoTitleBar.rawValue) }
         var opened = true
@@ -30,7 +30,7 @@ struct SheetSetManagerUI {
             ImGuiPushStyleVar(Int32(ImGuiStyleVar_WindowBorderSize.rawValue), 1.0)
             entered = igBegin("Sheet Set Manager##SheetSetManager", &opened, flags)
         }
-        _isDocked = ImGuiIsWindowDocked()
+        _isDockedBySlot[engine.ui.frameSlot] = ImGuiIsWindowDocked()
         AppLayout.reportCurrentDockedPanel(engine: engine)
         guard entered else {
             ImGuiEnd(); ImGuiPopStyleVar(1); ImGuiPopStyleColor(1)

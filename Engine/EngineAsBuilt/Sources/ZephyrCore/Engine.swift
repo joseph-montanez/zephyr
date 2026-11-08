@@ -799,6 +799,7 @@ public final class PhrostEngine {
         self.ui.blockInsertPromptAttributes = settings.blockInsertPromptAttributes
         self.ui.dataTablePanelVisible = settings.dataTablePanelVisible
         self.ui.showPropertiesPanel = settings.showPropertiesPanel
+        self.ui.panelStore = WindowPanelLayoutStore(layouts: settings.windowPanelLayouts)
         self.ui.showFPS = settings.showFPS
         self.ui.hasCompletedSetup = settings.hasCompletedSetup
         self.ui.radialNavVisible = settings.radialNavVisible
@@ -908,7 +909,7 @@ public final class PhrostEngine {
         let viewportY: Double
         let viewportWidth: Double
         let viewportHeight: Double
-        if let viewport = ui.drawingViewportRect {
+        if let viewport = ui.mainViewportRect() {
             viewportX = Double(viewport.x)
             viewportY = Double(viewport.y)
             viewportWidth = max(Double(viewport.w), 1.0)
@@ -968,6 +969,8 @@ public final class PhrostEngine {
         // window's widgets WasActive-stale at hover time, so buttons
         // could never hover or fire in float windows.
         let styleToCopy = ImGuiGetStyle()?.pointee
+        var mainIniSize = 0
+        let mainIniSeed = ImGuiSaveIniSettingsToMemory(&mainIniSize)
         let auxCtx = ImGuiCreateContext(io.pointee.Fonts)!
         registered.imguiContext = auxCtx
         // CreateContext restores the previously-current context, so switch
@@ -975,7 +978,18 @@ public final class PhrostEngine {
         igSetCurrentContext(auxCtx)
         registered.imguiIO = ImGuiGetIO()!
         registered.imguiIO?.pointee.ConfigFlags |= Int32(ImGuiConfigFlags_DockingEnable.rawValue)
-        registered.imguiIO?.pointee.IniFilename = nil
+        if let slotURL = UserSettings.imguiIniURL(slot: registered.slotID) {
+            let slotPath = slotURL.path
+            registered.iniPathStorage = z_strdup(slotPath)
+            if let iniCStr = registered.iniPathStorage {
+                registered.imguiIO?.pointee.IniFilename = UnsafePointer(iniCStr)
+            }
+            if FileManager.default.fileExists(atPath: slotPath) {
+                ImGuiLoadIniSettingsFromDisk(slotPath)
+            } else if let seed = mainIniSeed, mainIniSize > 0 {
+                ImGuiLoadIniSettingsFromMemory(seed, mainIniSize)
+            }
+        }
         if let styleToCopy, let style = ImGuiGetStyle() {
             style.pointee = styleToCopy
         }
@@ -992,6 +1006,10 @@ public final class PhrostEngine {
     public func closeAuxWindow(id: SDL_WindowID) {
         guard let aux = windowManager.window(for: id), !aux.isMain else { return }
         print("[Engine] Closing aux window (id \(id)).")
+        if aux.imguiContext != nil, let slotURL = UserSettings.imguiIniURL(slot: aux.slotID) {
+            activateImGuiContext(for: aux)
+            ImGuiSaveIniSettingsToDisk(slotURL.path)
+        }
         if let auxCtx = aux.imguiContext {
             if igGetCurrentContext() == auxCtx, let main = windowManager.mainWindow {
                 activateImGuiContext(for: main)
@@ -1008,6 +1026,7 @@ public final class PhrostEngine {
     /// Make a window's ImGui context current and repoint `engine.io` at
     /// its IO, so all frame/poll code transparently works on that window.
     internal func activateImGuiContext(for window: EngineManagedWindow) {
+        ui.frameSlot = window.slotID
         guard let ctx = window.imguiContext, let windowIO = window.imguiIO else { return }
         if igGetCurrentContext() != ctx {
             igSetCurrentContext(ctx)
@@ -1287,6 +1306,37 @@ public final class PhrostEngine {
         return window
     }
 
+    // MARK: - Per-Window Panels
+    /// Slot of the OS window showing the active tab (the float host when
+    /// the active tab floats, else main). Command-issued panel toggles
+    /// resolve through this so they land in the issuing window even when
+    /// they run outside that window's frame (`frameSlot` is only valid
+    /// mid-frame). In-frame UI (panel X buttons) already uses `frameSlot`.
+    public func activePanelSlot() -> WindowSlotID {
+        if let active = tabManager.activeTab, active.isFloated,
+           let windowID = floatWindowIDs[active.id],
+           let window = windowManager.window(for: windowID) {
+            return window.slotID
+        }
+        return windowManager.mainWindow?.slotID ?? .main
+    }
+    public func setPanel(_ keyPath: WritableKeyPath<WindowPanelLayout, Bool>, to value: Bool) {
+        let slot = activePanelSlot()
+        var layout = ui.panelStore.layout(for: slot)
+        layout[keyPath: keyPath] = value
+        ui.panelStore.set(layout, for: slot)
+    }
+    public func isPanel(_ keyPath: KeyPath<WindowPanelLayout, Bool>) -> Bool {
+        let slot = activePanelSlot()
+        if let layout = ui.panelStore.peek(slot) { return layout[keyPath: keyPath] }
+        return WindowPanelLayout()[keyPath: keyPath]
+    }
+    public func togglePanel(_ keyPath: WritableKeyPath<WindowPanelLayout, Bool>) {
+        let slot = activePanelSlot()
+        var layout = ui.panelStore.layout(for: slot)
+        layout[keyPath: keyPath].toggle()
+        ui.panelStore.set(layout, for: slot)
+    }
     // MARK: - Split Panes
 
     /// Activate a docked tab from the main tab bar, retargeting the focused
@@ -1310,7 +1360,7 @@ public final class PhrostEngine {
     /// - Returns: True when focus moved (caller swallows the click).
     public func focusSplitPane(at point: (x: Float, y: Float)) -> Bool {
         guard mainPanes.isSplit,
-              let canvasF = ui.drawingViewportRect else { return false }
+              let canvasF = ui.mainViewportRect() else { return false }
         let canvas = PaneRect(x: canvasF.x, y: canvasF.y, w: canvasF.w, h: canvasF.h)
         guard let leaf = mainPanes.hitTest(point: point, canvas: canvas),
               leaf.id != mainPanes.focusedLeafID else { return false }
@@ -1423,7 +1473,7 @@ public final class PhrostEngine {
 
     /// The main canvas as a `PaneRect` (nil before the first layout).
     private var mainPaneCanvas: PaneRect? {
-        guard let c = ui.drawingViewportRect else { return nil }
+        guard let c = ui.mainViewportRect() else { return nil }
         return PaneRect(x: c.x, y: c.y, w: c.w, h: c.h)
     }
 
@@ -1523,7 +1573,11 @@ public final class PhrostEngine {
             if !FileManager.default.fileExists(atPath: dir.path) {
                 try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             }
-            ImGuiSaveIniSettingsToDisk(iniURL.path)
+            for window in windowManager.windows where window.imguiContext != nil {
+                activateImGuiContext(for: window)
+                let slotURL = UserSettings.imguiIniURL(slot: window.slotID) ?? iniURL
+                ImGuiSaveIniSettingsToDisk(slotURL.path)
+            }
         }
         self.running = false
     }
