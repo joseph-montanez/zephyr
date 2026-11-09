@@ -68,8 +68,10 @@ final class MCPTests: XCTestCase {
             wx: 200, wy: 100, scale: s, ox: ox, oy: oy)
         XCTAssertEqual(x0, Double(plot.x), accuracy: 1e-9)
         XCTAssertEqual(x1, Double(plot.x + plot.w), accuracy: 1e-9)
+        // Y-down presentation (matches the app window): rows grow with
+        // world Y, so world minY sits at the content top.
         XCTAssertGreaterThan(y0, Double(plot.y))
-        XCTAssertLessThan(y1, y0) // y flips: world up = smaller row
+        XCTAssertGreaterThan(y1, y0)
     }
 
     func testNiceStepAndTickLabels() {

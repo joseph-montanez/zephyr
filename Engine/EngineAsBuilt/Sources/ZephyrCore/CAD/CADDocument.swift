@@ -436,7 +436,8 @@ public final class CADDocument {
     /// revision (`markEdited`/`markNeedsRegeneration`); live-drag
     /// transforms intentionally skip it, but no bounds caller runs
     /// mid-drag (regen launch and zoom-extents only).
-    private var cachedBoundsRevision: UInt64 = 0
+    private var cachedVisibleBoundsRevision: UInt64 = 0
+    private var cachedAllBoundsRevision: UInt64 = 0
     private var cachedVisibleBounds: BoundingBox3D?
     private var cachedVisibleBoundsValid = false
     private var cachedAllBounds: BoundingBox3D?
@@ -2775,11 +2776,12 @@ public final class CADDocument {
     /// text, SHX glyphs, dimension blocks, arcs, ellipses, and splines match what is displayed.
     public func renderableWorldBoundingBox(visibleLayersOnly: Bool = true) -> BoundingBox3D? {
         documentLock.withLock {
-            if cachedBoundsRevision == renderRevision {
-                if visibleLayersOnly, cachedVisibleBoundsValid { return cachedVisibleBounds }
-                if !visibleLayersOnly, cachedAllBoundsValid { return cachedAllBounds }
-            }
+            if visibleLayersOnly, cachedVisibleBoundsValid,
+               cachedVisibleBoundsRevision == renderRevision { return cachedVisibleBounds }
+            if !visibleLayersOnly, cachedAllBoundsValid,
+               cachedAllBoundsRevision == renderRevision { return cachedAllBounds }
             var bounds = CADRenderBoundsAccumulator()
+
         let layersByName = visibleLayersOnly ? layersByUppercasedName() : [:]
         // Rasters that never loaded render nothing; keep them out of extents.
         let drawableImageNames = Set(effectiveImageStore.keys)
@@ -2969,13 +2971,15 @@ public final class CADDocument {
         }
 
         let result = bounds.boundingBox
-        cachedBoundsRevision = renderRevision
+
         if visibleLayersOnly {
             cachedVisibleBounds = result
             cachedVisibleBoundsValid = true
+            cachedVisibleBoundsRevision = renderRevision
         } else {
             cachedAllBounds = result
             cachedAllBoundsValid = true
+            cachedAllBoundsRevision = renderRevision
         }
         return result
         }

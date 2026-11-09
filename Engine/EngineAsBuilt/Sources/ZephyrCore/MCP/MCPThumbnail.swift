@@ -51,18 +51,20 @@ enum MCPThumbMath {
         let sy = Double(plot.h) / frustum.height
         let s = min(sx, sy)
         // Center: extra space split on both sides. oy is the pixel row of
-        // world minY (y grows downward on screen).
+        // world minY (rows grow with world Y: Y-down, like the app).
         let usedW = frustum.width * s
         let usedH = frustum.height * s
         let ox = Double(plot.x) + (Double(plot.w) - usedW) / 2.0 - frustum.minX * s
-        let oy = Double(plot.y) + (Double(plot.h) - usedH) / 2.0 + frustum.maxY * s
+        let oy = Double(plot.y) + (Double(plot.h) - usedH) / 2.0 - frustum.minY * s
         return (s, ox, oy)
     }
 
+    /// Y-down presentation (matches the app window): pixel rows grow with
+    /// world Y, so engine text and imports render exactly as on screen.
     static func worldToPixel(
         wx: Double, wy: Double, scale: Double, ox: Double, oy: Double
     ) -> (x: Double, y: Double) {
-        (ox + wx * scale, oy - wy * scale)
+        (ox + wx * scale, oy + wy * scale)
     }
 
     /// Expand bounds to match a target aspect (w/h) by growing the smaller
@@ -412,14 +414,15 @@ final class MCPRaster: @unchecked Sendable {
             for x in 0..<width {
                 // Invert the world→pixel map to find the source texel.
                 let wx = (Double(x) - ox) / scale
-                let wy = (oy - Double(y)) / scale
+                let wy = (Double(y) - oy) / scale
                 let u = (wx - worldMinX) / wSpan
                 let v = (wy - worldMinY) / hSpan
                 guard u >= 0, u < 1, v >= 0, v < 1 else { continue }
                 let sx = min(image.width - 1, Int(u * Double(image.width)))
-                // PNG rows are top-down; world y grows up.
+                // PNG rows are top-down; under Y-down presentation the
+                // image top sits at world minY, matching the app window.
                 let sy = min(image.height - 1,
-                             Int((1.0 - v) * Double(image.height)))
+                             Int(v * Double(image.height)))
                 let s = (sy * image.width + sx) * 4
                 let a = Double(image.rgba[s + 3]) / 255.0 * opacity
                 guard a > 0 else { continue }

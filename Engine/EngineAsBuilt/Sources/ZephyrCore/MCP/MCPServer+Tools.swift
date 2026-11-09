@@ -58,7 +58,7 @@ enum MCPToolDefs {
          "description": "Point the pinned frustum at the drawing extents (recovery/inspection; not auto-called).",
          "inputSchema": ["type": "object", "properties": [:] as [String: Any]]],
         ["name": "thumbnail",
-         "description": "Deterministic CPU raster of the pinned frustum with grid ticks, optional reference overlay, and batch checksums.",
+         "description": "Deterministic CPU raster of the pinned frustum with grid ticks, optional reference overlay, and batch checksums. Y-down presentation, matching the app window.",
          "inputSchema": ["type": "object",
                          "properties": [
                              "width": ["type": "integer"],
@@ -405,7 +405,8 @@ extension MCPServer {
                     "layers": doc.allLayers.count,
                     "bbox": bbox,
                     "activeLayer": activeName,
-                    "needsRegeneration": doc.needsRegeneration] as [String: Any]
+                    "needsRegeneration": doc.needsRegeneration,
+                    "renderRevision": Int(doc.renderRevision)] as [String: Any]
         } as @MainActor () -> [String: Any])
     }
 

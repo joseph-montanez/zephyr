@@ -231,4 +231,53 @@ final class PrimitiveLayerVisibilityTests: XCTestCase {
         let b2 = doc.renderableWorldBoundingBox()
         XCTAssertEqual(b2?.max.x ?? 0, 110, accuracy: 1e-9)
     }
+    func testRenderableBoundsSlotsRefreshIndependently() {
+        // Regen (visibleLayersOnly:false, as the render loop calls it) and
+        // zoom-extents (visibleLayersOnly:true, as doc_summary/zoom call
+        // it) must not validate each other's stale cache entries: each
+        // slot carries its own revision.
+        let doc = CADDocument()
+        let layer = Layer(name: "0")
+        doc.importLayersBlocksEntities(
+            layers: [layer], blocks: [],
+            entities: [CADEntity(
+                layerID: layer.handle,
+                localGeometry: [.line(
+                    start: Vector3(x: 0, y: 0, z: 0),
+                    end: Vector3(x: 10, y: 0, z: 0), color: nil)],
+                transform: .identity)])
+        XCTAssertEqual(
+            doc.renderableWorldBoundingBox()?.max.x ?? 0, 10, accuracy: 1e-9)
+        let far = CADEntity(
+            layerID: layer.handle,
+            localGeometry: [.line(
+                start: Vector3(x: 100, y: 0, z: 0),
+                end: Vector3(x: 110, y: 0, z: 0), color: nil)],
+            transform: .identity)
+        doc.addEntity(far)
+        // Regen-style all-layer refresh first, as the live render loop does
+        // after every edit.
+        XCTAssertEqual(
+            doc.renderableWorldBoundingBox(visibleLayersOnly: false)?.max.x ?? 0,
+            110, accuracy: 1e-9)
+        // The visible-slot read must recompute, not replay its stale entry.
+        XCTAssertEqual(
+            doc.renderableWorldBoundingBox()?.max.x ?? 0,
+            110, accuracy: 1e-9)
+        let farther = CADEntity(
+            layerID: layer.handle,
+            localGeometry: [.line(
+                start: Vector3(x: 200, y: 0, z: 0),
+                end: Vector3(x: 210, y: 0, z: 0), color: nil)],
+            transform: .identity)
+        doc.addEntity(farther)
+        // Mirror direction: a visible-slot refresh must not validate the
+        // all-layer slot either.
+        XCTAssertEqual(
+            doc.renderableWorldBoundingBox()?.max.x ?? 0,
+            210, accuracy: 1e-9)
+        XCTAssertEqual(
+            doc.renderableWorldBoundingBox(visibleLayersOnly: false)?.max.x ?? 0,
+            210, accuracy: 1e-9)
+    }
 }

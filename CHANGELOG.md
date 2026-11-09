@@ -64,6 +64,10 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Measurement overlays clipped to the canvas** — `MEASUREGEOM` lines/labels no longer paint over the ribbon and docked panels; primary-window overlays clip to the canvas and floating panels cover them
 - **HATCH respects crossing edges (AutoCAD parity)** - Pick Points in HATCH (and BOUNDARY) now splits edges at interior crossings before tracing the boundary, so a line through a circle hatches only the seed's half instead of the whole circle; the legacy vertex-only walk remains as fallback
 - **Grid visibility and snap interval** - grid lines use per-theme minor/major colors with stronger major lines every `GRIDMAJOR` steps instead of near-invisible grays, following the effective pane/paper/custom background; grid snap (F9) uses the exact `SNAPUNIT` interval at every zoom instead of the zoom-adaptive display spacing
+- **MCP thumbnail matches the app window** - world-to-pixel mapping, grid ticks, and reference overlay use Y-down presentation; engine text previously rasterized upside-down
+- **Explicit MCP port bind failure is fatal** - --mcp-port failing to bind now exits non-zero instead of running silently MCP-less
+- **Zoom extents after Lisp/MCP edits** - the visible-layer and all-layer bounds caches shared one revision, so a regen refresh left zoom-extents stale; each slot now tracks its own revision, and `doc_summary` reports `renderRevision`
+
 
 ### Maintenance
 - **RevCloud and dimension-command internals (DRY/SOLID, no behavior change)** — split the 1600-line `REVCLOUD` command file into settings, geometry, and command files behind one shared UserDefaults helper, and moved the duplicated two-point picking flow out of `DIMLINEAR` into a shared `TwoPointDimensionCommand` base

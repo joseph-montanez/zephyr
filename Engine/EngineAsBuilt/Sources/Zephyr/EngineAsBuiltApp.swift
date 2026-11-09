@@ -96,7 +96,11 @@ struct ZephyrApp {
             do {
                 try MCPServer.shared.attachAndStart(port: mcpPort, engine: engine)
             } catch {
+                // An explicit --mcp-port must either serve or fail loudly:
+                // running on silently MCP-less lets a client attach to a
+                // stale port twin (or nobody), which is undebuggable.
                 print("MCP server failed to start on port \(mcpPort): \(error)")
+                exit(1)
             }
         }
 
