@@ -259,6 +259,35 @@ enum PDFTextEmitter {
     /// paragraph alignment and line-spacing inputs. Widths are measured
     /// with the base TTF face — the screen measures layout with the base
     /// SDL_ttf font too, then renders per-run styled faces.
+    /// AutoCAD Fit (72 = 5) / Aligned (72 = 3) adjustment measured with
+    /// the base face: Fit stretches the width factor to span
+    /// `fitWidthWorld`; Aligned scales height too. Callers pass the
+    /// adjusted values to both `layout` and emission so measured and
+    /// emitted advances stay in agreement.
+    static func fitAdjustedMetrics(
+        plainText: String,
+        heightWorld: Double,
+        widthFactor: Double,
+        alignH: Int,
+        fitWidthWorld: Double?,
+        baseFace: ResolvedFace
+    ) -> (heightWorld: Double, widthFactor: Double, alignH: Int) {
+        guard alignH == 3 || alignH == 5,
+              let fitWidthWorld, fitWidthWorld > 0,
+              !plainText.contains("\n") else {
+            return (heightWorld, widthFactor, alignH)
+        }
+        let font = baseFace.font
+        let emWorld = heightWorld * Double(font.unitsPerEm) / max(1.0, Double(font.capHeightUnits))
+        let natural = font.widthEm(of: plainText) * emWorld * max(widthFactor, 1e-9)
+        guard natural > 1e-12 else { return (heightWorld, widthFactor, alignH) }
+        let k = fitWidthWorld / natural
+        if alignH == 3 {
+            return (heightWorld * k, widthFactor, 0)
+        }
+        return (heightWorld, widthFactor * k, 0)
+    }
+
     static func layout(
         formatted: FormattedText?,
         plainText: String,

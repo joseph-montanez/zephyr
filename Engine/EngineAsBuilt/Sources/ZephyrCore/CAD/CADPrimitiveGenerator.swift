@@ -33,6 +33,7 @@ import SwiftSDL
         public let backgroundColor: (UInt8, UInt8, UInt8, UInt8)?
         public let backgroundUsesViewportColor: Bool
         public let formattedText: FormattedText?
+        public let fitWidth: Double?
 
         public init(
             text: String,
@@ -54,7 +55,8 @@ import SwiftSDL
             backgroundScale: Double? = nil,
             backgroundColor: (UInt8, UInt8, UInt8, UInt8)? = nil,
             backgroundUsesViewportColor: Bool = false,
-            formattedText: FormattedText? = nil
+            formattedText: FormattedText? = nil,
+            fitWidth: Double? = nil
         ) {
             self.text = text
             self.fontPath = fontPath
@@ -76,6 +78,7 @@ import SwiftSDL
             self.backgroundColor = backgroundColor
             self.backgroundUsesViewportColor = backgroundUsesViewportColor
             self.formattedText = formattedText
+            self.fitWidth = fitWidth
         }
     }
 
@@ -362,6 +365,7 @@ public enum CADPrimitiveGenerator {
             lineType: lineType, lineWeight: lineWeight,
             lineTypeScale: lineTypeScale, geomWidth: geomWidth,
             textWidthFactor: textWidthFactor, textObliqueAngle: textObliqueAngle,
+
             textStyleFonts: textStyleFonts, linetypePatterns: linetypePatterns,
             opacityMultiplier: opacityMultiplier,
             penStrokeBrushSettings: penStrokeBrushSettings,

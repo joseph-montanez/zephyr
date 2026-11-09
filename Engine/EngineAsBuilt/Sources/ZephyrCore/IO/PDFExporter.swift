@@ -1118,7 +1118,7 @@ public enum PDFExporter {
                     ?? (formattedTTFPath == nil ? exactStyleSHXFont : nil)
                     ?? CADFontManager.getOrLoadSHXFont(filename: fontFile)
 
-                let alignH: Int
+                var alignH: Int
                 if let ah = entity.xdata["dxf.alignH"], case .int(let v) = ah { alignH = v }
                 else { alignH = 0 }
                 let alignV: Int
@@ -1181,11 +1181,17 @@ public enum PDFExporter {
                 }
 
                 let baseWidthFactor = widthFactorOverride ? widthFactor : textStyle.widthFactor
-                let effectiveWidthFactor = baseWidthFactor * widthScale / heightScale
+                var effectiveWidthFactor = baseWidthFactor * widthScale / heightScale
                 let effectiveHeight = (heightOverride || textStyle.fixedHeight <= 0) ? height : textStyle.fixedHeight
-                let worldHeight = effectiveHeight * heightScale
+                var worldHeight = effectiveHeight * heightScale
                 let effectiveOblique = obliqueOverride ? oblique : textStyle.obliqueAngle
                 let worldWidth = mtextWidth.map { $0 * widthScale }
+                let worldFitWidth: Double?
+                if !isMTextEntity, let fw = entity.xdata["dxf.textFitWidth"], case .double(let v) = fw, v > 0 {
+                    worldFitWidth = v * widthScale
+                } else {
+                    worldFitWidth = nil
+                }
 
                 // ---- TTF route: live vector text (AutoCAD capture model) ----
                 // Renderer parity: live text only when the screen would use
@@ -1224,6 +1230,13 @@ public enum PDFExporter {
                     } else {
                         lineSpacingStyle = 1
                     }
+                    let fitAdj = PDFTextEmitter.fitAdjustedMetrics(
+                        plainText: displayText, heightWorld: worldHeight,
+                        widthFactor: effectiveWidthFactor, alignH: alignH,
+                        fitWidthWorld: worldFitWidth, baseFace: baseFace)
+                    worldHeight = fitAdj.heightWorld
+                    effectiveWidthFactor = fitAdj.widthFactor
+                    alignH = fitAdj.alignH
                     let laid = PDFTextEmitter.layout(
                         formatted: formatted,
                         plainText: displayText,
@@ -1319,7 +1332,7 @@ public enum PDFExporter {
                             alignV: alignV,
                             widthFactor: effectiveWidthFactor,
                             obliqueAngle: effectiveOblique,
-                            maxWidth: worldWidth)
+                            maxWidth: worldWidth, fitWidth: worldFitWidth)
                     }
                     items.append(.textStrokes(
                         prims: prims, color: entityColor,

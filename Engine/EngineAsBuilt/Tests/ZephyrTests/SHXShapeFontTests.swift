@@ -198,6 +198,88 @@ final class SHXShapeFontTests: XCTestCase {
         })
     }
 
+    private func loadRomans() throws -> SHXShapeFont {
+        let path = findTestFile("Fonts/romans.shx")
+        let font = try SHXShapeFont(url: URL(fileURLWithPath: path))
+        XCTAssertTrue(font.isUsable)
+        XCTAssertEqual(font.fontHeight, 21.0, accuracy: 1e-9)
+        return font
+    }
+
+    private func bounds(
+        _ prims: [CADPrimitive]
+    ) -> (minX: Double, maxX: Double, minY: Double, maxY: Double) {
+        var minX = Double.infinity, maxX = -Double.infinity
+        var minY = Double.infinity, maxY = -Double.infinity
+        for case .line(let start, let end, _) in prims {
+            minX = min(minX, start.x, end.x)
+            maxX = max(maxX, start.x, end.x)
+            minY = min(minY, start.y, end.y)
+            maxY = max(maxY, start.y, end.y)
+        }
+        return (minX, maxX, minY, maxY)
+    }
+
+    /// Handles 37BF9 / 37C78 of "Vivienda Unifamiliar 2.dwg" (style
+    /// R80-50 = romans.shx). Advance sums parsed independently from the
+    /// SHX shape definitions: 37BF9 = 1427 units, 37C78 = 447 units
+    /// (cap height 21). At the entity width factor 1.0 (DXF default for
+    /// an absent group 41) both fit their drawn geometry - the spec box
+    /// leaves 6.8791 from 37BF9's insertion point, 37C78's table cell
+    /// is 2.1309 wide; at the style factor 1.3 neither fits.
+    func testRomansAdvanceWidthsForReportedHandles() throws {
+        let font = try loadRomans()
+        let h = 0.0926476727069243
+        let line37BF9 = "-  TODOS LOS MATERIALES, TUBERIAS Y ACCESORIOS A UTILIZARSE EN LAS REDES DE"
+        let line37C78 = "TUBERIA DE AGUA CALIENTE"
+
+        let w1 = font.measuredAdvanceWidth(line37BF9, height: h, widthFactor: 1.0)
+        XCTAssertEqual(w1, 1427.0 / 21.0 * h, accuracy: 0.02)
+        XCTAssertLessThanOrEqual(w1, 6.8791)
+        let w1Wide = font.measuredAdvanceWidth(line37BF9, height: h, widthFactor: 1.3)
+        XCTAssertEqual(w1Wide, w1 * 1.3, accuracy: 0.02)
+        XCTAssertGreaterThan(w1Wide, 6.8791)
+
+        let w2 = font.measuredAdvanceWidth(line37C78, height: h, widthFactor: 1.0)
+        XCTAssertEqual(w2, 447.0 / 21.0 * h, accuracy: 0.02)
+        XCTAssertLessThanOrEqual(w2, 2.1309)
+        XCTAssertGreaterThan(
+            font.measuredAdvanceWidth(line37C78, height: h, widthFactor: 1.3), 2.1309)
+    }
+
+    /// Fit (alignH 5) keeps the height and stretches width so the pen
+    /// ends exactly at the span; Aligned (alignH 3) scales both axes.
+    /// Both anchor at the origin (first definition point), never centered.
+    func testFitAndAlignedRenderSpansExactly() throws {
+        let font = try loadRomans()
+        let h = 0.0926476727069243
+        let span = 2.1309
+        let text = "TUBERIA DE AGUA CALIENTE"
+
+        let natural = bounds(font.renderText(text, origin: .zero, height: h))
+        let naturalHeight = natural.maxY - natural.minY
+        XCTAssertGreaterThan(naturalHeight, 0)
+
+        let fit = bounds(font.renderText(
+            text, origin: .zero, height: h, alignH: 5, fitWidth: span))
+        XCTAssertGreaterThanOrEqual(fit.minX, -1e-9)
+        XCTAssertLessThanOrEqual(fit.maxX, span + 1e-9)
+        XCTAssertGreaterThan(fit.maxX, span * 0.95)
+        XCTAssertEqual(fit.maxY - fit.minY, naturalHeight, accuracy: 0.005)
+
+        let k = span / font.measuredAdvanceWidth(text, height: h, widthFactor: 1.0)
+        let aligned = bounds(font.renderText(
+            text, origin: .zero, height: h, alignH: 3, fitWidth: span))
+        XCTAssertGreaterThanOrEqual(aligned.minX, -1e-9)
+        XCTAssertLessThanOrEqual(aligned.maxX, span + 1e-9)
+        XCTAssertGreaterThan(aligned.maxX, span * 0.95)
+        XCTAssertEqual(aligned.maxY - aligned.minY, naturalHeight * k, accuracy: 0.01)
+
+        // Without a span, 3/5 keep the legacy centered placement.
+        let legacy = bounds(font.renderText(text, origin: .zero, height: h, alignH: 5))
+        XCTAssertLessThan(legacy.minX, 0)
+    }
+
     func testMultiStrokeFontsDetectedAndHavePositiveStrokeWidthRatio() throws {
         let boldPath = findTestFile("Fonts/bold.shx")
         let boldFont = try SHXShapeFont(url: URL(fileURLWithPath: boldPath))

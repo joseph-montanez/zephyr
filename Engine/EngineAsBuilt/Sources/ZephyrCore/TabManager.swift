@@ -2067,6 +2067,16 @@ public final class TabManager {
         xdata.removeValue(forKey: BlockEditorMetadata.lineTypeByBlock)
         xdata.removeValue(forKey: BlockEditorMetadata.lineWeightByBlock)
 
+        // The caller bakes entity.transform into the primitive (height
+        // included); the fit span must scale with it.
+        if case .double(let fitWidth)? = xdata["dxf.textFitWidth"], fitWidth > 0 {
+            let s = entity.transform.scale
+            let mag = (abs(s.x) + abs(s.y)) * 0.5
+            if mag > 1e-12, abs(mag - 1) > 1e-12 {
+                xdata["dxf.textFitWidth"] = .double(fitWidth * mag)
+            }
+        }
+
         if entity.transform != .identity {
             xdata.removeValue(forKey: "dxf.hatchScale")
             xdata.removeValue(forKey: "dxf.hatchAngle")

@@ -922,7 +922,7 @@ public final class CADRendererBridge {
                             mtextLineSpacingStyle: Int,
                             transform: Transform3D, color: ColorRGBA,
                             formattedText: FormattedText?, textBackgroundScale: Double?,
-                            textBackgroundColor: ColorRGBA?, textBackgroundUsesViewportColor: Bool)] = []
+                            textBackgroundColor: ColorRGBA?, textBackgroundUsesViewportColor: Bool, fitWidth: Double?)] = []
         var index = 0
         let layersByName = Dictionary(
             snapshot.layers.values.map { ($0.name.uppercased(), $0) },
@@ -1106,6 +1106,10 @@ public final class CADRendererBridge {
                 if let mw = entity.xdata["dxf.mtextWidth"], case .double(let v) = mw { mtextWidth = v }
                 else { mtextWidth = nil }
 
+                let textFitWidth: Double?
+                if !isMTextEntity, let fw = entity.xdata["dxf.textFitWidth"], case .double(let v) = fw, v > 0 { textFitWidth = v }
+                else { textFitWidth = nil }
+
                 let mtextLineSpacing: Double
                 if let spacing = entity.xdata["dxf.mtextLineSpacing"],
                    case .double(let value) = spacing,
@@ -1143,7 +1147,7 @@ public final class CADRendererBridge {
                     oblique, obliqueOverride, mtextWidth, mtextLineSpacing,
                     mtextLineSpacingStyle, entity.transform, effectiveColor, ft,
                     entityTextBackgroundScale, entityTextBackgroundColor,
-                    entityTextBackgroundUsesViewportColor))
+                    entityTextBackgroundUsesViewportColor, textFitWidth))
                 index += 1
                 continue
             }
@@ -1489,6 +1493,15 @@ public final class CADRendererBridge {
                                         ? entityOblique
                                         : textStyle.obliqueAngle
 
+                                    let primitiveTextFitWidth: Double?
+                                    if !isMTextPrimitive,
+                                       let fitValue = primitiveXData["dxf.textFitWidth"],
+                                       case .double(let span) = fitValue, span > 0 {
+                                        primitiveTextFitWidth = span
+                                    } else {
+                                        primitiveTextFitWidth = nil
+                                    }
+
                                     let effectiveWidthFactor =
                                         primitiveTextWidthFactor * widthScale / heightScale
                                     let effectiveHeight =
@@ -1556,11 +1569,29 @@ public final class CADRendererBridge {
                                             backgroundScale: backgroundScale,
                                             backgroundColor: backgroundRGBA,
                                             backgroundUsesViewportColor: backgroundUsesViewportColor,
-                                            formattedText: formattedText
+                                            formattedText: formattedText,
+                                            fitWidth: primitiveTextFitWidth.map { $0 * widthScale }
                                         ))
 
                                         currentZ += 0.01
                                         continue
+                                    }
+
+                                    // SHX route (sprite route above handles fit in
+                                    // EngineTextManager): pre-scale the primitive so
+                                    // CADPrimitiveGenerator renders the fitted span.
+                                    if let primitiveTextFitWidth,
+                                       case .text(let fPos, let fText, let fHeight, let fRot, let fStyle, let fAlignH, let fAlignV, let fMWidth, let fColor) = primitiveForRender,
+                                       let fitFont = CADFontManager.getOrLoadSHXFont(filename: fontFile) {
+                                        let adj = fitFont.fitAdjustedMetrics(
+                                            text: fText, height: fHeight,
+                                            widthFactor: primitiveTextWidthFactor,
+                                            alignH: fAlignH, fitWidth: primitiveTextFitWidth)
+                                        primitiveTextWidthFactor = adj.widthFactor
+                                        primitiveForRender = .text(
+                                            position: fPos, text: fText, height: adj.height,
+                                            rotation: fRot, style: fStyle, alignH: adj.alignH,
+                                            alignV: fAlignV, mtextWidth: fMWidth, color: fColor)
                                     }
 
                                     if let backgroundScale,
@@ -1813,6 +1844,7 @@ public final class CADRendererBridge {
                                 ? vt.oblique
                                 : textStyle.obliqueAngle
                             let worldWidth = vt.mtextWidth.map { $0 * widthScale }
+                            let worldFitWidth = vt.fitWidth.map { $0 * widthScale }
                             let worldRotation = atan2(worldX.y, worldX.x)
                             
                             if let font = shapeFont {
@@ -1867,7 +1899,7 @@ public final class CADRendererBridge {
                                         alignH: vt.alignH, alignV: vt.alignV,
                                         widthFactor: effectiveWidthFactor,
                                         obliqueAngle: effectiveOblique,
-                                        maxWidth: worldWidth)
+                                        maxWidth: worldWidth, fitWidth: worldFitWidth)
                                 }
                                 if textPrims.count > 500 {
                                     let preview = vt.text.prefix(40).replacingOccurrences(of: "\n", with: "\\n")
@@ -1911,7 +1943,8 @@ public final class CADRendererBridge {
                                         ($0.r, $0.g, $0.b, $0.a)
                                     },
                                     backgroundUsesViewportColor: vt.textBackgroundUsesViewportColor,
-                                    formattedText: vt.formattedText
+                                    formattedText: vt.formattedText,
+                                    fitWidth: vt.fitWidth.map { $0 * widthScale }
                                 )
                                 textSprites.append(spec)
                             }
@@ -2069,6 +2102,7 @@ public final class CADRendererBridge {
                     widthFactor: ts.widthFactor,
                     obliqueAngle: ts.obliqueAngle,
                     maxWidth: ts.maxWidth,
+                    fitWidth: ts.fitWidth,
                     alignH: ts.alignH,
                     alignV: ts.alignV,
                     lineSpacingFactor: ts.lineSpacingFactor,

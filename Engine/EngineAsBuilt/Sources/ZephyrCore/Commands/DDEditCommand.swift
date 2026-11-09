@@ -512,6 +512,9 @@ public final class DDEditCommand: FeatureCommand {
         engine.document.setXData(for: handle, key: "dxf.textHeight", value: .double(height))
         engine.document.setXData(for: handle, key: "dxf.textHeightOverride", value: .int(1))
         engine.document.setXData(for: handle, key: "dxf.alignH", value: .int(alignH))
+        if alignH != 3 && alignH != 5 {
+            engine.document.removeXData(for: handle, key: "dxf.textFitWidth")
+        }
         engine.document.setXData(for: handle, key: "dxf.alignV", value: .int(alignV))
         if mtextWidth > 0 {
             engine.document.setXData(for: handle, key: "dxf.mtextWidth", value: .double(mtextWidth))

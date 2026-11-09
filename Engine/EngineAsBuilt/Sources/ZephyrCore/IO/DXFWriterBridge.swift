@@ -2870,6 +2870,14 @@ public enum DXFWriterBridge {
             let entity = DXFTextEntity()
             entity.basePoint = toDXF(worldPosition)
             entity.secPoint = entity.basePoint
+            if alignH == 3 || alignH == 5,
+               let fitWidth = xdataDouble(xdata, "dxf.textFitWidth"), fitWidth > 0 {
+                // Fit/Aligned: group 11 is the second definition point,
+                // one span along the baseline from the insertion point.
+                let localSecond = position + Vector3(
+                    x: fitWidth * cos(rotation), y: fitWidth * sin(rotation), z: 0)
+                entity.secPoint = toDXF(transform.transformPoint(localSecond))
+            }
             entity.text = text
             entity.height = exportedHeight
             entity.angle_p = -worldRotation * 180.0 / .pi

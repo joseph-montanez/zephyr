@@ -1038,6 +1038,7 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
         alignH: Int,
         alignV: Int,
         mtextWidth: Double?
+
     ) -> (minX: Double, maxX: Double, minY: Double, maxY: Double) {
         if text.isEmpty { return (0, 0, 0, 0) }
         
@@ -1074,11 +1075,17 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
         let minY = -(blockOffsetY + height)
         let maxY = -(blockOffsetY - Double(numLines - 1) * localLineSpacing)
         
+
+
+
         let W = mtextWidth ?? estimatedTotalWidth
         let minX: Double
         let maxX: Double
         switch alignH {
-        case 1, 3, 4, 5: // Center/Middle/Aligned/Fit
+        case 3, 5: // Aligned/Fit: anchored at the first definition point
+            minX = 0
+            maxX = W
+        case 1, 4: // Center/Middle
             minX = -0.5 * W
             maxX = 0.5 * W
         case 2: // Right

@@ -3326,6 +3326,10 @@ public final class CADDocument {
             ? entityOblique
             : textStyle.obliqueAngle
 
+        let textFitWidth: Double?
+        if !isMText, let fw = textXData["dxf.textFitWidth"], case .double(let v) = fw, v > 0 { textFitWidth = v }
+        else { textFitWidth = nil }
+
         guard !text.isEmpty, effectiveHeight.isFinite, effectiveHeight > 0,
               rotation.isFinite else { return }
 
@@ -3335,7 +3339,10 @@ public final class CADDocument {
         let worldX = transform.transformPoint(position + localX) - origin
         let worldY = transform.transformPoint(position + localY) - origin
         let worldHeight = effectiveHeight * max(worldY.magnitude, 1e-12)
-        let worldWidth = mtextWidth.map { $0 * max(worldX.magnitude, 1e-12) }
+        // For Fit/Aligned TEXT the span doubles as the estimate width
+        // (renderText still receives it separately as fitWidth).
+        let worldWidth = (isMText ? mtextWidth : (textFitWidth ?? mtextWidth)).map { $0 * max(worldX.magnitude, 1e-12) }
+        let worldFitWidth = textFitWidth.map { $0 * max(worldX.magnitude, 1e-12) }
         let worldRotation = atan2(worldX.y, worldX.x)
         let fontFile = CADFontManager.resolveTextStyleFont(
             styleName: style,
@@ -3351,7 +3358,7 @@ public final class CADDocument {
                 alignV: alignV,
                 widthFactor: effectiveWidthFactor,
                 obliqueAngle: effectiveOblique,
-                maxWidth: worldWidth)
+                maxWidth: worldWidth, fitWidth: worldFitWidth)
             for primitive in primitives {
                 if case .line(let start, let end, _) = primitive {
                     bounds.include(start)

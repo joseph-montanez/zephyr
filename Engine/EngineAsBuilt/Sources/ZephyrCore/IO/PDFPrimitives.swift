@@ -341,6 +341,12 @@ enum PDFPrimitives {
         let widthScale = max(worldX.magnitude, 1e-12)
         let finalHeight = height * heightScale
         let finalMaxWidth = mtextWidth.map { $0 * widthScale }
+        let textFitWidthWorld: Double?
+        if let xd = primitiveXData?["dxf.textFitWidth"], case .double(let v) = xd, v > 0 {
+            textFitWidthWorld = v * widthScale
+        } else {
+            textFitWidthWorld = nil
+        }
 
         // Callers pre-resolve precedence + plot mapping into entityColor;
         // prim color is already accounted for upstream. Display-adjust here
@@ -414,12 +420,17 @@ enum PDFPrimitives {
             if let xd = primitiveXData?["dxf.mtextLineSpacingStyle"], case .int(let v) = xd, v == 2 {
                 spacingStyle = 2
             }
+            let fitAdj = PDFTextEmitter.fitAdjustedMetrics(
+                plainText: text, heightWorld: finalHeight,
+                widthFactor: widthFactor * widthScale / heightScale,
+                alignH: alignH, fitWidthWorld: textFitWidthWorld,
+                baseFace: baseFace)
             let laid = PDFTextEmitter.layout(
                 formatted: formatted, plainText: text,
                 origin: origin, rotation: finalRotation,
-                heightWorld: finalHeight, widthFactor: widthFactor * widthScale / heightScale,
+                heightWorld: fitAdj.heightWorld, widthFactor: fitAdj.widthFactor,
                 maxWidthWorld: finalMaxWidth,
-                alignH: alignH, alignV: alignV,
+                alignH: fitAdj.alignH, alignV: alignV,
                 lineSpacingFactor: spacing, lineSpacingStyle: spacingStyle,
                 baseFace: baseFace)
             let displayName: String
@@ -433,7 +444,7 @@ enum PDFPrimitives {
                 writeWorldPrimitives(
                     PDFTextEmitter.geometryOutlines(
                         laid, rotation: finalRotation,
-                        widthFactor: widthFactor * widthScale / heightScale,
+                        widthFactor: fitAdj.widthFactor,
                         obliqueDegrees: oblique),
                     defaultColor: resolvedColor,
                     lineWeightMM: lineWeightMM, pageScale: pageScale,
@@ -443,7 +454,7 @@ enum PDFPrimitives {
                 PDFTextEmitter.emit(
                     laid, displayName: displayName,
                     rotation: finalRotation,
-                    widthFactor: widthFactor * widthScale / heightScale,
+                    widthFactor: fitAdj.widthFactor,
                     obliqueDegrees: oblique, color: resolvedColor,
                     options: options, catalog: catalog, to: cb)
             }
@@ -453,6 +464,36 @@ enum PDFPrimitives {
         let fontFile = primitiveStyleFont
 
         if let font = CADFontManager.getOrLoadSHXFont(filename: fontFile) {
+            // Screen parity (CADRendererBridge .text case): entity width
+            // factor/oblique apply when present as overrides, else style.
+            let isMTextPrim: Bool = {
+                if let xd = primitiveXData?["dxf.textEntityType"], case .string(let t) = xd {
+                    return t.uppercased() == "MTEXT"
+                }
+                return false
+            }()
+            var shxWidthFactor = resolvedTextStyle.widthFactor
+            if !isMTextPrim,
+               let xd = primitiveXData?["dxf.textWidthScale"], case .double(let v) = xd, v > 0 {
+                let isOverride: Bool
+                if let ov = primitiveXData?["dxf.textWidthScaleOverride"], case .int(let f) = ov {
+                    isOverride = f != 0
+                } else {
+                    isOverride = abs(v - 1.0) > 1e-12
+                }
+                if isOverride { shxWidthFactor = v }
+            }
+            var shxOblique = resolvedTextStyle.obliqueAngle
+            if !isMTextPrim,
+               let xd = primitiveXData?["dxf.textOblique"], case .double(let v) = xd {
+                let isOverride: Bool
+                if let ov = primitiveXData?["dxf.textObliqueOverride"], case .int(let f) = ov {
+                    isOverride = f != 0
+                } else {
+                    isOverride = abs(v) > 1e-12
+                }
+                if isOverride { shxOblique = v }
+            }
             let glyphPrims = font.renderText(
                 text,
                 origin: origin,
@@ -460,7 +501,9 @@ enum PDFPrimitives {
                 rotation: finalRotation,
                 alignH: alignH,
                 alignV: alignV,
-                maxWidth: finalMaxWidth)
+                widthFactor: shxWidthFactor * widthScale / heightScale,
+                obliqueAngle: shxOblique,
+                maxWidth: finalMaxWidth, fitWidth: textFitWidthWorld)
             writeWorldPrimitives(glyphPrims, defaultColor: resolvedColor,
                                  lineWeightMM: lineWeightMM, pageScale: pageScale,
                                  isLightBackground: false, to: cb)

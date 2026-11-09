@@ -794,6 +794,263 @@ final class DXFImportTests: XCTestCase {
         XCTAssertEqual(textCount, 2, "Both TEXT and MTEXT should have dxf.text xdata")
     }
 
+    /// DXF TEXT group 41 (relative X scale) defaults to 1.0 and group 51
+    /// (oblique) to 0 when absent - they do NOT inherit the text style's
+    /// width factor/oblique. The DWG behind this test ("Vivienda
+    /// Unifamiliar 2.dwg", handles 37BF9/37C78) has style R80-50 with
+    /// width factor 1.3, but its TEXT entities carry no group 41 and were
+    /// authored to fit their box/table cell at factor 1.0; inheriting 1.3
+    /// rendered them ~30% too wide.
+    func testTextWithoutWidthFactorGroupUsesDXFDefaultNotStyle() throws {
+        let dxf = """
+        0
+        SECTION
+          2
+        TABLES
+          0
+        TABLE
+          2
+        STYLE
+          0
+        STYLE
+          2
+        R80-50
+         70
+        0
+         40
+        0.08
+         41
+        1.3
+         50
+        0.0
+         71
+        0
+         42
+        0.08
+          3
+        romans.shx
+          0
+        ENDTAB
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        ENTITIES
+          0
+        TEXT
+          8
+        punto2
+          7
+        R80-50
+         10
+        62.40228635911268
+         20
+        36.67475412099996
+         30
+        0.0
+         40
+        0.0926476727069243
+          1
+        -  TODOS LOS MATERIALES, TUBERIAS Y ACCESORIOS A UTILIZARSE EN LAS REDES DE
+          0
+        TEXT
+          8
+        TEXTO 0.3
+          7
+        R80-50
+         10
+        62.56493502429745
+         20
+        32.54821891416277
+         30
+        0.0
+         40
+        0.1111772072483092
+         41
+        1.25
+         51
+        10.0
+          1
+        SIMBOLO
+         72
+        4
+         11
+        63.00832031510916
+         21
+        32.60380751778692
+         31
+        0.0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+
+        let doc = try importDXFString(dxf)
+        func entity(forText needle: String) -> CADEntity? {
+            doc.allEntities.first { entity in
+                if case .string(let s) = entity.xdata["dxf.text"] { return s.contains(needle) }
+                return false
+            }
+        }
+
+        let plain = try XCTUnwrap(entity(forText: "TODOS LOS MATERIALES"))
+        XCTAssertEqual(plain.xdata["dxf.textWidthScale"], .double(1.0))
+        XCTAssertEqual(plain.xdata["dxf.textWidthScaleOverride"], .int(1),
+                       "Absent group 41 must be authoritative 1.0, not style factor 1.3")
+        XCTAssertEqual(plain.xdata["dxf.textOblique"], .double(0.0))
+        XCTAssertEqual(plain.xdata["dxf.textObliqueOverride"], .int(1))
+
+        let explicit = try XCTUnwrap(entity(forText: "SIMBOLO"))
+        XCTAssertEqual(explicit.xdata["dxf.textWidthScale"], .double(1.25))
+        XCTAssertEqual(explicit.xdata["dxf.textWidthScaleOverride"], .int(1))
+        XCTAssertEqual(explicit.xdata["dxf.textOblique"], .double(10.0))
+        XCTAssertEqual(explicit.xdata["dxf.textObliqueOverride"], .int(1))
+        // Middle justification anchors on the group-11 alignment point.
+        XCTAssertEqual(explicit.transform.position.x, 63.00832031510916, accuracy: 1e-9)
+        XCTAssertEqual(explicit.transform.position.y, -32.60380751778692, accuracy: 1e-9)
+        XCTAssertNil(explicit.xdata["dxf.textFitWidth"])
+    }
+
+    /// Fit (72=5) and Aligned (72=3) TEXT spans the two definition points:
+    /// the importer must keep the span (group 10 -> group 11 distance) and
+    /// place the entity at the FIRST point so renderers can scale the
+    /// string to land exactly on the second point.
+    func testFitAndAlignedTextImportStoresSpanFromFirstPoint() throws {
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        TEXT
+          8
+        0
+         10
+        0.0
+         20
+        10.0
+         30
+        0.0
+         40
+        2.5
+          1
+        FITME
+         72
+        5
+         11
+        10.0
+         21
+        10.0
+         31
+        0.0
+          0
+        TEXT
+          8
+        0
+         10
+        0.0
+         20
+        20.0
+         30
+        0.0
+         40
+        2.5
+          1
+        ALIGNME
+         72
+        3
+         11
+        6.0
+         21
+        20.0
+         31
+        0.0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+
+        let doc = try importDXFString(dxf)
+        func entity(forText needle: String) -> CADEntity? {
+            doc.allEntities.first { entity in
+                if case .string(let s) = entity.xdata["dxf.text"] { return s == needle }
+                return false
+            }
+        }
+
+        let fit = try XCTUnwrap(entity(forText: "FITME"))
+        XCTAssertEqual(fit.xdata["dxf.alignH"], .int(5))
+        XCTAssertEqual(fit.xdata["dxf.textFitWidth"], .double(10.0))
+        XCTAssertEqual(fit.transform.position.x, 0.0, accuracy: 1e-9)
+        XCTAssertEqual(fit.transform.position.y, -10.0, accuracy: 1e-9)
+
+        let aligned = try XCTUnwrap(entity(forText: "ALIGNME"))
+        XCTAssertEqual(aligned.xdata["dxf.alignH"], .int(3))
+        XCTAssertEqual(aligned.xdata["dxf.textFitWidth"], .double(6.0))
+        XCTAssertEqual(aligned.transform.position.x, 0.0, accuracy: 1e-9)
+        XCTAssertEqual(aligned.transform.position.y, -20.0, accuracy: 1e-9)
+    }
+
+    /// Fit text must survive a DXF round-trip: export writes group 72 = 5
+    /// with distinct first/second points, and reimport recovers the span.
+    func testFitTextRoundTripsThroughDXFExport() throws {
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        TEXT
+          8
+        0
+         10
+        1.0
+         20
+        10.0
+         30
+        0.0
+         40
+        2.5
+          1
+        FITME
+         72
+        5
+         11
+        11.0
+         21
+        10.0
+         31
+        0.0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+
+        let doc = try importDXFString(dxf)
+        let outURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fit_roundtrip_\(UUID().uuidString).dxf")
+        defer { try? FileManager.default.removeItem(at: outURL) }
+        try DXFExporter.export(document: doc, to: outURL)
+
+        let reimported = CADDocument()
+        try reimported.importDXF(url: outURL)
+        let fit = try XCTUnwrap(reimported.allEntities.first { entity in
+            if case .string(let s) = entity.xdata["dxf.text"] { return s == "FITME" }
+            return false
+        })
+        XCTAssertEqual(fit.xdata["dxf.alignH"], .int(5))
+        guard case .double(let span) = fit.xdata["dxf.textFitWidth"] else {
+            return XCTFail("dxf.textFitWidth missing after round-trip")
+        }
+        XCTAssertEqual(span, 10.0, accuracy: 1e-6)
+        XCTAssertEqual(fit.transform.position.x, 1.0, accuracy: 1e-9)
+        XCTAssertEqual(fit.transform.position.y, -10.0, accuracy: 1e-9)
+    }
+
     func testImportDXFWithTextStyles() throws {
         let dxf = """
         0
@@ -1879,6 +2136,271 @@ final class DXFImportTests: XCTestCase {
         XCTAssertTrue(hasCorner(boundaryPts, 10, 0))
         XCTAssertTrue(hasCorner(boundaryPts, 10, -10))
         XCTAssertTrue(hasCorner(boundaryPts, 0, -10))
+    }
+
+    /// Group 92 bit 8 marks a hatch "textbox" loop: the rectangle around
+    /// text that the hatch must never paint over. It is invisible to
+    /// island-detection parity — a textbox loop nested inside an island
+    /// (unfilled) must NOT become a filled region of its own. Mirrors the
+    /// title-band hatch in "Vivienda Unifamiliar 2.dwg" (loops 92=7/22/136),
+    /// which imported as a solid block behind "ESPECIFICACIONES TECNICAS".
+    func testHatchTextboxLoopInsideIslandIsNotFilled() throws {
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        HATCH
+          8
+        0
+          2
+        SOLID
+         70
+        1
+         71
+        0
+         91
+        3
+         92
+        7
+         72
+        0
+         73
+        1
+         93
+        4
+         10
+        0.0
+         20
+        0.0
+         10
+        20.0
+         20
+        0.0
+         10
+        20.0
+         20
+        10.0
+         10
+        0.0
+         20
+        10.0
+         97
+        0
+         92
+        22
+         72
+        0
+         73
+        1
+         93
+        4
+         10
+        1.0
+         20
+        1.0
+         10
+        19.0
+         20
+        1.0
+         10
+        19.0
+         20
+        9.0
+         10
+        1.0
+         20
+        9.0
+         97
+        0
+         92
+        136
+         93
+        4
+         72
+        1
+         10
+        5.0
+         20
+        6.0
+         11
+        15.0
+         21
+        6.0
+         72
+        1
+         10
+        15.0
+         20
+        6.0
+         11
+        15.0
+         21
+        4.0
+         72
+        1
+         10
+        15.0
+         20
+        4.0
+         11
+        5.0
+         21
+        4.0
+         72
+        1
+         10
+        5.0
+         20
+        4.0
+         11
+        5.0
+         21
+        6.0
+         97
+        0
+         75
+        0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        let entity = try XCTUnwrap(doc.allEntities.first)
+        let geom = try XCTUnwrap(doc.resolvedGeometry(for: entity))
+        let fills: [(outer: [Vector3], holes: [[Vector3]])] = geom.compactMap { prim in
+            if case .fillComplexPolygon(let outer, let holes, _) = prim { return (outer, holes) }
+            return nil
+        }
+        XCTAssertEqual(fills.count, 1,
+                       "Textbox loop inside an island must not become a second filled region")
+        let fill = try XCTUnwrap(fills.first)
+        // Y is negated at import: outer (0,0)-(20,10) → y in [-10, 0].
+        XCTAssertEqual(fill.outer.map(\.x).min() ?? .nan, 0.0, accuracy: 0.001)
+        XCTAssertEqual(fill.outer.map(\.x).max() ?? .nan, 20.0, accuracy: 0.001)
+        XCTAssertEqual(fill.holes.count, 1, "Only the inner island rect is a hole")
+        let hole = try XCTUnwrap(fill.holes.first)
+        XCTAssertEqual(hole.map(\.x).min() ?? .nan, 1.0, accuracy: 0.001)
+        XCTAssertEqual(hole.map(\.x).max() ?? .nan, 19.0, accuracy: 0.001)
+    }
+
+    /// A textbox loop lying in filled area must punch a hole so the hatch
+    /// does not paint over the text.
+    func testHatchTextboxLoopInFilledAreaBecomesHole() throws {
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        HATCH
+          8
+        0
+          2
+        SOLID
+         70
+        1
+         71
+        0
+         91
+        2
+         92
+        7
+         72
+        0
+         73
+        1
+         93
+        4
+         10
+        0.0
+         20
+        0.0
+         10
+        20.0
+         20
+        0.0
+         10
+        20.0
+         20
+        10.0
+         10
+        0.0
+         20
+        10.0
+         97
+        0
+         92
+        136
+         93
+        4
+         72
+        1
+         10
+        5.0
+         20
+        6.0
+         11
+        15.0
+         21
+        6.0
+         72
+        1
+         10
+        15.0
+         20
+        6.0
+         11
+        15.0
+         21
+        4.0
+         72
+        1
+         10
+        15.0
+         20
+        4.0
+         11
+        5.0
+         21
+        4.0
+         72
+        1
+         10
+        5.0
+         20
+        4.0
+         11
+        5.0
+         21
+        6.0
+         97
+        0
+         75
+        0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        let entity = try XCTUnwrap(doc.allEntities.first)
+        let geom = try XCTUnwrap(doc.resolvedGeometry(for: entity))
+        let fills: [(outer: [Vector3], holes: [[Vector3]])] = geom.compactMap { prim in
+            if case .fillComplexPolygon(let outer, let holes, _) = prim { return (outer, holes) }
+            return nil
+        }
+        XCTAssertEqual(fills.count, 1)
+        let fill = try XCTUnwrap(fills.first)
+        XCTAssertEqual(fill.holes.count, 1,
+                       "Textbox loop in filled area must become a hole")
+        let hole = try XCTUnwrap(fill.holes.first)
+        XCTAssertEqual(hole.map(\.x).min() ?? .nan, 5.0, accuracy: 0.001)
+        XCTAssertEqual(hole.map(\.x).max() ?? .nan, 15.0, accuracy: 0.001)
+        XCTAssertEqual(hole.map(\.y).min() ?? .nan, -6.0, accuracy: 0.001)
+        XCTAssertEqual(hole.map(\.y).max() ?? .nan, -4.0, accuracy: 0.001)
     }
 
     func testEntityStylesAndDashing() throws {

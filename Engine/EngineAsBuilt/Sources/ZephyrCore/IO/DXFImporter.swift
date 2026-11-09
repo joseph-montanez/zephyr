@@ -2415,13 +2415,23 @@ public enum DXFImporter {
             }
             xdata["dxf.alignH"] = .int(alignHValue)
             xdata["dxf.alignV"] = .int(alignVValue)
+            if text.eType != .mTEXT, alignHValue == 3 || alignHValue == 5 {
+                // Fit (5) / Aligned (3): keep the group 10 -> 11 span so
+                // renderers can scale the string between the two points.
+                let span = hypot(
+                    text.secPoint.x - text.basePoint.x,
+                    text.secPoint.y - text.basePoint.y)
+                if span.isFinite, span > 0 {
+                    xdata["dxf.textFitWidth"] = .double(span)
+                }
+            }
             xdata["dxf.textWidthScale"] = .double(text.widthScale)
             xdata["dxf.textOblique"] = .double(text.oblique)
             if text.eType != .mTEXT {
                 xdata["dxf.textWidthScaleOverride"] = .int(
-                    text.hasExplicitWidthScale ? 1 : 0)
+                    1)  // absent group 41 defaults to 1.0 (DXF spec), never the style width factor
                 xdata["dxf.textObliqueOverride"] = .int(
-                    text.hasExplicitOblique ? 1 : 0)
+                    1)  // absent group 51 defaults to 0 (DXF spec), never the style oblique angle
             }
             xdata["dxf.textGenerationFlags"] = .int(text.textGen)
             if text.eType == .mTEXT {
@@ -3433,6 +3443,9 @@ public enum DXFImporter {
             }
 
             var xdata = transformedPrimitiveXData(item.xdata, by: transform)
+            if case .double(let fitWidth)? = xdata["dxf.textFitWidth"], fitWidth > 0 {
+                xdata["dxf.textFitWidth"] = .double(fitWidth * planarWidthScale)
+            }
             if case .double(let width)? = xdata["dxf.polylineWidth"], width > 0 {
                 xdata["dxf.polylineWidth"] = .double(width * planarWidthScale)
             }

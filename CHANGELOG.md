@@ -28,6 +28,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **STARFIELD (`STARS`)** - toggle the Galactic starfield on or off.
 
 ### Improvements
+- **Fit/Aligned text** - TEXT with justification 3/5 spans its two definition points.
 - **Space acts as Enter** - Space submits commands like Enter does.
 - **Dropdown option lists** - common prompts show a pick list with the current value marked.
 - **Clickable prompt chips** - command keywords show as clickable chips.
@@ -52,6 +53,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Real spline export** - DXF/EAB keep true `SPLINE` definitions.
 
 ### Bug Fixes
+- **Imported text width** - TEXT without an authored width factor no longer inherits the style width factor.
+- **Hatch text exclusions** - hatch text-exclusion rectangles (group 92 bit 8) no longer fill.
 - **Lisp `atof` overflow** - huge exponents now clamp instead of returning infinity.
 - **PAN behavior** - pans only while the mouse button is held.
 - **Layout colors** - layouts follow Model layer colors; only ACI 7 inverts on white paper.

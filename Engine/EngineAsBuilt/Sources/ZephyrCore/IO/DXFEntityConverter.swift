@@ -530,6 +530,9 @@ public enum DXFEntityConverter {
         var pos = yflip(ref)
         var angle = -tx.angle_p * .pi / 180.0
 
+        // Fit/Aligned: origin is the FIRST definition point; the span to
+        // the second point rides xdata (dxf.textFitWidth) and renderers
+        // scale the string to land exactly on it.
         if isText && (tx.alignH == 3 || tx.alignH == 5) {
             let start = yflip(tx.basePoint)
             let end = yflip(tx.secPoint)
@@ -537,9 +540,9 @@ public enum DXFEntityConverter {
             let dy = end.y - start.y
             if abs(dx) > 1e-12 || abs(dy) > 1e-12 {
                 pos = Vector3(
-                    x: (start.x + end.x) * 0.5,
-                    y: (start.y + end.y) * 0.5,
-                    z: (start.z + end.z) * 0.5)
+                    x: start.x,
+                    y: start.y,
+                    z: start.z)
                 angle = atan2(dy, dx)
             }
         }
@@ -577,7 +580,7 @@ public enum DXFEntityConverter {
     private static func convertHatch(_ e: DXFEntity, color: ColorRGBA?) -> [CADPrimitive] {
         guard let h = e as? DXFHatchEntity else { return [] }
         let boundaryTransform = hatchBoundaryTransform(for: h)
-        let pathRegions = extractHatchPathRegions(
+        let pathRegions = extractHatchPathRegionsWithTextboxHoles(
             from: h,
             storedBoundaryTransform: boundaryTransform)
         guard !pathRegions.isEmpty else { return [] }
@@ -846,7 +849,13 @@ public enum DXFEntityConverter {
     ) -> [HatchPathRegion] {
         guard !h.loops.isEmpty else { return [] }
 
-        let candidates: [(loop: DXFHatchLoop, path: CADPolyline, points: [Vector3], area: Double)] = h.loops.compactMap { loop in
+        // Group 92 bit 8 marks a textbox loop: an exclusion rectangle
+        // around text that the hatch must never paint over. Textbox loops
+        // are invisible to island detection; the WithTextboxHoles wrapper
+        // applies them as holes after region building.
+        let boundaryLoops = h.loops.filter { ($0.type & 8) == 0 }
+
+        let candidates: [(loop: DXFHatchLoop, path: CADPolyline, points: [Vector3], area: Double)] = boundaryLoops.compactMap { loop in
             guard let path = buildHatchLoopPath(
                 loop,
                 storedBoundaryTransform: storedBoundaryTransform) else { return nil }
@@ -914,6 +923,50 @@ public enum DXFEntityConverter {
                 }
                 return HatchPathRegion(outer: candidates[outerIndex].path, holes: holes)
             }
+    }
+
+    /// Regions from `extractHatchPathRegions` with textbox loops (group 92
+    /// bit 8) punched as holes. A textbox loop is the exclusion rectangle
+    /// AutoCAD stores around text inside a hatch: it is never filled
+    /// itself, and where it falls in a region that would paint over it,
+    /// it becomes a hole of the innermost such region. A textbox loop in
+    /// unfilled area (inside an island hole) is dropped.
+    private static func extractHatchPathRegionsWithTextboxHoles(
+        from h: DXFHatchEntity,
+        storedBoundaryTransform: Transform3D
+    ) -> [HatchPathRegion] {
+        var regions = extractHatchPathRegions(
+            from: h,
+            storedBoundaryTransform: storedBoundaryTransform)
+        guard !regions.isEmpty else { return regions }
+
+        for loop in h.loops where (loop.type & 8) != 0 {
+            guard let path = buildHatchLoopPath(
+                loop,
+                storedBoundaryTransform: storedBoundaryTransform) else { continue }
+            let points = cleanAdjacentPoints(path.tessellatedPoints())
+            guard points.count >= 3 else { continue }
+            let probe = interiorProbe(points)
+            var bestRegion: Int?
+            var bestArea = Double.infinity
+            for index in regions.indices {
+                let outerPoints = cleanAdjacentPoints(regions[index].outer.tessellatedPoints())
+                guard pointInPolygon(probe, outerPoints) else { continue }
+                let insideHole = regions[index].holes.contains {
+                    pointInPolygon(probe, cleanAdjacentPoints($0.tessellatedPoints()))
+                }
+                guard !insideHole else { continue }
+                let area = abs(signedArea(outerPoints))
+                if area < bestArea {
+                    bestArea = area
+                    bestRegion = index
+                }
+            }
+            if let bestRegion {
+                regions[bestRegion].holes.append(path)
+            }
+        }
+        return regions
     }
 
     private static func interiorProbe(_ points: [Vector3]) -> Vector3 {

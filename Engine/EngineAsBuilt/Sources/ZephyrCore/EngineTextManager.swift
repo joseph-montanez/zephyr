@@ -395,6 +395,7 @@ public final class EngineTextManager {
         widthFactor: Double = 1.0,
         obliqueAngle: Double = 0.0,
         maxWidth: Double?,
+        fitWidth: Double? = nil,
         alignH: Int,
         alignV: Int,
         lineSpacingFactor: Double = 1.0,
@@ -422,8 +423,8 @@ public final class EngineTextManager {
         }
 
         let metrics = cadFontMetrics(for: font)
-        let worldScale = height / metrics.capHeightPixels
-        let horizontalWorldScale = worldScale * max(widthFactor, 1e-9)
+        var worldScale = height / metrics.capHeightPixels
+        var horizontalWorldScale = worldScale * max(widthFactor, 1e-9)
         let maxWidthPixels = maxWidth.map { $0 / horizontalWorldScale }
 
         let lines: [CADTextFormatter.Line]
@@ -474,10 +475,27 @@ public final class EngineTextManager {
             return (mixedW, mixedH)
         }
 
+        // Fit (alignH 5) / Aligned (alignH 3): rescale so the single
+        // line spans fitWidth exactly. World/height scales are var so
+        // Aligned can grow both axes; Fit stretches only horizontal.
+        var effectiveHeight = height
+        if let fitWidth, fitWidth > 0, (alignH == 3 || alignH == 5),
+           lines.count == 1, let firstLine = linePixelMetrics.first, firstLine.w > 0 {
+            let naturalWorld = firstLine.w * horizontalWorldScale
+            if naturalWorld > 1e-12 {
+                let k = fitWidth / naturalWorld
+                horizontalWorldScale *= k
+                if alignH == 3 {
+                    worldScale *= k
+                    effectiveHeight *= k
+                }
+            }
+        }
+
         let cosR = cos(rotation)
         let sinR = sin(rotation)
         let spacingFactor = max(lineSpacingFactor, 0.01)
-        let requestedLineHeight = height * (5.0 / 3.0) * spacingFactor
+        let requestedLineHeight = effectiveHeight * (5.0 / 3.0) * spacingFactor
         let renderedLineHeight = metrics.lineHeightPixels * worldScale
         let lineHeightWorld = lineSpacingStyle == 2
             ? requestedLineHeight
@@ -501,7 +519,7 @@ public final class EngineTextManager {
             case 3:
                 baseY = -metrics.capTopPaddingPixels * worldScale
             default:
-                baseY = -height
+                baseY = -effectiveHeight
             }
         }
 
@@ -544,7 +562,7 @@ public final class EngineTextManager {
             if hasParagraphAlignment {
                 effectiveAlignment = paragraphAlignment == 5 ? 0 : paragraphAlignment
             } else if alignH == 3 || alignH == 5 {
-                effectiveAlignment = 1
+                effectiveAlignment = (fitWidth ?? 0) > 0 ? 0 : 1
             } else {
                 effectiveAlignment = alignH
             }
@@ -606,7 +624,7 @@ public final class EngineTextManager {
             }
 
             if minX.isFinite, minY.isFinite, maxX.isFinite, maxY.isFinite {
-                let margin = max(0.0, (backgroundScale - 1.0) * height * 0.5)
+                let margin = max(0.0, (backgroundScale - 1.0) * effectiveHeight * 0.5)
                 let localCorners = [
                     (minX - margin, minY - margin),
                     (maxX + margin, minY - margin),

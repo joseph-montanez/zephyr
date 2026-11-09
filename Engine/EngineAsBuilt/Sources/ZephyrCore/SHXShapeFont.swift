@@ -982,6 +982,59 @@ public final class SHXShapeFont: @unchecked Sendable {
         return stored
     }
 
+    // MARK: - Measurement
+
+    /// Advance-sum width of the widest line of `text` in world units at
+    /// the given cap height and width factor. This is the same pen-advance
+    /// metric `renderText` lays glyphs out with (including the resolved
+    /// space advance and %% control codes), so a string rendered after
+    /// scaling by `span / measuredAdvanceWidth(...)` ends its pen exactly
+    /// `span` from its origin.
+    public func measuredAdvanceWidth(
+        _ text: String,
+        height: Double,
+        widthFactor: Double = 1.0
+    ) -> Double {
+        guard height.isFinite, height > 0, fontHeight > 0 else { return 0 }
+        let storedSpaceAdvance = glyphs[0x20]?.advanceX ?? 0.0
+        let spaceAdvance = Self.resolvedSpaceAdvance(
+            stored: storedSpaceAdvance,
+            fontHeight: fontHeight)
+        let scale = (height / fontHeight) * max(widthFactor, 1e-9)
+        var widest = 0.0
+        for line in text.components(separatedBy: "\n") {
+            widest = max(widest, getLocalStringWidth(line, spaceAdvance: spaceAdvance) * scale)
+        }
+        return widest
+    }
+
+    /// AutoCAD Fit (72 = 5) / Aligned (72 = 3) adjustment: scale the text
+    /// so its advance width exactly spans `fitWidth` (same units as
+    /// `height`). Fit keeps the height and stretches the width factor;
+    /// Aligned scales height and width together (aspect preserved).
+    /// Returns the adjusted metrics plus the effective horizontal
+    /// alignment to render with (0 = left from the first definition
+    /// point), or the inputs unchanged when this is not fitted text.
+    public func fitAdjustedMetrics(
+        text: String,
+        height: Double,
+        widthFactor: Double,
+        alignH: Int,
+        fitWidth: Double?
+    ) -> (height: Double, widthFactor: Double, alignH: Int) {
+        guard alignH == 3 || alignH == 5,
+              let fitWidth, fitWidth.isFinite, fitWidth > 0 else {
+            return (height, widthFactor, alignH)
+        }
+        let natural = measuredAdvanceWidth(text, height: height, widthFactor: widthFactor)
+        guard natural > 1e-12 else { return (height, widthFactor, alignH) }
+        let k = fitWidth / natural
+        if alignH == 3 {
+            return (height * k, widthFactor, 0)
+        }
+        return (height, widthFactor * k, 0)
+    }
+
     // MARK: - Text-to-Geometry
 
     /// Convert a string into line primitives at the given position and height.
@@ -1003,11 +1056,15 @@ public final class SHXShapeFont: @unchecked Sendable {
         widthFactor: Double = 1.0,
         obliqueAngle: Double = 0.0,
         maxWidth: Double? = nil,
+        fitWidth: Double? = nil,
         fillOutline: Bool = true
     ) -> [CADPrimitive] {
         var primitives: [CADPrimitive] = []
-        let scaleY = height / fontHeight
-        let scaleX = scaleY * max(widthFactor, 1e-9)
+        let fitAdjusted = fitAdjustedMetrics(
+            text: text, height: height, widthFactor: widthFactor,
+            alignH: alignH, fitWidth: fitWidth)
+        let scaleY = fitAdjusted.height / fontHeight
+        let scaleX = scaleY * max(fitAdjusted.widthFactor, 1e-9)
         let cosR = cos(rotation)
         let sinR = sin(rotation)
         let shear = tan(obliqueAngle * .pi / 180.0)
@@ -1086,7 +1143,7 @@ public final class SHXShapeFont: @unchecked Sendable {
                 ?? (minX: 0.0, maxX: lineLocalWidth)
 
             var offsetX: Double = 0
-            switch alignH {
+            switch fitAdjusted.alignH {
             case 1, 3, 4, 5:
                 offsetX = -0.5 * (drawableBounds.minX + drawableBounds.maxX)
             case 2:
