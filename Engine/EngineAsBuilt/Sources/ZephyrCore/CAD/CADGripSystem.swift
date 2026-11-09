@@ -37,13 +37,13 @@ public enum CADGripSystem {
             selectedLeaderContentHandle: selectedLeaderContentHandle,
             gripObjectLimit: gripObjectLimit)
         let threshold: Float = 10.0
-        var bestDist: Float = threshold * 2
+        var bestDist: Float = .infinity
         var best: CADSelectionManager.CadGripInfo? = nil
         for g in grips {
             let dx = Double(g.screenPos.x - screenX)
             let dy = Double(g.screenPos.y - screenY)
             let dist = Float(sqrt(Double(dx * dx + dy * dy)))
-            if dist < bestDist {
+            if dist <= threshold && dist < bestDist {
                 bestDist = dist
                 best = g
             }

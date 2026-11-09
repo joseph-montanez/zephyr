@@ -824,6 +824,7 @@ public final class PhrostEngine {
         self.snap.gridOriginY = settings.gridOriginY
         self.snap.gridMajor = settings.gridMajor
         PickFirstSettings.pickFirst = settings.pickFirst
+        SelectionCyclingSettings.value = settings.selectionCycling
         self.tabManager.autoOpenPageSetupForNewLayouts = settings.displayPageSetupForNewLayouts
         self.tabManager.onRequestPageSetup = { [weak self] in
             self?.ui.pageSetupManagerActive = true

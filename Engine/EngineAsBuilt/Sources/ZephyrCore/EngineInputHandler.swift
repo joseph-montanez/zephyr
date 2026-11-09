@@ -409,6 +409,7 @@ internal final class EngineInputHandler {
                         ? -wy : wy
                     let factor = dir > 0 ? 1.375 : 1.0 / 1.375
                     engine.camera.zoomView(factor: factor, screenX: engine.interaction.lastMouseX, screenY: engine.interaction.lastMouseY, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
+                    engine.interaction.clearSelectionCyclingTransient()
                 }
 
             // MARK: SDL3 Pen / Tablet events
@@ -601,6 +602,23 @@ internal final class EngineInputHandler {
                 return
             case .continue:
                 break
+            }
+        }
+
+        // ── Shift+Space: Selection Cycling pile step ──
+        // Must precede Space-as-Enter: with Shift held, Space must cycle the
+        // hover pile instead of confirming the "Select objects" prompt.
+        // Falls through when cycling is off or no pile is hovered, so
+        // Shift+Space keeps its legacy confirm behavior there.
+        if scancode == SDL_SCANCODE_SPACE,
+           (engine.io != nil && engine.io.pointee.KeyShift),
+           !handledByImGui,
+           !engine.commandProcessor.commandLineActive,
+           !engine.textManager.isEditorActive,
+           !engine.interaction.tableCellEditorActive,
+           !engine.ui.layerMoveActive {
+            if engine.loopController.cycleSelectionAtHover() {
+                return
             }
         }
 
@@ -1177,6 +1195,7 @@ internal final class EngineInputHandler {
             let screenDx = Double(xrel)
             let screenDy = Double(yrel)
             engine.camera.panByScreenDelta(dx: screenDx, dy: screenDy)
+            engine.interaction.clearSelectionCyclingTransient()
         } else {
             engine.loopController.handleToolMouseMotion(x: x, y: y)
         }

@@ -70,6 +70,15 @@ final class CADHoverCoordinator {
     private func updateEntity(worldX: Double, worldY: Double) {
         let interaction = engine.interaction
         let threshold = 6.0 / engine.camera.zoom
+        // An armed Shift+Space cycle owns the hover highlight while the
+        // cursor stays inside the pile's pickbox; mousemove must not
+        // overwrite the user's explicit choice.
+        if interaction.hasActiveHoverCycle {
+            let anchorDist = hypot(worldX - interaction.hoverCycleAnchorX,
+                                   worldY - interaction.hoverCycleAnchorY)
+            if anchorDist <= threshold { return }
+            interaction.clearHoverCycle()
+        }
         let nowTicks = SDL_GetTicks()
         let distance = hypot(
             worldX - interaction.lastHoverTestWorldX,
@@ -92,5 +101,59 @@ final class CADHoverCoordinator {
         interaction.lastHoverTestWorldX = worldX
         interaction.lastHoverTestWorldY = worldY
         interaction.lastHoverTestTicks = nowTicks
+        refreshHoverCycle(worldX: worldX, worldY: worldY, threshold: threshold)
     }
+
+    /// Rebuilds the hover pile after each hover test. Clears the cycle when
+    /// the cursor leaves geometry or cycling is disabled.
+    private func refreshHoverCycle(worldX: Double, worldY: Double, threshold: Double) {
+        let interaction = engine.interaction
+        guard SelectionCyclingSettings.isEnabled,
+              interaction.hoveredEntityHandle != nil,
+              engine.cadSelection.hasMultipleHitsAt(
+                worldX: worldX, worldY: worldY,
+                document: engine.document,
+                threshold: threshold,
+                simplifyComplexBlocks: engine.simplifyComplexBlocks)
+        else {
+            interaction.clearHoverCycle()
+            return
+        }
+        // Keep the current pile while the cursor stays inside it and the
+        // hover target is still a member; otherwise re-enumerate.
+        let anchorDist = hypot(worldX - interaction.hoverCycleAnchorX,
+                               worldY - interaction.hoverCycleAnchorY)
+        if !interaction.hoverCycleHandles.isEmpty,
+           anchorDist <= threshold,
+           let hovered = interaction.hoveredEntityHandle,
+           interaction.hoverCycleHandles.contains(hovered) {
+            return
+        }
+        let hits = engine.cadSelection.allHitsAt(
+            worldX: worldX, worldY: worldY,
+            document: engine.document,
+            threshold: threshold,
+            simplifyComplexBlocks: engine.simplifyComplexBlocks)
+        interaction.hoverCycleHandles = hits.map { $0.handle }
+        interaction.hoverCycleIndex = 0
+        interaction.hasActiveHoverCycle = false
+        interaction.hoverCycleAnchorX = worldX
+        interaction.hoverCycleAnchorY = worldY
+    }
+
+    /// Advances the hover pile (Shift+Space). Returns true when a cycle
+    /// step ran; the next click then takes the cycled entity directly.
+    @discardableResult
+    func advanceCycle() -> Bool {
+        let interaction = engine.interaction
+        guard SelectionCyclingSettings.isEnabled,
+              interaction.hoverCycleHandles.count >= 2 else { return false }
+        interaction.hasActiveHoverCycle = true
+        interaction.hoverCycleIndex = (interaction.hoverCycleIndex + 1) % interaction.hoverCycleHandles.count
+        if let handle = interaction.cycledHandle {
+            interaction.hoveredEntityHandle = handle
+        }
+        return true
+    }
+
 }

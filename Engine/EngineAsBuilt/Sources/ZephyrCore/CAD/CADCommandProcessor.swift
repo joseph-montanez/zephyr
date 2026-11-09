@@ -1111,6 +1111,8 @@ public final class CADCommandProcessor {
     /// lines only reach here from pending completions (reconstructed from
     /// stepwise-prompts); the interactive path submits one token at a time.
     public func executeFullLine(_ text: String) {
+        // A typed command dismisses any open Selection list or hover cycle.
+        engine?.interaction.clearSelectionCyclingTransient()
         // Reject-nested-interactive gate: while a Lisp routine runs, no
         // other command may start. Must precede lastExecutedCommand so a
         // rejected command never poisons spacebar repeat.
@@ -3017,6 +3019,7 @@ public final class CADCommandProcessor {
 
     /// Cancel any active command.
     internal func clearCommand() {
+        engine?.interaction.clearSelectionCyclingTransient()
         activeCommand = nil
         plotCliSession = nil
         publishCliSession = nil
@@ -3997,6 +4000,14 @@ public final class CADCommandProcessor {
             return
         }
 
+        applyObjectSelectionPick(handle)
+    }
+
+    /// Applies one Select-objects pick with Shift semantics (Shift removes,
+    /// otherwise adds) and refreshes the prompt count. Shared by direct
+    /// canvas clicks and deferred Selection-list row choices.
+    internal func applyObjectSelectionPick(_ handle: UUID) {
+        guard let engine = engine else { return }
         let shiftHeld = (engine.io != nil) ? engine.io.pointee.KeyShift : false
         if shiftHeld {
             engine.cadSelection.removeFromSelection(handle)
@@ -4032,6 +4043,9 @@ public final class CADCommandProcessor {
             return
         }
         isSelectingObjects = false
+        // Leaving the Select-objects phase retires any open Selection list:
+        // deferred row picks no longer have a prompt to feed.
+        engine.interaction.clearSelectionCyclingTransient()
         switch activeCommand {
         case "MOVE":
             commandPrompt = "Select base point"
@@ -4483,3 +4497,5 @@ public final class CADCommandProcessor {
         print("[CAD] Pasted \(entry.entities.count) entities as block '\(blockName)'.")
     }
 }
+
+

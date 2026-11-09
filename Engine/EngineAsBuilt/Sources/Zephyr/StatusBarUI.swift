@@ -115,6 +115,24 @@ struct StatusBarUI {
                 }
             }
 
+            // Selection Cycling toggle (AutoCAD status-bar parity).
+            // Ctrl+W stays bound to tab close, so this button and the
+            // SELECTIONCYCLING sysvar are the toggle paths.
+            ImGuiSameLine(0, 8)
+            do {
+                let scMode = SelectionCyclingSettings.value
+                let scLabel: String
+                switch scMode {
+                case 2: scLabel = "SC:2"
+                case 1: scLabel = "SC:1"
+                case 0: scLabel = "SC:0"
+                default: scLabel = "SC:off"
+                }
+                if igSmallButton(scLabel) {
+                    SelectionCyclingSettings.toggle()
+                }
+            }
+
             // Save failure indicator
             if let ss = saveState, case .failed = ss.status {
                 ImGuiSameLine(0, 8)

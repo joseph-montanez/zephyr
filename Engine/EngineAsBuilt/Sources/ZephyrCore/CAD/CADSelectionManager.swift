@@ -204,16 +204,35 @@ public final class CADSelectionManager {
             simplifyComplexBlocks: simplifyComplexBlocks)
     }
 
-    /// Returns all entities whose geometry is within threshold of the point.
-    /// Used for the multi-hit popup when entities overlap.
+    /// Returns all entities whose geometry is within threshold of the point,
+    /// sorted topmost-first (row 1 equals `hitTest`). Used for the Selection
+    /// Cycling list when entities overlap.
     public func allHitsAt(
         worldX: Double, worldY: Double,
         document: CADDocument,
+        threshold: Double = 3.0,
         simplifyComplexBlocks: Bool = true
     ) -> [(handle: UUID, label: String)] {
         return CADHitTesting.allHitsAt(
             worldX: worldX, worldY: worldY,
             document: document,
+            threshold: threshold,
+            simplifyComplexBlocks: simplifyComplexBlocks)
+    }
+
+    /// True when two or more distinct entities are within threshold of the
+    /// point. Backs the Selection Cycling hover badge without enumerating
+    /// the full list per mousemove.
+    public func hasMultipleHitsAt(
+        worldX: Double, worldY: Double,
+        document: CADDocument,
+        threshold: Double = 3.0,
+        simplifyComplexBlocks: Bool = true
+    ) -> Bool {
+        return CADHitTesting.hasMultipleHitsAt(
+            worldX: worldX, worldY: worldY,
+            document: document,
+            threshold: threshold,
             simplifyComplexBlocks: simplifyComplexBlocks)
     }
 
@@ -452,3 +471,4 @@ public final class CADSelectionManager {
         return CADGripSystem.getOrientedCorners(handle, document: document)
     }
 }
+

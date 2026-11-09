@@ -114,6 +114,7 @@ final class LispVarStore: @unchecked Sendable {
         "QTEXTMODE": .int(0),
         "REGENMODE": .int(1),
         "SELECTSIMILARMODE": .int(130),
+        "SELECTIONCYCLING": .int(2),
         "SKETCHINC": .real(0.1),
         "SNAPMODE": .int(0),
         "SNAPUNIT": LispEntityAdapter.lispList([.real(10), .real(10)]),
@@ -224,6 +225,9 @@ final class LispVarStore: @unchecked Sendable {
             return .int(document.lengthPrecision)
         case "SELECTSIMILARMODE":
             return .int(document.selectSimilarMode)
+        case "SELECTIONCYCLING":
+            // Live: shared with the Selection Cycling click/hover resolver.
+            return .int(SelectionCyclingSettings.value)
         case "PICKSTYLE":
             return .int(document.pickStyle)
         case "AUPREC":
@@ -407,6 +411,12 @@ final class LispVarStore: @unchecked Sendable {
             }
             document.selectSimilarMode = i
             store(name, value)
+            return nil
+        case "SELECTIONCYCLING":
+            guard case let .int(intVal) = value, (-2...2).contains(intVal) else {
+                return "SELECTIONCYCLING requires -2, -1, 0, 1, or 2"
+            }
+            SelectionCyclingSettings.value = intVal
             return nil
         case "PICKSTYLE":
             guard case let .int(i) = value, (0...3).contains(i) else {
@@ -705,3 +715,5 @@ final class LispVarStore: @unchecked Sendable {
         get(name, document: document, activeCommand: nil) ?? .int(0)
     }
 }
+
+

@@ -111,6 +111,37 @@ final class SelectionDisplayPolicyTests: XCTestCase {
         XCTAssertFalse(underLimit.isEmpty)
     }
 
+    func testGripHitTestUsesTenPixelRadius() {
+        // Grip squares are drawn 8 px wide; the hit test documents a
+        // 10 px radius. A click 15 px away must fall through to normal
+        // picking (in grip-dense block selections a wider radius carpets
+        // the whole hatch area and makes Selection Cycling unreachable).
+        let doc = CADDocument()
+        let layer = Layer(name: "0")
+        let line = CADEntity(
+            layerID: layer.handle,
+            localGeometry: [.line(
+                start: Vector3(x: 0, y: 0, z: 0),
+                end: Vector3(x: 10, y: 0, z: 0))],
+            transform: .identity)
+        doc.importLayersBlocksEntities(
+            layers: [layer], blocks: [], entities: [line])
+        let cam = CameraTransform(
+            camX: 0, camY: 0, camZoom: 1, camSin: 0, camCos: 1,
+            screenCenterX: 400, screenCenterY: 300)
+
+        // Endpoint grip sits at screen (400, 300); midpoint at (405, 300).
+        let near = CADGripSystem.gripHitTest(
+            screenX: 400, screenY: 309, document: doc, cam: cam,
+            simplifyComplexBlocks: true, selectedHandles: [line.handle])
+        XCTAssertNotNil(near, "9 px from a grip should still grab it")
+
+        let far = CADGripSystem.gripHitTest(
+            screenX: 400, screenY: 315, document: doc, cam: cam,
+            simplifyComplexBlocks: true, selectedHandles: [line.handle])
+        XCTAssertNil(far, "15 px from every grip must not start a grip drag")
+    }
+
     func testFrameRequiredMatchesHighlightStyle() {
         let doc = CADDocument()
         let layer = Layer(name: "0")

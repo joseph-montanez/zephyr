@@ -66,6 +66,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Grid visibility and snap interval** - grid lines use per-theme minor/major colors with stronger major lines every `GRIDMAJOR` steps instead of near-invisible grays, following the effective pane/paper/custom background; grid snap (F9) uses the exact `SNAPUNIT` interval at every zoom instead of the zoom-adaptive display spacing
 - **MCP thumbnail matches the app window** - world-to-pixel mapping, grid ticks, and reference overlay use Y-down presentation; engine text previously rasterized upside-down
 - **Explicit MCP port bind failure is fatal** - --mcp-port failing to bind now exits non-zero instead of running silently MCP-less
+- **Overlapping objects show a pick list again (AutoCAD parity)** — clicking where several objects stack up offers the choice list instead of guessing, with an on-cursor badge and Shift+Space cycling; Enter confirms, Esc backs out
+- **Clicking inside a hatch selects it (AutoCAD parity)** — hatched and solid-filled areas now select from anywhere inside, not just their edges, and crowded block grips no longer swallow the pick list
 - **Zoom extents after Lisp/MCP edits** - the visible-layer and all-layer bounds caches shared one revision, so a regen refresh left zoom-extents stale; each slot now tracks its own revision, and `doc_summary` reports `renderRevision`
 
 

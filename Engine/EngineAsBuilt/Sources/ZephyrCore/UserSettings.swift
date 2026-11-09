@@ -78,6 +78,8 @@ public struct UserSettings: Codable, Sendable {
     // to Quick mode with noun/verb selection on).
     public var trimExtendMode: Int
     public var pickFirst: Int
+    /// SELECTIONCYCLING registry (-2...2, default 2 = badge + list).
+    public var selectionCycling: Int
 
     // MARK: - Grid / Snap (GRIDMODE / SNAPMODE / GRIDUNIT / SNAPUNIT / GRIDMAJOR).
     // App-global drafting aids that survive restarts.
@@ -125,6 +127,7 @@ public struct UserSettings: Codable, Sendable {
         displayPageSetupForNewLayouts: Bool = false,
         trimExtendMode: Int = 1,
         pickFirst: Int = 1,
+        selectionCycling: Int = 2,
         gridVisible: Bool = false,
         gridSnapEnabled: Bool = false,
         gridSpacingX: Double = 10,
@@ -178,6 +181,7 @@ public struct UserSettings: Codable, Sendable {
         self.windowPanelLayouts = windowPanelLayouts
         self.trimExtendMode = (trimExtendMode == 0) ? 0 : 1
         self.pickFirst = (pickFirst == 0) ? 0 : 1
+        self.selectionCycling = (-2...2).contains(selectionCycling) ? selectionCycling : 2
         self.gridVisible = gridVisible
         self.gridSnapEnabled = gridSnapEnabled
         self.gridSpacingX = gridSpacingX > 0 ? gridSpacingX : 10
@@ -307,6 +311,9 @@ public struct UserSettings: Codable, Sendable {
         }
         pickFirst = try box.decodeIfPresent(Int.self, forKey: .pickFirst)
             ?? fallback.pickFirst
+        let decodedCycling = try box.decodeIfPresent(Int.self, forKey: .selectionCycling)
+            ?? fallback.selectionCycling
+        selectionCycling = (-2...2).contains(decodedCycling) ? decodedCycling : 2
     }
 
     /// Snapshots the live UI state into persistable settings. Single
@@ -322,6 +329,7 @@ public struct UserSettings: Codable, Sendable {
                                plotTransparencyOverride: Int = 1,
                                trimExtendMode: Int = TrimSettings.trimExtendMode,
                                pickFirst: Int = PickFirstSettings.pickFirst,
+                               selectionCycling: Int = SelectionCyclingSettings.value,
                                snap: EngineSnapManager? = nil) -> UserSettings {
         let mainLayout = ui.panelStore.peek(.main)
         return UserSettings(
@@ -353,6 +361,7 @@ public struct UserSettings: Codable, Sendable {
             plotTransparencyOverride: plotTransparencyOverride,
             trimExtendMode: trimExtendMode,
             pickFirst: pickFirst,
+            selectionCycling: selectionCycling,
             gridVisible: snap?.gridVisible ?? false,
             gridSnapEnabled: snap?.gridSnapEnabled ?? false,
             gridSpacingX: snap?.gridSpacingX ?? 10,
@@ -421,3 +430,4 @@ public struct UserSettings: Codable, Sendable {
         try? data.write(to: url, options: .atomic)
     }
 }
+

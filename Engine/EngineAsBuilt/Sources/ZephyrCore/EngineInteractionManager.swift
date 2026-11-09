@@ -82,6 +82,7 @@ public final class EngineInteractionManager {
         lassoActive = false
         lassoPointsWorld.removeAll()
         rectSelectPreviewHandles.removeAll()
+        clearSelectionCyclingTransient()
         clearWindowGestureIfIdle()
     }
 
@@ -161,11 +162,100 @@ public final class EngineInteractionManager {
     }
 
     // MARK: - Object Picker Popup (multi-hit click)
-    
-    public var popupHitList: [(handle: UUID, label: String)] = []
+
+    /// One row of the Selection Cycling list.
+    public struct PickerPopupHit: Sendable, Equatable {
+        public var handle: UUID
+        public var label: String
+        public var color: ColorRGBA
+        public var isLocked: Bool
+
+        public init(handle: UUID, label: String, color: ColorRGBA, isLocked: Bool) {
+            self.handle = handle
+            self.label = label
+            self.color = color
+            self.isLocked = isLocked
+        }
+    }
+
+    /// Deferred pick awaiting a Selection list choice. Replayed through the
+    /// normal per-entity handling once the user picks a row, so a deferred
+    /// click behaves exactly like a direct click on that entity.
+    public struct PendingPick: Sendable, Equatable {
+        /// World point of the original click (for hit revalidation).
+        public var worldX: Double
+        public var worldY: Double
+        /// Pickbox threshold used for the original enumeration.
+        public var threshold: Double
+        public var shiftHeld: Bool
+        public var isSelectingObjects: Bool
+        /// Screen point where the popup opens.
+        public var screenX: Float
+        public var screenY: Float
+        public var windowID: SDL_WindowID?
+        public var tabID: UUID?
+        /// Selection captured when the list opened; Esc restores it.
+        public var initialSelection: Set<UUID> = []
+    }
+
+    public var popupHitList: [PickerPopupHit] = []
     public var popupScreenX: Float = 0
     public var popupScreenY: Float = 0
     public var popupNeedsOpen: Bool = false
+    /// Row highlighted by hover or keyboard inside the open popup.
+    public var popupHoverHandle: UUID? = nil
+    public var popupKeyboardIndex: Int = 0
+    /// Deferred click context while the Selection list is open.
+    public var pendingPickContext: PendingPick? = nil
+    /// True when the press that opened the popup has not yet been released.
+    /// The release is consumed so opening the list never starts a drag.
+    public var pickerOpenedOnMouseDown: Bool = false
+
+    // MARK: - Selection Cycling hover state (Shift+Space)
+
+    /// Candidate handles under the current hover pile, topmost-first.
+    public var hoverCycleHandles: [UUID] = []
+    public var hoverCycleIndex: Int = 0
+    /// True after the user pressed Shift+Space: the next click takes the
+    /// cycled entity directly instead of opening the list.
+    public var hasActiveHoverCycle: Bool = false
+    /// Pickbox anchor of the current hover pile; leaving it disarms the cycle.
+    public var hoverCycleAnchorX: Double = 0
+    public var hoverCycleAnchorY: Double = 0
+
+    /// Currently cycled handle when `hasActiveHoverCycle` is set.
+    public var cycledHandle: UUID? {
+        guard hasActiveHoverCycle, hoverCycleHandles.indices.contains(hoverCycleIndex) else { return nil }
+        return hoverCycleHandles[hoverCycleIndex]
+    }
+
+    /// Whether the hover pile should show the overlap badge.
+    public var selectionBadgeVisible: Bool {
+        SelectionCyclingSettings.isEnabled && hoverCycleHandles.count >= 2
+    }
+
+    public func clearPickerPopup() {
+        popupHitList.removeAll()
+        popupNeedsOpen = false
+        popupHoverHandle = nil
+        popupKeyboardIndex = 0
+        pendingPickContext = nil
+        pickerOpenedOnMouseDown = false
+    }
+
+    public func clearHoverCycle() {
+        hoverCycleHandles.removeAll()
+        hoverCycleIndex = 0
+        hasActiveHoverCycle = false
+    }
+
+    /// Dismisses every transient Selection Cycling state (popup, deferred
+    /// pick, hover cycle). Called on command start/finish, tab switches,
+    /// zoom, and pan.
+    public func clearSelectionCyclingTransient() {
+        clearPickerPopup()
+        clearHoverCycle()
+    }
 
     // MARK: - Grip State
 
@@ -366,3 +456,5 @@ public struct PenState: Sendable {
     public var worldX: Double = 0.0
     public var worldY: Double = 0.0
 }
+
+
