@@ -5,79 +5,77 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 ## November 2026
 
 ### New Features
-- **Blocks palette (`BLOCKSPALETTE`)** — tabbed Current / Recent / Favorites / Libraries panel with vector thumbnails, search, pinning, and Explode / Repeat / Prompt-attributes options; Libraries browse `.dxf` / `.dwg` / `.eab` folders and container blocks with background parsing, and Recent / Favorites / folders / defaults persist; `INSERT` takes typed `x,y[,z]`, shows a true-size ghost, clones at commit (single undo), prompts when `ATTREQ=1`; adds `BLOCKSPALETTECLOSE` and `BLOCKSLIBRARYPATH`
-- **Model-space plotting** — `PLOT`, `PAGESETUP`, `-PLOT`, `-PAGESETUP`, and `PREVIEW` work from Model as well as layouts, with named setups scoped per space; also adds the AutoCAD PDF High Quality Print device
-- **Batch publishing (`PUBLISH`)** — sheet-list dialog with multi-select, Model/Layout filtering, Master setup assignment, Import, single/multi-sheet PDF output, per-sheet errors, and publishing from unsaved drawings; DWG rows need the ODA converter
-- **Save As DWG** — Save/Save As offer DWG via internal DXF export plus ODA conversion; the tab stays associated for later saves and the version follows `DXFVERSION` (default 2018)
-- **Sheet sets** — organize drawings (`.dst`) with `NEWSHEETSET`/`OPENSHEETSET`, manage from the `SHEETSET` palette, drop views with `PLACEVIEW` (live ghost), publish with `-PUBLISHSET`
-- **Callouts and transmit** — tag sheets with `PLACECALLOUT`, and package a whole sheet set for sharing with `-TRANSMITSET`, which gathers the set file plus its drawings into one archive folder
-- **Galactic Purple theme with viewport starfield** - deep-space dark theme (`GALAXY`, with galactic/purple/space aliases) whose canvas shows blinking X-sparkle stars in real stellar colors; the panorama drifts with time, responds to zoom (star size, drift speed, and a fly-through fade of near/far stars), and follows the mouse opposite its direction with depth-scaled parallax; selecting Galactic auto-enables the stars and leaving it turns them off
-- **Live-app MCP server for AI driving** - in-process localhost server (`--mcp-port`) with Lisp eval, scripted commands, input handoff, doc/batch summaries, pinned camera, CPU-raster thumbnails with grid ticks, and reference overlays; stdio bridge plus configs for Muse, pi, OpenCode, Cursor, and VS Code (`docs/mcp.md`)
-- **Native dimensions from Lisp** - `entmake` creates all nine `DIMENSION` types and reads/creates `DIMSTYLE` (40/41 scale arrows, 210 orients text via shared OCS math); eight scripted `DIM*` commands with aliases; native `DIMENSION` export records; DXF fixture sweep locks import/entmake/re-export agreement
+- **Blocks palette (`BLOCKSPALETTE`)** - browse and insert blocks with thumbnails, search, and favorites.
+- **Model-space plotting** - `PLOT`, `PAGESETUP`, and `PREVIEW` now work from Model space.
+- **Batch publishing (`PUBLISH`)** - publish multiple sheets to PDF at once from a sheet list.
+- **Save As DWG** - save directly to DWG; version follows `DXFVERSION`.
+- **Sheet sets** - organize drawings into sets, place views, and publish the set.
+- **Callouts and transmit** - tag sheets with callouts and package a set for sharing.
+- **Galactic Purple and Cotton Candy themes** - new dark purple theme with animated starfield canvas, plus a vivid pink theme.
+- **MCP server for AI driving** - local server lets AI tools inspect and drive the app (see `docs/mcp.md`).
+- **Native dimensions from Lisp** - create all dimension types from `entmake` with matching export.
 
 ### New Commands
-- **PUBLISH / +PUBLISH / -PUBLISH** — publish dialog workflow, preload the dialog from a sheet list, and foreground command-line publishing with a CSV log beside the `.dsd` file
-- **-EXPORTPDF** — headless command-line export of the current layout to PDF with the persisted options (no popup, no save window); an explicit path wins, otherwise `<drawing>.pdf` beside the drawing, and unsaved drawings without a path report usage instead of failing silently
-- **Layer command parity** — `LAYFRZ`/`LAYTHW`, `LAYLCK`/`LAYULK`, `LAYDEL`, `LAYMRG`, `LAYWALK`, `COPYTOLAYER`, `VPLAYER`, `LAYERSTATE`/`-LAYERSTATE`, `LAYERP`, expanded `-LAYER` grammar, and scripted `(command ...)` support
-- **UCS / PLAN (model view rotation, AutoCAD parity)** — `UCS` frames (World/3point/View/Z/Origin/Prev) with bare-Enter defaults, `PLAN` aligns the view (Current/Ucs/World); `UCS Z 45` rotates counter-clockwise like AutoCAD LT; pasted multi-token input replays stepwise through the same prompts; the cursor no longer parks at window center after radial-nav drags
-- **MIRROR (`MI`)** — mirror across a two-point line with live ghost, snapped or typed points, then `Erase source objects? [Yes/No] <N>`; one undo entry, locked layers refused; `MIRRTEXT` defaults to `0` so text stays readable
-- **STRETCH (`S`)** — crossing window/polygon picks objects whose defining points inside move while the rest holds; base/second points with live ghost, direct-distance and `Displacement` entry; zero displacement exits with no undo
-- **BREAK (`BR`) / BREAKATPOINT** — `BREAK` erases the span between two points on one object (`F` re-prompts the first point); `BREAKATPOINT` splits at one point and repeats until Enter; one undo entry per applied break
-- **EXTEND (`EX`)** — extend open objects to boundary edges (Standard pick loop or Quick mode) with Fence, Crossing, Mode, Project, Edge, and in-session Undo; ships with TRIM on the Modify ribbon with scripted `(command ...)` forms
-- **SNAP grid snap with Aspect spacing (AutoCAD parity)** - new `SNAP` command (F9, `GRIDSNAP` alias) with ON/OFF/Aspect/<spacing> prompts plus `SNAPUNIT`; `GRIDSPACING`/`GRIDUNIT` gain Aspect (separate X/Y), Snap (copy snap spacing), and `nX` multiples; new `GRIDMAJOR` major-line frequency; grid/snap state shows in the status bar and persists across restarts
-- **STARFIELD (`STARS`)** - toggle the Galactic Purple starfield panorama, with optional `ON`/`OFF`; takes effect while Galactic Purple is active
+- **PUBLISH / +PUBLISH / -PUBLISH** - dialog or command-line publishing with a CSV log.
+- **-EXPORTPDF** - export the current layout to PDF without dialogs.
+- **Layer commands** - `LAYFRZ`, `LAYTHW`, `LAYLCK`, `LAYULK`, `LAYDEL`, `LAYMRG`, `LAYWALK`, `COPYTOLAYER`, `VPLAYER`, `LAYERSTATE`, `LAYERP`, and richer `-LAYER`.
+- **UCS / PLAN** - set custom drawing planes and align the view to them.
+- **MIRROR (`MI`)** - mirror objects across a line with preview.
+- **STRETCH (`S`)** - move points inside a crossing window with preview.
+- **BREAK (`BR`) / BREAKATPOINT** - erase a span between two points or split at a point.
+- **EXTEND (`EX`)** - extend objects to boundary edges, with Quick mode and TRIM crossover.
+- **SNAP with Aspect spacing** - grid snap with separate X/Y spacing (`F9`), plus `GRIDMAJOR`.
+- **STARFIELD (`STARS`)** - toggle the Galactic starfield on or off.
 
 ### Improvements
-- **Space == Enter command input (AutoCAD parity)** — Space submits exactly like Enter: one token per keypress, so `UCS Z 45` is typed stepwise; prompts accepting blanks keep Space literal; spaced command names retired for canonical spellings
-- **Dropdown option lists for prompted commands** - SNAP, GRIDSPACING, UNITS, RIBBONMODE, SETUISCALE, DXFVERSION, VPORTS, and LAYERSORT now show a theme-style option list at the prompt (UP/DOWN/ENTER or click), with the current value marked and pre-highlighted; THEME and AUTOCONTRAST lists mark the active preset/mode the same way
-- **Clickable prompt chips** - prompt keywords now render as clickable pill chips: the ZOOM prompt bar (All/Center/Dynamic/Extents/Left/Previous/Right/Scale/Object/Window with hotkey hints) and pending-session input both offer chips; chips, hotkeys, and typed words share one dispatch, and keyword prompts across MEASUREGEOM, DVIEW, FILLET/CHAMFER, FIND, ALIGN, DIMBREAK, TEXTALIGN, WBLOCK, FIELD, IMAGEADJUST/PDFADJUST, SELECTFILTER, and SELECTSIMILAR all offer chips with the live mode marked where one exists
-- **THEME sub-command** — bare `THEME` prompts with exact, unique-prefix, `NEXT`, and `?` handling; ambiguous names re-prompt, bare Enter keeps current; `DARKMODE`/`LIGHTMODE` stay direct
-- **Feature options palette** — Enter on an empty buffer submits the highlighted option (typed text still wins); hovered/selected rows use the theme tint with gold text, readable in dark themes
-- **PDF export font handling (AutoCAD parity)** — `EXPORTPDF` opens a standalone options popup before the save window: embed TTF subsets as searchable text, convert text to outlines, or SHX-as-geometry; options persist, are shared with `PLOT`, and bare `Ctrl+P` routes to `PLOT`
-- **PDF table text sizing** — cell text tessellated under a scaled table transform now carries world-sized heights and widths instead of local ones, fixing undersized text on scaled title-block tables (e.g. 3.18-high text in 5.0-high rows under a 4.69x insert)
-- **PDF Extents framing** — layouts that plot Extents (e.g. centered 1:1 sheets) no longer export shifted a full sheet height off the page: the Y offset now composes against the area bottom, matching the engine's Y-down content against the Y-up printable rect (Window/Limits composition unchanged)
-- **PDF plot-style text ink (AutoCAD parity)** — CTB/STB pens now map dimension text, table-cell text, and other block-nested text (plus surrounding vectors); object-color tables preserve display color; images and gradients keep authored colors
-- **Planar UCS kernel foundation (Phase 1)** — new `ZephyrKernel` UCS math with canonical planar transforms, orientation/delta boundary converters, and absolute/relative/polar parsing; no command, display, or persistence wiring yet
-- **Ribbon fallback pattern icon** — fallback Draw panel now lists `HATCH` followed by `PATTERN`, and the `pattern` icon is registered with the known-icon set and painter coverage
-- **TRIM/EXTEND shared modes (AutoCAD parity)** — shared `TRIMEXTENDMODE` (Quick default like current AutoCAD), `PROJMODE`, and `EDGEMODE` on both prompts; Shift-select crosses over between trim and extend; `PICKFIRST` honored; sysvars validate ranges
-- **Screen-space curve tessellation with curve-only zoom LOD** — curves tessellate from a screen-space tolerance over 2x zoom bands instead of fixed world-space chords, so zooming refines instead of exposing facets; zoom-band crossings re-tessellate only curve-bearing entities
-- **Shifted-frame spline intersection polish** — bounding-box-center origin with knot-clamped damped Newton cuts the polish regression from ~827s to ~1.8s at sub-1e-9 residuals
-- **Zoom-independent trim** — trim tolerances no longer depend on zoom; the tolerance is `max(kernel linear, localDiagonal * 1e-9)` so trim results are identical at every zoom level
-- **Layers panel multi-selection and redesign** — Ctrl+Click toggles, Shift+Click ranges, Ctrl+A selects all; Select menu plus right-click row menu; bulk ops target the selection with skips noticed; double-click no longer changes current layer (F2/right-click renames); grouped icon toolbar, search + sort, scope chips, glanceable icon rows; rare actions in a More menu
-- **Cotton Candy vibrancy** - saturated the pink palette: hotter chrome, bubblegum panels, vivid violet-pink accents and borders, and stronger hover states
+- **Space acts as Enter** - Space submits commands like Enter does.
+- **Dropdown option lists** - common prompts show a pick list with the current value marked.
+- **Clickable prompt chips** - command keywords show as clickable chips.
+- **THEME prompt** - bare `THEME` lists themes and switches by name or prefix.
+- **Feature options palette** - Enter picks the highlighted option; clearer selection colors.
+- **PDF font handling** - choose searchable text, outlines, or SHX geometry; options persist.
+- **PDF table text sizing** - scaled title-block tables print at the right size.
+- **PDF Extents framing** - Extents plots no longer shift a full sheet off the page.
+- **PDF plot-style ink** - pen tables now color dimension and table text correctly.
+- **Planar UCS groundwork** - internal math for custom planes; no visible change yet.
+- **Ribbon PATTERN icon** - fallback Draw panel shows `HATCH` then `PATTERN`.
+- **Shared TRIM/EXTEND modes** - both share Quick/Project/Edge modes and Shift-crossover.
+- **Smoother curves when zooming** - curves refine with zoom instead of showing facets.
+- **Faster spline math** - intersection polishing is much faster with the same accuracy.
+- **Consistent trim at any zoom** - trim results no longer change with zoom level.
+- **Layers panel refresh** - multi-select, bulk actions, search, sort, and cleaner rows.
 
 ### DXF & File Formats
-- **Mirrored geometry round-trips** — `$MIRRTEXT` writes the stored header value, mirrored inserts export negative-Y scale so reimport rebuilds the reflection, and mirrored arcs emit matching sweeps; one canonical determinant check shared by all mirror paths
-- **Analytic spline export** — DXF export writes real `SPLINE` entities, EAB round-trips the analytic definition, PDF bounds span exact endpoints; 50-digit oracle scripts live in `Tools/oracles`
+- **Mirrored geometry round-trips** - mirrored blocks and arcs survive save and reopen.
+- **Real spline export** - DXF/EAB keep true `SPLINE` definitions.
 
 ### Bug Fixes
-- **AutoLISP `atof` overflow** — out-of-range exponents such as `"1e400"` parsed to infinity and were returned as-is; results now clamp to `+/-greatestFiniteMagnitude` with the sign preserved, while underflow (`"1e-400"`) still yields `0.0` and in-range values are untouched
-- **PAN press-and-hold (AutoCAD parity)** — `PAN` no longer latches on the first click and pans on hover until `Esc`; it now pans only while the left button is held, releasing stops the pan while staying in the command for another drag, with `Esc`/`Enter` to exit
-- **Layout layer colors and AutoCAD color parity** — layouts pick up Model layer-color edits; only ACI 7 inverts on white paper while explicit colors render raw; the importer records ACI-vs-TrueColor source through export, PDF, and GPU upload
-- **EXPORTPDF stuck prompt** — exporting no longer leaves the command line waiting for input after the dialog opens
-- **Spline trim overshoot** — trimming a spline no longer overshoots past the cutting edge; analytic curves stay the source of truth with display driven by screen-space tolerance
-- **Style-less table title heights** — `ACAD_TABLE` cells with no text height inherit the `*T` display-block nominal height/style instead of a rowHeight fraction clobbered to Standard 2.0
-- **Merged table cells and centered text on DXF/DWG import** — `ACAD_TABLE` import honors merged-cell groups and inherits alignment from `TABLESTYLE` row styles unless explicitly overridden, honoring table-level 280/281 suppression so suppressed single-row title blocks fall back to the data alignment instead of title center; spans write back in sync
-- **Table edges erased on plotted PDFs** — object-color plotting keeps the page-adjusted color (ACI 7 stays charcoal) instead of recomputing raw white-on-white; also fixes a malformed `ViewerPreferences` entry strict parsers rejected
-- **Discrete snaps with OTRACK on** - the wide OTRACK fallback pass could only return on-curve points, dropping endpoint/midpoint/center/intersection snaps when OTRACK was on; the discrete result is now carried forward instead, so chaining a new LINE off an old endpoint works again
-- **Hatch selection highlight** - selection, hover, rect-preview, and collaborator highlights now draw only the hatch boundary loops (outline) instead of re-tinting every pattern line in the selection color, matching AutoCAD where the pattern keeps its own colors
-- **Measurement overlays clipped to the canvas** — `MEASUREGEOM` lines/labels no longer paint over the ribbon and docked panels; primary-window overlays clip to the canvas and floating panels cover them
-- **HATCH respects crossing edges (AutoCAD parity)** - Pick Points in HATCH (and BOUNDARY) now splits edges at interior crossings before tracing the boundary, so a line through a circle hatches only the seed's half instead of the whole circle; the legacy vertex-only walk remains as fallback
-- **Grid visibility and snap interval** - grid lines use per-theme minor/major colors with stronger major lines every `GRIDMAJOR` steps instead of near-invisible grays, following the effective pane/paper/custom background; grid snap (F9) uses the exact `SNAPUNIT` interval at every zoom instead of the zoom-adaptive display spacing
-- **MCP thumbnail matches the app window** - world-to-pixel mapping, grid ticks, and reference overlay use Y-down presentation; engine text previously rasterized upside-down
-- **Explicit MCP port bind failure is fatal** - --mcp-port failing to bind now exits non-zero instead of running silently MCP-less
-- **Overlapping objects show a pick list again (AutoCAD parity)** — clicking where several objects stack up offers the choice list instead of guessing, with an on-cursor badge and Shift+Space cycling; Enter confirms, Esc backs out
-- **Clicking inside a hatch selects it (AutoCAD parity)** — hatched and solid-filled areas now select from anywhere inside, not just their edges, and crowded block grips no longer swallow the pick list
-- **Zoom extents after Lisp/MCP edits** - the visible-layer and all-layer bounds caches shared one revision, so a regen refresh left zoom-extents stale; each slot now tracks its own revision, and `doc_summary` reports `renderRevision`
-
+- **Lisp `atof` overflow** - huge exponents now clamp instead of returning infinity.
+- **PAN behavior** - pans only while the mouse button is held.
+- **Layout colors** - layouts follow Model layer colors; only ACI 7 inverts on white paper.
+- **EXPORTPDF prompt** - command line no longer hangs after export.
+- **Spline trim** - trims stop at the cutting edge instead of overshooting.
+- **Table title heights** - style-less titles use the right default height.
+- **Table merges on import** - merged cells and alignment import correctly.
+- **Table edges on PDFs** - plotted tables keep visible edges.
+- **Snaps with OTRACK on** - endpoint and midpoint snaps work again with tracking on.
+- **Hatch highlight** - selected hatches outline instead of recoloring the pattern.
+- **Measurement overlays** - helpers stay on the canvas instead of painting over panels.
+- **HATCH crossing edges** - a line through a shape hatches only the picked side.
+- **Grid visibility and snap** - clearer grid lines; F9 snap uses the exact snap interval.
+- **MCP thumbnails** - thumbnails match the app window orientation.
+- **MCP port failure** - a busy `--mcp-port` exits with an error instead of silently disabling.
+- **Overlapping picks** - clicking stacked objects shows a choice list again.
+- **Click inside hatches** - clicking anywhere inside a hatch selects it.
+- **Zoom extents after scripts** - extents refresh correctly after Lisp/MCP edits.
 
 ### Maintenance
-- **RevCloud and dimension-command internals (DRY/SOLID, no behavior change)** — split the 1600-line `REVCLOUD` command file into settings, geometry, and command files behind one shared UserDefaults helper, and moved the duplicated two-point picking flow out of `DIMLINEAR` into a shared `TwoPointDimensionCommand` base
-- **Windows CRLF-safe ribbon icon test** - painter-name scan splits unit-wise so CRLF checkouts no longer report zero painted icons
+- **Code cleanup** - split up the REVCLOUD file and shared dimension picking; no behavior change.
+- **CRLF-safe icon test** - ribbon icon check passes on Windows checkouts.
 
 ### Performance
-- **Parallel curve-only zoom settle** — band-crossing refresh fans curve entities across a task group at 4-7% of full-regen cost, reproducing full-regen tessellation point-for-point
-- **Snap and trim responsiveness** — fallback snap passes skip the computed discrete stage, intersection snap exits early, trims splice only changed entities and rebuild the entity grid; no geometry behavior changed
+- **Faster zoom refresh** - curve-only refresh costs a fraction of a full regen.
+- **Snappier snap and trim** - fewer wasted passes; geometry unchanged.
 
 ## October 2026
 
