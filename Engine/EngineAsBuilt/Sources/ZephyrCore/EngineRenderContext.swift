@@ -129,6 +129,7 @@ public final class WindowRenderContext {
     /// Secondary contexts call this when dropped; the primary calls it
     /// from the renderer's teardown path.
     public func destroy(device: OpaquePointer) {
+        sprites.removeAllSprites()
         regenTask?.cancel()
         regenTask = nil
         regenInFlight = nil

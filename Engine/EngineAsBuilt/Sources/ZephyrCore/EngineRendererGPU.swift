@@ -618,11 +618,17 @@ extension EngineRenderer {
 
         // Clean up Font Cache (deduplicate pointers)
         var closedFonts = Set<OpaquePointer>()
+        for font in engine.textManager.fontCache.values {
+            if let font = font, closedFonts.insert(font).inserted {
+                TTF_CloseFont(font)
+            }
+        }
         for font in engine.fontCache.values {
             if let font = font, closedFonts.insert(font).inserted {
                 TTF_CloseFont(font)
             }
         }
+        engine.textManager.fontCache.removeAll()
         engine.fontCache.removeAll()
 
         // Release pipelines, shaders, sampler
@@ -648,7 +654,17 @@ extension EngineRenderer {
         for ctx in secondaryCtxs.values where ctx !== primaryCtx {
             ctx.destroy(device: engine.gpuDevice)
         }
+        for ctx in paneCtxs.values {
+            ctx.destroy(device: engine.gpuDevice)
+        }
+        paneCtxs.removeAll()
         secondaryCtxs.removeAll()
+        var releasedDataTextures = Set<OpaquePointer>()
+        for texture in engine.textureManager.dataTextureCache.values {
+            if let texture = texture, releasedDataTextures.insert(texture).inserted {
+                SDL_ReleaseGPUTexture(engine.gpuDevice, texture)
+            }
+        }
         if let buf = imguiVertexBuffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) }
         if let buf = imguiIndexBuffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) }
 

@@ -481,6 +481,7 @@ public final class PhrostEngine {
         self.window = window
         self.gpuDevice = gpuDevice
         self.spriteManager = SpriteManager()
+        self.spriteManager.textureReleaser = { [gpuDevice] tex in SDL_ReleaseGPUTexture(gpuDevice, tex) }
         self.ctx = nil
         self.io = nil
         self.geometryManager = GeometryManager()

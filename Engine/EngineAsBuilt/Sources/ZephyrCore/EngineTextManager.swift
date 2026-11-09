@@ -292,6 +292,7 @@ public final class EngineTextManager {
             color: color,
             speed: (0.0, 0.0),
             texture: texture,
+            ownsTexture: texture != nil,
             text: text,
             font: font
         )
@@ -323,11 +324,12 @@ public final class EngineTextManager {
         let (newTexture, newWidth, newHeight) = renderTextToTexture(
             font: font, text: newText, color: bakeColor, renderer: renderer, gpuDevice: gpuDevice)
 
-        if let oldTexture = sprite.texture {
+        if let oldTexture = sprite.texture, oldTexture != newTexture, sprite.ownsTexture {
             SDL_ReleaseGPUTexture(gpuDevice, oldTexture)
         }
 
         sprite.texture = newTexture
+        sprite.ownsTexture = newTexture != nil
         sprite.size = (newWidth, newHeight)
         sprite.text = newText
     }
@@ -722,7 +724,7 @@ public final class EngineTextManager {
                 let segmentX =
                     offsetX + segmentCursorPixels * horizontalWorldScale
 
-                func addSegmentSprite(localXOffset: Double, spriteZ: Double) {
+                func addSegmentSprite(localXOffset: Double, spriteZ: Double, ownsTexture: Bool) {
                     let segmentHalfWidth = quadWidth * 0.5
                     let segmentHalfHeight = quadHeight * 0.5
                     let desiredCenter = worldPoint(
@@ -748,6 +750,7 @@ public final class EngineTextManager {
                         color: color,
                         speed: (0.0, 0.0),
                         texture: texture,
+                        ownsTexture: ownsTexture,
                         text: segment.text,
                         font: segmentFont,
                         useBoundsWhilePanning: true)
@@ -755,11 +758,11 @@ public final class EngineTextManager {
                     spriteIDs.append(id)
                 }
 
-                addSegmentSprite(localXOffset: 0, spriteZ: z)
+                addSegmentSprite(localXOffset: 0, spriteZ: z, ownsTexture: true)
                 if segment.bold && segmentPath == fontPath {
                     addSegmentSprite(
                         localXOffset: horizontalWorldScale,
-                        spriteZ: z + 0.001)
+                        spriteZ: z + 0.001, ownsTexture: false)
                 }
 
                 segmentCursorPixels += rendered.w

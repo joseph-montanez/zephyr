@@ -364,6 +364,9 @@ public final class EngineRenderer {
         // exiting the block editor) must supersede this context even when
         // the incoming document's revision coincides with the outgoing one
         // or another context already consumed its regeneration flag.
+        if ctx.sprites.textureReleaser == nil {
+            ctx.sprites.textureReleaser = { [device = engine.gpuDevice] tex in SDL_ReleaseGPUTexture(device, tex) }
+        }
         if ctx.supersedeIfDocumentChanged(to: doc) {
             ctx.invalidateBuiltState(device: engine.gpuDevice)
         }
@@ -448,7 +451,8 @@ public final class EngineRenderer {
             viewportBackground: bgTuple(background)) {
         case .none, .launched:
             break
-        case .requiresFullRegen:
+        case .requiresFullRegen:
+            if _panProxyActiveThisFrame { break }
             ctx.regenGeneration &+= 1
         }
         return pendingApplied

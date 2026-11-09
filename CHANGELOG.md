@@ -55,6 +55,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 ### Bug Fixes
 - **Imported text width** - TEXT without an authored width factor no longer inherits the style width factor.
 - **Hatch text exclusions** - hatch text-exclusion rectangles (group 92 bit 8) no longer fill.
+- **Panning memory use** - panned text sprites no longer leak GPU textures.
 - **Lisp `atof` overflow** - huge exponents now clamp instead of returning infinity.
 - **PAN behavior** - pans only while the mouse button is held.
 - **Layout colors** - layouts follow Model layer colors; only ACI 7 inverts on white paper.

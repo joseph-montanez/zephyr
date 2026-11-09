@@ -29,6 +29,7 @@ public final class Sprite: @unchecked Sendable {
     public var adjustedColorLight: (UInt8, UInt8, UInt8, UInt8)
     public var adjustedColorDark: (UInt8, UInt8, UInt8, UInt8)
     public var texture: OpaquePointer? = nil
+    public var ownsTexture: Bool = false
     public var rotate: (Double, Double, Double)
     public var shearX: Double
     public var speed: (Double, Double)
@@ -56,6 +57,7 @@ public final class Sprite: @unchecked Sendable {
         color: (UInt8, UInt8, UInt8, UInt8),
         speed: (Double, Double),
         texture: OpaquePointer? = nil,
+        ownsTexture: Bool = false,
         text: String? = nil,
         font: OpaquePointer? = nil,
         sourceRect: SDL_FRect? = nil,
@@ -71,6 +73,7 @@ public final class Sprite: @unchecked Sendable {
         self.adjustedColorDark = (dark.r, dark.g, dark.b, dark.a)
         self.size = size
         self.texture = texture
+        self.ownsTexture = ownsTexture
         self.rotate = rotate
         self.shearX = shearX
         self.speed = speed
@@ -87,9 +90,36 @@ public final class SpriteManager: @unchecked Sendable {
     private var sprites: [SpriteID: Sprite] = [:]
     private var isSortNeeded = false
     private var renderList: [Sprite] = []
+    public var textureReleaser: ((OpaquePointer) -> Void)?
 
     public init() {}
 
+    private func releaseOwnedTexture(of sprite: Sprite) {
+        guard sprite.ownsTexture, let tex = sprite.texture else { return }
+        let shared = sprites.values.contains { $0.id != sprite.id && $0.texture == tex }
+        sprite.texture = nil
+        sprite.ownsTexture = false
+        if shared {
+            if let other = sprites.values.first(where: { $0.id != sprite.id && $0.texture == tex }) {
+                other.ownsTexture = true
+            }
+            return
+        }
+        textureReleaser?(tex)
+    }
+    public func removeAllSprites() {
+        var seen = Set<OpaquePointer>()
+        for sprite in sprites.values where sprite.ownsTexture {
+            if let tex = sprite.texture, seen.insert(tex).inserted {
+                textureReleaser?(tex)
+            }
+            sprite.texture = nil
+            sprite.ownsTexture = false
+        }
+        sprites.removeAll()
+        renderList.removeAll()
+        isSortNeeded = false
+    }
     public func addSprite(
         id1: Int64, id2: Int64,
         position: (Double, Double, Double),
@@ -124,13 +154,18 @@ public final class SpriteManager: @unchecked Sendable {
     }
 
     public func addRawSprite(_ sprite: Sprite) {
+        if let old = sprites[sprite.id], old !== sprite {
+            releaseOwnedTexture(of: old)
+            renderList.removeAll(where: { $0.id == sprite.id })
+        }
         sprites[sprite.id] = sprite
         renderList.append(sprite)
         isSortNeeded = true
     }
 
     public func removeSprite(id: SpriteID) {
-        if sprites.removeValue(forKey: id) != nil {
+        if let removed = sprites.removeValue(forKey: id) {
+            releaseOwnedTexture(of: removed)
             renderList.removeAll(where: { $0.id == id })
             isSortNeeded = true
         }
@@ -168,11 +203,19 @@ public final class SpriteManager: @unchecked Sendable {
         if let r = rotation { sprite.rotate = r }
         if let c = color { sprite.color = c }
         if let s = speed { sprite.speed = s }
-        if let t = texture { sprite.texture = t }
+        if let t = texture, t != sprite.texture {
+            if sprite.ownsTexture { releaseOwnedTexture(of: sprite) }
+            sprite.texture = t
+            sprite.ownsTexture = false
+        }
     }
 
     public func setTexture(for id: SpriteID, texture: OpaquePointer?) {
-        sprites[id]?.texture = texture
+        guard let sprite = sprites[id] else { return }
+        if sprite.texture == texture { return }
+        if sprite.ownsTexture { releaseOwnedTexture(of: sprite) }
+        sprite.texture = texture
+        sprite.ownsTexture = false
     }
 
     public func setSourceRect(_ id: SpriteID, _ rect: (Float, Float, Float, Float)) {
