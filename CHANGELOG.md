@@ -44,6 +44,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Faster spline math** - intersection polishing is much faster with the same accuracy.
 - **Consistent trim at any zoom** - trim results no longer change with zoom level.
 - **Layers panel refresh** - multi-select, bulk actions, search, sort, and cleaner rows.
+- **LAYOUT SAveas** - duplicates the current layout under a new name; template-file export is still pending.
+- **MEASUREGEOM Angle mode** - three-click vertex/first/second angle with an arc overlay (`N` hotkey, `AN` keyword, prompt chip).
 
 ### DXF & File Formats
 - **Mirrored geometry round-trips** - mirrored blocks and arcs survive save and reopen.

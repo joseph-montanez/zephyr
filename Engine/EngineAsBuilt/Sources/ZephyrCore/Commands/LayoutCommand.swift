@@ -359,11 +359,35 @@ public final class LayoutCommand: FeatureCommand {
             }
 
         case "SA", "SAVEAS":
-            print("[CAD] LAYOUT Saveas is not supported yet (use COPY).")
-            openPrompt(
-                "LAYOUT SAveas is not supported yet (use COPY). \(Self.optionPromptText)",
-                processor: processor)
-            return .consumed
+            // SAveas duplicates the current layout under a new name (the same
+            // result COPY offers; exporting to a .dwt template file is future work).
+            let saveSrc = defaultSheetName(in: tabManager)
+            if saveSrc.caseInsensitiveCompare("Model") == .orderedSame {
+                phase = .option
+                print("[CAD] Model tab cannot be saved as a layout copy.")
+                openPrompt(Self.optionPromptText, processor: processor)
+                return .consumed
+            }
+            guard let canonicalSaveSrc = tabManager.paperLayoutNames.first(where: {
+                $0.caseInsensitiveCompare(saveSrc) == .orderedSame
+            }) else {
+                phase = .option
+                print("[CAD] No current layout to save.")
+                openPrompt(Self.optionPromptText, processor: processor)
+                return .consumed
+            }
+            if inline.isEmpty {
+                let defDst = tabManager.nextCopyLayoutName(from: canonicalSaveSrc)
+                phase = .copyDest(sourceName: canonicalSaveSrc, defaultDest: defDst)
+                openPrompt("Enter new layout name <\(defDst)>:", processor: processor)
+                return .consumed
+            }
+            return performCopyLayout(
+                from: canonicalSaveSrc,
+                to: inline,
+                tabManager: tabManager,
+                processor: processor,
+                onZoomExtents: onZoomExtents)
 
         case "T", "TEMPLATE":
             print("[CAD] LAYOUT Template is not supported yet (use COPY).")

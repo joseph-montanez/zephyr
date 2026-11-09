@@ -189,17 +189,56 @@ final class LayoutCommandTests: XCTestCase {
         XCTAssertEqual(manager.paperLayoutNames, ["Layout1"])
     }
 
-    func testQuestionMarkSaveAsAndTemplateStayInOptionPhase() {
+    func testQuestionMarkAndTemplateStayInOptionPhase() {
         let manager = makeManager()
         let processor = CADCommandProcessor()
         let cmd = LayoutCommand()
 
         cmd.start(tabManager: manager, processor: processor)
-        for keyword in ["?", "sa", "t"] {
+        for keyword in ["?", "t"] {
             let result = cmd.handleCommandText(keyword, tabManager: manager, processor: processor)
             XCTAssertEqual(result, .consumed, "Keyword '\(keyword)' should stay in option phase")
             XCTAssertEqual(cmd.phase, .option)
             XCTAssertTrue(processor.commandLineActive)
+        }
+    }
+
+    func testInteractiveSaveAsCopiesCurrentLayout() {
+        let manager = makeManager()
+        let processor = CADCommandProcessor()
+        let cmd = LayoutCommand()
+
+        // Active view starts on Model; SAVEAS defaults to the first sheet.
+        cmd.start(tabManager: manager, processor: processor)
+        let step1 = cmd.handleCommandText("sa", tabManager: manager, processor: processor)
+        XCTAssertEqual(step1, .consumed)
+        XCTAssertEqual(cmd.phase, .copyDest(sourceName: "Layout1", defaultDest: "Layout1 (2)"))
+        XCTAssertEqual(processor.commandPrompt, "Enter new layout name <Layout1 (2)>:")
+
+        // Bare Enter accepts the default copy name and activates the copy.
+        let step2 = cmd.handleCommandText("", tabManager: manager, processor: processor)
+        XCTAssertEqual(step2, .finished)
+        XCTAssertEqual(manager.activeViewName, "Layout1 (2)")
+        XCTAssertEqual(manager.paperLayoutNames, ["Layout1", "Layout1 (2)"])
+
+        // Inline SAVEAS duplicates the current layout under the given name.
+        let inlineCmd = LayoutCommand()
+        inlineCmd.start(tabManager: manager, processor: processor)
+        XCTAssertEqual(
+            inlineCmd.handleCommandText("SAVEAS InlineSave", tabManager: manager, processor: processor),
+            .finished)
+        XCTAssertEqual(manager.activeViewName, "InlineSave")
+        XCTAssertTrue(manager.paperLayoutNames.contains("InlineSave"))
+
+        // A duplicate destination name re-prompts instead of overwriting.
+        let dupCmd = LayoutCommand()
+        dupCmd.start(tabManager: manager, processor: processor)
+        let dupResult = dupCmd.handleCommandText(
+            "SAVEAS Layout1", tabManager: manager, processor: processor)
+        XCTAssertEqual(dupResult, .consumed)
+        XCTAssertTrue(processor.commandLineActive)
+        guard case .copyDest = dupCmd.phase else {
+            return XCTFail("duplicate SAVEAS should re-prompt for a copy name")
         }
     }
 

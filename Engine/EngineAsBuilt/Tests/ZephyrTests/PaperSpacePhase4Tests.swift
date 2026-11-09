@@ -453,10 +453,10 @@ final class PaperSpacePhase4Tests: XCTestCase {
             .finished)
         XCTAssertEqual(manager.paperLayoutNames, ["Layout1", "SheetB"])
 
-        // 4. ?, SAveas, Template stay in .option
+        // 4. ?, Template stay in .option (SAveas now copies the current layout)
         let infoCmd = LayoutCommand()
         infoCmd.start(tabManager: manager, processor: processor)
-        for kw in ["?", "sa", "t"] {
+        for kw in ["?", "t"] {
             XCTAssertEqual(
                 infoCmd.handleCommandText(kw, tabManager: manager, processor: processor),
                 .consumed)

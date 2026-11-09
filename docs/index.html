@@ -322,7 +322,7 @@
         </div>
         <div style="font-size:15px; line-height:1.6; color:var(--text-2);">
           <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">WORKS IN ZEPHYR TODAY</div>
-          <p style="margin:0 0 20px;">The aliases your fingers know (<span style="font-family:'Geist Mono'; font-size:13px;">L · PL · C · REC · M · O · TR · J</span> and the rest), snaps, polar and object-snap tracking, grips, layers with viewport overrides, blocks with in-place editing (<span style="font-family:'Geist Mono'; font-size:13px;">BEDIT</span>), dimensions, multileaders, tables, layouts, and <span style="font-family:'Geist Mono'; font-size:13px;">PLOT</span>/<span style="font-family:'Geist Mono'; font-size:13px;">PUBLISH</span> to PDF. DWG and DXF round-trip; core AutoLISP routines run.</p>
+          <p style="margin:0 0 20px;">The aliases your fingers know (<span style="font-family:'Geist Mono'; font-size:13px;">L · PL · C · REC · M · O · TR · J · MI · S · BR · EX</span> and the rest), snaps with aspect spacing, polar and object-snap tracking, selection cycling, grips, layers with viewport overrides plus multi-select and bulk actions, blocks with in-place editing (<span style="font-family:'Geist Mono'; font-size:13px;">BEDIT</span>) and a <span style="font-family:'Geist Mono'; font-size:13px;">BLOCKSPALETTE</span> library with previews and search, dimensions, multileaders, tables, layouts, and <span style="font-family:'Geist Mono'; font-size:13px;">PLOT</span>/<span style="font-family:'Geist Mono'; font-size:13px;">PUBLISH</span> to PDF — including Model-space plotting and batch <span style="font-family:'Geist Mono'; font-size:13px;">PUBLISH</span>. DWG and DXF round-trip; core AutoLISP routines run.</p>
           <div style="font-family:'Geist Mono'; font-size:11px; color:var(--accent); margin-bottom:8px;">CHECK BEFORE YOU RELY ON IT</div>
           <p style="margin:0;">DWG needs a one-time ODA converter install (<span style="font-family:'Geist Mono'; font-size:13px;">INSTALLODA</span>) — native in-process DWG is on the roadmap, not shipped. Test-plot a sheet with your own CTB/STB tables, and work on copies while you learn where the rough edges are. Nightly builds move fast.</p>
         </div>
@@ -615,7 +615,7 @@
           <div style="display:grid; grid-template-columns: 0.72fr 1fr 1.28fr; border-bottom:1px solid var(--border-soft); font-size:13px; line-height:1.5;">
             <div style="padding:16px 18px; font-weight:600;">Model / layouts</div>
             <div style="padding:16px 18px; color:var(--text-2);">Model/layout tabs plus full layout management.</div>
-            <div style="padding:16px 18px; color:var(--text-2);"><span style="font-family:'Geist Mono';">MODEL</span>, <span style="font-family:'Geist Mono';">SHEET</span>/<span style="font-family:'Geist Mono';">LAYOUT</span>, <span style="font-family:'Geist Mono';">VIEW</span>, <span style="font-family:'Geist Mono';">NEXTVIEW</span>, and <span style="font-family:'Geist Mono';">PREVIOUSVIEW</span> select imported views; layout creation/copy/rename is separate future work.</div>
+            <div style="padding:16px 18px; color:var(--text-2);"><span style="font-family:'Geist Mono';">MODEL</span>, <span style="font-family:'Geist Mono';">SHEET</span>/<span style="font-family:'Geist Mono';">LAYOUT</span>, <span style="font-family:'Geist Mono';">VIEW</span>, <span style="font-family:'Geist Mono';">NEXTVIEW</span>, and <span style="font-family:'Geist Mono';">PREVIOUSVIEW</span> select imported views; layout creation, copy, rename, delete, set, and save-as are built in (template import is the remaining future work).</div>
           </div>
           <div style="display:grid; grid-template-columns: 0.72fr 1fr 1.28fr; font-size:13px; line-height:1.5;">
             <div style="padding:16px 18px; font-weight:600;">Order / float</div>
@@ -1021,21 +1021,21 @@ class Component extends DCLogic {
 
       workflowCells: [
         { tag: 'MEASURE',  title: 'Quick Measure',  cmd: 'MEA · MEASUREGEOM',
-          body: 'Hover anywhere. Orthogonal raycasts ±X, ±Y find the nearest geometry in real time; side lengths and interior angles overlay live.' },
+          body: 'Hover anywhere. Orthogonal raycasts ±X, ±Y find the nearest geometry in real time; side lengths and interior angles overlay live. Three-click Distance, Area, and Angle modes (AN) with arc overlays.' },
         { tag: 'WINDOWS',  title: 'Tabs, floats & splits',  cmd: 'TABW · VSPLIT · VPORTS',
           body: 'Reorder file tabs, float a drawing into a true OS window, or split the main canvas into resizable panes. Panes can compare different drawings—or Model and a paper layout from the same one.' },
         { tag: 'PALETTE',  title: 'Command line',  cmd: 'TYPE ANY LETTER',
-          body: 'Type any letter to open. 130+ registered commands across 7 categories, fuzzy‑matched autocomplete with Tab cycling. Space repeats the last command. AutoCAD muscle memory works.' },
+          body: 'Type any letter to open. 130+ registered commands across 7 categories, fuzzy‑matched autocomplete with Tab cycling. Space repeats the last command, options show as dropdown lists with clickable chips. AutoCAD muscle memory works.' },
         { tag: 'SNAP',     title: 'Snap engine',  cmd: '9 anchor types',
-          body: 'Two‑tier: AABB proximity filter then exact distance to center, vertex, midpoint, insertion, quadrant, perpendicular, tangent, nearest, intersection.' },
+          body: 'Two‑tier: AABB proximity filter then exact distance to center, vertex, midpoint, insertion, quadrant, perpendicular, tangent, nearest, intersection. SNAP (F9) sets exact spacing including aspect X/Y.' },
         { tag: 'TRACK',    title: 'Polar + OTRACK',  cmd: 'OTRACK · EXT',
           body: 'Polar tracking at 15°/30°/45°/90°. Object snap tracking from acquired points. Extension snapping along existing geometry.' },
         { tag: 'GRIPS',    title: 'Direct manipulation',  cmd: 'click + drag',
           body: 'Per‑vertex grips on polylines and polygons. Corner, center, midpoint, and rotation grips on every selection bounding box.' },
-        { tag: 'BLOCKS',   title: 'Blocks & xrefs',  cmd: 'INSERT · ATTACH · XREF',
-          body: 'Insert blocks or whole drawings, attach DWG/image/PDF references that reload when sources change, and edit blocks in place with BEDIT. SIMPLIFY keeps heavy sets responsive.' },
-        { tag: 'LAYERS',   title: 'Layer move',  cmd: 'LM / LAYMOVE',
-          body: 'Pick entities, type LM, autocomplete the destination layer. Full layer table with ACI color indexing and per‑layer line type / weight.' },
+        { tag: 'BLOCKS',   title: 'Blocks & xrefs',  cmd: 'BLOCKSPALETTE · INSERT · XREF · ATTACH',
+          body: 'Browse and insert with BLOCKSPALETTE — thumbnails, search, favorites — or INSERT blocks and whole drawings, attach DWG/image/PDF references that reload when sources change, and edit blocks in place with BEDIT. SIMPLIFY keeps heavy sets responsive.' },
+        { tag: 'LAYERS',   title: 'Layers',  cmd: 'LM · LAYER · LAYWALK',
+          body: 'Pick entities, type LM, autocomplete the destination layer. Full layer table with multi-select, bulk actions, search and sort, ACI color indexing and per‑layer line type / weight, plus LAYFRZ / LAYLCK / LAYWALK and COPYTOLAYER.' },
         { tag: 'ROADMAP',  title: '15 constraints',  cmd: 'in development',
           body: 'Coincident, parallel, perpendicular, tangent, concentric, distance, angle, fix, midpoint, collinear, symmetric, offset — numerical solver to be programmed.' },
       ],

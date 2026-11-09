@@ -13,7 +13,7 @@ final class PromptChipCoverageTests: XCTestCase {
     func testMeasureModesOfferChipsWithActiveMode() {
         let options = MeasureGeomTool().commandTextOptions(for: "")
         XCTAssertEqual(
-            options.map(\.value), ["Distance", "Area", "Quick", "Exit"])
+            options.map(\.value), ["Distance", "Area", "Angle", "Quick", "Exit"])
         XCTAssertEqual(
             options.filter(\.isActive).map(\.value), ["Quick"])
     }

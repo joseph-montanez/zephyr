@@ -14,7 +14,7 @@ import SwiftSDL
 //     angular measurement while the cursor touches a corner.
 //   - .distance: Two-click point-to-point distance measurement with snapping.
 //   - .area: Click inside enclosed region to detect boundary and compute area.
-//   - .angle: Stub — reserved for future three-click angle measurement.
+//   - .angle: Three-click vertex/first/second angle with arc overlay.
 //
 // All visuals are drawn via the ImGui background draw list (immediate-mode),
 // which renders before UI windows so floating panels cover the lines. World
@@ -41,7 +41,7 @@ public final class MeasureGeomTool: FeatureCommand {
         let length: Double
     }
 
-    private struct QuickAngleSpan {
+    struct QuickAngleSpan {
         let vertex: Vector3
         let startAngle: Double
         let sweepAngle: Double
@@ -87,6 +87,11 @@ public final class MeasureGeomTool: FeatureCommand {
     private var areaLabel: String? = nil
     private var areaLabelPosition: Vector3? = nil
 
+    // Angle Mode — vertex, first endpoint, and the recorded span.
+    private var angleVertex: Vector3? = nil
+    private var anglePointA: Vector3? = nil
+    internal var angleSpan: QuickAngleSpan? = nil
+
     // Active measurement labels: (text, world position)
     private var activeLabels: [(String, Vector3)] = []
 
@@ -113,7 +118,7 @@ public final class MeasureGeomTool: FeatureCommand {
         case .angle:
             processor.commandPrompt = "Angle - pick vertex point"
         case .quick:
-            processor.commandPrompt = "MEASUREGEOM [Distance/Area/Quick/eXit] <Quick>:"
+            processor.commandPrompt = "MEASUREGEOM [Distance/Angle/Area/Quick/eXit] <Quick>:"
         }
     }
 
@@ -136,8 +141,7 @@ public final class MeasureGeomTool: FeatureCommand {
             return handleAreaClick(worldX: worldX, worldY: worldY, engine: engine, processor: processor)
 
         case .angle:
-            activeLabels = [("Angle mode: not yet implemented", Vector3(x: worldX, y: worldY, z: 0))]
-            return .continue
+            return handleAngleClick(worldX: worldX, worldY: worldY, engine: engine, processor: processor)
         }
     }
 
@@ -186,6 +190,10 @@ public final class MeasureGeomTool: FeatureCommand {
             selectMode(.area, processor: processor)
             return .continue
 
+        case SDL_SCANCODE_N:
+            selectMode(.angle, processor: processor)
+            return .continue
+
         case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER, SDL_SCANCODE_ESCAPE:
             return .finished
 
@@ -207,6 +215,9 @@ public final class MeasureGeomTool: FeatureCommand {
         case "A", "AREA":
             selectMode(.area, processor: processor)
             return .continue
+        case "N", "AN", "ANGLE":
+            selectMode(.angle, processor: processor)
+            return .continue
         case "X", "EXIT":
             return .finished
         default:
@@ -220,6 +231,7 @@ public final class MeasureGeomTool: FeatureCommand {
         return [
             FeatureCommandTextOption(value: "Distance", title: "[D] Distance", aliases: ["D"], description: "Measure point-to-point distance", isActive: currentMode == .distance),
             FeatureCommandTextOption(value: "Area", title: "[A] Area", aliases: ["A"], description: "Measure enclosed area", isActive: currentMode == .area),
+            FeatureCommandTextOption(value: "Angle", title: "[N] Angle", aliases: ["N"], description: "Measure three-point angle", isActive: currentMode == .angle),
             FeatureCommandTextOption(value: "Quick", title: "[Q] Quick", aliases: ["Q"], description: "Quick measure (default)", isActive: currentMode == .quick),
             FeatureCommandTextOption(value: "Exit", title: "Exit", aliases: ["X"], description: "Exit measure"),
         ].filter { $0.matches(input) }
@@ -260,7 +272,7 @@ public final class MeasureGeomTool: FeatureCommand {
             renderAreaOverlay(drawList: drawList, cam: cam)
 
         case .angle:
-            break
+            renderAngleOverlay(drawList: drawList, cam: cam)
         }
 
         renderLabels(drawList: drawList, cam: cam)
@@ -270,6 +282,8 @@ public final class MeasureGeomTool: FeatureCommand {
         var pts: [Vector3] = []
         if let a = distancePointA { pts.append(a) }
         if let b = distancePointB { pts.append(b) }
+        if let v = angleVertex { pts.append(v) }
+        if let a = anglePointA { pts.append(a) }
         return pts
     }
 
@@ -1210,6 +1224,107 @@ public final class MeasureGeomTool: FeatureCommand {
     }
 
     // =====================================================================
+    // MARK: - Angle Mode
+    // =====================================================================
+
+    /// Angle in degrees between the rays vertex->first and vertex->second,
+    /// in [0, 180]. Degenerate (zero-length) legs measure 0.
+    static func angleDegrees(vertex: Vector3, first: Vector3, second: Vector3) -> Double {
+        let v1x = first.x - vertex.x, v1y = first.y - vertex.y
+        let v2x = second.x - vertex.x, v2y = second.y - vertex.y
+        let len1 = sqrt(v1x * v1x + v1y * v1y)
+        let len2 = sqrt(v2x * v2x + v2y * v2y)
+        guard len1 > 1e-12, len2 > 1e-12 else { return 0 }
+        let cosValue = max(-1.0, min(1.0, (v1x * v2x + v1y * v2y) / (len1 * len2)))
+        return acos(cosValue) * 180.0 / Double.pi
+    }
+
+    /// Arc span for the overlay: direction of the first leg plus the signed
+    /// sweep to the second leg, normalized to [-pi, pi].
+    static func angleSpan(vertex: Vector3, first: Vector3, second: Vector3) -> QuickAngleSpan {
+        let startAngle = atan2(first.y - vertex.y, first.x - vertex.x)
+        var sweep = atan2(second.y - vertex.y, second.x - vertex.x) - startAngle
+        while sweep > Double.pi { sweep -= 2.0 * Double.pi }
+        while sweep < -Double.pi { sweep += 2.0 * Double.pi }
+        return QuickAngleSpan(
+            vertex: vertex,
+            startAngle: startAngle,
+            sweepAngle: sweep,
+            angleDegrees: angleDegrees(vertex: vertex, first: first, second: second))
+    }
+
+    private func handleAngleClick(
+        worldX: Double, worldY: Double,
+        engine: PhrostEngine, processor: CADCommandProcessor
+    ) -> CommandResult {
+        let snapped: Vector3? = engine.snap.currentSnapResult.map { $0.worldPos }
+        return handleAnglePick(worldX: worldX, worldY: worldY, snapped: snapped, processor: processor)
+    }
+
+    /// Headless angle pick for unit tests (no SDL engine required).
+    @discardableResult
+    func handleAnglePick(
+        worldX: Double, worldY: Double,
+        snapped: Vector3?,
+        processor: CADCommandProcessor
+    ) -> CommandResult {
+        let x = snapped?.x ?? worldX
+        let y = snapped?.y ?? worldY
+
+        if angleVertex == nil {
+            angleVertex = Vector3(x: x, y: y, z: 0)
+            anglePointA = nil
+            angleSpan = nil
+            activeLabels.removeAll()
+            processor.commandPrompt = "Angle - pick first angle endpoint"
+            return .continue
+        }
+
+        if anglePointA == nil {
+            let v = angleVertex!
+            if abs(x - v.x) < 1e-9 && abs(y - v.y) < 1e-9 {
+                processor.commandPrompt = "First endpoint matches the vertex - pick a different point"
+                return .continue
+            }
+            anglePointA = Vector3(x: x, y: y, z: 0)
+            processor.commandPrompt = "Angle - pick second angle endpoint"
+            return .continue
+        }
+
+        let span = Self.angleSpan(
+            vertex: angleVertex!, first: anglePointA!, second: Vector3(x: x, y: y, z: 0))
+        angleSpan = span
+        angleVertex = nil
+        anglePointA = nil
+        processor.commandPrompt = "Angle \(formatAngle(span.angleDegrees)) recorded - pick vertex for next (Esc to exit)"
+        return .continue
+    }
+
+    private func renderAngleOverlay(drawList: UnsafeMutablePointer<ImDrawList>?, cam: CameraTransform) {
+        let dimColor = ImGui_Color(255, 190, 60, 100)
+        let dotColor = ImGui_Color(255, 190, 60, 255)
+
+        if let span = angleSpan {
+            drawQuickAngle(drawList: drawList, span: span, cam: cam)
+        }
+
+        if let v = angleVertex {
+            let sv = EngineCameraManager.worldToScreen(worldX: v.x, worldY: v.y, cam: cam)
+            let vp = ImVec2(x: sv.x, y: sv.y)
+            ImDrawListAddCircleFilled(drawList, vp, 3.0, dotColor, 0)
+            if let a = anglePointA {
+                let sa = EngineCameraManager.worldToScreen(worldX: a.x, worldY: a.y, cam: cam)
+                let ap = ImVec2(x: sa.x, y: sa.y)
+                ImDrawListAddLine(drawList, vp, ap, dimColor, 1.5)
+                ImDrawListAddCircleFilled(drawList, ap, 3.0, dotColor, 0)
+            }
+            let sc = EngineCameraManager.worldToScreen(
+                worldX: currentMouseWorldX, worldY: currentMouseWorldY, cam: cam)
+            ImDrawListAddLine(drawList, vp, ImVec2(x: sc.x, y: sc.y), dimColor, 1.0)
+        }
+    }
+
+    // =====================================================================
     // MARK: - Rendering
     // =====================================================================
 
@@ -1529,7 +1644,7 @@ public final class MeasureGeomTool: FeatureCommand {
         switch currentMode {
         case .quick:  currentMode = .distance; processor.commandPrompt = "Distance — click first point"
         case .distance: currentMode = .area; processor.commandPrompt = "Area — click inside enclosed region"
-        case .area:   currentMode = .angle;   processor.commandPrompt = "Angle — not yet implemented"
+        case .area:   currentMode = .angle;   processor.commandPrompt = "Angle - pick vertex point"
         case .angle:  currentMode = .quick;   processor.commandPrompt = "Quick Measure — move between geometry, or touch a corner to show its angle"
         }
         resetModeState()
@@ -1549,6 +1664,9 @@ public final class MeasureGeomTool: FeatureCommand {
         quickRadiusSpan = nil
         distancePointA = nil
         distancePointB = nil
+        angleVertex = nil
+        anglePointA = nil
+        angleSpan = nil
         areaBoundary = nil
         areaLabel = nil
         areaLabelPosition = nil
