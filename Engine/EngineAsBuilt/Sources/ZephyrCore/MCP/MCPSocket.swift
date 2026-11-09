@@ -115,7 +115,11 @@ final class MCPTCPConnection: @unchecked Sendable {
     func close() {
         if !closedFlag {
             closedFlag = true
-            _ = close(fd)
+            #if canImport(Darwin)
+            _ = Darwin.close(fd)
+            #else
+            _ = Glibc.close(fd)
+            #endif
         }
     }
     #endif
@@ -176,7 +180,11 @@ final class MCPTCPListener: @unchecked Sendable {
             }
         }
         #else
+        #if canImport(Darwin)
         let fd = socket(AF_INET, SOCK_STREAM, 0)
+        #else
+        let fd = socket(AF_INET, CInt(SOCK_STREAM.rawValue), 0)
+        #endif
         guard fd >= 0 else { throw MCPSocketError.startupFailed("socket errno: \(errno)") }
         self.fd = fd
         var one: CInt = 1
@@ -203,8 +211,11 @@ final class MCPTCPListener: @unchecked Sendable {
             close()
             throw MCPSocketError.bindFailed("listen errno: \(err)")
         }
-        var tv = timeval(
-            tv_sec: ioTimeoutMs / 1000, tv_usec: (ioTimeoutMs % 1000) * 1000)
+        #if canImport(Darwin)
+        var tv = timeval(tv_sec: ioTimeoutMs / 1000, tv_usec: __darwin_suseconds_t((ioTimeoutMs % 1000) * 1000))
+        #else
+        var tv = timeval(tv_sec: ioTimeoutMs / 1000, tv_usec: (ioTimeoutMs % 1000) * 1000)
+        #endif
         _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         #endif
@@ -232,8 +243,11 @@ final class MCPTCPListener: @unchecked Sendable {
             }
         }
         guard c >= 0 else { throw MCPSocketError.acceptFailed("accept errno: \(errno)") }
-        var tv = timeval(
-            tv_sec: ioTimeoutMs / 1000, tv_usec: (ioTimeoutMs % 1000) * 1000)
+        #if canImport(Darwin)
+        var tv = timeval(tv_sec: ioTimeoutMs / 1000, tv_usec: __darwin_suseconds_t((ioTimeoutMs % 1000) * 1000))
+        #else
+        var tv = timeval(tv_sec: ioTimeoutMs / 1000, tv_usec: (ioTimeoutMs % 1000) * 1000)
+        #endif
         _ = setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         return MCPTCPConnection(fd: c)
         #endif
@@ -248,7 +262,11 @@ final class MCPTCPListener: @unchecked Sendable {
         }
         #else
         if fd >= 0 {
-            _ = close(fd)
+            #if canImport(Darwin)
+            _ = Darwin.close(fd)
+            #else
+            _ = Glibc.close(fd)
+            #endif
             fd = -1
         }
         #endif

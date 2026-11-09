@@ -338,6 +338,9 @@ jobs:
           cp -R Patterns "$APP_RESOURCES/" || true
           cp -R lisp "$APP_RESOURCES/" || true
           cp Shaders/*.msl "$APP_RESOURCES/"
+          mkdir -p "$APP_RESOURCES/Tools"
+          cp Tools/mcp-bridge.py "$APP_RESOURCES/Tools/"
+          chmod +x "$APP_RESOURCES/Tools/mcp-bridge.py"
 
           # SwiftPM resource bundle for ZephyrCore (hatch Patterns). It lives
           # in the per-arch build dir, not next to the lipo'd universal

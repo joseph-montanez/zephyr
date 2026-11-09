@@ -253,6 +253,13 @@ parts:
           cp -R "$bin_dir/$asset" "$dest/"
         fi
       done
+      mkdir -p "$dest/Tools"
+      if [ -f "$bin_dir/Tools/mcp-bridge.py" ]; then
+        cp -L "$bin_dir/Tools/mcp-bridge.py" "$dest/Tools/"
+      else
+        cp -L "Engine/EngineAsBuilt/Tools/mcp-bridge.py" "$dest/Tools/"
+      fi
+      chmod +x "$dest/Tools/mcp-bridge.py"
       # SwiftPM resource bundle for ZephyrCore (hatch Patterns), next to
       # the executable. The app also finds the plain Patterns/ folder.
       for bundle in "Zephyr_ZephyrCore.bundle" "Zephyr_ZephyrCore.resources"; do

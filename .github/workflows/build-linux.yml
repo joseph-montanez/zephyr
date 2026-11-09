@@ -275,6 +275,14 @@ jobs:
               cp -R "$BIN_DIR/$asset" "$STAGE_DIR/"
             fi
           done
+          # MCP stdio bridge (Tools/mcp-bridge.py), staged next to the binary.
+          mkdir -p "$STAGE_DIR/Tools"
+          if [ -f "$BIN_DIR/Tools/mcp-bridge.py" ]; then
+            cp -L "$BIN_DIR/Tools/mcp-bridge.py" "$STAGE_DIR/Tools/"
+          else
+            cp -L "Tools/mcp-bridge.py" "$STAGE_DIR/Tools/"
+          fi
+          chmod +x "$STAGE_DIR/Tools/mcp-bridge.py"
 
           # SwiftPM resource bundle for ZephyrCore (hatch Patterns), next to
           # the executable. The app also finds the plain Patterns/ folder.
@@ -320,6 +328,14 @@ jobs:
               cp -R "$BIN_DIR/$asset" "$APPDIR/usr/bin/"
             fi
           done
+          # MCP stdio bridge (Tools/mcp-bridge.py), next to the binary.
+          mkdir -p "$APPDIR/usr/bin/Tools"
+          if [ -f "$BIN_DIR/Tools/mcp-bridge.py" ]; then
+            cp -L "$BIN_DIR/Tools/mcp-bridge.py" "$APPDIR/usr/bin/Tools/"
+          else
+            cp -L "Tools/mcp-bridge.py" "$APPDIR/usr/bin/Tools/"
+          fi
+          chmod +x "$APPDIR/usr/bin/Tools/mcp-bridge.py"
 
           # SwiftPM resource bundle for ZephyrCore (hatch Patterns), next to
           # the executable. The app also finds the plain Patterns/ folder.
@@ -396,6 +412,14 @@ jobs:
               cp -R "$BIN_DIR/$asset" "$STAGE_PAYLOAD/"
             fi
           done
+          # MCP stdio bridge (Tools/mcp-bridge.py), next to the binary.
+          mkdir -p "$STAGE_PAYLOAD/Tools"
+          if [ -f "$BIN_DIR/Tools/mcp-bridge.py" ]; then
+            cp -L "$BIN_DIR/Tools/mcp-bridge.py" "$STAGE_PAYLOAD/Tools/"
+          else
+            cp -L "Tools/mcp-bridge.py" "$STAGE_PAYLOAD/Tools/"
+          fi
+          chmod +x "$STAGE_PAYLOAD/Tools/mcp-bridge.py"
 
           # SwiftPM resource bundle for ZephyrCore (hatch Patterns), next to
           # the executable. The app also finds the plain Patterns/ folder.

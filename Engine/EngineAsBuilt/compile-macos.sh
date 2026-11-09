@@ -46,6 +46,10 @@ cp -R "Plot Styles" "$BUILD_DIR/" || true
 cp -R Patterns "$BUILD_DIR/" || true
 cp -R lisp "$BUILD_DIR/" || true
 cp Shaders/*.msl "$BUILD_DIR/"
+# Stage the MCP stdio bridge (Tools/mcp-bridge.py) next to the binary.
+mkdir -p "$BUILD_DIR/Tools"
+cp Tools/mcp-bridge.py "$BUILD_DIR/Tools/"
+chmod +x "$BUILD_DIR/Tools/mcp-bridge.py"
 if [ -f "libpdfium.dylib" ]; then
     cp libpdfium.dylib "$BUILD_DIR/"
 fi

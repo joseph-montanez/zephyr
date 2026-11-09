@@ -135,5 +135,12 @@ for asset in "Fonts" "Plot Styles" "Patterns" "lisp"; do
     fi
 done
 
+# Stage the MCP stdio bridge (Tools/mcp-bridge.py) next to the binary.
+if [ -f "$SWIFT_DIR/Tools/mcp-bridge.py" ]; then
+    mkdir -p "$BIN_DIR/Tools"
+    cp -L "$SWIFT_DIR/Tools/mcp-bridge.py" "$BIN_DIR/Tools/"
+    chmod +x "$BIN_DIR/Tools/mcp-bridge.py"
+fi
+
 echo ""
 echo "### Build complete. Run with: $BIN_PATH ###"

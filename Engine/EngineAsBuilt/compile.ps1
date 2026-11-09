@@ -233,6 +233,14 @@ foreach ($dest in $destDirs) {
             Copy-Item -Path "$swiftBuildDir\$asset\*" -Destination $assetDest -Force -Recurse -ErrorAction SilentlyContinue
         }
     }
+
+    # Copy the MCP stdio bridge (Tools/mcp-bridge.py) next to the binary.
+    $bridgeSource = "$swiftBuildDir\Tools\mcp-bridge.py"
+    if (Test-Path $bridgeSource) {
+        $bridgeDest = "$dest\Tools"
+        New-Item -ItemType Directory -Force -Path $bridgeDest | Out-Null
+        Copy-Item -Path $bridgeSource -Destination $bridgeDest -Force
+    }
 }
 
 # Mirror the SwiftPM resource bundle (ZephyrCore hatch Patterns) next to

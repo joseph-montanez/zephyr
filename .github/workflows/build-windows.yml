@@ -701,6 +701,15 @@ jobs:
             Write-Host "lisp copied."
           }
 
+          # Copy the MCP stdio bridge (Tools/mcp-bridge.py) next to the binary
+          $bridgeSource = "$swiftDir\Tools\mcp-bridge.py"
+          if (Test-Path $bridgeSource) {
+            $bridgeDest = "$dllDest\Tools"
+            New-Item -ItemType Directory -Force -Path $bridgeDest | Out-Null
+            Copy-Item -Path $bridgeSource -Destination $bridgeDest -Force
+            Write-Host "mcp-bridge.py copied."
+          }
+
           Write-Host "--- DLLs in output ---"
           Get-ChildItem $dllDest -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
 
@@ -802,6 +811,13 @@ jobs:
           }
           if (Test-Path "$buildDir\lisp") {
             Copy-Item -Path "$buildDir\lisp" -Destination "$stageDir\lisp" -Recurse -Force
+          }
+          $bridgeStaged = "$buildDir\Tools\mcp-bridge.py"
+          if (-not (Test-Path $bridgeStaged)) { $bridgeStaged = "${{ github.workspace }}\Engine\EngineAsBuilt\Tools\mcp-bridge.py" }
+          if (Test-Path $bridgeStaged) {
+            New-Item -ItemType Directory -Force -Path "$stageDir\Tools" | Out-Null
+            Copy-Item -Path $bridgeStaged -Destination "$stageDir\Tools" -Force
+            Write-Host "Bundled: Tools/mcp-bridge.py"
           }
 
           # SwiftPM resource bundle for ZephyrCore (hatch Patterns). The app
