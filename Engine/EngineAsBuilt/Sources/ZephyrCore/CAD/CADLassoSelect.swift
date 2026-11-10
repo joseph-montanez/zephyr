@@ -95,8 +95,9 @@ public enum CADLassoSelect {
 
         guard let geometry = document.resolvedGeometry(for: entity), !geometry.isEmpty else { return false }
 
-        for prim in geometry {
-            if primitiveIntersectsPolygon(prim, transform: entity.transform, polygon: polygon) {
+        let textCtx = document.textBoundsContext(for: entity)
+        for (primIndex, prim) in geometry.enumerated() {
+            if primitiveIntersectsPolygon(prim, transform: entity.transform, polygon: polygon, textContext: textCtx, textIndex: primIndex) {
                 return true
             }
         }
@@ -115,8 +116,9 @@ public enum CADLassoSelect {
 
         guard let geometry = document.resolvedGeometry(for: entity), !geometry.isEmpty else { return false }
 
-        for prim in geometry {
-            if !primitiveEnclosedByPolygon(prim, transform: entity.transform, polygon: polygon) {
+        let textCtx = document.textBoundsContext(for: entity)
+        for (primIndex, prim) in geometry.enumerated() {
+            if !primitiveEnclosedByPolygon(prim, transform: entity.transform, polygon: polygon, textContext: textCtx, textIndex: primIndex) {
                 return false
             }
         }
@@ -125,7 +127,8 @@ public enum CADLassoSelect {
 
     /// Crossing test for a single primitive against a lasso polygon.
     public static func primitiveIntersectsPolygon(
-        _ prim: CADPrimitive, transform: Transform3D, polygon: [Vector3]
+        _ prim: CADPrimitive, transform: Transform3D, polygon: [Vector3],
+        textContext: CADTextBoundsContext? = nil, textIndex: Int? = nil
     ) -> Bool {
         // Infinite rays/xlines use long finite segments for intersection tests.
         if case .ray(let start, let direction, _) = prim {
@@ -148,7 +151,7 @@ public enum CADLassoSelect {
         // overlapped the lasso bbox, which is the accepted approximation.
         if case .table = prim { return true }
 
-        let outline = outlinePoints(for: prim, transform: transform)
+        let outline = outlinePoints(for: prim, transform: transform, textContext: textContext, textIndex: textIndex)
         guard !outline.points.isEmpty else { return false }
 
         // Any geometry point inside the lasso.
@@ -172,12 +175,13 @@ public enum CADLassoSelect {
     /// Window test for a single primitive: every point inside the lasso and
     /// no edge touching its boundary. Infinite rays/xlines are never enclosed.
     public static func primitiveEnclosedByPolygon(
-        _ prim: CADPrimitive, transform: Transform3D, polygon: [Vector3]
+        _ prim: CADPrimitive, transform: Transform3D, polygon: [Vector3],
+        textContext: CADTextBoundsContext? = nil, textIndex: Int? = nil
     ) -> Bool {
         if case .ray = prim { return false }
         if case .xline = prim { return false }
         if case .table = prim { return false }  // no outline without entity bounds
-        let outline = outlinePoints(for: prim, transform: transform)
+        let outline = outlinePoints(for: prim, transform: transform, textContext: textContext, textIndex: textIndex)
         guard !outline.points.isEmpty else { return false }
         for pt in outline.points {
             if !CADRectSelect.isPointInPolygon(pt, polygon: polygon) { return false }
@@ -234,7 +238,8 @@ public enum CADLassoSelect {
     /// World-space outline of a primitive: tessellated boundary points, whether
     /// the boundary is closed, and whether the primitive covers an area (fill).
     public static func outlinePoints(
-        for prim: CADPrimitive, transform: Transform3D
+        for prim: CADPrimitive, transform: Transform3D,
+        textContext: CADTextBoundsContext? = nil, textIndex: Int? = nil
     ) -> (points: [Vector3], closed: Bool, filled: Bool) {
         switch prim {
         case .point(let pos, _):
@@ -287,7 +292,7 @@ public enum CADLassoSelect {
                 controlPoints: controlPoints, weights: w, segmentsPerSpan: 6)
             return (evaluated.map { transform.transformPoint($0) }, false, false)
 
-        case .text(let pos, let text, let height, let rotation, _, let alignH, let alignV, let mtextWidth, _):
+        case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):
             var localToWorld = transform
             if rotation != 0 {
                 localToWorld = localToWorld.multiplying(by: .rotated(by: rotation))
@@ -298,7 +303,10 @@ public enum CADLassoSelect {
             let bounds = CADEntity.estimateTextLocalBounds(
                 text: text, height: height,
                 alignH: alignH, alignV: alignV,
-                mtextWidth: mtextWidth)
+                mtextWidth: mtextWidth,
+                style: style,
+                context: textContext,
+                primitiveIndex: textIndex)
             let corners = [
                 localToWorld.transformPoint(Vector3(x: bounds.minX, y: bounds.minY, z: 0)),
                 localToWorld.transformPoint(Vector3(x: bounds.maxX, y: bounds.minY, z: 0)),

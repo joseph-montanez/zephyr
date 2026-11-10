@@ -869,33 +869,38 @@ extension LispCADHost {
         if case let .entityName(handle) = assoc.first(-1),
            let uuid = LispEntityAdapter.handle(fromEname: handle),
            let found = document.entity(for: uuid),
-           case let .text(_, text, height, rotation, _, alignH, alignV, mtextWidth, _) = found.localGeometry?.first
+           case .text(_, let text, let height, let rotation, let foundStyle, let alignH, let alignV, let mtextWidth, _) = found.localGeometry?.first
         {
             entity = found
             prim = .text(
                 position: Vector3(x: 0, y: 0, z: 0), text: text, height: height,
-                rotation: rotation, style: nil, alignH: alignH, alignV: alignV,
+                rotation: rotation, style: foundStyle, alignH: alignH, alignV: alignV,
                 mtextWidth: mtextWidth, color: nil)
         } else if assoc.first(-1) != nil {
             throw LispError.hostError("textbox: invalid entity name")
         } else {
             entity = try LispEntityAdapter.makeEntity(
                 from: assoc, document: document, name: "textbox")
-            guard case let .text(_, text, height, rotation, _, alignH, alignV, mtextWidth, _) = entity.localGeometry?.first else {
+            guard case .text(_, let text, let height, let rotation, let assocStyle, let alignH, let alignV, let mtextWidth, _) = entity.localGeometry?.first else {
                 return nil
             }
             prim = .text(
                 position: Vector3(x: 0, y: 0, z: 0), text: text, height: height,
-                rotation: rotation, style: nil, alignH: alignH, alignV: alignV,
+                rotation: rotation, style: assocStyle, alignH: alignH, alignV: alignV,
                 mtextWidth: mtextWidth, color: nil)
         }
-        guard case let .text(_, text, height, rotation, _, alignH, alignV, mtextWidth, _) = prim else {
+        guard case .text(_, let text, let height, let rotation, let textStyle, let alignH, let alignV, let mtextWidth, _) = prim else {
             return nil
         }
         let t = entity.transform
         let bounds = CADEntity.estimateTextLocalBounds(
             text: text, height: height * t.scale.x,
-            alignH: alignH, alignV: alignV, mtextWidth: mtextWidth)
+            alignH: alignH, alignV: alignV, mtextWidth: mtextWidth,
+            style: textStyle,
+            context: CADTextBoundsContext(
+                textStyleFonts: document.textStyleFonts,
+                textStyles: document.textStyles,
+                defaultXData: entity.xdata))
         let total = rotation + t.rotation
         let cosR = cos(total), sinR = sin(total)
         let corners = [

@@ -794,7 +794,8 @@ public enum CADLeaderGeometry {
                 height: style.textHeight,
                 alignH: alignH,
                 alignV: alignV,
-                mtextWidth: data.textWidth)
+                mtextWidth: data.textWidth,
+                style: style.textStyleName)
             let dx = localPoint.x - data.contentPosition.x
             let dy = localPoint.y - data.contentPosition.y
             let textRotation = resolvedTextRotation(data: data, style: style)
@@ -863,7 +864,8 @@ public enum CADLeaderGeometry {
                     height: style.textHeight,
                     alignH: alignH,
                     alignV: alignV,
-                    mtextWidth: data.textWidth)
+                    mtextWidth: data.textWidth,
+                    style: style.textStyleName)
                 let padding = style.contentGap * 0.5
                 primitives.append(.rect(
                     origin: Vector3(

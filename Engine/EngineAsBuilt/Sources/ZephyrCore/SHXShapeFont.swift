@@ -1303,6 +1303,65 @@ public final class SHXShapeFont: @unchecked Sendable {
         return primitives
     }
 
+    /// Ink bounding box of `renderText` for the same arguments, measured in
+    /// the text's local frame (origin at the insertion point, unrotated).
+    /// This is the same layout `renderText` produces — including alignment
+    /// offsets, oblique shear, and MTEXT wrapping — so selection boxes,
+    /// hit-testing, and background masks match the drawn ink. Returns nil
+    /// when the string produces no drawable geometry (empty or blank text);
+    /// callers fall back to the advance width in that case.
+    public func measuredLocalBounds(
+        _ text: String,
+        height: Double,
+        widthFactor: Double = 1.0,
+        obliqueAngle: Double = 0.0,
+        alignH: Int = 0,
+        alignV: Int = 0,
+        maxWidth: Double? = nil,
+        fitWidth: Double? = nil
+    ) -> (minX: Double, maxX: Double, minY: Double, maxY: Double)? {
+        guard !text.isEmpty, height.isFinite, height > 0 else { return nil }
+        let prims = renderText(
+            text,
+            origin: .zero,
+            height: height,
+            rotation: 0,
+            alignH: alignH,
+            alignV: alignV,
+            widthFactor: widthFactor,
+            obliqueAngle: obliqueAngle,
+            maxWidth: maxWidth,
+            fitWidth: fitWidth)
+        var minX = Double.infinity
+        var minY = Double.infinity
+        var maxX = -Double.infinity
+        var maxY = -Double.infinity
+        func include(_ x: Double, _ y: Double) {
+            minX = min(minX, x)
+            minY = min(minY, y)
+            maxX = max(maxX, x)
+            maxY = max(maxY, y)
+        }
+        for prim in prims {
+            switch prim {
+            case .line(let start, let end, _):
+                include(start.x, start.y)
+                include(end.x, end.y)
+            case .fillPolygon(let points, _):
+                for point in points { include(point.x, point.y) }
+            case .fillComplexPolygon(let outer, let holes, _):
+                for point in outer { include(point.x, point.y) }
+                for hole in holes {
+                    for point in hole { include(point.x, point.y) }
+                }
+            default:
+                break
+            }
+        }
+        guard minX.isFinite, minY.isFinite, maxX.isFinite, maxY.isFinite else { return nil }
+        return (minX, maxX, minY, maxY)
+    }
+
 
     private struct FormattedGlyphLayout {
         let scalar: Unicode.Scalar

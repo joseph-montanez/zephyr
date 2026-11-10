@@ -133,7 +133,7 @@ public final class Txt2MtxtCommand: FeatureCommand {
         }
         let bounds = CADEntity.estimateTextLocalBounds(
             text: text, height: height, alignH: alignH, alignV: alignV,
-            mtextWidth: nil)
+            mtextWidth: nil, style: style)
         return Source(
             handle: entity.handle,
             text: text,

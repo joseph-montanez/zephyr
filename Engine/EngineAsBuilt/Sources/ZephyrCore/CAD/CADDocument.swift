@@ -1907,9 +1907,16 @@ public final class CADDocument {
                 }
             }
 
+            // SHX text measures with the resolved style faces so the
+            // cached box matches the rendered ink (not the legacy
+            // character-count estimate).
             result.localBoundingBox = CADEntity.computeLocalBoundingBox(
                 blockID: result.blockID,
-                localGeometry: result.localGeometry) ?? result.localBoundingBox
+                localGeometry: result.localGeometry,
+                textContext: CADTextBoundsContext(
+                    textStyleFonts: textStyleFonts,
+                    textStyles: textStyles,
+                    defaultXData: result.xdata)) ?? result.localBoundingBox
 
             // A pen stroke stores sparse on-curve fit points. Its solved NURBS
             // controls can extend outside that fit-point box, so include them in
@@ -4851,6 +4858,17 @@ public final class CADDocument {
             return block.primitiveXData
         }
         return [:]
+    }
+
+    /// Measurement context for SHX text bounds that match the rendered
+    /// ink: style tables plus per-primitive xdata (block instances) with
+    /// the entity xdata as the loose-geometry fallback.
+    public func textBoundsContext(for entity: CADEntity) -> CADTextBoundsContext {
+        CADTextBoundsContext(
+            textStyleFonts: textStyleFonts,
+            textStyles: textStyles,
+            xdataByIndex: primitiveXData(for: entity),
+            defaultXData: entity.xdata)
     }
 
     public func layersByUppercasedName() -> [String: Layer] {

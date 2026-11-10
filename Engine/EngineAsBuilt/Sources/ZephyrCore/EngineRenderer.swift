@@ -4116,13 +4116,14 @@ public final class EngineRenderer {
             guard vertices.count >= 2 else { return }
             drawPath(vertices.map { $0.position }, closed: false)
 
-        case .text(let position, let text, let height, let rotation, _, let alignH, let alignV, let mtextWidth, _):
+        case .text(let position, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):
             let bounds = CADEntity.estimateTextLocalBounds(
                 text: text,
                 height: height,
                 alignH: alignH,
                 alignV: alignV,
-                mtextWidth: mtextWidth)
+                mtextWidth: mtextWidth,
+                style: style)
             let c = cos(rotation)
             let s = sin(rotation)
             func textPoint(_ x: Double, _ y: Double) -> Vector3 {

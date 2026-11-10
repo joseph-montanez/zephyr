@@ -81,7 +81,7 @@ public enum CADHitTesting {
                 for primIndex in candidates {
                     guard CADPrimitiveVisibility.isVisible(
                         style: primStyles[primIndex], layersByName: layersByName) else { continue }
-                    if let d = distanceSqToPrimitive(geometry[primIndex], point: point, transform: transform, t2: t2) {
+                    if let d = distanceSqToPrimitive(geometry[primIndex], point: point, transform: transform, t2: t2, textContext: document.textBoundsContext(for: entity), textIndex: primIndex) {
                         if d < minDist { minDist = d }
                     }
                 }
@@ -222,7 +222,7 @@ public enum CADHitTesting {
                     for primIndex in candidates {
                         guard CADPrimitiveVisibility.isVisible(
                             style: primStyles[primIndex], layersByName: layersByName) else { continue }
-                        if let d = distanceSqToPrimitive(geometry[primIndex], point: point, transform: transform, t2: t2) {
+                        if let d = distanceSqToPrimitive(geometry[primIndex], point: point, transform: transform, t2: t2, textContext: document.textBoundsContext(for: entity), textIndex: primIndex) {
                             if d < minDist { minDist = d }
                         }
                     }
@@ -388,7 +388,7 @@ public enum CADHitTesting {
                     layersByName: layersByName) else { continue }
                 guard let dist = distanceSqToPrimitive(
                     geometry[primIndex], point: point,
-                    transform: transform, t2: t2) else { continue }
+                    transform: transform, t2: t2, textContext: document.textBoundsContext(for: entity), textIndex: primIndex) else { continue }
                 if dist < (best?.distanceSquared ?? .infinity) {
                     best = NestedHit(
                         entity: entity, primitiveIndex: primIndex,
@@ -491,7 +491,7 @@ public enum CADHitTesting {
             for primIndex in candidates {
                 guard CADPrimitiveVisibility.isVisible(
                     style: primStyles[primIndex], layersByName: layersByName) else { continue }
-                if distanceSqToPrimitive(geom[primIndex], point: point, transform: transform, t2: t2) != nil {
+                if distanceSqToPrimitive(geom[primIndex], point: point, transform: transform, t2: t2, textContext: document.textBoundsContext(for: entity), textIndex: primIndex) != nil {
                     return true
                 }
             }
@@ -517,7 +517,8 @@ public enum CADHitTesting {
     }
 
     public static func distanceSqToPrimitive(
-        _ prim: CADPrimitive, point: Vector3, transform: Transform3D, t2: Double
+        _ prim: CADPrimitive, point: Vector3, transform: Transform3D, t2: Double,
+        textContext: CADTextBoundsContext? = nil, textIndex: Int? = nil
     ) -> Double? {
         switch prim {
         case .point(let pos, _):
@@ -640,7 +641,7 @@ public enum CADHitTesting {
             }
             return best <= t2 ? best : nil
 
-        case .text(let pos, let text, let height, let rotation, _, let alignH, let alignV, let mtextWidth, _):
+        case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):
             var localToWorld = transform
             if rotation != 0 {
                 localToWorld = localToWorld.multiplying(by: .rotated(by: rotation))
@@ -655,7 +656,10 @@ public enum CADHitTesting {
             let bounds = CADEntity.estimateTextLocalBounds(
                 text: text, height: height,
                 alignH: alignH, alignV: alignV,
-                mtextWidth: mtextWidth)
+                mtextWidth: mtextWidth,
+                style: style,
+                context: textContext,
+                primitiveIndex: textIndex)
 
             let th = sqrt(t2)
             if localPoint.x >= bounds.minX - th && localPoint.x <= bounds.maxX + th &&

@@ -813,10 +813,34 @@ public final class CADRendererBridge {
         color: ColorRGBA?,
         usesViewportColor: Bool,
         z: Double,
-        renderOrigin: CADRenderOrigin
+        renderOrigin: CADRenderOrigin,
+        fontFile: String? = nil,
+        widthFactor: Double = 1.0,
+        obliqueAngle: Double = 0.0,
+        fitWidth: Double? = nil
     ) -> PrimitiveSpec? {
         guard scale >= 1.0, usesViewportColor || color != nil else { return nil }
-        let bounds = CADEntity.estimateTextLocalBounds(
+        // SHX text measures with the same metrics the vector route renders
+        // with so the background matches the ink; anything else keeps the
+        // legacy estimate.
+        let measured: (minX: Double, maxX: Double, minY: Double, maxY: Double)?
+        if let fontFile, !fontFile.isEmpty,
+           let font = CADFontManager.getOrLoadSHXFont(
+               filename: fontFile, allowFallback: false) {
+            measured = CADTextMeasurement.measuredBoundsDirect(
+                text: text,
+                font: font,
+                height: height,
+                widthFactor: widthFactor,
+                obliqueAngle: obliqueAngle,
+                alignH: alignH,
+                alignV: alignV,
+                maxWidth: maxWidth,
+                fitWidth: fitWidth)
+        } else {
+            measured = nil
+        }
+        let bounds = measured ?? CADEntity.estimateTextLocalBounds(
             text: text,
             height: height,
             alignH: alignH,
@@ -1613,7 +1637,11 @@ public final class CADRendererBridge {
                                         color: backgroundColor,
                                         usesViewportColor: backgroundUsesViewportColor,
                                         z: primZ - 0.02,
-                                        renderOrigin: renderOrigin) {
+                                        renderOrigin: renderOrigin,
+                                        fontFile: fontFile,
+                                        widthFactor: effectiveWidthFactor,
+                                        obliqueAngle: primitiveTextObliqueAngle,
+                                        fitWidth: primitiveTextFitWidth.map { $0 * widthScale }) {
                                         specs.append(mask)
                                     }
                                 }
@@ -1867,7 +1895,11 @@ public final class CADRendererBridge {
                                     color: vt.textBackgroundColor,
                                     usesViewportColor: vt.textBackgroundUsesViewportColor,
                                     z: baseZ - 0.02,
-                                    renderOrigin: renderOrigin) {
+                                    renderOrigin: renderOrigin,
+                                    fontFile: fontFile,
+                                    widthFactor: effectiveWidthFactor,
+                                    obliqueAngle: effectiveOblique,
+                                    fitWidth: worldFitWidth) {
                                     specs.append(mask)
                                 }
                                 let textPrims: [CADPrimitive]

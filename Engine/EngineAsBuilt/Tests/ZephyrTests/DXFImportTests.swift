@@ -913,6 +913,148 @@ final class DXFImportTests: XCTestCase {
         XCTAssertNil(explicit.xdata["dxf.textFitWidth"])
     }
 
+    /// Block TEXT from "Vivienda Unifamiliar 2.dwg" (handles 37BFD/37C78,
+    /// style R80-50 = romans.shx): the block bounding box must match the
+    /// rendered SHX ink, not the 0.6-height-per-character estimate. 37BFD
+    /// (left, no group 41) advances 1550 SHX units = 6.8383 world units from
+    /// its insertion point; the estimate reports 4.56, which clips
+    /// selection, hit-testing, and the properties panel.
+    func testBlockTextBoundsMatchRenderedSHXInk() throws {
+        let h = 0.0926476727069243
+        let dxf = """
+        0
+        SECTION
+          2
+        TABLES
+          0
+        TABLE
+          2
+        STYLE
+          0
+        STYLE
+          2
+        R80-50
+         70
+        0
+         40
+        0.08
+         41
+        1.3
+         50
+        0.0
+         71
+        0
+         42
+        0.08
+          3
+        romans.shx
+          0
+        ENDTAB
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        BLOCKS
+          0
+        BLOCK
+          8
+        0
+          2
+        SPECBOX
+         70
+        0
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+          0
+        TEXT
+          8
+        punto2
+         10
+        62.30792953282248
+         20
+        35.16466240493877
+         30
+        0.0
+         40
+        0.0926476727069243
+          1
+        -  SE UTILIZARA  PEGAMENTO ESPECIAL PARA C PVC. CON AISLAMIENTO TERMICO APROPIADO.
+          7
+        R80-50
+          0
+        TEXT
+          8
+        TEXTO 0.3
+         10
+        63.80861987457691
+         20
+        31.7859757666741
+         30
+        0.0
+         40
+        0.0926476727069243
+          1
+        TUBERIA DE AGUA CALIENTE
+          7
+        R80-50
+         72
+        4
+         11
+        64.79244992284568
+         21
+        31.83229960302756
+         31
+        0.0
+          0
+        ENDBLK
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        ENTITIES
+          0
+        INSERT
+          8
+        0
+          2
+        SPECBOX
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+          0
+        ENDSEC
+          0
+        EOF
+        """
+
+        let doc = try importDXFString(dxf)
+        let block = try XCTUnwrap(doc.allBlocks.first { $0.name == "SPECBOX" })
+        let box = block.localBoundingBox
+
+        // 37BFD: romans advance sum is 1550 SHX units at cap height 21.
+        let expectedAdvance = 1550.0 / 21.0 * h
+        XCTAssertEqual(expectedAdvance, 6.8383, accuracy: 0.001)
+        let width = box.max.x - box.min.x
+        XCTAssertEqual(width, expectedAdvance, accuracy: 0.1,
+                       "Block box must span the SHX pen advance, not the 0.6 estimate (4.56)")
+        // Left-aligned ink starts at the insertion point (plus a small
+        // left side bearing), and must stay inside the spec box (right
+        // edge x=69.2814 in the real file).
+        XCTAssertGreaterThanOrEqual(box.min.x, 62.30792953282248 - 0.01)
+        XCTAssertLessThanOrEqual(box.min.x, 62.30792953282248 + 0.1)
+        XCTAssertGreaterThan(box.max.x, 69.0)
+        XCTAssertLessThanOrEqual(box.max.x, 69.2814)
+    }
+
     /// Fit (72=5) and Aligned (72=3) TEXT spans the two definition points:
     /// the importer must keep the span (group 10 -> group 11 distance) and
     /// place the entity at the FIRST point so renderers can scale the

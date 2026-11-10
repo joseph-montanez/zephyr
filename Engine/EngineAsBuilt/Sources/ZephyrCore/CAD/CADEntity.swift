@@ -842,7 +842,8 @@ public struct CADBlock: Hashable, Sendable {
                 dxfFlags: Int = 0,
                 isInternalTableDisplayBlock: Bool = false,
                 xrefDescriptor: CADXrefDescriptor? = nil,
-                attributeDefinitions: [CADAttributeDefinition] = []) {
+                attributeDefinitions: [CADAttributeDefinition] = [],
+                textContext: CADTextBoundsContext? = nil) {
         self.handle = handle
         self.name = name
         self.geometry = geometry
@@ -852,18 +853,27 @@ public struct CADBlock: Hashable, Sendable {
         self.isInternalTableDisplayBlock = isInternalTableDisplayBlock
         self.xrefDescriptor = xrefDescriptor
         self.attributeDefinitions = attributeDefinitions
-        self.localBoundingBox = CADBlock.computeBoundingBox(from: geometry)
+        self.localBoundingBox = CADBlock.computeBoundingBox(
+            from: geometry, textContext: textContext)
     }
 
     /// Recompute the cached bounding box (call after mutating geometry).
-    public mutating func updateBoundingBox() {
-        self.localBoundingBox = CADBlock.computeBoundingBox(from: geometry)
+    public mutating func updateBoundingBox(textContext: CADTextBoundsContext? = nil) {
+        self.localBoundingBox = CADBlock.computeBoundingBox(
+            from: geometry, textContext: textContext)
     }
 
     /// Compute an AABB from block primitives — called once, never per-instance.
-    static func computeBoundingBox(from primitives: [CADPrimitive]) -> BoundingBox3D {
+    ///
+    /// Pass `textContext` (style tables + per-primitive xdata) so SHX text
+    /// measures with the same metrics the renderers draw with. Without it,
+    /// text falls back to the legacy character-count estimate.
+    static func computeBoundingBox(
+        from primitives: [CADPrimitive],
+        textContext: CADTextBoundsContext? = nil
+    ) -> BoundingBox3D {
         var points: [Vector3] = []
-        for p in primitives {
+        for (primitiveIndex, p) in primitives.enumerated() {
             switch p {
             case .point(let pos, _):
                 points.append(pos)
@@ -924,13 +934,16 @@ public struct CADBlock: Hashable, Sendable {
                 points.append(contentsOf: controlPoints)
             case .penStroke(let vertices, _, _):
                 points.append(contentsOf: vertices.map { $0.position })
-            case .text(let pos, let text, let height, _, _, let alignH, let alignV, let mtextWidth, _):
+            case .text(let pos, let text, let height, _, let style, let alignH, let alignV, let mtextWidth, _):
                 let bounds = CADEntity.estimateTextLocalBounds(
                     text: text,
                     height: height,
                     alignH: alignH,
                     alignV: alignV,
-                    mtextWidth: mtextWidth
+                    mtextWidth: mtextWidth,
+                    style: style,
+                    context: textContext,
+                    primitiveIndex: primitiveIndex
                 )
                 points.append(Vector3(x: pos.x + bounds.minX, y: pos.y + bounds.minY, z: pos.z))
                 points.append(Vector3(x: pos.x + bounds.maxX, y: pos.y + bounds.maxY, z: pos.z))
@@ -1032,15 +1045,41 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
     public private(set) var anchorPoints: [AnchorPoint]
 
     /// Estimate local space bounding box of text based on characters and alignment/wrapping.
+    ///
+    /// When `style` resolves to a loadable SHX face, the box is measured
+    /// from the same SHX metrics the renderers draw with (advance sums,
+    /// alignment offsets, oblique shear, MTEXT wrapping), so selection,
+    /// hit-testing, and property panels match the ink. Pass the document's
+    /// style tables via `context` (plus the primitive index for
+    /// per-primitive xdata) for exact faces; without them the style name
+    /// alone still measures with the best available SHX face. Styles that
+    /// do not resolve to SHX (TTF/sprite text) keep the legacy
+    /// character-count estimate below.
     public static func estimateTextLocalBounds(
         text: String,
         height: Double,
         alignH: Int,
         alignV: Int,
-        mtextWidth: Double?
+        mtextWidth: Double?,
+        style: String? = nil,
+        context: CADTextBoundsContext? = nil,
+        primitiveIndex: Int? = nil
 
     ) -> (minX: Double, maxX: Double, minY: Double, maxY: Double) {
         if text.isEmpty { return (0, 0, 0, 0) }
+        // SHX-measurable text uses the same metrics the renderers draw
+        // with; anything else keeps the legacy estimate below.
+        if let measured = CADTextMeasurement.measuredBounds(
+            text: text,
+            style: style,
+            height: height,
+            alignH: alignH,
+            alignV: alignV,
+            mtextWidth: mtextWidth,
+            context: context,
+            primitiveIndex: primitiveIndex) {
+            return measured
+        }
         
         let paragraphs = text.components(separatedBy: "\n")
         var numLines = paragraphs.count
@@ -1460,19 +1499,24 @@ public struct CADEntity: Entity, Snappable, AttributeAttachable, Hashable, Senda
 
     /// Recompute local bounding box when geometry changes (call from document mutations).
     /// Assigning `localBoundingBox` triggers the world-box cache refresh automatically.
-    public mutating func updateLocalBoundingBox(fromBlock block: CADBlock?) {
+    public mutating func updateLocalBoundingBox(
+        fromBlock block: CADBlock?,
+        textContext: CADTextBoundsContext? = nil
+    ) {
         if let b = block, blockID == b.handle {
             localBoundingBox = b.localBoundingBox
         } else {
             localBoundingBox = CADEntity.computeLocalBoundingBox(
-                blockID: blockID, localGeometry: localGeometry)
+                blockID: blockID, localGeometry: localGeometry,
+                textContext: textContext)
         }
     }
 
     public static func computeLocalBoundingBox(
-        blockID: UUID?, localGeometry: [CADPrimitive]?) -> BoundingBox3D? {
+        blockID: UUID?, localGeometry: [CADPrimitive]?,
+        textContext: CADTextBoundsContext? = nil) -> BoundingBox3D? {
         if let geom = localGeometry, !geom.isEmpty {
-            return CADBlock.computeBoundingBox(from: geom)
+            return CADBlock.computeBoundingBox(from: geom, textContext: textContext)
         }
         // Block geometry is resolved elsewhere; localBoundingBox will be set from the block.
         return nil

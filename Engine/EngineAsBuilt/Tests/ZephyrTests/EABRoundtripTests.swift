@@ -305,7 +305,11 @@ final class EABRoundtripTests: XCTestCase {
         if let box = wbb {
             print("World box: min=(\(box.min.x), \(box.min.y)), max=(\(box.max.x), \(box.max.y))")
             XCTAssertEqual(box.min.x, 10.0, accuracy: 1e-5)
-            XCTAssertEqual(box.max.x, 10.0 + 2.5 * 0.6 * 5.0, accuracy: 1e-5) // "Hello" has 5 chars
+            // simplex.shx draws "Hello" with an ink span of 69 SHX units
+            // (advance 75 units, cap height 21), so the box spans the
+            // rendered ink, not the legacy 0.6 * height * character-count
+            // estimate (which gave 17.5).
+            XCTAssertEqual(box.max.x, 10.0 + 2.5 * 69.0 / 21.0, accuracy: 1e-5)
             XCTAssertEqual(box.min.y, 20.0 - 2.5, accuracy: 1e-5) // grows down to -2.5
             XCTAssertEqual(box.max.y, 20.0, accuracy: 1e-5)
         }

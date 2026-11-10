@@ -1027,6 +1027,24 @@ public enum DXFImporter {
                 endAngle: entry.endAngle)
         }
 
+        // Text styles must precede block geometry conversion: block
+        // bounding boxes measure SHX text with the resolved style faces.
+        var textStyles: [String: CADTextStyle] = ["Standard": .standard]
+        for entry in reader.textstyles where !entry.name.isEmpty {
+            let style = CADTextStyle(
+                name: entry.name,
+                fontFile: entry.font.isEmpty ? "simplex.shx" : entry.font,
+                fixedHeight: entry.height,
+                widthFactor: entry.width == 0 ? 1 : entry.width,
+                obliqueAngle: entry.oblique,
+                isAnnotative: false
+            ).normalized
+            textStyles[style.name] = style
+        }
+        let textStyleFonts = Dictionary(
+            textStyles.values.map { ($0.name, $0.fontFile) },
+            uniquingKeysWith: { first, _ in first })
+
         DXFProfile.mark("setup: layers/styles/leader/handle maps")
         var blockGeometryCache: [String: [StyledPrimitive]] = [:]
 
@@ -1165,7 +1183,14 @@ public enum DXFImporter {
                     }),
                 dxfFlags: block.flags,
                 isInternalTableDisplayBlock: block.name.hasPrefix("*T"),
-                attributeDefinitions: Self.attributeDefinitions(in: block, base: blockBaseByName[block.name] ?? .zero))
+                attributeDefinitions: Self.attributeDefinitions(in: block, base: blockBaseByName[block.name] ?? .zero),
+                textContext: CADTextBoundsContext(
+                    textStyleFonts: textStyleFonts,
+                    textStyles: textStyles,
+                    xdataByIndex: Dictionary(
+                        uniqueKeysWithValues: styledGeometry.enumerated().map {
+                            ($0.offset, $0.element.xdata)
+                        })))
             blocks.append(cadBlock)
             blockByID[handle] = cadBlock
         }
@@ -1862,20 +1887,8 @@ public enum DXFImporter {
             return result
         }
 
-        DXFProfile.mark("tail start (textStyles/linetypes)")
+        DXFProfile.mark("tail start (linetypes)")
         DXFProfile.dump("primitive accumulators so far")
-        var textStyles: [String: CADTextStyle] = ["Standard": .standard]
-        for entry in reader.textstyles where !entry.name.isEmpty {
-            let style = CADTextStyle(
-                name: entry.name,
-                fontFile: entry.font.isEmpty ? "simplex.shx" : entry.font,
-                fixedHeight: entry.height,
-                widthFactor: entry.width == 0 ? 1 : entry.width,
-                obliqueAngle: entry.oblique,
-                isAnnotative: false
-            ).normalized
-            textStyles[style.name] = style
-        }
 
         var linetypePatterns: [String: [Double]] = [:]
         for ltype in reader.ltypes {

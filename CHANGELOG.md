@@ -74,6 +74,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Overlapping picks** - clicking stacked objects shows a choice list again.
 - **Click inside hatches** - clicking anywhere inside a hatch selects it.
 - **Zoom extents after scripts** - extents refresh correctly after Lisp/MCP edits.
+- **SHX text bounds match the ink** - selection, hit-testing, property panels, and background masks now measure TEXT with the resolved SHX advance metrics instead of the 0.6-per-character estimate, so block text frames exactly as drawn.
 
 ### Maintenance
 - **Code cleanup** - split up the REVCLOUD file and shared dimension picking; no behavior change.

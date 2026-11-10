@@ -130,11 +130,13 @@ public enum CADRectSelect {
         } else {
             candidates = Array(geometry.indices)
         }
+        let textCtx = document.textBoundsContext(for: entity)
         for primIndex in candidates {
             guard CADPrimitiveVisibility.isVisible(
                 style: primStyles[primIndex], layersByName: layersByName) else { continue }
             if primitiveIntersectsRect(geometry[primIndex], transform: entity.transform,
-                                       rectMin: rectMin, rectMax: rectMax) {
+                                       rectMin: rectMin, rectMax: rectMax,
+                                       textContext: textCtx, textIndex: primIndex) {
                 return true
             }
         }
@@ -146,7 +148,8 @@ public enum CADRectSelect {
     /// (interior containment counts).
     public static func primitiveIntersectsRect(
         _ prim: CADPrimitive, transform: Transform3D,
-        rectMin: Vector3, rectMax: Vector3
+        rectMin: Vector3, rectMax: Vector3,
+        textContext: CADTextBoundsContext? = nil, textIndex: Int? = nil
     ) -> Bool {
         switch prim {
         case .table: return true
@@ -262,7 +265,7 @@ public enum CADRectSelect {
             }
             return false
 
-        case .text(let pos, let text, let height, let rotation, _, let alignH, let alignV, let mtextWidth, _):
+        case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _):
             var localToWorld = transform
             if rotation != 0 {
                 localToWorld = localToWorld.multiplying(by: .rotated(by: rotation))
@@ -274,7 +277,10 @@ public enum CADRectSelect {
             let bounds = CADEntity.estimateTextLocalBounds(
                 text: text, height: height,
                 alignH: alignH, alignV: alignV,
-                mtextWidth: mtextWidth)
+                mtextWidth: mtextWidth,
+                style: style,
+                context: textContext,
+                primitiveIndex: textIndex)
 
             let c1 = localToWorld.transformPoint(Vector3(x: bounds.minX, y: bounds.minY, z: 0))
             let c2 = localToWorld.transformPoint(Vector3(x: bounds.maxX, y: bounds.minY, z: 0))
