@@ -2292,8 +2292,12 @@ public class DXFWriter {
             writeDbl(40, tx.height, &out)
             writeStr(1, tx.text, &out)
             writeDbl(50, tx.angle_p, &out)  // degrees
-            writeDbl(41, tx.widthScale, &out)
-            writeDbl(51, tx.oblique, &out)
+            // Groups 41/51 are relative to the text style: omit them when
+            // absent on import so reimported text keeps inheriting the
+            // style width/oblique instead of pinning 1.0/0.0 (MTEXT keeps
+            // its unconditional 41: there it is the reference width).
+            if tx.hasExplicitWidthScale { writeDbl(41, tx.widthScale, &out) }
+            if tx.hasExplicitOblique { writeDbl(51, tx.oblique, &out) }
             writeStr(7, tx.style, &out)
             writeInt(71, tx.textGen, &out)
             writeInt(72, tx.alignH, &out)

@@ -2886,6 +2886,13 @@ public enum DXFWriterBridge {
             entity.alignV = alignV
             entity.widthScale = xdataDouble(xdata, "dxf.textWidthScale") ?? 1.0
             entity.oblique = xdataDouble(xdata, "dxf.textOblique") ?? 0.0
+            // Preserve absent-vs-explicit groups 41/51: emitting a defaulted
+            // 1.0/0.0 as explicit would pin the entity factor on reimport
+            // instead of inheriting the text style (see DXFImporter).
+            entity.hasExplicitWidthScale =
+                (xdataInt(xdata, "dxf.textWidthScaleOverride") ?? 0) == 1
+            entity.hasExplicitOblique =
+                (xdataInt(xdata, "dxf.textObliqueOverride") ?? 0) == 1
             entity.textGen = xdataInt(xdata, "dxf.textGenerationFlags") ?? 0
             applyColor(color, to: entity)
             appendFieldXData(xdata, to: entity)

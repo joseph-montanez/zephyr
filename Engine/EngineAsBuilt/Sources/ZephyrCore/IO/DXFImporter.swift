@@ -2441,10 +2441,15 @@ public enum DXFImporter {
             xdata["dxf.textWidthScale"] = .double(text.widthScale)
             xdata["dxf.textOblique"] = .double(text.oblique)
             if text.eType != .mTEXT {
+                // Absent groups 41/51 are the DXF defaults (1.0/0) *relative*
+                // to the style: they do NOT cancel the style width/oblique
+                // (AutoCAD renders such TEXT at style width, e.g. R80-50
+                // 1.3). Only an explicitly authored group overrides the style.
+                // Mirrors dxf.textHeightOverride above.
                 xdata["dxf.textWidthScaleOverride"] = .int(
-                    1)  // absent group 41 defaults to 1.0 (DXF spec), never the style width factor
+                    text.hasExplicitWidthScale ? 1 : 0)
                 xdata["dxf.textObliqueOverride"] = .int(
-                    1)  // absent group 51 defaults to 0 (DXF spec), never the style oblique angle
+                    text.hasExplicitOblique ? 1 : 0)
             }
             xdata["dxf.textGenerationFlags"] = .int(text.textGen)
             if text.eType == .mTEXT {
