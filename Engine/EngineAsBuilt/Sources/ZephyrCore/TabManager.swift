@@ -448,6 +448,12 @@ public final class TabManager {
     public var captureSelectionState: (() -> SelectionState)?
     public var applySelectionState: ((SelectionState) -> Void)?
 
+    /// Fired after a block editor session is entered (document already swapped,
+    /// extra height cleared). Wired by the engine to auto frame the block
+    /// geometry (AutoCAD BEDIT-like zoom-extents) so the user is not left with
+    /// an empty viewport when the definition lives far from the last view.
+    public var onBlockEditorEntered: (() -> Void)? = nil
+
     // MARK: - Save State (per-tab, background-save)
 
     /// In-flight save tasks keyed by tab ID.
@@ -2174,6 +2180,10 @@ public final class TabManager {
         tabs[activeIndex] = tab
 
         onActiveTabChanged?()
+        // Auto-frame the block geometry like AutoCAD BEDIT (zoom extents).
+        // The engine wires this to zoomExtents(); deferred so the swapped
+        // temp document is the bounds source.
+        onBlockEditorEntered?()
     }
 
     /// Exits block editor mode.

@@ -33,6 +33,52 @@ final class BlockEditorExitTests: XCTestCase {
             "restoring the parent document must request regeneration even when block edits are discarded")
     }
 
+    func testEnterBlockEditorFiresZoomCallbackOncePerEntry() {
+        let manager = TabManager()
+        _ = manager.newTab()
+        let parent = manager.activeDocument
+        let block = CADBlock(
+            name: "ZoomBlock",
+            geometry: [
+                .line(
+                    start: Vector3(x: 500, y: 500, z: 0),
+                    end: Vector3(x: 510, y: 500, z: 0),
+                    color: .white)
+            ])
+        parent.importLayersBlocksEntities(layers: [], blocks: [block], entities: [])
+        var zoomCallbacks = 0
+        manager.onBlockEditorEntered = { zoomCallbacks += 1 }
+        manager.enterBlockEditor(blockID: block.handle)
+        XCTAssertEqual(manager.activeTab?.editingBlockID, block.handle)
+        XCTAssertEqual(zoomCallbacks, 1, "entering the block editor must request auto zoom-extents")
+        let bounds = manager.activeDocument.renderableWorldBoundingBox()
+        XCTAssertNotNil(bounds, "block temp document must have framing bounds for zoomExtents")
+        if let bounds {
+            XCTAssertEqual(bounds.min.x, 500, accuracy: 1e-9)
+            XCTAssertEqual(bounds.min.y, 500, accuracy: 1e-9)
+            XCTAssertEqual(bounds.max.x, 510, accuracy: 1e-9)
+            XCTAssertEqual(bounds.max.y, 500, accuracy: 1e-9)
+        }
+        manager.enterBlockEditor(blockID: block.handle)
+        XCTAssertEqual(zoomCallbacks, 1)
+        manager.exitBlockEditor(saveChanges: false)
+        XCTAssertEqual(zoomCallbacks, 1, "exiting must not fire the entry zoom callback")
+    }
+
+    func testEnterBlockEditorWithoutZoomCallbackDoesNotCrash() {
+        let manager = TabManager()
+        _ = manager.newTab()
+        let parent = manager.activeDocument
+        let block = CADBlock(
+            name: "NoCallbackBlock",
+            geometry: [.line(start: .zero, end: Vector3(x: 1, y: 0, z: 0), color: .white)])
+        parent.importLayersBlocksEntities(layers: [], blocks: [block], entities: [])
+        manager.onBlockEditorEntered = nil
+        manager.enterBlockEditor(blockID: block.handle)
+        XCTAssertEqual(manager.activeTab?.editingBlockID, block.handle)
+        manager.exitBlockEditor(saveChanges: false)
+    }
+
     func testRenderContextSupersedesWhenDocumentObjectChangesAtSameRevision() {
         let context = WindowRenderContext(
             geometry: GeometryManager(),

@@ -6,8 +6,8 @@ blockCount: 0
 entityCount: 3
 entity: kind=circle layer=0 block=- geomCount=1 transform=8b68b521a35ec8d5 geometry=dc4d3667dfda8973
 entity: kind=line layer=0 block=- geomCount=1 transform=8b68b521a35ec8d5 geometry=8819be7e3d3bb1cf
-entity: kind=text layer=0 block=- geomCount=1 transform=35507eec19159309 geometry=63f91a61b892c49e
+entity: kind=text layer=0 block=- geomCount=1 transform=35507eec19159309 geometry=79b4838c11fde172
 primitiveKind: circle count=1
 primitiveKind: line count=1
 primitiveKind: text count=1
-DIGEST: 58256f12b3adef3f
+DIGEST: 35d8755356c9e3eb

@@ -53,33 +53,30 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Real spline export** - DXF/EAB keep true `SPLINE` definitions.
 
 ### Bug Fixes
-- **Imported text width** - TEXT without an authored width factor no longer inherits the style width factor.
-- **TEXT leading/trailing spaces** - DXF group-1/3 values keep significant
-  padding instead of trimming it, so alignment spaces survive import (e.g.
-  the dash column in Vivienda Unifamiliar 2.dwg handle 37BFD, whose leading
-  space was stripped, shifting its dash a full space left of the column).
-- **Hatch text exclusions** - hatch text-exclusion rectangles (group 92 bit 8) no longer fill.
+- **Imported text width** - text without an explicit width now uses the DXF default (1.0) instead of the style width.
+- **Text spaces** - import preserves leading/trailing spaces, so alignment columns stay aligned.
+- **SHX text bounds** - selection and picking now use true glyph widths instead of an estimate.
+- **Hatch gaps** - gaps around text in hatches no longer fill in.
+- **Hatch highlight** - selected hatches outline instead of recoloring the pattern.
+- **HATCH crossing edges** - a line through a shape hatches only the picked side.
+- **Click inside hatches** - clicking anywhere inside a hatch selects it.
+- **Block editor framing** - opening the block editor now fits the block in view, like AutoCAD.
+- **EXPORTPDF prompt** - command line no longer hangs after export.
+- **Table edges on PDFs** - plotted tables keep visible edges.
+- **Table title heights** - style-less titles use the right default height.
+- **Table merges on import** - merged cells and alignment import correctly.
 - **Panning memory use** - panned text sprites no longer leak GPU textures.
 - **Lisp `atof` overflow** - huge exponents now clamp instead of returning infinity.
 - **PAN behavior** - pans only while the mouse button is held.
 - **Layout colors** - layouts follow Model layer colors; only ACI 7 inverts on white paper.
-- **EXPORTPDF prompt** - command line no longer hangs after export.
 - **Spline trim** - trims stop at the cutting edge instead of overshooting.
-- **Table title heights** - style-less titles use the right default height.
-- **Table merges on import** - merged cells and alignment import correctly.
-- **Table edges on PDFs** - plotted tables keep visible edges.
 - **Snaps with OTRACK on** - endpoint and midpoint snaps work again with tracking on.
-- **Hatch highlight** - selected hatches outline instead of recoloring the pattern.
 - **Measurement overlays** - helpers stay on the canvas instead of painting over panels.
-- **HATCH crossing edges** - a line through a shape hatches only the picked side.
 - **Grid visibility and snap** - clearer grid lines; F9 snap uses the exact snap interval.
 - **MCP thumbnails** - thumbnails match the app window orientation.
 - **MCP port failure** - a busy `--mcp-port` exits with an error instead of silently disabling.
 - **Overlapping picks** - clicking stacked objects shows a choice list again.
-- **Click inside hatches** - clicking anywhere inside a hatch selects it.
 - **Zoom extents after scripts** - extents refresh correctly after Lisp/MCP edits.
-- **Block editor framing** - entering BEDIT now zooms to the block extents so far-away geometry is centered in view, like AutoCAD.
-- **SHX text bounds match the ink** - selection, hit-testing, property panels, and background masks now measure TEXT with the resolved SHX advance metrics instead of the 0.6-per-character estimate, so block text frames exactly as drawn.
 
 ### Maintenance
 - **Code cleanup** - split up the REVCLOUD file and shared dimension picking; no behavior change.

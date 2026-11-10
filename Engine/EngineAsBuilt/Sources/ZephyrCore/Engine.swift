@@ -681,6 +681,15 @@ public final class PhrostEngine {
             self.cadSelection.selectedLeaderContentHandle = state.selectedLeaderContentHandle
             self.cadSelection._selectionGeneration &+= 1
         }
+        tabManager.onBlockEditorEntered = { [weak self] in
+            guard let self = self else { return }
+            // AutoCAD BEDIT frames the block geometry on entry. Without this the
+            // inherited parent view often misses definitions that live far from
+            // the last camera position, leaving an apparently empty editor.
+            // Save the pre-editor view so ZOOM Previous can return to it.
+            self.camera.pushViewState()
+            self.zoomExtents()
+        }
         tabManager.onActiveTabChanged = { [weak self] in
             guard let self else { return }
             if ProcessInfo.processInfo.environment["ZEPHYR_DEBUG_INPUT"] != nil {
