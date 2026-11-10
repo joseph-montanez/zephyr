@@ -930,6 +930,90 @@ final class DXFImportTests: XCTestCase {
         XCTAssertNil(explicit.xdata["dxf.textFitWidth"])
     }
 
+    /// Group-1 leading/trailing spaces are significant text content, not
+    /// padding: the reader must preserve them. Handle 37BFD of "Vivienda
+    /// Unifamiliar 2.dwg" (" -  SE UTILIZARA ...") aligns its dash with the
+    /// sibling lines via a leading space; trimming it shifted the dash a
+    /// full space advance left of the column versus AutoCAD / Open CAD
+    /// Studio. (One extra indent space below: Swift strips the literal
+    /// indentation, leaving a real leading space on the group-1 line.)
+    func testTextLeadingAndTrailingSpacesPreservedFromGroupOne() throws {
+        let dxf = """
+        0
+        SECTION
+          2
+        TABLES
+          0
+        TABLE
+          2
+        STYLE
+          0
+        STYLE
+          2
+        R80-50
+         40
+        0.08
+         41
+        1.3
+          3
+        romans.shx
+          0
+        ENDTAB
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        ENTITIES
+          0
+        TEXT
+          8
+        punto2
+          7
+        R80-50
+         10
+        62.30792953282248
+         20
+        35.16466240493877
+         30
+        0.0
+         40
+        0.0926476727069243
+          1
+         -  SE UTILIZARA 
+          0
+        ENDSEC
+          0
+        EOF
+        """
+
+        let doc = try importDXFString(dxf)
+        let entity = try XCTUnwrap(doc.allEntities.first { entity in
+            if case .string(let s) = entity.xdata["dxf.text"] { return s.contains("SE UTILIZARA") }
+            return false
+        })
+        guard case .string(let stored) = entity.xdata["dxf.text"] else {
+            XCTFail("imported TEXT must carry dxf.text xdata")
+            return
+        }
+        XCTAssertTrue(stored.hasPrefix(" "), "leading space is content, not padding")
+        XCTAssertTrue(stored.hasSuffix(" "), "trailing space is content, not padding")
+        guard case .text(_, let text, let height, _, let style, let alignH, let alignV, _, _) =
+            try XCTUnwrap(entity.localGeometry?.first) else {
+            XCTFail("imported TEXT must produce a text primitive")
+            return
+        }
+        let ctx = doc.textBoundsContext(for: entity)
+        let box = try XCTUnwrap(CADTextMeasurement.measuredBounds(
+            text: text, style: style, height: height,
+            alignH: alignH, alignV: alignV, mtextWidth: nil, context: ctx))
+        // romans space = 21/21 * height * 1.3 = 0.1204: the dash ink must
+        // start a full space advance right of the insertion point (a
+        // trimmed space would read ~0.023, the dash bearing alone).
+        XCTAssertGreaterThan(box.minX, 0.10)
+        XCTAssertLessThan(box.minX, 0.16)
+    }
+
     /// Block TEXT from "Vivienda Unifamiliar 2.dwg" (handles 37BFD/37C78,
     /// style R80-50 = romans.shx): the block bounding box must match the
     /// rendered SHX ink, not the 0.6-height-per-character estimate. 37BFD

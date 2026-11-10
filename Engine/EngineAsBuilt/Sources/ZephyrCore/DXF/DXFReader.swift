@@ -266,7 +266,13 @@ public class DXFReader {
             if codeStr.isEmpty { continue }
             guard let code = Int32(codeStr).flatMap({ Int($0) }) else { continue }
             guard i < lines.count else { break }
-            let value = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
+            // Groups 1/3 carry significant leading/trailing spaces (see above).
+            let value: String
+            if code == 1 || code == 3 {
+                value = lines[i]
+            } else {
+                value = lines[i].trimmingCharacters(in: .whitespacesAndNewlines)
+            }
             i += 1
             result.append((code, value))
         }
@@ -323,10 +329,16 @@ public class DXFReader {
                 }
                 if failure { return }
 
+                // Groups 1/3 carry text content whose leading/trailing spaces
+                // are significant (TEXT alignment and MTEXT chunk joins depend
+                // on them - e.g. Vivienda Unifamiliar 2.dwg 37BFD aligns its
+                // dash via a leading space). Trim padding on every other group.
                 var trimmedStart = valueStart
                 var trimmedEnd = valueEnd
-                while trimmedStart < trimmedEnd, Self.isValuePadding(bytes[trimmedStart]) { trimmedStart += 1 }
-                while trimmedEnd > trimmedStart, Self.isValuePadding(bytes[trimmedEnd - 1]) { trimmedEnd -= 1 }
+                if code != 1 && code != 3 {
+                    while trimmedStart < trimmedEnd, Self.isValuePadding(bytes[trimmedStart]) { trimmedStart += 1 }
+                    while trimmedEnd > trimmedStart, Self.isValuePadding(bytes[trimmedEnd - 1]) { trimmedEnd -= 1 }
+                }
 
                 // Short DXF values stay in small-string storage, so this is cheap; keeping the
                 // `(Int, String)` shape leaves the 24 `parseX` functions untouched.

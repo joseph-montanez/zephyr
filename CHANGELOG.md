@@ -58,6 +58,10 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
   AutoCAD web and Open CAD Studio); only explicit values override, and export omits
   un-authored groups so reimport keeps inheriting. Fixes ~23%-too-narrow legend text under
   non-1.0 styles such as R80-50 (Vivienda Unifamiliar 2.dwg handle 37BFD).
+- **TEXT leading/trailing spaces** - DXF group-1/3 values keep significant
+  padding instead of trimming it, so alignment spaces survive import (e.g.
+  the dash column in Vivienda Unifamiliar 2.dwg handle 37BFD, whose leading
+  space was stripped, shifting its dash a full space left of the column).
 - **Hatch text exclusions** - hatch text-exclusion rectangles (group 92 bit 8) no longer fill.
 - **Panning memory use** - panned text sprites no longer leak GPU textures.
 - **Lisp `atof` overflow** - huge exponents now clamp instead of returning infinity.
