@@ -80,6 +80,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **CRLF-safe icon test** - ribbon icon check passes on Windows checkouts.
 
 ### Performance
+- **Contained zoom refresh** - viewports inside the tessellated curves skip needless regens.
 - **Faster zoom refresh** - curve-only refresh costs a fraction of a full regen.
 - **Snappier snap and trim** - fewer wasted passes; geometry unchanged.
 

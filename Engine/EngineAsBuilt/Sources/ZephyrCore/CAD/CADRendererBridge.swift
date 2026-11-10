@@ -236,6 +236,11 @@ public final class CADRendererBridge {
     /// Decide whether the applied curve tessellation is still valid for a new
     /// LOD key. Full-document work owns revision changes; this path only
     /// refreshes zoom-band and viewport-region staleness for the same revision.
+    static func isCurveLODContainedSatisfied(applied: CurveScreenTessellationContext, desired: CurveScreenTessellationContext) -> Bool {
+        guard desired.band == applied.band else { return false }
+        guard let appliedViewport = applied.viewport, let desiredViewport = desired.viewport else { return false }
+        return appliedViewport.contains(desiredViewport)
+    }
     func refreshCurveLODIfNeeded(
         generation: Int,
         revision: UInt64,
@@ -251,6 +256,7 @@ public final class CADRendererBridge {
               appliedGeneration == generation else { return .none }
         if applied == desired { return .none }
         if curveTask != nil { return .launched }
+        if Self.isCurveLODContainedSatisfied(applied: applied, desired: desired) { return .none }
         if curveUnsupportedCount > 0 { return .requiresFullRegen }
         guard !curveSlots.isEmpty else {
             appliedCurveLOD = desired
@@ -299,7 +305,7 @@ public final class CADRendererBridge {
             into: geometryManager,
             entityPrimitiveMap: &entityPrimitiveMap,
             viewportBackground: viewportBackground)
-        guard appliedCount > 0 else { return }
+        _ = appliedCount // empty refresh still settles the LOD key; prevents relaunch spin
         appliedCurveLOD = context
     }
 
