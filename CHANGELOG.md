@@ -53,11 +53,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Real spline export** - DXF/EAB keep true `SPLINE` definitions.
 
 ### Bug Fixes
-- **Imported text width** - TEXT with no authored group 41/51 now inherits the text style
-  width factor/oblique instead of pinning 1.0/0 (AutoCAD "relative X scale" rule, as in
-  AutoCAD web and Open CAD Studio); only explicit values override, and export omits
-  un-authored groups so reimport keeps inheriting. Fixes ~23%-too-narrow legend text under
-  non-1.0 styles such as R80-50 (Vivienda Unifamiliar 2.dwg handle 37BFD).
+- **Imported text width** - TEXT without an authored width factor no longer inherits the style width factor.
 - **TEXT leading/trailing spaces** - DXF group-1/3 values keep significant
   padding instead of trimming it, so alignment spaces survive import (e.g.
   the dash column in Vivienda Unifamiliar 2.dwg handle 37BFD, whose leading

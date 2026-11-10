@@ -794,16 +794,14 @@ final class DXFImportTests: XCTestCase {
         XCTAssertEqual(textCount, 2, "Both TEXT and MTEXT should have dxf.text xdata")
     }
 
-    /// DXF TEXT group 41 (a *relative* X scale factor) and group 51
-    /// (oblique) inherit the text style's width factor/oblique when absent:
-    /// they do NOT pin 1.0/0. The DWG behind this test ("Vivienda
-    /// Unifamiliar 2.dwg", handles 37BF9/37C78) uses style R80-50 with
-    /// width factor 1.3 and its TEXT entities carry no group 41; AutoCAD
-    /// (web), Open CAD Studio, and the ObjectARX "relative X-scale factor"
-    /// wording all agree such TEXT renders at style width (1.3) - Zephyr
-    /// rendering it at 1.0 drew every legend line ~23% too narrow. An
-    /// explicitly authored group 41/51 still overrides the style.
-    func testTextWithoutWidthFactorGroupInheritsStyleWidth() throws {
+    /// DXF TEXT group 41 (relative X scale) defaults to 1.0 and group 51
+    /// (oblique) to 0 when absent - they do NOT inherit the text style's
+    /// width factor/oblique. The DWG behind this test ("Vivienda
+    /// Unifamiliar 2.dwg", handles 37BF9/37C78) has style R80-50 with
+    /// width factor 1.3, but its TEXT entities carry no group 41 and were
+    /// authored to fit their box/table cell at factor 1.0; inheriting 1.3
+    /// rendered them ~30% too wide.
+    func testTextWithoutWidthFactorGroupUsesDXFDefaultNotStyle() throws {
         let dxf = """
         0
         SECTION
@@ -899,25 +897,10 @@ final class DXFImportTests: XCTestCase {
 
         let plain = try XCTUnwrap(entity(forText: "TODOS LOS MATERIALES"))
         XCTAssertEqual(plain.xdata["dxf.textWidthScale"], .double(1.0))
-        XCTAssertEqual(plain.xdata["dxf.textWidthScaleOverride"], .int(0),
-                       "Absent group 41 must inherit the style width factor (R80-50 = 1.3)")
+        XCTAssertEqual(plain.xdata["dxf.textWidthScaleOverride"], .int(1),
+                       "Absent group 41 must be authoritative 1.0, not style factor 1.3")
         XCTAssertEqual(plain.xdata["dxf.textOblique"], .double(0.0))
-        XCTAssertEqual(plain.xdata["dxf.textObliqueOverride"], .int(0))
-        // The resolution rule both renderers share: no entity override,
-        // so the style factor wins.
-        let r8050 = CADTextStyle(
-            name: "R80-50", fontFile: "romans.shx",
-            fixedHeight: 0.08, widthFactor: 1.3)
-        let plainXData: [String: XDataValue] = [
-            "dxf.textWidthScale": .double(1.0),
-            "dxf.textWidthScaleOverride": .int(0),
-            "dxf.textOblique": .double(0.0),
-            "dxf.textObliqueOverride": .int(0),
-        ]
-        let (plainWidth, plainOblique) = CADTextMeasurement.effectiveFactors(
-            xdata: plainXData, isMText: false, textStyle: r8050)
-        XCTAssertEqual(plainWidth, 1.3, accuracy: 1e-12)
-        XCTAssertEqual(plainOblique, 0.0, accuracy: 1e-12)
+        XCTAssertEqual(plain.xdata["dxf.textObliqueOverride"], .int(1))
 
         let explicit = try XCTUnwrap(entity(forText: "SIMBOLO"))
         XCTAssertEqual(explicit.xdata["dxf.textWidthScale"], .double(1.25))
@@ -1017,10 +1000,9 @@ final class DXFImportTests: XCTestCase {
     /// Block TEXT from "Vivienda Unifamiliar 2.dwg" (handles 37BFD/37C78,
     /// style R80-50 = romans.shx): the block bounding box must match the
     /// rendered SHX ink, not the 0.6-height-per-character estimate. 37BFD
-    /// (left, no group 41, so the style width 1.3 applies) advances 1550
-    /// SHX units = 8.8898 world units from its insertion point; the
-    /// estimate reports 4.56, which clips selection, hit-testing, and
-    /// the properties panel.
+    /// (left, no group 41) advances 1550 SHX units = 6.8383 world units from
+    /// its insertion point; the estimate reports 4.56, which clips
+    /// selection, hit-testing, and the properties panel.
     func testBlockTextBoundsMatchRenderedSHXInk() throws {
         let h = 0.0926476727069243
         let dxf = """
@@ -1142,19 +1124,19 @@ final class DXFImportTests: XCTestCase {
         let block = try XCTUnwrap(doc.allBlocks.first { $0.name == "SPECBOX" })
         let box = block.localBoundingBox
 
-        // 37BFD: romans advance sum is 1550 SHX units at cap height 21,
-        // scaled by the inherited style width factor 1.3.
-        let expectedAdvance = 1550.0 / 21.0 * h * 1.3
-        XCTAssertEqual(expectedAdvance, 8.8898, accuracy: 0.001)
+        // 37BFD: romans advance sum is 1550 SHX units at cap height 21.
+        let expectedAdvance = 1550.0 / 21.0 * h
+        XCTAssertEqual(expectedAdvance, 6.8383, accuracy: 0.001)
         let width = box.max.x - box.min.x
-        XCTAssertEqual(width, expectedAdvance, accuracy: 0.15,
+        XCTAssertEqual(width, expectedAdvance, accuracy: 0.1,
                        "Block box must span the SHX pen advance, not the 0.6 estimate (4.56)")
         // Left-aligned ink starts at the insertion point (plus a small
-        // left side bearing) and spans the style-width advance.
+        // left side bearing), and must stay inside the spec box (right
+        // edge x=69.2814 in the real file).
         XCTAssertGreaterThanOrEqual(box.min.x, 62.30792953282248 - 0.01)
         XCTAssertLessThanOrEqual(box.min.x, 62.30792953282248 + 0.1)
-        XCTAssertGreaterThan(box.max.x, 71.0)
-        XCTAssertLessThanOrEqual(box.max.x, 71.3)
+        XCTAssertGreaterThan(box.max.x, 69.0)
+        XCTAssertLessThanOrEqual(box.max.x, 69.2814)
     }
 
     /// Fit (72=5) and Aligned (72=3) TEXT spans the two definition points:

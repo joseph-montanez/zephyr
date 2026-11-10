@@ -223,11 +223,10 @@ final class SHXShapeFontTests: XCTestCase {
     /// Handles 37BF9 / 37C78 of "Vivienda Unifamiliar 2.dwg" (style
     /// R80-50 = romans.shx). Advance sums parsed independently from the
     /// SHX shape definitions: 37BF9 = 1427 units, 37C78 = 447 units
-    /// (cap height 21). These are pure font metrics: the effective width
-    /// factor is decided at import (absent group 41 inherits the style
-    /// width 1.3, so both lines overrun the 6.8791 / 2.1309 geometry the
-    /// authoring tool drew around factor-1.0 advances - AutoCAD renders
-    /// the same overrun).
+    /// (cap height 21). At the entity width factor 1.0 (DXF default for
+    /// an absent group 41) both fit their drawn geometry - the spec box
+    /// leaves 6.8791 from 37BF9's insertion point, 37C78's table cell
+    /// is 2.1309 wide; at the style factor 1.3 neither fits.
     func testRomansAdvanceWidthsForReportedHandles() throws {
         let font = try loadRomans()
         let h = 0.0926476727069243
