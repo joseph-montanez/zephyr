@@ -1057,6 +1057,10 @@ public final class SHXShapeFont: @unchecked Sendable {
         obliqueAngle: Double = 0.0,
         maxWidth: Double? = nil,
         fitWidth: Double? = nil,
+        mirrorX: Bool = false,
+        mirrorY: Bool = false,
+        vertical: Bool = false,
+        lineSpacingFactor: Double = 1.0,
         fillOutline: Bool = true
     ) -> [CADPrimitive] {
         var primitives: [CADPrimitive] = []
@@ -1068,6 +1072,16 @@ public final class SHXShapeFont: @unchecked Sendable {
         let cosR = cos(rotation)
         let sinR = sin(rotation)
         let shear = tan(obliqueAngle * .pi / 180.0)
+        let mx: Double = mirrorX ? -1.0 : 1.0
+        let my: Double = mirrorY ? -1.0 : 1.0
+        let storedSpaceAdvanceEarly = glyphs[0x20]?.advanceX ?? 0.0
+        let spaceAdvanceEarly = Self.resolvedSpaceAdvance(
+            stored: storedSpaceAdvanceEarly,
+            fontHeight: fontHeight)
+        let spacingFactor = max(lineSpacingFactor, 0.01)
+        if vertical {
+            return renderVerticalText(text, origin: origin, height: fitAdjusted.height, rotation: rotation, alignH: fitAdjusted.alignH, alignV: alignV, widthFactor: fitAdjusted.widthFactor, obliqueAngle: obliqueAngle, maxWidth: maxWidth, mirrorX: mirrorX, mirrorY: mirrorY, lineSpacingFactor: spacingFactor, scaleX: scaleX, scaleY: scaleY, cosR: cosR, sinR: sinR, shear: shear, spaceAdvance: spaceAdvanceEarly, fillOutline: fillOutline)
+        }
         let storedSpaceAdvance = glyphs[0x20]?.advanceX ?? 0.0
         let spaceAdvance = Self.resolvedSpaceAdvance(
             stored: storedSpaceAdvance,
@@ -1115,7 +1129,7 @@ public final class SHXShapeFont: @unchecked Sendable {
             finalLines = paragraphs
         }
 
-        let localLineSpacing = 1.666 * fontHeight
+        let localLineSpacing = 1.666 * fontHeight * max(lineSpacingFactor, 0.01)
 
         var blockOffsetY: Double = 0
         switch alignV {
@@ -1299,7 +1313,165 @@ public final class SHXShapeFont: @unchecked Sendable {
                 i += 1
             }
         }
+        if mirrorX || mirrorY {
+            func mirrorPoint(_ p: Vector3) -> Vector3 {
+                let dx = p.x - origin.x
+                let dy = p.y - origin.y
+                let sx0 = dx * cosR + dy * sinR
+                let ly0 = -dx * sinR + dy * cosR
+                let sx = mx * sx0
+                let ly = my * ly0
+                return Vector3(x: origin.x + sx * cosR - ly * sinR, y: origin.y + sx * sinR + ly * cosR, z: p.z)
+            }
+            for idx in primitives.indices {
+                switch primitives[idx] {
+                case .line(let s, let e, let c):
+                    primitives[idx] = .line(start: mirrorPoint(s), end: mirrorPoint(e), color: c)
+                case .fillPolygon(let pts, let c):
+                    primitives[idx] = .fillPolygon(points: pts.map(mirrorPoint), color: c)
+                case .fillComplexPolygon(let o, let h, let c):
+                    primitives[idx] = .fillComplexPolygon(outer: o.map(mirrorPoint), holes: h.map { $0.map(mirrorPoint) }, color: c)
+                default:
+                    break
+                }
+            }
+        }
 
+        return primitives
+    }
+
+    /// Vertical top-to-bottom layout for MTEXT drawing direction 3 (and 5
+    /// with a vertical style): each paragraph is one column, characters stack
+    /// downward, columns advance rightward. Mirrors compose via the same
+    /// post-process as horizontal text.
+    private func renderVerticalText(
+        _ text: String,
+        origin: Vector3,
+        height: Double,
+        rotation: Double,
+        alignH: Int,
+        alignV: Int,
+        widthFactor: Double,
+        obliqueAngle: Double,
+        maxWidth: Double?,
+        mirrorX: Bool,
+        mirrorY: Bool,
+        lineSpacingFactor: Double,
+        scaleX: Double,
+        scaleY: Double,
+        cosR: Double,
+        sinR: Double,
+        shear: Double,
+        spaceAdvance: Double,
+        fillOutline: Bool
+    ) -> [CADPrimitive] {
+        var primitives: [CADPrimitive] = []
+        let mx: Double = mirrorX ? -1.0 : 1.0
+        let my: Double = mirrorY ? -1.0 : 1.0
+        let pitch = max(fontHeight * max(lineSpacingFactor, 0.01), 1e-9)
+        let columns = text.components(separatedBy: "\n")
+        var colWidths: [Double] = []
+        var colScalars: [[Unicode.Scalar]] = []
+        colScalars.reserveCapacity(columns.count)
+        for col in columns {
+            let scalars = Array(col.unicodeScalars)
+            colScalars.append(scalars)
+            var w = 0.0
+            for s in scalars {
+                let cp = Int(s.value)
+                if cp == 0x20 { w = max(w, spaceAdvance) }
+                else if cp == 0x09 { w = max(w, 4.0 * fontHeight) }
+                else if let g = glyphs[cp] { w = max(w, g.advanceX) }
+                else { w = max(w, spaceAdvance) }
+            }
+            if scalars.isEmpty { w = spaceAdvance * 0.5 }
+            colWidths.append(w)
+        }
+        let gap = spaceAdvance
+        var totalW = 0.0
+        for (i, w) in colWidths.enumerated() {
+            totalW += w
+            if i < colWidths.count - 1 { totalW += gap }
+        }
+        let maxRows = colScalars.map(\.count).max() ?? 0
+        var baseX: Double = 0
+        switch alignH {
+        case 1, 3, 4, 5: baseX = -totalW * 0.5
+        case 2: baseX = -totalW
+        default: baseX = 0
+        }
+        var baseTop: Double = 0
+        let totalH = max(Double(max(maxRows, 1)) - 1.0, 0.0) * pitch + fontHeight
+        switch alignV {
+        case 1: baseTop = totalH - 0.2 * fontHeight
+        case 2: baseTop = totalH * 0.5 - 0.5 * fontHeight
+        case 3: baseTop = -fontHeight
+        default:
+            if alignH == 4 { baseTop = totalH * 0.5 - 0.5 * fontHeight }
+            else { baseTop = Double(max(maxRows, 1) - 1) * pitch }
+        }
+        func emitGlyph(_ codePoint: Int, atX: Double, lineOff: Double) {
+            if codePoint == 0x0A || codePoint == 0x0D { return }
+            if codePoint == 0x20 || codePoint == 0x09 { return }
+            guard let glyph = glyphs[codePoint] else { return }
+            if fillOutline && self.isOutlineFont && !glyph.filledPolygons.isEmpty {
+                for poly in glyph.filledPolygons {
+                    let worldOuter = poly.outer.map { pt -> Vector3 in
+                        let lx = (atX + pt.x) * scaleX
+                        let ly = -(lineOff + pt.y) * scaleY
+                        let sx = lx - ly * shear
+                        let wx = origin.x + sx * cosR - ly * sinR
+                        let wy = origin.y + sx * sinR + ly * cosR
+                        return Vector3(x: wx, y: wy, z: origin.z)
+                    }
+                    primitives.append(.fillPolygon(points: worldOuter))
+                }
+                for seg in glyph.openSegments {
+                    let lx1 = (atX + seg.x1) * scaleX
+                    let ly1 = -(lineOff + seg.y1) * scaleY
+                    let lx2 = (atX + seg.x2) * scaleX
+                    let ly2 = -(lineOff + seg.y2) * scaleY
+                    let sx1 = lx1 - ly1 * shear
+                    let sx2 = lx2 - ly2 * shear
+                    primitives.append(.line(start: Vector3(x: origin.x + sx1 * cosR - ly1 * sinR, y: origin.y + sx1 * sinR + ly1 * cosR, z: origin.z), end: Vector3(x: origin.x + sx2 * cosR - ly2 * sinR, y: origin.y + sx2 * sinR + ly2 * cosR, z: origin.z)))
+                }
+            } else {
+                for seg in glyph.segments {
+                    let lx1 = (atX + seg.x1) * scaleX
+                    let ly1 = -(lineOff + seg.y1) * scaleY
+                    let lx2 = (atX + seg.x2) * scaleX
+                    let ly2 = -(lineOff + seg.y2) * scaleY
+                    let sx1 = lx1 - ly1 * shear
+                    let sx2 = lx2 - ly2 * shear
+                    primitives.append(.line(start: Vector3(x: origin.x + sx1 * cosR - ly1 * sinR, y: origin.y + sx1 * sinR + ly1 * cosR, z: origin.z), end: Vector3(x: origin.x + sx2 * cosR - ly2 * sinR, y: origin.y + sx2 * sinR + ly2 * cosR, z: origin.z)))
+                }
+            }
+        }
+        var cursorX = baseX
+        for (ci, scalars) in colScalars.enumerated() {
+            for (ri, scalar) in scalars.enumerated() {
+                let lineOff = baseTop - Double(ri) * pitch
+                emitGlyph(Int(scalar.value), atX: cursorX, lineOff: lineOff)
+            }
+            cursorX += colWidths[ci] + (ci < colWidths.count - 1 ? gap : 0)
+        }
+        if mirrorX || mirrorY {
+            func mirrorPoint(_ p: Vector3) -> Vector3 {
+                let dx = p.x - origin.x
+                let dy = p.y - origin.y
+                let sx0 = dx * cosR + dy * sinR
+                let ly0 = -dx * sinR + dy * cosR
+                return Vector3(x: origin.x + mx * sx0 * cosR - my * ly0 * sinR, y: origin.y + mx * sx0 * sinR + my * ly0 * cosR, z: p.z)
+            }
+            for idx in primitives.indices {
+                switch primitives[idx] {
+                case .line(let s, let e, let c): primitives[idx] = .line(start: mirrorPoint(s), end: mirrorPoint(e), color: c)
+                case .fillPolygon(let pts, let c): primitives[idx] = .fillPolygon(points: pts.map(mirrorPoint), color: c)
+                case .fillComplexPolygon(let o, let h, let c): primitives[idx] = .fillComplexPolygon(outer: o.map(mirrorPoint), holes: h.map { $0.map(mirrorPoint) }, color: c)
+                default: break
+                }
+            }
+        }
         return primitives
     }
 
@@ -1318,7 +1490,11 @@ public final class SHXShapeFont: @unchecked Sendable {
         alignH: Int = 0,
         alignV: Int = 0,
         maxWidth: Double? = nil,
-        fitWidth: Double? = nil
+        fitWidth: Double? = nil,
+        mirrorX: Bool = false,
+        mirrorY: Bool = false,
+        vertical: Bool = false,
+        lineSpacingFactor: Double = 1.0
     ) -> (minX: Double, maxX: Double, minY: Double, maxY: Double)? {
         guard !text.isEmpty, height.isFinite, height > 0 else { return nil }
         let prims = renderText(
@@ -1331,7 +1507,11 @@ public final class SHXShapeFont: @unchecked Sendable {
             widthFactor: widthFactor,
             obliqueAngle: obliqueAngle,
             maxWidth: maxWidth,
-            fitWidth: fitWidth)
+            fitWidth: fitWidth,
+            mirrorX: mirrorX,
+            mirrorY: mirrorY,
+            vertical: vertical,
+            lineSpacingFactor: lineSpacingFactor)
         var minX = Double.infinity
         var minY = Double.infinity
         var maxX = -Double.infinity
@@ -1651,7 +1831,19 @@ public final class SHXShapeFont: @unchecked Sendable {
                 }
                 let fitWidth = max(0.0, candidateWidth - separatorWidth)
 
-                if currentHasText && fitWidth > availableWidth {
+                // Overlong leading whitespace keeps its own (invisible) line slot:
+                // AutoCAD wraps a leading space run that already exceeds the
+                // reference width onto its own line instead of collapsing it,
+                // so the following words sit one slot lower (MTEXT 65B
+                // "spc def", MTEXT 567 "abc abcd"). Fitting indent is still
+                // kept on the first word's line.
+                let leadingOverflow = !currentHasText
+                    && !current.isEmpty
+                    && lineAdvance(
+                        current,
+                        lineLeft: currentLeft,
+                        tabStops: tabStops) > availableWidth
+                if (currentHasText && (fitWidth > availableWidth || separatorWidth > availableWidth)) || leadingOverflow {
                     lines.append(FormattedLineLayout(
                         glyphs: current,
                         alignment: paragraph.alignment,

@@ -77,6 +77,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **MCP port failure** - a busy `--mcp-port` exits with an error instead of silently disabling.
 - **Overlapping picks** - clicking stacked objects shows a choice list again.
 - **Zoom extents after scripts** - extents refresh correctly after Lisp/MCP edits.
+- **Wrapped MTEXT leading spaces** - a leading space run wider than the reference width now keeps its own invisible line instead of collapsing, so following words land on AutoCAD's line slots.
 
 ### Maintenance
 - **Code cleanup** - split up the REVCLOUD file and shared dimension picking; no behavior change.
