@@ -682,8 +682,8 @@ internal final class EngineInputHandler {
             // Windows/Linux: Control key (SDL_KMOD_CTRL) triggers shortcuts.
             let keyMod = UInt32(e.key.mod)
             #if os(macOS)
-            let ctrlHeld = (engine.io != nil && engine.io.pointee.KeySuper)
-                || (keyMod & SDL_KMOD_GUI) != 0
+            let ctrlHeld = (engine.io != nil && (engine.io.pointee.KeySuper || engine.io.pointee.KeyCtrl))
+                || (keyMod & SDL_KMOD_GUI) != 0 || (keyMod & SDL_KMOD_CTRL) != 0
             #else
             let ctrlHeld = (engine.io != nil && engine.io.pointee.KeyCtrl)
                 || (keyMod & SDL_KMOD_CTRL) != 0
@@ -701,6 +701,8 @@ internal final class EngineInputHandler {
             }
 
             // ── Ctrl/Cmd + key shortcuts (don't open command line) ──
+            let shiftHeld = (engine.io != nil && engine.io.pointee.KeyShift)
+                || (keyMod & SDL_KMOD_SHIFT) != 0
             if ctrlHeld {
                 switch e.key.scancode {
                 case SDL_SCANCODE_Z:
@@ -733,13 +735,13 @@ internal final class EngineInputHandler {
                     _ = engine.tabManager.newTab()
                     engine.zoomExtents()
                 case SDL_SCANCODE_W:
-                    if engine.io.pointee.KeyShift {
+                    if shiftHeld {
                         engine.commandProcessor.executeCommand("CLOSEALL")
                     } else {
                     _ = engine.tabManager.requestCloseActiveTab()
                     }
                 case SDL_SCANCODE_S:
-                    if engine.io.pointee.KeyShift {
+                    if shiftHeld {
                         showNativeSaveDialog()
                     } else {
                         engine.tabManager.startSaveActiveTab()
@@ -750,13 +752,13 @@ internal final class EngineInputHandler {
                         }
                     }
                 case SDL_SCANCODE_C:
-                    if engine.io.pointee.KeyShift {
+                    if shiftHeld {
                         engine.commandProcessor.executeCommand("COPYBASE")
                     } else {
                         engine.commandProcessor.executeCommand("COPYCLIP")
                     }
                 case SDL_SCANCODE_V:
-                    if engine.io.pointee.KeyShift {
+                    if shiftHeld {
                         engine.commandProcessor.executeCommand("PASTEBLOCK")
                     } else if engine.commandProcessor.clipboard.hasEntities {
                         engine.commandProcessor.executeCommand("PASTECLIP")
@@ -779,7 +781,7 @@ internal final class EngineInputHandler {
                     engine.commandProcessor.executeCommand(
                         engine.ui.cleanScreenActive ? "CLEANSCREENOFF" : "CLEANSCREENON")
                 case SDL_SCANCODE_P:
-                    if engine.io.pointee.KeyShift {
+                    if shiftHeld {
                         engine.commandProcessor.executeCommand("PDFIMPORT")
                     } else {
                         engine.commandProcessor.executeCommand("PLOT")

@@ -90,7 +90,9 @@
           (zr-sub "Clipboard"
             (list
               (zr-item "COPYCLIP" "Copy" nil)
+              (zr-item "COPYBASE" "Copy with Base Point" nil)
               (zr-item "PASTECLIP" "Paste" nil)
+              (zr-item "PASTEBLOCK" "Paste as Block" nil)
               (zr-item "PASTEORIG" "Paste to Original Coordinates" nil)))
           (zr-sep)
           (zr-item "MATCHPROP" "Match Properties" (list (zr-enable (zr-sel 1))))

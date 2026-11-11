@@ -323,11 +323,11 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "ALIGN",      aliases: ["AL"],             category: .modify,  syntax: "", description: "Align objects by matching two pairs of points (move, rotate, optionally scale)"),
         CommandDescriptor(canonicalName: "ERASE",      aliases: ["E"],             category: .modify,  syntax: "", description: "Delete all currently selected entities"),
         CommandDescriptor(canonicalName: "COPY",       aliases: ["CO", "CP"],      category: .modify,  syntax: "", description: "Duplicate selected entities within the drawing"),
-        CommandDescriptor(canonicalName: "COPYCLIP",   aliases: [],                category: .modify,  syntax: "", description: "Copy selected entities to clipboard"),
-        CommandDescriptor(canonicalName: "COPYBASE",   aliases: [],                category: .modify,  syntax: "", description: "Copy selected entities to clipboard with a base point"),
-        CommandDescriptor(canonicalName: "PASTECLIP",  aliases: [],                category: .modify,  syntax: "", description: "Paste clipboard entities at viewport center"),
+        CommandDescriptor(canonicalName: "COPYCLIP",   aliases: [],                category: .modify,  syntax: "", description: "Copy selected entities to clipboard (Ctrl+C)"),
+        CommandDescriptor(canonicalName: "COPYBASE",   aliases: [],                category: .modify,  syntax: "", description: "Copy selected entities to clipboard with a base point (Ctrl+Shift+C)"),
+        CommandDescriptor(canonicalName: "PASTECLIP",  aliases: [],                category: .modify,  syntax: "", description: "Paste clipboard entities at a picked insertion point (Ctrl+V)"),
         CommandDescriptor(canonicalName: "PASTEORIG",  aliases: [],                category: .modify,  syntax: "", description: "Paste clipboard entities at original coordinates"),
-        CommandDescriptor(canonicalName: "PASTEBLOCK", aliases: [],                category: .modify,  syntax: "", description: "Paste clipboard entities as a new block"),
+        CommandDescriptor(canonicalName: "PASTEBLOCK", aliases: [],                category: .modify,  syntax: "", description: "Paste clipboard entities as a new anonymous block (Ctrl+Shift+V)"),
         CommandDescriptor(canonicalName: "CLEANSPECKLES", aliases: ["CS", "SPECKLES"], category: .modify, syntax: "", description: "Remove tiny/speckle entities from the drawing"),
         CommandDescriptor(canonicalName: "TEXTEDIT",   aliases: ["DDEDIT", "ED", "TEDIT"], category: .modify, syntax: "", description: "Edit text, multiline text, and attribute values"),
         CommandDescriptor(canonicalName: "DRAWORDER",  aliases: ["DR"],            category: .modify,  syntax: "[Above/Under/Front/Back]", description: "Change the draw order of selected entities"),
@@ -1203,6 +1203,25 @@ public final class CADCommandProcessor {
         // If a command is active waiting for additional input, handle it here.
         if let cmd = activeCommand {
             switch cmd {
+            case "COPYBASE" where !isSelectingObjects:
+                guard let engine = engine,
+                      engine.cadSelection.hasSelection
+                else {
+                    clearCommand()
+                    return
+                }
+                guard let point = InsertCommand.parsePoint(
+                    text.trimmingCharacters(in: .whitespacesAndNewlines))
+                else {
+                    commandPrompt =
+                        "Point or option keyword required. Specify base point:"
+                    return
+                }
+                let copied = captureSelectionToClipboard(
+                    engine: engine, basePoint: point)
+                print("[CAD] Copied \(copied) entities to clipboard with base point.")
+                clearCommand()
+                return
             case "BLOCK":
                 if let engine = engine, !upper.isEmpty {
                     let block = engine.document.createBlockFromEntities(
@@ -1703,8 +1722,8 @@ public final class CADCommandProcessor {
                 startCommand("COPYCLIP", prompt: "Select objects to copy to clipboard, then press Enter", selectingObjects: true)
                 return
             }
-            captureToClipboard(engine: engine)
-            print("[CAD] Copied \(engine.cadSelection.selectedHandles.count) entities to clipboard.")
+            let copied = captureSelectionToClipboard(engine: engine)
+            print("[CAD] Copied \(copied) entities to clipboard.")
             clearCommand()
 
         case "COPYBASE":
@@ -1743,34 +1762,39 @@ public final class CADCommandProcessor {
             print("[CAD] Copied \(newHandles.count) entities. Specify destination.")
 
         case "PASTECLIP":
+            guard engine != nil else { clearCommand(); return }
+            guard clipboard.entry != nil else {
+                print("[CAD] Clipboard is empty. Use COPYCLIP or COPYBASE first.")
+                clearCommand()
+                break
+            }
+            clearCommand()
+            activateFeatureCommand(PasteCommand(mode: .clip))
+
+        case "PASTEORIG":
             guard let engine = engine else { clearCommand(); return }
             guard let entry = clipboard.entry else {
                 print("[CAD] Clipboard is empty. Use COPYCLIP or COPYBASE first.")
                 clearCommand()
                 break
             }
-            pasteFromClipboard(engine: engine, at: .center, basePoint: entry.basePoint)
-            clearCommand()
-
-        case "PASTEORIG":
-            guard let engine = engine else { clearCommand(); return }
-            guard clipboard.entry != nil else {
-                print("[CAD] Clipboard is empty. Use COPYCLIP or COPYBASE first.")
-                clearCommand()
-                break
+            let pasted = engine.document.importClipboardEntry(entry, mode: .original)
+            engine.cadSelection.clearSelection()
+            for handle in pasted.handles {
+                engine.cadSelection.addToSelection(handle)
             }
-            pasteFromClipboard(engine: engine, at: .original, basePoint: nil)
+            print("[CAD] Pasted \(pasted.handles.count) entities at original coordinates.")
             clearCommand()
 
         case "PASTEBLOCK":
-            guard let engine = engine else { clearCommand(); return }
+            guard engine != nil else { clearCommand(); return }
             guard clipboard.entry != nil else {
                 print("[CAD] Clipboard is empty. Use COPYCLIP or COPYBASE first.")
                 clearCommand()
                 break
             }
-            pasteFromClipboardAsBlock(engine: engine)
             clearCommand()
+            activateFeatureCommand(PasteCommand(mode: .block))
 
         case "SELALL", "SELECTALL":
             engine?.selectAll()
@@ -4075,8 +4099,8 @@ public final class CADCommandProcessor {
             engine.deleteSelected()
             clearCommand()
         case "COPYCLIP":
-            captureToClipboard(engine: engine)
-            print("[CAD] Copied \(engine.cadSelection.selectedHandles.count) entities to clipboard.")
+            let copied = captureSelectionToClipboard(engine: engine)
+            print("[CAD] Copied \(copied) entities to clipboard.")
             clearCommand()
         case "COPYBASE":
             commandPrompt = "Specify base point"
@@ -4116,8 +4140,8 @@ public final class CADCommandProcessor {
                 clearCommand()
                 return
             }
-            captureToClipboard(engine: engine, basePoint: Vector3(x: worldX, y: worldY, z: 0))
-            print("[CAD] Copied \(engine.cadSelection.selectedHandles.count) entities to clipboard with base point.")
+            let copied = captureSelectionToClipboard(engine: engine, basePoint: Vector3(x: worldX, y: worldY, z: 0))
+            print("[CAD] Copied \(copied) entities to clipboard with base point.")
             clearCommand()
 
         case "MOVE":
@@ -4286,216 +4310,23 @@ public final class CADCommandProcessor {
         _moveGhostWorldY = base.1 + dy
     }
 
-    // MARK: - Clipboard Helpers
+    // MARK: - Clipboard Capture
 
-    /// Paste location mode.
-    private enum PasteLocation {
-        /// Place at viewport center (PASTECLIP).
-        case center
-        /// Place at original world coordinates (PASTEORIG).
-        case original
-    }
-
-    /// Capture selected entities plus their block definitions into the internal clipboard.
-    private func captureToClipboard(engine: PhrostEngine, basePoint: Vector3? = nil) {
-        let handles = engine.cadSelection.selectedHandles
-        var entities: [CADEntity] = []
-        var blocks: [UUID: CADBlock] = [:]
-
-        for handle in handles {
-            guard let entity = engine.document.entity(for: handle) else { continue }
-            entities.append(entity)
-
-            // Collect referenced block definitions
-            if let bid = entity.blockID, let block = engine.document.block(for: bid) {
-                blocks[bid] = block
-            }
-        }
-
-        clipboard.entry = CADClipboardEntry(
-            entities: entities,
-            blocks: blocks,
-            basePoint: basePoint
-        )
-    }
-
-    /// Paste clipboard entities into the current document.
-    private func pasteFromClipboard(
-        engine: PhrostEngine,
-        at location: PasteLocation,
-        basePoint: Vector3?
-    ) {
-        guard let entry = clipboard.entry else { return }
-
-        // Determine the offset: for PASTECLIP, offset so the content lands at viewport center.
-        // For PASTEORIG, no offset (entities keep original world coords).
-        let offset: Vector3
-        if location == .center {
-            let vp = engine.camera.worldViewportRect(
-                windowWidth: engine.windowWidth,
-                windowHeight: engine.windowHeight)
-            let viewCenter = Vector3(
-                x: (vp.minX + vp.maxX) / 2,
-                y: (vp.minY + vp.maxY) / 2,
-                z: 0)
-            let contentCenter: Vector3
-            if let bp = basePoint {
-                contentCenter = bp
-            } else {
-                // Compute bounding center of clipboard entities
-                var minX = Double.infinity, minY = Double.infinity
-                var maxX = -Double.infinity, maxY = -Double.infinity
-                for entity in entry.entities {
-                    if let bb = entity.worldBoundingBox {
-                        minX = min(minX, bb.min.x)
-                        minY = min(minY, bb.min.y)
-                        maxX = max(maxX, bb.max.x)
-                        maxY = max(maxY, bb.max.y)
-                    }
-                }
-                if minX.isFinite {
-                    contentCenter = Vector3(x: (minX + maxX) / 2, y: (minY + maxY) / 2, z: 0)
-                } else {
-                    contentCenter = .zero
-                }
-            }
-            offset = Vector3(
-                x: viewCenter.x - contentCenter.x,
-                y: viewCenter.y - contentCenter.y,
-                z: 0)
-        } else {
-            offset = .zero
-        }
-
-        // Add blocks first (deduplicated by UUID)
-        for (_, block) in entry.blocks {
-            if engine.document.block(for: block.handle) == nil {
-                engine.document.addBlock(block)
-            }
-        }
-
-        // Duplicate entities with offset (generate new UUIDs for each pasted entity)
-        // We directly create copies from clipboard entries (not from document)
-        var newHandles = Set<UUID>()
-        for entity in entry.entities {
-            var e = entity
-            // Generate new handle
-            e = CADEntity(
-                handle: UUID(),
-                layerID: entity.layerID,
-                blockID: entity.blockID,
-                localGeometry: entity.localGeometry,
-                dimensionMetadata: entity.dimensionMetadata,
-                leaderData: entity.leaderData,
-                arrayData: entity.arrayData,
-                transform: entity.transform,
-                xdata: entity.xdata,
-                drawOrder: entity.drawOrder
-            )
-            // Apply offset
-            var t = e.transform
-            t.position = Vector3(
-                x: t.position.x + offset.x,
-                y: t.position.y + offset.y,
-                z: t.position.z + offset.z
-            )
-            e.transform = t
-            engine.document.addEntity(e)
-            newHandles.insert(e.handle)
-        }
-
-        // Select the new entities
-        engine.cadSelection.clearSelection()
-        for h in newHandles {
-            engine.cadSelection.addToSelection(h)
-        }
-
-        let mode = location == .original ? "at original coordinates" : "from clipboard"
-        print("[CAD] Pasted \(newHandles.count) entities \(mode).")
-    }
-
-    /// Paste clipboard entities as a new block reference at viewport center.
-    private func pasteFromClipboardAsBlock(engine: PhrostEngine) {
-        guard let entry = clipboard.entry else { return }
-
-        // Collect world-space geometry from clipboard entities
-        var worldGeom: [CADPrimitive] = []
-        var minX = Double.infinity, minY = Double.infinity
-        var maxX = -Double.infinity, maxY = -Double.infinity
-
-        for entity in entry.entities {
-            if let bb = entity.worldBoundingBox {
-                minX = min(minX, bb.min.x)
-                minY = min(minY, bb.min.y)
-                maxX = max(maxX, bb.max.x)
-                maxY = max(maxY, bb.max.y)
-            }
-
-            let prims: [CADPrimitive]
-            if let bid = entity.blockID, let block = entry.blocks[bid] {
-                prims = block.geometry
-            } else if let local = entity.localGeometry {
-                prims = local
-            } else {
-                continue
-            }
-            let transformed = CADGeometryMath.transformPrimitives(prims, by: entity.transform)
-            worldGeom.append(contentsOf: transformed)
-        }
-
-        guard !worldGeom.isEmpty else {
-            print("[CAD] PASTEBLOCK: no geometry on clipboard.")
-            return
-        }
-
-        // Compute center of clipboard content
-        let contentCenter = Vector3(
-            x: minX.isFinite ? (minX + maxX) / 2 : 0,
-            y: minY.isFinite ? (minY + maxY) / 2 : 0,
-            z: 0)
-
-        // Transform to block-local space (relative to content center)
-        let invTransform = Transform3D.translated(
-            by: Vector3(x: -contentCenter.x, y: -contentCenter.y, z: -contentCenter.z))
-        let localGeom = CADGeometryMath.transformPrimitives(worldGeom, by: invTransform)
-
-        // Create block definition with a unique name
-        var blockName = "PasteBlock"
-        var suffix = 1
-        let existingNames = Set(engine.document.allBlocks.map { $0.name })
-        while existingNames.contains(blockName) {
-            suffix += 1
-            blockName = "PasteBlock_\(suffix)"
-            if suffix > 999 { break }
-        }
-        var block = CADBlock(name: blockName, geometry: localGeom)
-        block.updateBoundingBox()
-        engine.document.addBlock(block)
-
-        // Determine insertion point: viewport center
-        let vp = engine.camera.worldViewportRect(
-            windowWidth: engine.windowWidth,
-            windowHeight: engine.windowHeight)
-        let viewCenter = Vector3(
-            x: (vp.minX + vp.maxX) / 2,
-            y: (vp.minY + vp.maxY) / 2,
-            z: 0)
-
-        // Create block instance
-        let layerID = engine.document.activeLayerID
-            ?? engine.document.allLayers.first?.handle
-            ?? UUID()
-        let instance = CADEntity(
-            layerID: layerID,
-            blockID: block.handle,
-            localGeometry: nil,
-            transform: Transform3D.translated(by: viewCenter)
-        )
-        engine.document.addEntity(instance)
-        engine.cadSelection.select(instance.handle)
-
-        print("[CAD] Pasted \(entry.entities.count) entities as block '\(blockName)'.")
+    /// Snapshot the current selection into the clipboard entry (see
+    /// CADClipboardCapture / CADDocument.importClipboardEntry). COPYCLIP
+    /// anchors at the selection lower-left; COPYBASE supplies the picked
+    /// or typed base point. Preserves the previous entry when nothing
+    /// usable was selected. Returns the captured entity count.
+    @discardableResult
+    private func captureSelectionToClipboard(
+        engine: PhrostEngine, basePoint: Vector3? = nil
+    ) -> Int {
+        guard let entry = CADClipboardCapture.capture(
+            from: engine.document,
+            handles: engine.cadSelection.selectedHandles,
+            basePointOverride: basePoint)
+        else { return 0 }
+        clipboard.entry = entry
+        return entry.entities.count
     }
 }
-
-

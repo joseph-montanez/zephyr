@@ -3,43 +3,87 @@ import Foundation
 // =========================================================================
 // MARK: - CADClipboard
 //
-// Internal clipboard for CAD entity copy/paste operations. Mimics AutoCAD's
-// Windows clipboard behavior but stays entirely in-process — no OS clipboard
-// serialization of CAD geometry is required.
+// In-process clipboard for CAD copy/paste across document tabs. There is
+// one engine and one command processor, so the entry survives tab switches
+// (see TabManager.switchToTab). No OS clipboard serialization: geometry
+// stays as value-type CADEntity/CADBlock copies.
 //
-//   - COPYCLIP  → snapshots selected entities + block defs into `entry`
-//   - COPYBASE  → same, but also stores a basePoint for aligned pasting
-//   - PASTECLIP → duplicates entities from entry, places at viewport center
-//   - PASTEORIG → duplicates entities, keeps original world coordinates
-//   - PASTEBLOCK→ pastes entities bundled into a new block definition
+//   - COPYCLIP  → snapshots selection; anchor = lower-left of bounds
+//   - COPYBASE  → same, but anchor = picked base point
+//   - PASTECLIP → interactive insertion-point prompt, ghost at cursor
+//   - PASTEORIG → duplicates at (unit-scaled) original coordinates
+//   - PASTEBLOCK→ bundles the entry into one anonymous *A block
+//
+// Cross-document paste remaps by NAME (target wins), never by UUID:
+// layers, blocks, and styles resolve case-insensitively against the
+// target document; missing definitions are imported. See
+// CADClipboardImport for the single commit path.
 // =========================================================================
 
 // MARK: - CADClipboardEntry
 
-/// A single clipboard entry: copied entities, their block definitions,
-/// and an optional base point for alignment.
+/// A single clipboard entry: copied entities plus every definition needed
+/// to paste them into a different document and render identically.
 public struct CADClipboardEntry: Sendable {
     /// Deep-copied entities captured at COPYCLIP/COPYBASE time.
-    /// Each entity still has its original UUID handle — these are regenerated
-    /// at paste time by `CADDocument.duplicateEntities`.
+    /// Handles are source-document handles — regenerated at paste time.
     public let entities: [CADEntity]
 
     /// Block definitions referenced by the copied entities.
-    /// Keyed by original block UUID — remapped at paste time.
+    /// Keyed by source-document block handle — remapped at paste time.
     public let blocks: [UUID: CADBlock]
 
-    /// Optional base point. Set by COPYBASE; nil for COPYCLIP.
-    /// When non-nil, pasted entities are offset so this point lands at the
-    /// paste insertion point.
-    public let basePoint: Vector3?
+    /// Layers referenced by the copied entities (entity layers plus any
+    /// layers named by block primitive styles). Keyed by source handle.
+    public let layers: [UUID: Layer]
+
+    /// Named styles referenced by the copied content. Merged skip-if-exists
+    /// (same rule as DrawingFileInsert.mergeBundleSymbols).
+    public let textStyles: [String: CADTextStyle]
+    public let dimensionStyles: [String: CADDimensionStyle]
+    public let leaderStyles: [String: CADLeaderStyle]
+    /// Linetype patterns, keyed by uppercased name (document convention).
+    public let linetypePatterns: [String: [Double]]
+
+    /// Image assets + referenced-media definitions used by the content.
+    public let imageAssets: [String: CADImageAsset]
+    public let imageDefinitions: [String: CADImageDefinition]
+    public let pdfDefinitions: [String: CADPdfDefinition]
+
+    /// Source drawing unit for INSUNITS scaling at paste time.
+    /// Nil (unspecified) pastes 1:1 like CADModelSpaceBaker.unitScale.
+    public let sourceUnit: CADUnit?
+
+    /// Anchor in source world coordinates. COPYBASE stores the picked
+    /// point; COPYCLIP stores the lower-left of the selection bounds.
+    /// Pasted entities offset so this point lands at the insertion point.
+    public let basePoint: Vector3
 
     public init(
         entities: [CADEntity],
-        blocks: [UUID: CADBlock],
-        basePoint: Vector3? = nil
+        blocks: [UUID: CADBlock] = [:],
+        layers: [UUID: Layer] = [:],
+        textStyles: [String: CADTextStyle] = [:],
+        dimensionStyles: [String: CADDimensionStyle] = [:],
+        leaderStyles: [String: CADLeaderStyle] = [:],
+        linetypePatterns: [String: [Double]] = [:],
+        imageAssets: [String: CADImageAsset] = [:],
+        imageDefinitions: [String: CADImageDefinition] = [:],
+        pdfDefinitions: [String: CADPdfDefinition] = [:],
+        sourceUnit: CADUnit? = nil,
+        basePoint: Vector3
     ) {
         self.entities = entities
         self.blocks = blocks
+        self.layers = layers
+        self.textStyles = textStyles
+        self.dimensionStyles = dimensionStyles
+        self.leaderStyles = leaderStyles
+        self.linetypePatterns = linetypePatterns
+        self.imageAssets = imageAssets
+        self.imageDefinitions = imageDefinitions
+        self.pdfDefinitions = pdfDefinitions
+        self.sourceUnit = sourceUnit
         self.basePoint = basePoint
     }
 }

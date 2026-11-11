@@ -48,6 +48,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **LAYOUT SAveas** - duplicates the current layout under a new name; template-file export is still pending.
 - **MEASUREGEOM Angle mode** - three-click vertex/first/second angle with an arc overlay (`N` hotkey, `AN` keyword, prompt chip).
 - **WBLOCK file export** - DXF or DWG output chosen by extension (DWG via ODA), native save dialog with the extension auto-applied, object selections shifted to the origin with pruned symbol tables and dimension-aware shifting, noun/verb preselection, Enter/Space step confirmation, block-reference picking, xref refusal, and object snaps for the base point.
+- **Cross-tab clipboard** - `COPYCLIP` / `COPYBASE` / `PASTECLIP` / `PASTEBLOCK` now work across open drawings: layers, blocks, and styles resolve by name with the target drawing winning collisions, anonymous blocks clone per paste, attributes/text styles/images/units carry over, and one paste is one Undo; `PASTECLIP` / `PASTEBLOCK` prompt for an insertion point with a cursor ghost and accept typed `x,y[,z]`, `COPYBASE` accepts a snapped click or typed base point, and `PASTEORIG` keeps original coordinates. `Ctrl+C` / `Ctrl+Shift+C` / `Ctrl+V` / `Ctrl+Shift+V` read the event modifier state (physical Ctrl counts on macOS).
 
 ### DXF & File Formats
 - **Mirrored geometry round-trips** - mirrored blocks and arcs survive save and reopen.
@@ -81,6 +82,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Wrapped MTEXT leading spaces** - a leading space run wider than the reference width now keeps its own invisible line instead of collapsing, so following words land on AutoCAD's line slots.
 - **Distributed MTEXT paragraphs** - text with the 70=1/71=2/72=2 columns marker (text.dxf "Xxp     pxX") now spreads across the reference width like AutoCAD instead of packing left, so trailing words land in their boxes.
 - **AutoLISP crash while a script runs** - running an AutoLISP function in a document no longer crashes the app: every document read and write now serializes on the document lock, so the per-frame status bar and the background evaluator cannot race on the entity registry.
+- **Cross-tab paste left invisible geometry** - pasting into another drawing no longer lands entities on layers the target drawing does not have; layers, blocks, and styles are remapped by name (target wins) and missing definitions are imported, so pasted content renders and picks immediately.
 
 ### Maintenance
 - **Code cleanup** - split up the REVCLOUD file and shared dimension picking; no behavior change.
