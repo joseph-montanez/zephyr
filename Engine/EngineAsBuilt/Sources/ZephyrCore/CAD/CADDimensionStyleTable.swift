@@ -10,13 +10,15 @@ public extension CADDocument {
     /// Case-insensitive lookup with a Standard fallback, mirroring
     /// textStyle(named:) / leaderStyle(named:).
     func dimensionStyle(named name: String) -> CADDimensionStyle {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let key = dimensionStyles.keys.first(where: {
-            $0.caseInsensitiveCompare(trimmed) == .orderedSame
-        }) {
-            return dimensionStyles[key] ?? .default
+        return documentLock.withLock {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let key = dimensionStyles.keys.first(where: {
+                $0.caseInsensitiveCompare(trimmed) == .orderedSame
+            }) {
+                return dimensionStyles[key] ?? .default
+            }
+            return .default
         }
-        return .default
     }
 
     /// Canonical stored key for a name, or "Standard" when absent.
@@ -61,6 +63,7 @@ public extension CADDocument {
     /// Returns false for blank names. Mirrors applyTextStyle/applyLeaderStyle.
     @discardableResult
     func applyDimensionStyle(_ style: CADDimensionStyle, replacing originalName: String? = nil) -> Bool {
+        return documentLock.withLock {
         let trimmed = style.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         var style = style
@@ -81,6 +84,7 @@ public extension CADDocument {
         dimensionStyles[trimmed] = style
         markEdited(regenerate: true)
         return true
+        }
     }
 
     /// Delete a style, re-pointing its dimensions at Standard. Standard

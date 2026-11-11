@@ -1586,13 +1586,13 @@ public final class EngineLoopController {
                 return entity
             }
         } else {
-            visibleEntities = engine.document.entitiesView.filter { entity in
+            visibleEntities = engine.document.withEntities { $0.filter { entity in
                 if interaction.gripActive, let gripHandle = interaction.gripHandle, entity.handle == gripHandle { return false }
                 if interaction.dragActive, engine.cadSelection.selectedHandles.contains(entity.handle) { return false }
                 guard !engine.document.isIsolatedHidden(entity.handle) else { return false }
                 guard let layer = engine.document.layer(for: entity.layerID) else { return false }
                 return LayerAccess.isSnappable(layer)
-            }
+            } }
         }
 
         let discreteAnchorSnap = engine.snap.snapEngine.nearestSnap(

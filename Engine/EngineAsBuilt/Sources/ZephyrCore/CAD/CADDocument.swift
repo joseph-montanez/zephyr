@@ -733,14 +733,16 @@ public final class CADDocument {
             staged.append((entity.handle, updated))
         }
         guard !staged.isEmpty else { return 0 }
-        let before = snapshot()
-        for (handle, updated) in staged {
-            guard entityRegistry[handle] != nil else { continue }
-            updateEntityLive(updated)
+        return documentLock.withLock {
+            let before = snapshot()
+            for (handle, updated) in staged {
+                guard entityRegistry[handle] != nil else { continue }
+                updateEntityLive(updated)
+            }
+            invalidateEntityGrid()
+            pushUndo(before)
+            return staged.count
         }
-        invalidateEntityGrid()
-        pushUndo(before)
-        return staged.count
     }
 
     /// Bumped whenever rendering must refresh, including non-dirty
@@ -806,7 +808,7 @@ public final class CADDocument {
     private let entitySpatialIndex = CADEntitySpatialIndex()
 
     /// Whether the broad-phase entity index currently represents this document.
-    public var entityGridBuilt: Bool { entitySpatialIndex.isBuilt }
+    public var entityGridBuilt: Bool { documentLock.withLock { entitySpatialIndex.isBuilt } }
 
     /// Invalidate the entity spatial grid. Call after any entity transform mutation,
     /// undo/redo, or bulk import. The grid will be rebuilt on the next hit-test demand.
@@ -815,13 +817,15 @@ public final class CADDocument {
     /// for a non-geometric reason (xdata, layer assignment, visibility) must NOT throw away
     /// the grid — otherwise the next hover pays for a full 153k rebuild + full scan.
     public func invalidateEntityGrid() {
-        entitySpatialIndex.invalidate()
+        documentLock.withLock { entitySpatialIndex.invalidate() }
     }
 
     /// Rebuild the entity spatial grid from current entity world bounding boxes.
     /// Uses the same cell-size heuristic as GeometryManager.
     public func rebuildEntityGrid() {
-        entitySpatialIndex.rebuild(from: entityRegistry.values)
+        documentLock.withLock {
+            entitySpatialIndex.rebuild(from: entityRegistry.values)
+        }
     }
 
     /// Returns entity handles potentially visible in the given world-space AABB.
@@ -830,11 +834,13 @@ public final class CADDocument {
         minX: Double, minY: Double,
         maxX: Double, maxY: Double
     ) -> [UUID]? {
-        entitySpatialIndex.handles(
-            inWorldRectMinX: minX,
-            minY: minY,
-            maxX: maxX,
-            maxY: maxY)
+        return documentLock.withLock {
+            entitySpatialIndex.handles(
+                inWorldRectMinX: minX,
+                minY: minY,
+                maxX: maxX,
+                maxY: maxY)
+        }
     }
 
     /// Returns entity handles along a ray using DDA grid traversal (broad-phase for raycasting).
@@ -849,16 +855,18 @@ public final class CADDocument {
     public func entityHandlesAlongRay(
         rayOrigin: Vector3, rayDir: Vector3, maxDistance: Double = 100_000
     ) -> [UUID]? {
-        if !entityGridBuilt {
-            if entityRegistry.count > 1 {
-                rebuildEntityGrid()
+        return documentLock.withLock {
+            if !entityGridBuilt {
+                if entityRegistry.count > 1 {
+                    rebuildEntityGrid()
+                }
+                guard entityGridBuilt else { return nil }
             }
-            guard entityGridBuilt else { return nil }
+            return entitySpatialIndex.handles(
+                alongRayFrom: rayOrigin,
+                direction: rayDir,
+                maxDistance: maxDistance)
         }
-        return entitySpatialIndex.handles(
-            alongRayFrom: rayOrigin,
-            direction: rayDir,
-            maxDistance: maxDistance)
     }
 
     // MARK: Undo
@@ -880,15 +888,19 @@ public final class CADDocument {
     /// Call whenever the document changes in a way that should be persisted.
     /// - Parameter regenerate: If true (default), also marks the document for regeneration.
     public func markEdited(regenerate: Bool = true) {
-        editRevision &+= 1
-        renderRevision &+= 1
-        if regenerate { needsRegeneration = true }
+        documentLock.withLock {
+            editRevision &+= 1
+            renderRevision &+= 1
+            if regenerate { needsRegeneration = true }
+        }
     }
 
     /// Call for render/cache-only invalidation (palette change, theme toggle).
     public func markNeedsRegeneration() {
-        renderRevision &+= 1
-        needsRegeneration = true
+        documentLock.withLock {
+            renderRevision &+= 1
+            needsRegeneration = true
+        }
     }
 
     /// Call on successful manual save, passing the revision captured in the save snapshot.
@@ -1223,7 +1235,7 @@ public final class CADDocument {
     }
 
     public func layer(for handle: UUID) -> Layer? {
-        layerTable[handle]
+        documentLock.withLock { layerTable[handle] }
     }
 
     /// Reachability sweep for PURGE: unreferenced layers, blocks, text /
@@ -1408,20 +1420,24 @@ public final class CADDocument {
     }
 
     // Legacy Array copy (Avoid using in performance loops)
-    public var allLayers: [Layer] { Array(layerTable.values) }
+    public var allLayers: [Layer] { documentLock.withLock { Array(layerTable.values) } }
 
     // Fast O(1) properties for UI and Rendering
-    public var layerCount: Int { layerTable.count }
-    public var layersView: Dictionary<UUID, Layer>.Values { layerTable.values }
+    public var layerCount: Int { documentLock.withLock { layerTable.count } }
+    public var layersView: Dictionary<UUID, Layer>.Values {
+        documentLock.withLock { layerTable }.values
+    }
 
     public func setLayerVisible(_ handle: UUID, visible: Bool) {
-        checkpointLayerPrevious()
-        pushUndo()
-        guard var layer = layerTable[handle] else { return }
-        layer.isVisible = visible
-        layerTable[handle] = layer
-        markEdited(regenerate: true)
-        // Visibility is filtered at query time; the grid still holds all handles. No invalidation.
+        documentLock.withLock {
+            checkpointLayerPrevious()
+            pushUndo()
+            guard var layer = layerTable[handle] else { return }
+            layer.isVisible = visible
+            layerTable[handle] = layer
+            markEdited(regenerate: true)
+            // Visibility is filtered at query time; the grid still holds all handles. No invalidation.
+        }
     }
 
     public func renameLayer(handle: UUID, name: String) {
@@ -1836,10 +1852,12 @@ public final class CADDocument {
 
     /// Find a layer by name (first match, case-insensitive, trimmed).
     public func findLayer(named name: String) -> Layer? {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        if let exact = layerTable.values.first(where: { $0.name == trimmed }) { return exact }
-        return layerTable.values.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
+        return documentLock.withLock {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            if let exact = layerTable.values.first(where: { $0.name == trimmed }) { return exact }
+            return layerTable.values.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
+        }
     }
 
     /// Generate a unique layer name by appending a counter.
@@ -1956,6 +1974,7 @@ public final class CADDocument {
     }
 
     private func refreshPathArrays(dependingOn pathHandle: UUID? = nil) {
+        documentLock.withLock {
         if let pathHandle {
             refreshPathArrays(dependingOn: Set([pathHandle]))
             return
@@ -1968,6 +1987,7 @@ public final class CADDocument {
             guard let entity = entityRegistry[handle] else { continue }
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
+        }
     }
 
     /// Set version: one registry scan no matter how many movers. Bulk
@@ -1975,6 +1995,7 @@ public final class CADDocument {
     /// handle — O(selection × registry), which froze large documents
     /// once 100+ objects moved at once.
     private func refreshPathArrays(dependingOn pathHandles: Set<UUID>) {
+        documentLock.withLock {
         guard !pathHandles.isEmpty else { return }
         let handles = entityRegistry.values.compactMap { entity -> UUID? in
             guard let array = entity.arrayData, array.kind == .path,
@@ -1986,20 +2007,23 @@ public final class CADDocument {
             guard let entity = entityRegistry[handle] else { continue }
             entityRegistry[handle] = preparedEntityForStorage(entity)
         }
+        }
     }
 
     // MARK: - Block Operations
 
     public func addBlock(_ block: CADBlock) {
-        pushUndo()
-        blockTable[block.handle] = block
-        markEdited(regenerate: true)
+        documentLock.withLock {
+            pushUndo()
+            blockTable[block.handle] = block
+            markEdited(regenerate: true)
+        }
     }
 
     /// Insert a block definition without undo/dirty side effects
     /// (xref attach fan-out into non-active view documents).
     public func insertBlockSilently(_ block: CADBlock) {
-        blockTable[block.handle] = block
+        documentLock.withLock { blockTable[block.handle] = block }
     }
 
     /// Update the descriptor of an xref definition in place (repath).
@@ -2089,6 +2113,7 @@ public final class CADDocument {
     public func bindXref(
         blockHandle: UUID, shadow: CADBlock, bindType: Int, pushUndoBefore: Bool = true
     ) -> Bool {
+        return documentLock.withLock {
         guard var block = blockTable[blockHandle], block.isXref else { return false }
         if pushUndoBefore { pushUndo() }
 
@@ -2219,6 +2244,7 @@ public final class CADDocument {
         invalidateEntityGrid()
         markEdited(regenerate: true)
         return true
+        }
     }
 
     /// XBIND one dependent layer: rename (bind mode 0) or merge into
@@ -2470,15 +2496,17 @@ public final class CADDocument {
     }
 
     public func block(for handle: UUID) -> CADBlock? {
-        blockTable[handle]
+        documentLock.withLock { blockTable[handle] }
     }
 
     // Legacy Array copy
-    public var allBlocks: [CADBlock] { Array(blockTable.values) }
+    public var allBlocks: [CADBlock] { documentLock.withLock { Array(blockTable.values) } }
 
     // Fast O(1) properties for UI and Rendering
-    public var blockCount: Int { blockTable.count }
-    public var blocksView: Dictionary<UUID, CADBlock>.Values { blockTable.values }
+    public var blockCount: Int { documentLock.withLock { blockTable.count } }
+    public var blocksView: Dictionary<UUID, CADBlock>.Values {
+        documentLock.withLock { blockTable }.values
+    }
 
     public func updateBlockGeometry(handle: UUID, geometry: [CADPrimitive]) {
         guard blockTable[handle]?.isXref != true else {
@@ -2700,6 +2728,7 @@ public final class CADDocument {
         handles: Set<UUID>,
         offset: Vector3 = .zero
     ) -> (entities: [CADEntity], blockRemap: [UUID: UUID], clonedBlocks: [CADBlock]) {
+        return documentLock.withLock {
         var newEntities: [CADEntity] = []
         var blockRemap: [UUID: UUID] = [:]
         var clonedBlocks: [CADBlock] = []
@@ -2763,6 +2792,7 @@ public final class CADDocument {
         }
 
         return (newEntities, blockRemap, clonedBlocks)
+        }
     }
 
     public func entity(for handle: UUID) -> CADEntity? {
@@ -2774,9 +2804,48 @@ public final class CADDocument {
         documentLock.withLock { Array(entityRegistry.values) }
     }
 
-    // Fast O(1) properties for UI and Rendering
-    public var entityCount: Int { entityRegistry.count }
-    public var entitiesView: Dictionary<UUID, CADEntity>.Values { entityRegistry.values }
+    // Fast O(1) properties for UI and Rendering.
+    //
+    // Every one of these takes `documentLock`: the main thread reads them
+    // per frame (status bar, snap, hit testing) while a detached
+    // AutoLISP/MCP evaluator may mutate the registry. An unlocked
+    // `Dictionary.count`/`values` racing a rehashing write is undefined
+    // behavior and was the reported crash (access violation in
+    // `entityCount` while a Lisp function ran).
+    public var entityCount: Int { documentLock.withLock { entityRegistry.count } }
+
+    /// Snapshot copy of the registry's values. The dictionary copy is taken
+    /// under `documentLock` (CoW makes the copy itself O(1)), so iterating
+    /// the result is safe even while a background evaluator mutates the
+    /// live registry. Prefer `withEntities(_:)` on hot per-frame paths to
+    /// avoid pinning superseded storage.
+    public var entitiesView: Dictionary<UUID, CADEntity>.Values {
+        documentLock.withLock { entityRegistry }.values
+    }
+
+    /// Scoped locked iteration over the live registry. Holds `documentLock`
+    /// for the closure body: the fastest safe path for per-frame filters
+    /// (snap, hit testing). Do not escape the view outside the closure,
+    /// and do not do long work while holding the lock.
+    public func withEntities<R>(_ body: (Dictionary<UUID, CADEntity>.Values) -> R) -> R {
+        documentLock.withLock { body(entityRegistry.values) }
+    }
+
+    /// One locked read of the status-bar inputs (count + active layer
+    /// name), so the per-window status line never observes a torn mix of a
+    /// Lisp write landing between separate reads.
+    public func statusBarSnapshot() -> (entityCount: Int, layerName: String?) {
+        documentLock.withLock {
+            let count = entityRegistry.count
+            let name: String?
+            if let id = activeLayerID, let layer = layerTable[id] {
+                name = layer.name
+            } else {
+                name = nil
+            }
+            return (count, name)
+        }
+    }
 
     /// World-space bounds of geometry that can actually be drawn in the current document.
     /// This walks the renderable primitives instead of trusting cached entity boxes so rotated
@@ -3508,66 +3577,76 @@ public final class CADDocument {
 
     /// Update an entity's local geometry (for vertex drag finalization).
     public func updateEntityGeometry(for handle: UUID, geometry: [CADPrimitive]) {
-        pushUndo()
-        guard var entity = entityRegistry[handle] else { return }
-        entity.localGeometry = geometry
-        entity.localBoundingBox = CADEntity.computeLocalBoundingBox(
-            blockID: entity.blockID, localGeometry: geometry)
-        entity.updateAnchorCache()   // anchors live in local space; geometry changed
-        entityRegistry[handle] = entity
-        refreshPathArrays(dependingOn: handle)
-        markEdited(regenerate: true)
-        invalidateEntityGrid()
+        documentLock.withLock {
+            pushUndo()
+            guard var entity = entityRegistry[handle] else { return }
+            entity.localGeometry = geometry
+            entity.localBoundingBox = CADEntity.computeLocalBoundingBox(
+                blockID: entity.blockID, localGeometry: geometry)
+            entity.updateAnchorCache()   // anchors live in local space; geometry changed
+            entityRegistry[handle] = entity
+            refreshPathArrays(dependingOn: handle)
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+        }
     }
 
     /// Update entity without pushing undo — for live property editing.
     public func updateEntityLive(_ entity: CADEntity) {
-        guard entityRegistry[entity.handle] != nil else { return }
-        let updated = preparedEntityForStorage(entity)
-        entityRegistry[updated.handle] = updated
-        refreshPathArrays(dependingOn: updated.handle)
-        // Don't invalidate grid or push undo.
-        markEdited(regenerate: true)
+        documentLock.withLock {
+            guard entityRegistry[entity.handle] != nil else { return }
+            let updated = preparedEntityForStorage(entity)
+            entityRegistry[updated.handle] = updated
+            refreshPathArrays(dependingOn: updated.handle)
+            // Don't invalidate grid or push undo.
+            markEdited(regenerate: true)
+        }
     }
 
     /// Update entity with undo.
     public func updateEntity(_ entity: CADEntity) {
-        pushUndo()
-        guard entityRegistry[entity.handle] != nil else { return }
-        let updated = preparedEntityForStorage(entity)
-        entityRegistry[updated.handle] = updated
-        refreshPathArrays(dependingOn: updated.handle)
-        markEdited(regenerate: true)
-        invalidateEntityGrid()
+        documentLock.withLock {
+            pushUndo()
+            guard entityRegistry[entity.handle] != nil else { return }
+            let updated = preparedEntityForStorage(entity)
+            entityRegistry[updated.handle] = updated
+            refreshPathArrays(dependingOn: updated.handle)
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
+        }
     }
 
     public func updateEntities(_ entities: [CADEntity]) {
-        let existing = entities.filter { entityRegistry[$0.handle] != nil }
-        guard !existing.isEmpty else { return }
-        pushUndo()
-        for entity in existing {
-            let updated = preparedEntityForStorage(entity)
-            entityRegistry[updated.handle] = updated
+        documentLock.withLock {
+            let existing = entities.filter { entityRegistry[$0.handle] != nil }
+            guard !existing.isEmpty else { return }
+            pushUndo()
+            for entity in existing {
+                let updated = preparedEntityForStorage(entity)
+                entityRegistry[updated.handle] = updated
+            }
+            refreshPathArrays(dependingOn: Set(existing.map(\.handle)))
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
         }
-        refreshPathArrays(dependingOn: Set(existing.map(\.handle)))
-        markEdited(regenerate: true)
-        invalidateEntityGrid()
     }
 
     /// Update entity geometry without pushing undo — for live grip editing.
     /// The caller (finalizeVertexDrag) will push a single undo entry on mouse-up.
     public func updateEntityGeometryLive(for handle: UUID, geometry: [CADPrimitive]) {
-        guard var entity = entityRegistry[handle] else { return }
-        entity.localGeometry = geometry
-        entity.localBoundingBox = CADEntity.computeLocalBoundingBox(
-            blockID: entity.blockID, localGeometry: geometry)
-        // Refresh anchors here too: arcs/circles/splines never go through the
-        // finalize path (gripEditedGeometryNeedsFinalize excludes them), so the
-        // live write is the ONLY place their anchors can be kept in sync.
-        entity.updateAnchorCache()
-        entityRegistry[handle] = entity
-        refreshPathArrays(dependingOn: handle)
-        // Don't invalidate entity grid during live drag — only on finalize
+        documentLock.withLock {
+            guard var entity = entityRegistry[handle] else { return }
+            entity.localGeometry = geometry
+            entity.localBoundingBox = CADEntity.computeLocalBoundingBox(
+                blockID: entity.blockID, localGeometry: geometry)
+            // Refresh anchors here too: arcs/circles/splines never go through the
+            // finalize path (gripEditedGeometryNeedsFinalize excludes them), so the
+            // live write is the ONLY place their anchors can be kept in sync.
+            entity.updateAnchorCache()
+            entityRegistry[handle] = entity
+            refreshPathArrays(dependingOn: handle)
+            // Don't invalidate entity grid during live drag — only on finalize
+        }
     }
 
     /// Update block geometry without pushing undo — for live grip editing.
@@ -3723,6 +3802,7 @@ public final class CADDocument {
     // MARK: - Bulk Transforms
 
     public func moveEntities(handles: Set<UUID>, by delta: Vector3) {
+        documentLock.withLock {
         let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
         guard !targets.isEmpty else { return }
         pushUndo()
@@ -3740,6 +3820,7 @@ public final class CADDocument {
         refreshPathArrays(dependingOn: targets)
         markEdited(regenerate: true)
         invalidateEntityGrid()
+        }
     }
 
     public func moveEntitiesLive(handles: Set<UUID>, by delta: Vector3) {
@@ -3763,6 +3844,7 @@ public final class CADDocument {
     public func rotateEntities(
         handles: Set<UUID>, around center: Vector3, angleDeltaRadians: Double
     ) {
+        documentLock.withLock {
         let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
         guard !targets.isEmpty else { return }
         pushUndo()
@@ -3786,6 +3868,7 @@ public final class CADDocument {
         refreshPathArrays(dependingOn: targets)
         markEdited(regenerate: true)
         invalidateEntityGrid()
+        }
     }
 
     public func rotateEntitiesLive(
@@ -3814,6 +3897,7 @@ public final class CADDocument {
     }
 
     public func scaleEntities(handles: Set<UUID>, around center: Vector3, factor: Double) {
+        documentLock.withLock {
         guard factor > 0 else { return }
         let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
         guard !targets.isEmpty else { return }
@@ -3840,6 +3924,7 @@ public final class CADDocument {
         refreshPathArrays(dependingOn: targets)
         markEdited(regenerate: true)
         invalidateEntityGrid()
+        }
     }
 
     public func scaleEntitiesLive(handles: Set<UUID>, around center: Vector3, factor: Double) {
@@ -3906,6 +3991,7 @@ public final class CADDocument {
         eraseSource: Bool,
         mirrText: Int
     ) -> MirrorOutcome {
+        return documentLock.withLock {
         var outcome = MirrorOutcome()
         var editable: [UUID] = []
         editable.reserveCapacity(handles.count)
@@ -3957,6 +4043,7 @@ public final class CADDocument {
         markEdited(regenerate: true)
         invalidateEntityGrid()
         return outcome
+        }
     }
 
     /// Compose the mirror into the entity transform, then (MIRRTEXT = 0)
@@ -4051,6 +4138,7 @@ public final class CADDocument {
         moveWhole: Set<UUID>,
         by delta: Vector3
     ) -> StretchOutcome {
+        return documentLock.withLock {
         var outcome = StretchOutcome()
         guard delta.magnitude > 1e-12 else { return outcome }
         var editable: [UUID] = []
@@ -4108,6 +4196,7 @@ public final class CADDocument {
         markEdited(regenerate: true)
         invalidateEntityGrid()
         return outcome
+        }
     }
 
     // MARK: - BREAK / BREAKATPOINT Command Support
@@ -4152,6 +4241,7 @@ public final class CADDocument {
         firstWorld: Vector3,
         secondWorld: Vector3
     ) -> BreakOutcome {
+        return documentLock.withLock {
         var outcome = BreakOutcome()
         guard let entity = entityRegistry[handle] else {
             outcome.message = "The object no longer exists."
@@ -4223,6 +4313,7 @@ public final class CADDocument {
             outcome.message = "Broke the object into two pieces."
         }
         return outcome
+        }
     }
 
     // MARK: - ALIGN Command Support
@@ -4697,18 +4788,20 @@ public final class CADDocument {
     }
 
     public func removeEntities(handles: Set<UUID>) {
-        let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
-        guard !targets.isEmpty else { return }
-        pushUndo()
-        let erased = targets.compactMap { entityRegistry[$0] }
-        if !erased.isEmpty {
-            oopsBuffer = erased
+        documentLock.withLock {
+            let targets = handles.filter { entityRegistry[$0]?.isViewportProjected != true }
+            guard !targets.isEmpty else { return }
+            pushUndo()
+            let erased = targets.compactMap { entityRegistry[$0] }
+            if !erased.isEmpty {
+                oopsBuffer = erased
+            }
+            for handle in targets {
+                entityRegistry.removeValue(forKey: handle)
+            }
+            markEdited(regenerate: true)
+            invalidateEntityGrid()
         }
-        for handle in targets {
-            entityRegistry.removeValue(forKey: handle)
-        }
-        markEdited(regenerate: true)
-        invalidateEntityGrid()
     }
 
     /// Replace all viewport-projected (derived) entities with fresh
@@ -4839,35 +4932,43 @@ public final class CADDocument {
     /// available, otherwise the document's own definition. Edit-side
     /// code (BEDIT, explode, geometry update) must use `block(for:)`.
     public func effectiveBlock(for handle: UUID) -> CADBlock? {
-        if let shadow = xrefRuntimeStore?.shadowBlock(for: handle) {
-            return shadow
+        documentLock.withLock {
+            if let shadow = xrefRuntimeStore?.shadowBlock(for: handle) {
+                return shadow
+            }
+            return blockTable[handle]
         }
-        return blockTable[handle]
     }
 
     public func resolvedGeometry(for entity: CADEntity) -> [CADPrimitive]? {
-        if let bid = entity.blockID, let block = effectiveBlock(for: bid) {
-            return block.geometry
+        documentLock.withLock {
+            if let bid = entity.blockID, let block = effectiveBlock(for: bid) {
+                return block.geometry
+            }
+            return entity.localGeometry
         }
-        return entity.localGeometry
     }
 
     /// Per-primitive styles aligned with `resolvedGeometry(for:)`
     /// (block styles for instances, empty for loose geometry).
     public func primitiveStyles(for entity: CADEntity) -> [Int: CADPrimitiveStyle] {
-        if let bid = entity.blockID, let block = effectiveBlock(for: bid) {
-            return block.primitiveStyles
+        documentLock.withLock {
+            if let bid = entity.blockID, let block = effectiveBlock(for: bid) {
+                return block.primitiveStyles
+            }
+            return [:]
         }
-        return [:]
     }
 
         /// Per-primitive xdata aligned with `resolvedGeometry(for:)`
     /// (block xdata for instances, empty for loose geometry).
     public func primitiveXData(for entity: CADEntity) -> [Int: [String: XDataValue]] {
-        if let bid = entity.blockID, let block = effectiveBlock(for: bid) {
-            return block.primitiveXData
+        documentLock.withLock {
+            if let bid = entity.blockID, let block = effectiveBlock(for: bid) {
+                return block.primitiveXData
+            }
+            return [:]
         }
-        return [:]
     }
 
     /// Measurement context for SHX text bounds that match the rendered
@@ -4906,6 +5007,7 @@ public final class CADDocument {
     /// effective (shadow or placeholder) geometry. Called after xref
     /// load/unload/reload, undo restore, paste, and viewport projection.
     public func resyncXrefInstanceBounds(forBlock blockHandle: UUID? = nil) {
+        documentLock.withLock {
         var changed = false
         for (handle, entity) in entityRegistry {
             guard let bid = entity.blockID,
@@ -4926,6 +5028,7 @@ public final class CADDocument {
             changed = true
         }
         if changed { invalidateEntityGrid() }
+        }
     }
 
     /// After a media reference loads, sync instance geometry with the
@@ -4933,6 +5036,7 @@ public final class CADDocument {
     /// definition pixel sizes refresh. Runtime sync only — no undo
     /// entry, no dirty flag (mirrors resyncXrefInstanceBounds).
     public func resyncMediaInstanceBounds(forName name: String? = nil) {
+        documentLock.withLock {
         guard let store = mediaRuntimeStore else { return }
         var changed = false
         for (handle, entity) in entityRegistry {
@@ -4977,6 +5081,7 @@ public final class CADDocument {
             }
         }
         if changed { invalidateEntityGrid() }
+        }
     }
 
     /// Merge dependent symbols from a loaded xref. Default VISRETAIN=1
@@ -5404,6 +5509,7 @@ public final class CADDocument {
     public func snapshot(
         dxfRoundTripPayloadFallback: DXFRoundTripPayload? = nil
     ) -> CADDocumentSnapshot {
+        return documentLock.withLock {
         // Validate internal dictionaries haven't been corrupted
         let entityCount = entityRegistry.count
         let layerCount = layerTable.count
@@ -5483,6 +5589,7 @@ public final class CADDocument {
             layerStates: layerStates,
             layerFilters: layerFilters
         )
+        }
     }
 
     /// Snapshot for rendering / PDF / save: loaded xref shadow blocks
@@ -5578,6 +5685,7 @@ public final class CADDocument {
     }
 
     public func restore(from snapshot: CADDocumentSnapshot) {
+        documentLock.withLock {
         blockGridCache.removeAll()
         layerTable = snapshot.layers
         blockTable = snapshot.blocks
@@ -5616,20 +5724,25 @@ public final class CADDocument {
         resyncMediaInstanceBounds()
         markEdited(regenerate: true)
         invalidateEntityGrid()   // entity set changed wholesale; rebuild lazily on next hit-test
+        }
     }
 
     public func undo() {
-        let currentSnapshot = snapshot()
-        guard let prev = undoManager.popUndo(currentSnapshot: currentSnapshot) else { return }
-        restore(from: prev)
+        documentLock.withLock {
+            let currentSnapshot = snapshot()
+            guard let prev = undoManager.popUndo(currentSnapshot: currentSnapshot) else { return }
+            restore(from: prev)
+        }
     }
 
     public func redo() {
-        let currentSnapshot = snapshot()
-        guard let next = undoManager.popRedo(currentSnapshot: currentSnapshot) else { return }
-        restore(from: next)
+        documentLock.withLock {
+            let currentSnapshot = snapshot()
+            guard let next = undoManager.popRedo(currentSnapshot: currentSnapshot) else { return }
+            restore(from: next)
+        }
     }
-    public func pushUndo() { undoManager.pushUndoGrouped(snapshot()) }
+    public func pushUndo() { documentLock.withLock { undoManager.pushUndoGrouped(snapshot()) } }
 
     /// Records a snapshot captured before an interactive live edit.
     public func pushUndo(_ snapshot: CADDocumentSnapshot) {

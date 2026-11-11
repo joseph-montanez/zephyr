@@ -227,18 +227,14 @@ public enum StatusBarUIPolicy {
             viewIndex, viewCount: tab.drawingViews.count)
         let view = tab.drawingViews[clamped]
         let document = view.document
-        let layerName: String
-        if let layerID = document.activeLayerID, let layer = document.layer(for: layerID) {
-            layerName = layer.name
-        } else {
-            layerName = "none"
-        }
+        let status = document.statusBarSnapshot()
+        let layerName = status.layerName ?? "none"
         return StatusBarShownInfo(
             tabName: tab.displayName,
             isDirty: tab.hasUnsavedChanges,
             viewName: view.name,
             layerName: layerName,
-            entityCount: document.entityCount)
+            entityCount: status.entityCount)
     }
 
     public static func leftText(info: StatusBarShownInfo, trackingSuffix: String) -> String {

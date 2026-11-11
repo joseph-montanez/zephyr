@@ -79,6 +79,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Zoom extents after scripts** - extents refresh correctly after Lisp/MCP edits.
 - **Wrapped MTEXT leading spaces** - a leading space run wider than the reference width now keeps its own invisible line instead of collapsing, so following words land on AutoCAD's line slots.
 - **Distributed MTEXT paragraphs** - text with the 70=1/71=2/72=2 columns marker (text.dxf "Xxp     pxX") now spreads across the reference width like AutoCAD instead of packing left, so trailing words land in their boxes.
+- **AutoLISP crash while a script runs** - running an AutoLISP function in a document no longer crashes the app: every document read and write now serializes on the document lock, so the per-frame status bar and the background evaluator cannot race on the entity registry.
 
 ### Maintenance
 - **Code cleanup** - split up the REVCLOUD file and shared dimension picking; no behavior change.
