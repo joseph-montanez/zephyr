@@ -150,6 +150,28 @@ public enum CADFontManager {
     internal nonisolated static let cacheLock = NSRecursiveLock()
     internal static nonisolated(unsafe) var shxFontCache: [String: SHXShapeFont] = [:]
     internal static nonisolated(unsafe) var ttfFontCache: [String: CADTrueTypeFont] = [:]
+    /// Explicitly registered SHX search directories, highest priority first.
+    ///
+    /// Lets an embedder pin font discovery to a known tree (for example the
+    /// source-tree `Fonts` next to a golden directory) instead of depending
+    /// on the process working directory or on assets staged next to the
+    /// executable. DXF export header extents use SHX text bounds when a font
+    /// is found and an estimated rectangle otherwise, so ambient-only lookup
+    /// makes export bytes - and anything digesting them - CWD-dependent.
+    internal static nonisolated(unsafe) var registeredFontDirectories: [URL] = []
+
+    /// Registers an additional directory searched first by `getOrLoadSHXFont`.
+    /// Duplicate registrations are ignored. The app itself never calls this,
+    /// so runtime lookup order is unchanged unless an embedder opts in.
+    public static func registerFontDirectory(_ url: URL) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        let key = url.standardizedFileURL.path.lowercased()
+        guard !registeredFontDirectories.contains(where: {
+            $0.standardizedFileURL.path.lowercased() == key
+        }) else { return }
+        registeredFontDirectories.insert(url, at: 0)
+    }
 
     /// Load (and cache) a TrueType font from a resolved file path.
     /// Returns nil when the file is missing or unparsable.
@@ -277,12 +299,13 @@ public enum CADFontManager {
         let exeDir = URL(fileURLWithPath: Bundle.main.executablePath ?? ".")
             .deletingLastPathComponent()
 
-        var fontDirectories = [
+        var fontDirectories = registeredFontDirectories
+        fontDirectories.append(contentsOf: [
             exeDir.appendingPathComponent("Fonts"),
             URL(fileURLWithPath: "Fonts"),
             exeDir,
             URL(fileURLWithPath: ".")
-        ]
+        ])
         fontDirectories.append(contentsOf: platformSHXFontDirectories)
 
         var fileNamesToTry: [String] = []

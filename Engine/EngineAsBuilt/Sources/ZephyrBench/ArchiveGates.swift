@@ -258,6 +258,20 @@ extension Cases {
     /// touch. The export is compared through a round-trip rather than byte-for-byte because exported
     /// handles are derived from per-import UUIDs; `exportLineCount`/`exportBytes` still pin the layout.
     static func dxfRoundtripDigest(directory: String) throws -> String {
+        // Pin SHX discovery to the source-tree Fonts beside the golden fixtures.
+        // Export header extents use SHX text bounds when a font resolves and an
+        // estimated rectangle otherwise, so without this the digest depends on
+        // the process working directory and on assets staged next to the binary
+        // (Windows CI runs the bench from the repo root before staging Fonts).
+        let packageFonts = URL(fileURLWithPath: directory, isDirectory: true)
+            .standardizedFileURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fonts", isDirectory: true)
+        if FileManager.default.fileExists(atPath: packageFonts.path) {
+            CADFontManager.registerFontDirectory(packageFonts)
+        }
         let url = URL(fileURLWithPath: directory)
         let fixtures = ((try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension.lowercased() == "dxf" }

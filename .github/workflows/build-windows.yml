@@ -527,8 +527,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Swift 6.4 feature canary failed" }
 
           Write-Host "=== DXF parser golden digests ==="
-          & $bench dxf-goldens (Join-Path $swiftDir "Tools\bench\golden")
-          if ($LASTEXITCODE -ne 0) { throw "DXF golden digests failed" }
+          Push-Location $swiftDir
+          & $bench dxf-goldens Tools\bench\golden
+          $goldensExit = $LASTEXITCODE
+          Pop-Location
+          if ($goldensExit -ne 0) { throw "DXF golden digests failed" }
 
           Write-Host "=== Perf baseline (Windows) ==="
           & $bench nurbs
