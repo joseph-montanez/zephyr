@@ -2887,8 +2887,8 @@ public final class CADDocument {
             }
 
             var geometry: [CADPrimitive]
-            let primitiveStyles: [Int: CADPrimitiveStyle]
-            let primitiveXData: [Int: [String: XDataValue]]
+            var primitiveStyles: [Int: CADPrimitiveStyle]
+            var primitiveXData: [Int: [String: XDataValue]]
             if let blockID = entity.blockID {
                 guard let definedBlock = blockTable[blockID],
                       !definedBlock.isInternalTableDisplayBlock else { continue }
@@ -2923,9 +2923,12 @@ public final class CADDocument {
                 // Attribute value text participates in extents like any
                 // other visible block member.
                 if !block.attributeDefinitions.isEmpty {
-                    geometry += CADAttributeDisplay.textPrimitives(
+                    for item in CADAttributeDisplay.styledPrimitivesWithXData(
                         definitions: block.attributeDefinitions,
-                        values: entity.attributeValues)
+                        values: entity.attributeValues) {
+                        primitiveXData[geometry.count] = item.xdata
+                        geometry.append(item.primitive)
+                    }
                 }
             } else {
                 guard let localGeometry = entity.localGeometry,
@@ -3336,6 +3339,11 @@ public final class CADDocument {
         let textFitWidth: Double?
         if !isMText, let fw = textXData["dxf.textFitWidth"], case .double(let v) = fw, v > 0 { textFitWidth = v }
         else { textFitWidth = nil }
+        let genFlags: Int = { if !isMText, let g = textXData["dxf.textGenerationFlags"], case .int(let v) = g { return v }; return 0 }()
+        let mirrorX = !isMText && (genFlags & 2) != 0
+        let mirrorY = !isMText && (genFlags & 4) != 0
+        let isVertical: Bool = { if isMText, let d = textXData["dxf.mtextDirection"], case .int(let v) = d { return v == 3 }; return false }()
+        let lineSpacing: Double = { if let s = textXData["dxf.mtextLineSpacing"], case .double(let v) = s, v > 0 { return v }; return 1.0 }()
 
         guard !text.isEmpty, effectiveHeight.isFinite, effectiveHeight > 0,
               rotation.isFinite else { return }
@@ -3365,7 +3373,9 @@ public final class CADDocument {
                 alignV: alignV,
                 widthFactor: effectiveWidthFactor,
                 obliqueAngle: effectiveOblique,
-                maxWidth: worldWidth, fitWidth: worldFitWidth)
+                maxWidth: worldWidth, fitWidth: worldFitWidth,
+                mirrorX: mirrorX, mirrorY: mirrorY,
+                vertical: isVertical, lineSpacingFactor: lineSpacing)
             for primitive in primitives {
                 if case .line(let start, let end, _) = primitive {
                     bounds.include(start)

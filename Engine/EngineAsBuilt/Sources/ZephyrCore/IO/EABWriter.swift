@@ -786,6 +786,7 @@ public enum EABWriter {
             w.writeInt32(Int32(def.alignH))
             w.writeInt32(Int32(def.alignV))
             w.writeInt32(Int32(def.flags))
+            w.writeInt32(Int32(def.generationFlags))
             w.writeString(def.layerName ?? "")
         }
     }
@@ -815,6 +816,12 @@ public enum EABWriter {
             if let rotation = value.rotation {
                 w.writeUInt8(1)
                 w.writeFloat64(rotation)
+            } else {
+                w.writeUInt8(0)
+            }
+            if let genFlags = value.generationFlags {
+                w.writeUInt8(1)
+                w.writeInt32(Int32(genFlags))
             } else {
                 w.writeUInt8(0)
             }

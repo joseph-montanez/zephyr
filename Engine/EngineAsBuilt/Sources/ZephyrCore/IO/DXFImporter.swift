@@ -2394,7 +2394,7 @@ public enum DXFImporter {
 
         if let text = entity as? DXFTextEntity {
             let displayText: String
-            if text.eType == .aTTDEF, text.text.isEmpty {
+            if text.eType == .aTTDEF, !text.attributeTag.isEmpty {
                 displayText = text.attributeTag
             } else {
                 displayText = text.text
@@ -2450,10 +2450,21 @@ public enum DXFImporter {
             if text.eType == .mTEXT {
                 xdata["dxf.mtextRaw"] = .string(text.text)
                 xdata["dxf.mtextWidth"] = .double(text.widthScale)
-                let formatted = MTEXTFormatter.parse(
+                var formatted = MTEXTFormatter.parse(
                     text.text,
                     defaultFont: text.style.isEmpty ? "STANDARD" : text.style,
                     defaultHeight: text.height > 0 ? text.height : 2.5)
+                if let mtext = text as? DXFMTextEntity,
+                   mtext.columnType == 1, mtext.columnFlow == 2,
+                   mtext.columnAlign == 2 {
+                    // AutoCAD distributes these paragraphs across the reference
+                    // width (text.dxf 534/646 "Xxp     pxX"); paragraph
+                    // alignment 4 (distributed) reproduces that layout while
+                    // the entity anchor stays top-left.
+                    for i in formatted.paragraphs.indices {
+                        formatted.paragraphs[i].alignment = 4
+                    }
+                }
                 if let data = try? JSONEncoder().encode(formatted),
                    let json = String(data: data, encoding: .utf8) {
                     xdata["dxf.formattedText"] = .string(json)
@@ -2461,6 +2472,7 @@ public enum DXFImporter {
                 if let mtext = text as? DXFMTextEntity {
                     xdata["dxf.mtextLineSpacing"] = .double(mtext.interlin)
                     xdata["dxf.mtextLineSpacingStyle"] = .int(mtext.lineSpacingStyle)
+                    xdata["dxf.mtextDirection"] = .int(mtext.direction)
                 }
             }
         }
@@ -2642,7 +2654,7 @@ public enum DXFImporter {
         var style: String? = attdef.style.isEmpty ? nil : attdef.style
         var alignH = attdef.alignH
         var alignV = attdef.alignV
-        var defaultValue = DXFEntityConverter.cleanTextFormatting(
+        let defaultValue = DXFEntityConverter.cleanTextFormatting(
             attdef.text, entityType: .aTTDEF)
         let primitives = DXFEntityConverter.convertEntityToPrimitives(
             attdef,
@@ -2658,7 +2670,7 @@ public enum DXFImporter {
             style = st
             alignH = ah
             alignV = av
-            defaultValue = cleaned
+            _ = cleaned // display tag stays in geometry; defaultValue keeps group-1 value
         }
         return CADAttributeDefinition(
             tag: attdef.attributeTag,
@@ -2671,6 +2683,7 @@ public enum DXFImporter {
             alignH: alignH,
             alignV: alignV,
             flags: attdef.attributeFlags,
+            generationFlags: attdef.textGen,
             layerName: attdef.layer.isEmpty ? nil : attdef.layer)
     }
 
@@ -2735,6 +2748,7 @@ public enum DXFImporter {
                     placed.height = h > 0 ? h : nil
                 }
             }
+            placed.generationFlags = attribute.textGen
             values[key] = placed
         }
         return values

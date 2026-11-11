@@ -2314,7 +2314,7 @@ public class DXFWriter {
             writeInt(73, mt.lineSpacingStyle, &out)
             writeDbl(50, mt.angle_p, &out)  // degrees
             writeInt(71, mt.textGen, &out)  // attachment
-            writeInt(72, mt.alignH, &out)   // drawing direction
+            writeInt(72, mt.direction, &out)   // drawing direction (1/3/5)
             writeMTextString(mt.text, &out)
             writeStr(7, mt.style, &out)
 
@@ -3016,7 +3016,10 @@ public class DXFWriter {
         writeDbl(40, tx.height, &out)
         writeStr(1, tx.text, &out)
         writeDbl(50, tx.angle_p, &out)
+        writeDbl(41, tx.widthScale, &out)
+        writeDbl(51, tx.oblique, &out)
         if !tx.style.isEmpty { writeStr(7, tx.style, &out) }
+        writeInt(71, tx.textGen, &out)
         writeInt(72, tx.alignH, &out)
         writeInt(74, tx.alignV, &out)
         if tx.alignH != 0 || tx.alignV != 0 {

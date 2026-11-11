@@ -1337,7 +1337,7 @@ public enum EABReader {
                 : name.uppercased().hasPrefix("*T")
             let primitiveXData = version >= 12 ? try parsePrimitiveXData(r) : [:]
             let attributeDefinitions = version >= 22
-                ? try parseAttributeDefinitions(r) : []
+                ? try parseAttributeDefinitions(r, version: version) : []
             var block = CADBlock(handle: handle, name: name, geometry: geometry,
                                  primitiveStyles: primitiveStyles,
                                  primitiveXData: primitiveXData,
@@ -1351,7 +1351,7 @@ public enum EABReader {
     }
 
     private static func parseAttributeDefinitions(
-        _ r: BinaryReader
+        _ r: BinaryReader, version: UInt32 = 23
     ) throws -> [CADAttributeDefinition] {
         let count = safeCount(r.readUInt32(), limit: maxSafeStyleCount, label: "attributeDefinitions")
         var defs: [CADAttributeDefinition] = []
@@ -1368,6 +1368,7 @@ public enum EABReader {
             let alignH = Int(r.readInt32())
             let alignV = Int(r.readInt32())
             let flags = Int(r.readInt32())
+            let generationFlags = version >= 24 ? Int(r.readInt32()) : 0
             let layerRaw = r.readString()
             defs.append(CADAttributeDefinition(
                 tag: tag,
@@ -1380,13 +1381,14 @@ public enum EABReader {
                 alignH: alignH,
                 alignV: alignV,
                 flags: flags,
+                generationFlags: generationFlags,
                 layerName: layerRaw.isEmpty ? nil : layerRaw))
         }
         return defs
     }
 
     private static func parseAttributeValues(
-        _ r: BinaryReader
+        _ r: BinaryReader, version: UInt32 = 23
     ) throws -> [String: CADAttributeValue] {
         let count = safeCount(r.readUInt32(), limit: maxSafeStyleCount, label: "attributeValues")
         var values: [String: CADAttributeValue] = [:]
@@ -1399,8 +1401,10 @@ public enum EABReader {
                 : nil
             let height: Double? = r.readUInt8() != 0 ? r.readFloat64() : nil
             let rotation: Double? = r.readUInt8() != 0 ? r.readFloat64() : nil
+            let generationFlags: Int? = version >= 24 ? (r.readUInt8() != 0 ? Int(r.readInt32()) : nil) : nil
             values[key] = CADAttributeValue(
-                value: value, position: position, height: height, rotation: rotation)
+                value: value, position: position, height: height, rotation: rotation,
+                generationFlags: generationFlags)
         }
         return values
     }
@@ -1556,7 +1560,7 @@ public enum EABReader {
 
             var attributeValues: [String: CADAttributeValue] = [:]
             if hasAttributeValues {
-                attributeValues = try parseAttributeValues(r)
+                attributeValues = try parseAttributeValues(r, version: version)
             }
 
             var entity = CADEntity(

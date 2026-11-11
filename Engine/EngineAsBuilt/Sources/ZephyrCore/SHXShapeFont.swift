@@ -1962,7 +1962,7 @@ public final class SHXShapeFont: @unchecked Sendable {
                 let contentLeft = referenceBoxLeft + line.leftIndent
                 let contentRight = referenceBoxLeft + maxWidth - line.rightIndent
                 switch effectiveAlignment {
-                case 1, 4:
+                case 1:
                     offsetX = (contentLeft + contentRight) * 0.5
                         - 0.5 * (minX + maxX)
                 case 2:
@@ -1972,7 +1972,7 @@ public final class SHXShapeFont: @unchecked Sendable {
                 }
             } else {
                 switch effectiveAlignment {
-                case 1, 4:
+                case 1:
                     offsetX = -0.5 * (minX + maxX)
                 case 2:
                     offsetX = -maxX

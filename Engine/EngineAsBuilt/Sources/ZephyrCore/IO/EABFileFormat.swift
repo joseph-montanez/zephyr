@@ -85,10 +85,11 @@ public let EABArchiveMagic: UInt32 = 0x41424145  // "EABA" in little-endian
 /// v20-era readers would misrender the unscaled values, so they reject v21.
 /// Version 22 persists block attribute definitions (ATTDEF) and per-insert
 /// attribute values (ATTRIB).
+/// Version 24 appends attribute text generation flags (backwards/upside-down).
 /// Version 23 appends the layer parity tail (frozen/locked/freeze-in-new-VP
 /// flags, description, reconciled state, 0...90 transparency, color intent,
 /// plot-style name); v22-era readers stop before the tail, so they reject v23.
-public let EABVersion: UInt32 = 23
+public let EABVersion: UInt32 = 24
 /// First version whose strings may use the 0xFFFF + UInt32 long-length form.
 public let EABVersionLongStrings: UInt32 = 18
 

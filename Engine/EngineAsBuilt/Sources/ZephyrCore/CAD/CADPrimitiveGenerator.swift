@@ -356,7 +356,11 @@ public enum CADPrimitiveGenerator {
         renderOrigin: CADRenderOrigin = .zero,
         splineTessellationDivisor: Double = 5000.0,
         curveTessellation: CurveScreenTessellationContext? = nil,
-        isTrueColor: Bool = false
+        isTrueColor: Bool = false,
+        textMirrorX: Bool = false,
+        textMirrorY: Bool = false,
+        textVertical: Bool = false,
+        textLineSpacing: Double = 1.0
     ) -> [PrimitiveSpec] {
         var discarded = CurveTessellationDiagnostics()
         return computePrimitiveSpecs(
@@ -375,7 +379,11 @@ public enum CADPrimitiveGenerator {
             splineTessellationDivisor: splineTessellationDivisor,
             curveTessellation: curveTessellation,
             diagnostics: &discarded,
-            isTrueColor: isTrueColor)
+            isTrueColor: isTrueColor,
+            textMirrorX: textMirrorX,
+            textMirrorY: textMirrorY,
+            textVertical: textVertical,
+            textLineSpacing: textLineSpacing)
     }
 
     static func computePrimitiveSpecs(
@@ -397,7 +405,11 @@ public enum CADPrimitiveGenerator {
         splineTessellationDivisor: Double = 5000.0,
         curveTessellation: CurveScreenTessellationContext? = nil,
         diagnostics: inout CurveTessellationDiagnostics,
-        isTrueColor: Bool = false
+        isTrueColor: Bool = false,
+        textMirrorX: Bool = false,
+        textMirrorY: Bool = false,
+        textVertical: Bool = false,
+        textLineSpacing: Double = 1.0
     ) -> [PrimitiveSpec] {
         // Extract primitive color override if present
         let primColor: ColorRGBA?
@@ -1081,7 +1093,11 @@ public enum CADPrimitiveGenerator {
                     alignV: alignV,
                     widthFactor: finalWidthFactor,
                     obliqueAngle: textObliqueAngle,
-                    maxWidth: finalMaxWidth
+                    maxWidth: finalMaxWidth,
+                    mirrorX: textMirrorX,
+                    mirrorY: textMirrorY,
+                    vertical: textVertical,
+                    lineSpacingFactor: textLineSpacing
                 )
                 if textPrims.count > 500 {
                     let preview = text.prefix(40).replacingOccurrences(of: "\n", with: "\\n")

@@ -1186,6 +1186,10 @@ public enum PDFExporter {
                 var worldHeight = effectiveHeight * heightScale
                 let effectiveOblique = obliqueOverride ? oblique : textStyle.obliqueAngle
                 let worldWidth = mtextWidth.map { $0 * widthScale }
+                let pdfGenFlags: Int = { if !isMTextEntity, let g = entity.xdata["dxf.textGenerationFlags"], case .int(let v) = g { return v }; return 0 }()
+                let pdfMirrorX = !isMTextEntity && (pdfGenFlags & 2) != 0
+                let pdfMirrorY = !isMTextEntity && (pdfGenFlags & 4) != 0
+                let pdfVertical: Bool = { if isMTextEntity, let d = entity.xdata["dxf.mtextDirection"], case .int(let v) = d { return v == 3 }; return false }()
                 let worldFitWidth: Double?
                 if !isMTextEntity, let fw = entity.xdata["dxf.textFitWidth"], case .double(let v) = fw, v > 0 {
                     worldFitWidth = v * widthScale
@@ -1210,7 +1214,7 @@ public enum PDFExporter {
                 } else {
                     ttfBaseReference = styleName
                 }
-                if let ttfBaseReference, rendererTTFPath != nil,
+                if let ttfBaseReference, rendererTTFPath != nil, !(pdfMirrorX || pdfMirrorY || pdfVertical),
                    let baseFace = PDFTextEmitter.resolveBaseFace(
                        formatted: formatted, styleName: styleName,
                        textStyleFonts: document.textStyleFonts) {
@@ -1332,7 +1336,9 @@ public enum PDFExporter {
                             alignV: alignV,
                             widthFactor: effectiveWidthFactor,
                             obliqueAngle: effectiveOblique,
-                            maxWidth: worldWidth, fitWidth: worldFitWidth)
+                            maxWidth: worldWidth, fitWidth: worldFitWidth,
+                            mirrorX: pdfMirrorX, mirrorY: pdfMirrorY,
+                            vertical: pdfVertical, lineSpacingFactor: lineSpacingFactor)
                     }
                     items.append(.textStrokes(
                         prims: prims, color: entityColor,

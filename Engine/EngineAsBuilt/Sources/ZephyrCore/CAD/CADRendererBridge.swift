@@ -1,4 +1,4 @@
-﻿import Foundation
+import Foundation
 import SwiftSDL
 
 // Large-file design note:
@@ -817,7 +817,11 @@ public final class CADRendererBridge {
         fontFile: String? = nil,
         widthFactor: Double = 1.0,
         obliqueAngle: Double = 0.0,
-        fitWidth: Double? = nil
+        fitWidth: Double? = nil,
+        mirrorX: Bool = false,
+        mirrorY: Bool = false,
+        textVertical: Bool = false,
+        lineSpacingFactor: Double = 1.0
     ) -> PrimitiveSpec? {
         guard scale >= 1.0, usesViewportColor || color != nil else { return nil }
         // SHX text measures with the same metrics the vector route renders
@@ -836,7 +840,9 @@ public final class CADRendererBridge {
                 alignH: alignH,
                 alignV: alignV,
                 maxWidth: maxWidth,
-                fitWidth: fitWidth)
+                fitWidth: fitWidth,
+                mirrorX: mirrorX, mirrorY: mirrorY,
+                vertical: textVertical, lineSpacingFactor: lineSpacingFactor)
         } else {
             measured = nil
         }
@@ -949,7 +955,8 @@ public final class CADRendererBridge {
                             widthFactorOverride: Bool, oblique: Double,
                             obliqueOverride: Bool,
                             mtextWidth: Double?, mtextLineSpacing: Double,
-                            mtextLineSpacingStyle: Int,
+                            mtextLineSpacingStyle: Int, mirrorX: Bool, mirrorY: Bool,
+                            textVertical: Bool,
                             transform: Transform3D, color: ColorRGBA,
                             formattedText: FormattedText?, textBackgroundScale: Double?,
                             textBackgroundColor: ColorRGBA?, textBackgroundUsesViewportColor: Bool, fitWidth: Double?)] = []
@@ -1170,12 +1177,17 @@ public final class CADRendererBridge {
 
                 // Use plain text from formatted text if available, otherwise use dxf.text
                 let displayText = ft?.toPlainText() ?? text
+                let genFlagsTop: Int = { if !isMTextEntity, let g = entity.xdata["dxf.textGenerationFlags"], case .int(let v) = g { return v }; return 0 }()
+                let mirrorXTop = !isMTextEntity && (genFlagsTop & 2) != 0
+                let mirrorYTop = !isMTextEntity && (genFlagsTop & 4) != 0
+                let verticalTop: Bool = { if isMTextEntity, let d = entity.xdata["dxf.mtextDirection"], case .int(let v) = d { return v == 3 }; return false }()
 
                 visibleText.append((
                     index, entity.handle, displayText, h, heightOverride, style,
                     alignH, alignV, widthFactor, widthFactorOverride,
                     oblique, obliqueOverride, mtextWidth, mtextLineSpacing,
-                    mtextLineSpacingStyle, entity.transform, effectiveColor, ft,
+                    mtextLineSpacingStyle, mirrorXTop, mirrorYTop,
+                    verticalTop, entity.transform, effectiveColor, ft,
                     entityTextBackgroundScale, entityTextBackgroundColor,
                     entityTextBackgroundUsesViewportColor, textFitWidth))
                 index += 1
@@ -1216,13 +1228,14 @@ public final class CADRendererBridge {
             if let bid = entity.blockID,
                let block = snapshot.blocks[bid],
                !block.attributeDefinitions.isEmpty {
-                for item in CADAttributeDisplay.styledPrimitives(
+                for item in CADAttributeDisplay.styledPrimitivesWithXData(
                     definitions: block.attributeDefinitions,
                     values: entity.attributeValues) {
                     if let layer = item.layerName, !layer.isEmpty {
                         primitiveStyles[geometry.count] = CADPrimitiveStyle(
                             layerName: layer)
                     }
+                    primitiveXData[geometry.count] = item.xdata
                     geometry.append(item.primitive)
                 }
             }
@@ -1443,6 +1456,10 @@ public final class CADRendererBridge {
                                 var primitiveForRender = primitive
                                 var primitiveTextWidthFactor = 1.0
                                 var primitiveTextObliqueAngle = 0.0
+                                var primitiveMirrorX = false
+                                var primitiveMirrorY = false
+                                var primitiveVertical = false
+                                var primitiveLineSpacing = 1.0
 
                                 if case .text(let pos, let text, let height, let rotation, let style, let alignH, let alignV, let mtextWidth, _) = primitive {
                                     let textStyle = CADTextStyle.resolve(style, in: snapshot.textStyles)
@@ -1531,6 +1548,11 @@ public final class CADRendererBridge {
                                     } else {
                                         primitiveTextFitWidth = nil
                                     }
+                                    let primitiveGenFlags: Int = { if !isMTextPrimitive, let g = primitiveXData["dxf.textGenerationFlags"], case .int(let v) = g { return v }; return 0 }()
+                                    primitiveMirrorX = !isMTextPrimitive && (primitiveGenFlags & 2) != 0
+                                    primitiveMirrorY = !isMTextPrimitive && (primitiveGenFlags & 4) != 0
+                                    primitiveVertical = { if isMTextPrimitive, let d = primitiveXData["dxf.mtextDirection"], case .int(let v) = d { return v == 3 }; return false }()
+                                    primitiveLineSpacing = { if let s = primitiveXData["dxf.mtextLineSpacing"], case .double(let v) = s, v > 0 { return v }; return 1.0 }()
 
                                     let effectiveWidthFactor =
                                         primitiveTextWidthFactor * widthScale / heightScale
@@ -1577,7 +1599,7 @@ public final class CADRendererBridge {
                                         ? CADFontManager.getTTFEquivalent(filename: fontFile)
                                         : nil
 
-                                    if let ttfPath = formattedTTFPath ?? styleTTFPath {
+                                    if let ttfPath = formattedTTFPath ?? styleTTFPath, !(primitiveMirrorX || primitiveMirrorY || primitiveVertical) {
                                         let backgroundRGBA = backgroundColor.map {
                                             ($0.r, $0.g, $0.b, $0.a)
                                         }
@@ -1641,7 +1663,10 @@ public final class CADRendererBridge {
                                         fontFile: fontFile,
                                         widthFactor: effectiveWidthFactor,
                                         obliqueAngle: primitiveTextObliqueAngle,
-                                        fitWidth: primitiveTextFitWidth.map { $0 * widthScale }) {
+                                        fitWidth: primitiveTextFitWidth.map { $0 * widthScale },
+                                        mirrorX: primitiveMirrorX, mirrorY: primitiveMirrorY,
+                                        textVertical: primitiveVertical,
+                                        lineSpacingFactor: primitiveLineSpacing) {
                                         specs.append(mask)
                                     }
                                 }
@@ -1689,7 +1714,11 @@ public final class CADRendererBridge {
                                     splineTessellationDivisor: splineTessellationDivisor,
                                     curveTessellation: curveBudgetContext,
                                     diagnostics: &chunkDiagnostics,
-                                    isTrueColor: drawStyle.isTrueColor)
+                                    isTrueColor: drawStyle.isTrueColor,
+                                    textMirrorX: primitiveMirrorX,
+                                    textMirrorY: primitiveMirrorY,
+                                    textVertical: primitiveVertical,
+                                    textLineSpacing: primitiveLineSpacing)
                                 if s.count > 10000 {
                                     let typeStr: String
                                     switch primitive {
@@ -1899,11 +1928,14 @@ public final class CADRendererBridge {
                                     fontFile: fontFile,
                                     widthFactor: effectiveWidthFactor,
                                     obliqueAngle: effectiveOblique,
-                                    fitWidth: worldFitWidth) {
+                                    fitWidth: worldFitWidth,
+                                    mirrorX: vt.mirrorX, mirrorY: vt.mirrorY,
+                                    textVertical: vt.textVertical,
+                                    lineSpacingFactor: vt.mtextLineSpacing) {
                                     specs.append(mask)
                                 }
                                 let textPrims: [CADPrimitive]
-                                if var formatted = vt.formattedText {
+                                if var formatted = vt.formattedText, !(vt.mirrorX || vt.mirrorY || vt.textVertical) {
                                     let localHeightScale = effectiveHeight / max(vt.height, 1e-12)
                                     formatted.styleName = textStyle.name
                                     formatted.defaultFont = fontFile
@@ -1930,6 +1962,17 @@ public final class CADRendererBridge {
                                         lineSpacingFactor: vt.mtextLineSpacing,
                                         lineSpacingStyle: vt.mtextLineSpacingStyle,
                                         textStyleFonts: snapshot.textStyleFonts)
+                                } else if vt.mirrorX || vt.mirrorY || vt.textVertical {
+                                    textPrims = font.renderText(
+                                        vt.text, origin: origin,
+                                        height: worldHeight, rotation: worldRotation,
+                                        alignH: vt.alignH, alignV: vt.alignV,
+                                        widthFactor: effectiveWidthFactor,
+                                        obliqueAngle: effectiveOblique,
+                                        maxWidth: worldWidth, fitWidth: worldFitWidth,
+                                        mirrorX: vt.mirrorX, mirrorY: vt.mirrorY,
+                                        vertical: vt.textVertical,
+                                        lineSpacingFactor: vt.mtextLineSpacing)
                                 } else {
                                     textPrims = font.renderText(
                                         vt.text, origin: origin,
@@ -1937,7 +1980,8 @@ public final class CADRendererBridge {
                                         alignH: vt.alignH, alignV: vt.alignV,
                                         widthFactor: effectiveWidthFactor,
                                         obliqueAngle: effectiveOblique,
-                                        maxWidth: worldWidth, fitWidth: worldFitWidth)
+                                        maxWidth: worldWidth, fitWidth: worldFitWidth,
+                                        lineSpacingFactor: vt.mtextLineSpacing)
                                 }
                                 if textPrims.count > 500 {
                                     let preview = vt.text.prefix(40).replacingOccurrences(of: "\n", with: "\\n")

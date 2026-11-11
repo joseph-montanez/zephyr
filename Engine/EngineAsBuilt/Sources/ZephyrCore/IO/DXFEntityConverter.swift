@@ -515,7 +515,7 @@ public enum DXFEntityConverter {
         let sourceText: String
         if showAttributeDefinitionTagWhenEmpty,
            e.eType == .aTTDEF,
-           tx.text.isEmpty {
+           !tx.attributeTag.isEmpty {
             sourceText = tx.attributeTag
         } else {
             sourceText = tx.text

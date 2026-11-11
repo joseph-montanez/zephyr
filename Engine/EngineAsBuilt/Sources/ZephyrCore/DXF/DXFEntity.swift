@@ -850,6 +850,15 @@ public class DXFMTextEntity: DXFTextEntity {
     public var backgroundColor: Int       // 63
     public var backgroundColor24: Int     // 421
     public var backgroundTransparency: Int // 441
+    public var direction: Int // 72: 1 = left-to-right, 3 = top-to-bottom, 5 = by style
+    // Embedded MTEXT columns object (group 101) values. Observed AutoCAD
+    // behavior: 70=1/71=2/72=2 marks distributed paragraphs (text.dxf 534 and
+    // 646 "Xxp     pxX" spread across the reference width); every other MTEXT
+    // in that file carries 70=1/71=2/72=1 (or no columns object) and lays out
+    // left-aligned.
+    public var columnType: Int // embedded columns group 70
+    public var columnFlow: Int // embedded columns group 71
+    public var columnAlign: Int // embedded columns group 72
 
     public override init(eType: DXFEType = .mTEXT) {
         self.interlin = 1
@@ -859,6 +868,10 @@ public class DXFMTextEntity: DXFTextEntity {
         self.backgroundColor = -1
         self.backgroundColor24 = -1
         self.backgroundTransparency = -1
+        self.direction = 1
+        self.columnType = 0
+        self.columnFlow = 0
+        self.columnAlign = 0
         super.init(eType: eType)
         self.alignH = 0
         self.alignV = 3

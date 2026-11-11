@@ -429,4 +429,91 @@ final class TextMirroringTests: XCTestCase {
                 "visible ink must span past the first line slot for [\(text)]")
         }
     }
+
+    func testDistributedMarkerSpreadsWordsAcrossReferenceWidth() throws {
+        // MTEXT 534/646 "Xxp     pxX" carry the embedded columns marker
+        // 70=1/71=2/72=2. AutoCAD distributes those paragraphs across the
+        // reference width (pxX lands in box 537 and tracks the right grip);
+        // every other MTEXT in text.dxf carries 72=1 (or no columns object)
+        // and stays left-aligned.
+        // Minimal columns block; only 70/71/72 are read.
+        // DXF group codes are whitespace-trimmed, so indentation is free.
+        func dxf(withMarker: Bool) -> String {
+            let tail = withMarker
+                ? "101\nEmbedded Object\n70\n1\n71\n2\n72\n2"
+                : "73\n1"
+            return """
+            0
+            SECTION
+              2
+            ENTITIES
+              0
+            MTEXT
+              8
+            0
+             10
+            1330.64
+             20
+            714.79
+             30
+            0.0
+             40
+            58.4075
+             41
+            1012.4051
+             71
+            1
+             72
+            5
+              1
+            Xxp     pxX
+              7
+            Simplex_100
+            \(tail)
+              0
+            ENDSEC
+              0
+            EOF
+            """
+        }
+        let font = try shxFont()
+        for withMarker in [true, false] {
+            let doc = try importDXFString(dxf(withMarker: withMarker))
+            XCTAssertEqual(doc.allEntities.count, 1)
+            let entity = try XCTUnwrap(doc.allEntities.first)
+            guard case .string(let json) = entity.xdata["dxf.formattedText"] else {
+                XCTFail("missing formatted text")
+                continue
+            }
+            let formatted = try JSONDecoder().decode(
+                FormattedText.self, from: Data(json.utf8))
+            let alignment = formatted.paragraphs.first?.alignment ?? -1
+            let primitives = font.renderFormattedText(
+                formatted, origin: .zero,
+                alignH: 0, alignV: 3, maxWidth: 1012.4051)
+            var minX = Double.infinity
+            var maxX = -Double.infinity
+            for primitive in primitives {
+                if case .line(let start, let end, _) = primitive {
+                    minX = min(minX, start.x, end.x)
+                    maxX = max(maxX, start.x, end.x)
+                }
+            }
+            if withMarker {
+                XCTAssertEqual(alignment, 4,
+                    "columns marker 70=1/71=2/72=2 must map to distributed paragraphs")
+                XCTAssertGreaterThan(minX, -5.0)
+                XCTAssertLessThan(minX, 45.0,
+                    "distributed Xxp must stay at the insertion x")
+                XCTAssertGreaterThan(maxX, 900.0,
+                    "distributed pxX must reach the right box, not stop at natural width")
+                XCTAssertLessThanOrEqual(maxX, 1012.4051 + 5.0)
+            } else {
+                XCTAssertEqual(alignment, 0,
+                    "no marker must keep left-aligned paragraphs")
+                XCTAssertLessThan(maxX, 700.0,
+                    "plain paragraph must keep natural width")
+            }
+        }
+    }
 }

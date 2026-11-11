@@ -30,6 +30,8 @@ public struct CADAttributeDefinition: Hashable, Sendable {
     /// Raw DXF attribute flags (group 70): bit 0 (1) invisible,
     /// bit 1 (2) constant, bit 2 (4) verify, bit 3 (8) preset.
     public var flags: Int
+    /// Text generation flags (group 71): bit 1 (2) backwards, bit 2 (4) upside-down.
+    public var generationFlags: Int
     /// Layer the definition was authored on. "0"/empty inherits the insert.
     public var layerName: String?
 
@@ -44,6 +46,7 @@ public struct CADAttributeDefinition: Hashable, Sendable {
         alignH: Int = 0,
         alignV: Int = 0,
         flags: Int = 0,
+        generationFlags: Int = 0,
         layerName: String? = nil
     ) {
         self.tag = tag
@@ -56,6 +59,7 @@ public struct CADAttributeDefinition: Hashable, Sendable {
         self.alignH = alignH
         self.alignV = alignV
         self.flags = flags
+        self.generationFlags = generationFlags
         self.layerName = layerName
     }
 
@@ -76,17 +80,20 @@ public struct CADAttributeValue: Hashable, Sendable {
     public var position: Vector3?
     public var height: Double?
     public var rotation: Double?
+    public var generationFlags: Int?
 
     public init(
         value: String,
         position: Vector3? = nil,
         height: Double? = nil,
-        rotation: Double? = nil
+        rotation: Double? = nil,
+        generationFlags: Int? = nil
     ) {
         self.value = value
         self.position = position
         self.height = height
         self.rotation = rotation
+        self.generationFlags = generationFlags
     }
 }
 
@@ -128,6 +135,7 @@ public struct CADResolvedAttribute: Sendable {
     public var position: Vector3
     public var height: Double
     public var rotation: Double
+    public var generationFlags: Int
 }
 
 public enum CADAttributeDisplay {
@@ -152,7 +160,8 @@ public enum CADAttributeDisplay {
                 text: text,
                 position: stored?.position ?? def.position,
                 height: stored?.height ?? def.height,
-                rotation: stored?.rotation ?? def.rotation))
+                rotation: stored?.rotation ?? def.rotation,
+                generationFlags: stored?.generationFlags ?? def.generationFlags))
         }
         let definedKeys = Set(definitions.map(\.key))
         for key in values.keys.sorted() where !definedKeys.contains(key) {
@@ -162,13 +171,15 @@ public enum CADAttributeDisplay {
                 defaultValue: stored.value,
                 position: stored.position ?? .zero,
                 height: stored.height ?? 2.5,
-                rotation: stored.rotation ?? 0)
+                rotation: stored.rotation ?? 0,
+                generationFlags: stored.generationFlags ?? 0)
             rows.append(CADResolvedAttribute(
                 definition: surrogate,
                 text: stored.value,
                 position: surrogate.position,
                 height: surrogate.height,
-                rotation: surrogate.rotation))
+                rotation: surrogate.rotation,
+                generationFlags: stored.generationFlags ?? 0))
         }
         return rows
     }
@@ -203,5 +214,29 @@ public enum CADAttributeDisplay {
         values: [String: CADAttributeValue]
     ) -> [CADPrimitive] {
         styledPrimitives(definitions: definitions, values: values).map(\.primitive)
+    }
+
+    public static func styledPrimitivesWithXData(
+        definitions: [CADAttributeDefinition],
+        values: [String: CADAttributeValue]
+    ) -> [(primitive: CADPrimitive, layerName: String?, xdata: [String: XDataValue])] {
+        resolve(definitions: definitions, values: values).map { row in
+            (primitive: CADPrimitive.text(
+                position: row.position,
+                text: row.text,
+                height: row.height,
+                rotation: row.rotation,
+                style: row.definition.style,
+                alignH: row.definition.alignH,
+                alignV: row.definition.alignV,
+                mtextWidth: nil,
+                color: nil),
+             layerName: row.definition.layerName,
+             xdata: ["dxf.text": .string(row.text),
+                     "dxf.textEntityType": .string("ATTRIB"),
+                     "dxf.textGenerationFlags": .int(row.generationFlags),
+                     "dxf.alignH": .int(row.definition.alignH),
+                     "dxf.alignV": .int(row.definition.alignV)])
+        }
     }
 }

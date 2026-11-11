@@ -598,6 +598,9 @@ public class DXFReader {
         let isMTEXT = (typeName == "MTEXT")   // hoisted: this was a String compare per pair
         var idx = startPos + 1
         var skippingEmbeddedMTextObject = false
+        var embeddedCol70: Int? = nil
+        var embeddedCol71: Int? = nil
+        var embeddedCol72: Int? = nil
         while idx < pairs.count {
             let (c, v) = pairs[idx]
             if c == 0 { break }
@@ -606,7 +609,15 @@ public class DXFReader {
                 idx += 1
                 continue
             }
-            if !skippingEmbeddedMTextObject { allPairs.append((c, v)) }
+            if skippingEmbeddedMTextObject {
+                // Capture only the columns alignment marker; the rest of the
+                // embedded payload must not overwrite placement fields.
+                if c == 70, embeddedCol70 == nil { embeddedCol70 = i(v) }
+                else if c == 71, embeddedCol71 == nil { embeddedCol71 = i(v) }
+                else if c == 72, embeddedCol72 == nil { embeddedCol72 = i(v) }
+            } else {
+                allPairs.append((c, v))
+            }
             idx += 1
         }
         startPos = idx  // advance to next 0
@@ -628,7 +639,12 @@ public class DXFReader {
         case "SEQEND":   return nil
         case "SPLINE":   return parseSpline(allPairs)
         case "TEXT":     return parseText(allPairs)
-        case "MTEXT":    return parseMText(allPairs)
+        case "MTEXT":
+            let mtext = parseMText(allPairs)
+            mtext.columnType = embeddedCol70 ?? 0
+            mtext.columnFlow = embeddedCol71 ?? 0
+            mtext.columnAlign = embeddedCol72 ?? 0
+            return mtext
         case "ATTDEF":   return parseText(allPairs, entityType: .aTTDEF)
         case "ATTRIB":   return parseText(allPairs, entityType: .aTTRIB)
         case "INSERT":   return parseInsert(allPairs)
@@ -1097,7 +1113,7 @@ extension DXFReader {
                 explicitAngleOrder = pairIndex
             case 63:  e.backgroundColor = i(v)
             case 71:  e.textGen = i(v)     // attachment point
-            case 72:  break                 // drawing direction, not alignment
+            case 72:  e.direction = i(v)     // drawing direction (1/3/5)
             case 73:  e.lineSpacingStyle = i(v)
             case 90:  e.backgroundFillFlags = i(v)
             case 421: e.backgroundColor24 = i(v)

@@ -173,6 +173,11 @@ public enum CADTextMeasurement: Sendable {
         } else {
             fitWidth = nil
         }
+        let genFlags: Int = { if !mtext, let g = xdata["dxf.textGenerationFlags"], case .int(let v) = g { return v }; return 0 }()
+        let mirrorX = !mtext && (genFlags & 2) != 0
+        let mirrorY = !mtext && (genFlags & 4) != 0
+        let isVertical: Bool = { if mtext, let d = xdata["dxf.mtextDirection"], case .int(let v) = d { return v == 3 }; return false }()
+        let lineSpacing: Double = { if let s = xdata["dxf.mtextLineSpacing"], case .double(let v) = s, v > 0 { return v }; return 1.0 }()
         if let ink = font.measuredLocalBounds(
             text,
             height: effHeight,
@@ -181,7 +186,9 @@ public enum CADTextMeasurement: Sendable {
             alignH: alignH,
             alignV: alignV,
             maxWidth: mtext ? mtextWidth : nil,
-            fitWidth: fitWidth) {
+            fitWidth: fitWidth,
+            mirrorX: mirrorX, mirrorY: mirrorY,
+            vertical: isVertical, lineSpacingFactor: lineSpacing) {
             return ink
         }
         // Blank text draws no ink but still occupies the advance width
@@ -207,7 +214,11 @@ public enum CADTextMeasurement: Sendable {
         alignH: Int,
         alignV: Int,
         maxWidth: Double?,
-        fitWidth: Double? = nil
+        fitWidth: Double? = nil,
+        mirrorX: Bool = false,
+        mirrorY: Bool = false,
+        vertical: Bool = false,
+        lineSpacingFactor: Double = 1.0
     ) -> (minX: Double, maxX: Double, minY: Double, maxY: Double)? {
         guard !text.isEmpty, height.isFinite, height > 0 else { return nil }
         if let ink = font.measuredLocalBounds(
@@ -218,7 +229,9 @@ public enum CADTextMeasurement: Sendable {
             alignH: alignH,
             alignV: alignV,
             maxWidth: maxWidth,
-            fitWidth: fitWidth) {
+            fitWidth: fitWidth,
+            mirrorX: mirrorX, mirrorY: mirrorY,
+            vertical: vertical, lineSpacingFactor: lineSpacingFactor) {
             return ink
         }
         let advance = font.measuredAdvanceWidth(

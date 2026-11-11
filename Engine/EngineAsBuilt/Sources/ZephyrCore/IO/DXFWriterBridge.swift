@@ -586,6 +586,10 @@ public enum DXFWriterBridge {
                 for (index, primitive) in block.geometry.enumerated() {
                     if consumedHatchIndices.contains(index) { continue }
                     let primitiveXData = block.primitiveXData[index] ?? [:]
+                    if case .string(let at) = primitiveXData["dxf.attributeType"], at.caseInsensitiveCompare("ATTDEF") == .orderedSame {
+                        let afl: Int = { if case .int(let v) = primitiveXData["dxf.attributeFlags"] { return v }; return 0 }()
+                        if (afl & 2) == 0 { continue }
+                    }
                     if case .table(let data, let origin, _) = primitive {
                         if !isCrossVersionExport, let table = nativeTableEntity(
                             data: data,
@@ -2858,6 +2862,7 @@ public enum DXFWriterBridge {
                 entity.angle_p = -worldRotation * 180.0 / .pi
                 entity.style = style ?? xdataString(xdata, "dxf.textStyle") ?? "STANDARD"
                 entity.textGen = mtextAttachment(alignH: alignH, alignV: alignV)
+                entity.direction = xdataInt(xdata, "dxf.mtextDirection") ?? 1
                 entity.interlin = xdataDouble(xdata, "dxf.mtextLineSpacing") ?? 1.0
                 entity.lineSpacingStyle = xdataInt(
                     xdata, "dxf.mtextLineSpacingStyle") == 2 ? 2 : 1
@@ -3314,6 +3319,7 @@ public enum DXFWriterBridge {
         entity.attributeTag = def.tag
         entity.attributePrompt = def.prompt
         entity.attributeFlags = def.flags
+        entity.textGen = def.generationFlags
         return entity
     }
 
@@ -3361,6 +3367,7 @@ public enum DXFWriterBridge {
             text.alignV = def?.alignV ?? 0
             text.attributeTag = tag
             text.attributeFlags = def?.flags ?? 0
+            text.textGen = stored.generationFlags ?? def?.generationFlags ?? 0
             return text
         }
         let definedKeys = Set(block.attributeDefinitions.map(\.key))

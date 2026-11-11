@@ -589,7 +589,12 @@ public enum DXFExporter {
             output += " 10\r\n0.0\r\n 20\r\n0.0\r\n 30\r\n0.0\r\n"
             output += "  3\r\n\(dxfEscape(block.name))\r\n"
             output += "  1\r\n\r\n"
-            for prim in block.geometry {
+            for (index, prim) in block.geometry.enumerated() {
+                let xd = block.primitiveXData[index] ?? [:]
+                if case .string(let t) = xd["dxf.attributeType"], t.caseInsensitiveCompare("ATTDEF") == .orderedSame {
+                    let fl: Int = { if case .int(let v) = xd["dxf.attributeFlags"] { return v }; return 0 }()
+                    if (fl & 2) == 0 { continue }
+                }
                 writePrimitive(prim, ctx: ctx, layerName: "0", into: &output)
             }
             for def in block.attributeDefinitions {
@@ -817,6 +822,7 @@ public enum DXFExporter {
         output += "  2\r\n\(dxfEscape(def.tag))\r\n"
         if !def.prompt.isEmpty { output += "  3\r\n\(dxfEscape(def.prompt))\r\n" }
         output += " 70\r\n\(def.flags)\r\n"
+        output += " 71\r\n\(def.generationFlags)\r\n"
     }
 
     /// Writes one per-INSERT attribute value in world space. Placement is
@@ -860,6 +866,7 @@ public enum DXFExporter {
         }
         output += "  2\r\n\(dxfEscape(tag))\r\n"
         output += " 70\r\n\(definition?.flags ?? 0)\r\n"
+        output += " 71\r\n\(value.generationFlags ?? definition?.generationFlags ?? 0)\r\n"
     }
 
     // MARK: - Entity header helper

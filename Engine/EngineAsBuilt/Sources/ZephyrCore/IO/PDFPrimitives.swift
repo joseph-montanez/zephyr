@@ -49,12 +49,38 @@ enum PDFPrimitives {
                             options: PDFExporter.PDFExportOptions = .default,
                             catalog: PDFTextEmitter.PDFFontCatalog? = nil,
                             plotInk: PDFExporter.PlotInk? = nil) {
-        guard let geometry = entity.resolvedGeometry(in: document), !geometry.isEmpty
+        guard var geometry = entity.resolvedGeometry(in: document), !geometry.isEmpty
         else { return }
+        var primStylesVar = document.primitiveStyles(for: entity)
+        var primXDataVar = document.primitiveXData(for: entity)
+        if let bid = entity.blockID, let blk = document.block(for: bid), !blk.attributeDefinitions.isEmpty {
+            var filtered: [CADPrimitive] = []
+            var filteredStyles: [Int: CADPrimitiveStyle] = [:]
+            var filteredXData: [Int: [String: XDataValue]] = [:]
+            for (idx, prim) in geometry.enumerated() {
+                let xd = primXDataVar[idx] ?? [:]
+                if case .string(let t) = xd["dxf.attributeType"], t.caseInsensitiveCompare("ATTDEF") == .orderedSame {
+                    let fl: Int = { if case .int(let v) = xd["dxf.attributeFlags"] { return v }; return 0 }()
+                    if (fl & 2) == 0 { continue }
+                }
+                let ni = filtered.count
+                filtered.append(prim)
+                if let s = primStylesVar[idx] { filteredStyles[ni] = s }
+                if let x = primXDataVar[idx] { filteredXData[ni] = x }
+            }
+            for item in CADAttributeDisplay.styledPrimitivesWithXData(definitions: blk.attributeDefinitions, values: entity.attributeValues) {
+                filteredXData[filtered.count] = item.xdata
+                filtered.append(item.primitive)
+            }
+            geometry = filtered
+            primStylesVar = filteredStyles
+            primXDataVar = filteredXData
+            guard !geometry.isEmpty else { return }
+        }
 
         // Per-primitive styles (block contents): hidden style layers are
         // skipped and style colour/lineweight win over the entity's.
-        let primStyles = document.primitiveStyles(for: entity)
+        let primStyles = primStylesVar
         let layersByName = document.layersByUppercasedName()
         func styleLayer(_ index: Int) -> Layer? {
             guard let name = primStyles[index]?.effectiveLayerUppercased else { return nil }
@@ -192,7 +218,7 @@ enum PDFPrimitives {
                                entityColor: resolvedMappedColor(index, prim),
                                lineWeightMM: resolvedLineWeightMM(index),
                                pageScale: pageScale, isLightBackground: isLightBackground, to: cb,
-                               primitiveXData: document.primitiveXData(for: entity)[index],
+                               primitiveXData: primXDataVar[index],
                                options: options, catalog: catalog)
         }
 
@@ -389,7 +415,13 @@ enum PDFPrimitives {
         }
         let rendererPrimitiveTTFPath = primitiveFormattedTTFPath
             ?? (exactPrimitiveSHXFont == nil ? CADFontManager.getTTFEquivalent(filename: primitiveStyleFont) : nil)
-        if rendererPrimitiveTTFPath != nil,
+        let pdfPrimGenFlags: Int = { if let xd = primitiveXData?["dxf.textGenerationFlags"], case .int(let v) = xd { return v }; return 0 }()
+        let pdfPrimIsMText: Bool = { if let xd = primitiveXData?["dxf.textEntityType"], case .string(let t) = xd { return t.uppercased() == "MTEXT" }; return false }()
+        let pdfPrimMirrorX = !pdfPrimIsMText && (pdfPrimGenFlags & 2) != 0
+        let pdfPrimMirrorY = !pdfPrimIsMText && (pdfPrimGenFlags & 4) != 0
+        let pdfPrimVertical: Bool = { if pdfPrimIsMText, let d = primitiveXData?["dxf.mtextDirection"], case .int(let v) = d { return v == 3 }; return false }()
+        let pdfPrimSpacing: Double = { if let xd = primitiveXData?["dxf.mtextLineSpacing"], case .double(let v) = xd, v > 0 { return v }; return 1.0 }()
+        if rendererPrimitiveTTFPath != nil, !(pdfPrimMirrorX || pdfPrimMirrorY || pdfPrimVertical),
            let baseFace = PDFTextEmitter.resolveBaseFace(
                formatted: formatted, styleName: styleRef,
                textStyleFonts: document.textStyleFonts) {
@@ -503,7 +535,9 @@ enum PDFPrimitives {
                 alignV: alignV,
                 widthFactor: shxWidthFactor * widthScale / heightScale,
                 obliqueAngle: shxOblique,
-                maxWidth: finalMaxWidth, fitWidth: textFitWidthWorld)
+                maxWidth: finalMaxWidth, fitWidth: textFitWidthWorld,
+                mirrorX: pdfPrimMirrorX, mirrorY: pdfPrimMirrorY,
+                vertical: pdfPrimVertical, lineSpacingFactor: pdfPrimSpacing)
             writeWorldPrimitives(glyphPrims, defaultColor: resolvedColor,
                                  lineWeightMM: lineWeightMM, pageScale: pageScale,
                                  isLightBackground: false, to: cb)
