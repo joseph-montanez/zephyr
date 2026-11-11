@@ -23,6 +23,10 @@ struct BlockPanelUI {
     private static var libraryFolderField: String = ""
     private static var libraryFolderReady: Bool = false
     private static var libraryScannedFolder: String = ""
+    private static var libraryError: String? = nil
+    /// Session-picked drawing files (Add Files…), listed alongside the
+    /// folder scan. Not persisted; re-merged on every rescan.
+    private static var libraryExtraPaths: [String] = []
     private static var libraryEntries: [BlockLibraryService.FileEntry] = []
     private static var libraryParses: [String: Task<Void, Never>] = [:]
     private static var collapsedPaths = Set<String>()
@@ -286,6 +290,15 @@ struct BlockPanelUI {
                 engine.tabManager.enterBlockEditor(blockID: row.handle)
                 engine.cadSelection.clearSelection()
             }
+            ImGuiSameLine(0, 4)
+            // Write this definition to a DXF/DWG file: skips straight to
+            // the destination step (no source or base-point questions —
+            // block output is block-local at the origin).
+            if igSmallButton("Export") {
+                let cmd = WblockCommand(useFileDialog: true)
+                cmd.seedBlockExport(name: row.name)
+                engine.commandProcessor.activateFeatureCommand(cmd)
+            }
             if let ref = refForCurrentBlock(name: row.name, engine: engine) {
                 ImGuiSameLine(0, 4)
                 let star = isFavorite(engine: engine, ref: ref) ? "Unpin" : "Pin"
@@ -308,9 +321,7 @@ struct BlockPanelUI {
         engine: PhrostEngine, doc: CADDocument, ref: BlockLibraryRef,
         trailing: (PhrostEngine) -> Void
     ) {
-        var rowIdx = Int32(ref.path.hashValue & 0x7FFF_FFFF)
-        rowIdx &+= Int32(abs((ref.block ?? "").hashValue) % 997)
-        ImGuiPushID(rowIdx)
+        ImGuiPushID(ref.path + "\n" + (ref.block ?? ""))
         let missing = !refAvailable(ref, doc: doc)
         let label = missing ? "\(ref.displayName) (missing)" : ref.displayName
         ImGuiTextV(label)
@@ -340,7 +351,7 @@ struct BlockPanelUI {
         var shown = false
         for name in live.filter({ matchesSearch($0) }) {
             shown = true
-            ImGuiPushID(Int32(abs(name.hashValue) % 100_003))
+            ImGuiPushID("recent\n" + name)
             ImGuiTextV("\(name) (this drawing)")
             ImGuiSameLine(0, 8)
             if igSmallButton("Insert") {
@@ -409,20 +420,31 @@ struct BlockPanelUI {
         let committed = DataTablePanelUI.inputText(
             id: "##libraryfolder", value: &libraryFolderField, enterReturnsTrue: true)
         ImGuiSameLine(0, 8)
-        // Rescan on explicit Load or Enter (not per keystroke).
+        // Load always rescans (even for an unchanged path) so drawings
+        // added on disk since the last scan appear.
         if igSmallButton("Load") || committed {
-            if libraryFolderField != libraryScannedFolder
-                && !libraryFolderField.trimmingCharacters(in: .whitespaces).isEmpty {
-                engine.ui.blockLibraryFolders = [libraryFolderField]
-                rescanLibraries()
-            }
+            commitLibraryFolder(engine: engine)
         }
+        ImGuiSameLine(0, 8)
+        if igSmallButton("Browse…") {
+            browseLibraryFolder(engine: engine)
+        }
+        ImGuiSameLine(0, 8)
+        if igSmallButton("Add Files…") {
+            addLibraryFiles(engine: engine)
+        }
+        renderLibraryRecent(engine: engine)
         igSeparator()
+        if let error = libraryError {
+            ImGuiTextV(error)
+        }
         if libraryEntries.isEmpty {
-            ImGuiTextV(
-                libraryScannedFolder.isEmpty
-                    ? "Enter a library folder above."
-                    : "No drawings found in this folder.")
+            if libraryError == nil {
+                ImGuiTextV(
+                    libraryScannedFolder.isEmpty && libraryExtraPaths.isEmpty
+                        ? "Enter a library folder above, or Browse / Add Files."
+                        : "No drawings found in this folder.")
+            }
             return
         }
         pumpLibraryParses(maxInflight: 4)
@@ -436,14 +458,98 @@ struct BlockPanelUI {
         }
     }
 
+    /// Commit the folder field: persist the MRU, then rescan. An empty
+    /// field is a no-op (the previous list stays visible).
+    private static func commitLibraryFolder(engine: PhrostEngine) {
+        let trimmed = libraryFolderField.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        libraryFolderField = trimmed
+        BlockLibraryPolicy.recordLibraryFolder(
+            trimmed, into: &engine.ui.blockLibraryFolders)
+        rescanLibraries()
+    }
+
+    /// Folder picker for the library path. Cancelling leaves everything
+    /// unchanged; picking sets the field and rescans like Load.
+    private static func browseLibraryFolder(engine: PhrostEngine) {
+        let start = libraryFolderField.trimmingCharacters(in: .whitespacesAndNewlines)
+        NativeFileDialog.showOpenFolderDialog(
+            window: engine.dialogParentWindow,
+            defaultLocation: start.isEmpty ? nil : start
+        ) { [weak engine] urls in
+            guard let engine, let url = urls.first else { return }
+            libraryFolderField = url.path
+            commitLibraryFolder(engine: engine)
+        }
+    }
+
+    /// Single-file picks (DWG/DXF/EAB) listed alongside the folder scan
+    /// for this session. Already-listed and unsupported files are skipped.
+    private static func addLibraryFiles(engine: PhrostEngine) {
+        NativeFileDialog.showOpenDialog(
+            window: engine.dialogParentWindow,
+            filters: [NativeFileDialog.Filter(
+                label: "Drawings", extensions: ["dxf", "dwg", "eab"])],
+            allowMultiple: true
+        ) { urls in
+            var added = false
+            for url in urls {
+                guard !libraryExtraPaths.contains(url.path),
+                      !libraryEntries.contains(where: { $0.path == url.path }),
+                      BlockLibraryService.entry(for: url) != nil
+                else { continue }
+                libraryExtraPaths.append(url.path)
+                added = true
+            }
+            guard added else { return }
+            libraryExtraPaths = BlockLibraryService.pruningVanished(libraryExtraPaths)
+            libraryEntries = BlockLibraryService.merging(
+                libraryEntries, withExtraPaths: libraryExtraPaths)
+        }
+    }
+
+    /// Recent-libraries dropdown (most-recent first, persisted). Picking a
+    /// folder sets the field and rescans like Load.
+    private static func renderLibraryRecent(engine: PhrostEngine) {
+        let recent = engine.ui.blockLibraryFolders
+        guard !recent.isEmpty else { return }
+        ImGuiSameLine(0, 8)
+        ImGuiSetNextItemWidth(160)
+        if ImGuiBeginCombo("##libraryrecent", "Recent", 0) {
+            for folder in recent {
+                if ImGuiSelectable(
+                    folder, folder == libraryFolderField, 0, ImVec2(x: 0, y: 0))
+                {
+                    libraryFolderField = folder
+                    commitLibraryFolder(engine: engine)
+                }
+            }
+            ImGuiEndCombo()
+        }
+    }
+
     private static func rescanLibraries() {
         for task in libraryParses.values {
             task.cancel()
         }
         libraryParses = [:]
         collapsedPaths = []
-        let url = URL(fileURLWithPath: libraryFolderField)
-        libraryEntries = BlockLibraryService.scanFolder(at: url)
+        libraryError = nil
+        libraryExtraPaths = BlockLibraryService.pruningVanished(libraryExtraPaths)
+        var isDir = ObjCBool(false)
+        let exists = FileManager.default.fileExists(
+            atPath: libraryFolderField, isDirectory: &isDir)
+        if !libraryFolderField.isEmpty, (!exists || !isDir.boolValue) {
+            libraryError = "Folder not found: \(libraryFolderField)"
+            libraryEntries = BlockLibraryService.merging(
+                [], withExtraPaths: libraryExtraPaths)
+        } else {
+            let url = URL(fileURLWithPath: libraryFolderField)
+            libraryEntries = BlockLibraryService.merging(
+                libraryFolderField.isEmpty
+                    ? [] : BlockLibraryService.scanFolder(at: url),
+                withExtraPaths: libraryExtraPaths)
+        }
         libraryScannedFolder = libraryFolderField
     }
 
@@ -472,6 +578,13 @@ struct BlockPanelUI {
     }
 
     private static func renderLibraryFileRow(engine: PhrostEngine, entry: BlockLibraryService.FileEntry) {
+        // Scope the repeated "Insert file"/"Pin" labels: without this every
+        // visible file row shares one ID and Dear ImGui asserts.
+        ImGuiPushID(entry.path)
+        // File thumbnail (model-space content): block-definition-only files
+        // show their root preview here so (0 blocks) rows are not blank.
+        previewCell(entry.rootPreview, size: 44)
+        ImGuiSameLine(0, 8)
         let collapsed = collapsedPaths.contains(entry.path)
         if igSmallButton(collapsed ? "+##\(entry.path)" : "-##\(entry.path)") {
             if collapsed {
@@ -510,14 +623,15 @@ struct BlockPanelUI {
         } else {
             ImGuiTextV("(…)")
         }
+        ImGuiPopID()
     }
 
     private static func renderLibraryBlockRow(
         engine: PhrostEngine, filePath: String, block: BlockLibraryService.BlockEntry
     ) {
-        var rowIdx = Int32(abs(block.blockName.hashValue) % 100_003)
-        rowIdx &+= Int32(abs(filePath.hashValue) % 997)
-        ImGuiPushID(rowIdx)
+        // Stable string scope: hash-based IDs collide (and Swift hashes
+        // vary per launch), which trips the duplicate-ID assert.
+        ImGuiPushID(filePath + "\n" + block.blockName)
         previewCell(block.preview, size: 44)
         ImGuiSameLine(0, 8)
         ImGuiTextV("\(block.blockName)")

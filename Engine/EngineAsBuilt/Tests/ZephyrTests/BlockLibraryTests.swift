@@ -494,6 +494,29 @@ final class BlockLibraryTests: XCTestCase {
         XCTAssertFalse(parsed.rootPreview?.isEmpty ?? true)
     }
 
+    func testRequestParseModelOnlyFileKeepsRootPreview() async throws {
+        // WBLOCK-style output (loose model entities, no definitions):
+        // zero container blocks, but the file row still gets a thumbnail.
+        let document = CADDocument()
+        document.addLayer(Layer(name: "0"))
+        let layer = try XCTUnwrap(document.findLayer(named: "0"))
+        document.addEntity(CADEntity(
+            layerID: layer.handle,
+            localGeometry: [.line(
+                start: Vector3(x: 0, y: 0, z: 0),
+                end: Vector3(x: 10, y: 0, z: 0), color: nil)],
+            transform: .identity))
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("blocklib-modelonly-\(UUID().uuidString).dxf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DXFExporter.export(document: document, to: url)
+        let row = try XCTUnwrap(BlockLibraryService.entry(for: url))
+        let parsed = try await BlockLibraryService.requestParse(entry: row)
+        XCTAssertNil(parsed.error)
+        XCTAssertEqual(parsed.containerBlocks?.count, 0)
+        XCTAssertFalse(parsed.rootPreview?.isEmpty ?? true)
+    }
+
     func testRequestParseMissingThrowsFileNotFound() async {
         let missing = BlockLibraryService.FileEntry(
             path: "/nonexistent/door.dxf", displayName: "door",
@@ -634,6 +657,84 @@ final class BlockLibraryTests: XCTestCase {
         doc.undo()
         XCTAssertTrue(doc.allEntities.isEmpty)
         XCTAssertFalse(doc.allBlocks.contains { $0.name == "Chair" })
+    }
+
+    // MARK: - Library picks: entry factory, merge, MRU
+
+    func testEntryFactoryAcceptsSupportedFile() throws {
+        let folder = try makeLibraryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("door.dxf")
+        guard let entry = BlockLibraryService.entry(for: url) else {
+            return XCTFail("entry(for:) rejected door.dxf")
+        }
+        XCTAssertEqual(entry.displayName, "door")
+        XCTAssertEqual(entry.ext, "dxf")
+        XCTAssertEqual(entry.path, url.path)
+    }
+
+    func testEntryFactoryRejectsUnsupportedMissingAndDirectories() throws {
+        let folder = try makeLibraryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        XCTAssertNil(BlockLibraryService.entry(
+            for: folder.appendingPathComponent("notes.txt")))
+        XCTAssertNil(BlockLibraryService.entry(
+            for: folder.appendingPathComponent("ghost.dxf")))
+        XCTAssertNil(BlockLibraryService.entry(for: folder))
+        let fakeDir = folder.appendingPathComponent("sub.dxf", isDirectory: true)
+        try FileManager.default.createDirectory(at: fakeDir, withIntermediateDirectories: true)
+        XCTAssertNil(BlockLibraryService.entry(for: fakeDir))
+    }
+
+    func testMergingExtrasDedupesAndDropsVanished() throws {
+        let folder = try makeLibraryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let scanned = BlockLibraryService.scanFolder(at: folder)
+        let door = folder.appendingPathComponent("door.dxf").path
+        let merged = BlockLibraryService.merging(
+            scanned,
+            withExtraPaths: [door, folder.appendingPathComponent("ghost.dxf").path])
+        // door.dxf is already listed (no duplicate), ghost.dxf is gone (dropped).
+        XCTAssertEqual(merged.map(\.path).sorted(), scanned.map(\.path).sorted())
+        // A real file outside the folder is appended.
+        let outside = FileManager.default.temporaryDirectory
+            .appendingPathComponent("blocklib-outside-\(UUID().uuidString).dxf")
+        try doorDXF().write(to: outside, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let merged2 = BlockLibraryService.merging(scanned, withExtraPaths: [outside.path])
+        XCTAssertEqual(merged2.count, scanned.count + 1)
+        XCTAssertTrue(merged2.contains { $0.path == outside.path })
+    }
+
+    func testPruningVanishedKeepsOnlyListable() throws {
+        let folder = try makeLibraryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let door = folder.appendingPathComponent("door.dxf").path
+        let kept = BlockLibraryService.pruningVanished([
+            door,
+            folder.appendingPathComponent("ghost.dxf").path,
+            folder.appendingPathComponent("notes.txt").path,
+        ])
+        XCTAssertEqual(kept, [door])
+    }
+
+    func testRecordLibraryFolderDedupesCapsAndIgnoresEmpty() {
+        var folders: [String] = []
+        BlockLibraryPolicy.recordLibraryFolder("   ", into: &folders)
+        XCTAssertTrue(folders.isEmpty)
+        for i in 0..<12 {
+            BlockLibraryPolicy.recordLibraryFolder("/lib/\(i)", into: &folders)
+        }
+        XCTAssertEqual(folders.count, 10)
+        XCTAssertEqual(folders.first, "/lib/11")
+        // Re-pick moves to front without growing.
+        BlockLibraryPolicy.recordLibraryFolder("/lib/3", into: &folders)
+        XCTAssertEqual(folders.first, "/lib/3")
+        XCTAssertEqual(folders.count, 10)
+        // Surrounding whitespace matches the same folder.
+        BlockLibraryPolicy.recordLibraryFolder("  /lib/3\t", into: &folders)
+        XCTAssertEqual(folders.first, "/lib/3")
+        XCTAssertEqual(folders.count, 10)
     }
 }
 

@@ -5,7 +5,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 ## November 2026
 
 ### New Features
-- **Blocks palette (`BLOCKSPALETTE`)** - browse and insert blocks with thumbnails, search, and favorites.
+- **Blocks palette (`BLOCKSPALETTE`)** - browse and insert blocks with thumbnails, search, and favorites; library folders with Browse/Add Files/Recent, background parsing with per-file and per-block previews, file-row thumbnails, stable row IDs, and one-click block Export to DXF/DWG.
 - **Model-space plotting** - `PLOT`, `PAGESETUP`, and `PREVIEW` now work from Model space.
 - **Batch publishing (`PUBLISH`)** - publish multiple sheets to PDF at once from a sheet list.
 - **Save As DWG** - save directly to DWG; version follows `DXFVERSION`.
@@ -47,6 +47,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Layers panel refresh** - multi-select, bulk actions, search, sort, and cleaner rows.
 - **LAYOUT SAveas** - duplicates the current layout under a new name; template-file export is still pending.
 - **MEASUREGEOM Angle mode** - three-click vertex/first/second angle with an arc overlay (`N` hotkey, `AN` keyword, prompt chip).
+- **WBLOCK file export** - DXF or DWG output chosen by extension (DWG via ODA), native save dialog with the extension auto-applied, object selections shifted to the origin with pruned symbol tables and dimension-aware shifting, noun/verb preselection, Enter/Space step confirmation, block-reference picking, xref refusal, and object snaps for the base point.
 
 ### DXF & File Formats
 - **Mirrored geometry round-trips** - mirrored blocks and arcs survive save and reopen.

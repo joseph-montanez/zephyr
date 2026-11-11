@@ -336,7 +336,78 @@ public enum NativeFileDialog {
             panel.begin(completionHandler: finished)
         }
     }
+
+    private static func showMacOpenFolderDialog(
+        allowMultiple: Bool,
+        defaultLocation: String?,
+        completion: @escaping @MainActor @Sendable ([URL]) -> Void
+    ) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = allowMultiple
+        panel.resolvesAliases = true
+        panel.treatsFilePackagesAsDirectories = false
+        if let defaultLocation, !defaultLocation.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: defaultLocation)
+        }
+
+        let finished: (NSApplication.ModalResponse) -> Void = { response in
+            completion(response == .OK ? panel.urls : [])
+            NSApp.activate(ignoringOtherApps: true)
+        }
+
+        if let parentWindow = NSApp.keyWindow ?? NSApp.mainWindow {
+            panel.beginSheetModal(
+                for: parentWindow,
+                completionHandler: finished)
+        } else {
+            panel.begin(completionHandler: finished)
+        }
+    }
 #endif
+
+    // MARK: - Show Open Folder Dialog
+
+    /// Show the native OS folder-picker dialog (block library folder,
+    /// recent-blocks location, and similar directory picks).
+    ///
+    /// Requires SDL 3.2+ on non-macOS platforms (`SDL_ShowOpenFolderDialog`);
+    /// all pinned build environments ship 3.4.x (see CI workflows and setup scripts).
+    ///
+    /// - Parameters:
+    ///   - window: The SDL window to make the dialog modal for.
+    ///   - allowMultiple: Whether the user can select multiple folders.
+    ///   - defaultLocation: Folder the dialog opens at, if supported.
+    ///   - completion: Called on the main thread with the selected folder
+    ///     URLs, or an empty array if the user cancelled.
+    public static func showOpenFolderDialog(
+        window: OpaquePointer?,
+        allowMultiple: Bool = false,
+        defaultLocation: String? = nil,
+        completion: @escaping @MainActor @Sendable ([URL]) -> Void
+    ) {
+#if os(macOS)
+        showMacOpenFolderDialog(
+            allowMultiple: allowMultiple,
+            defaultLocation: defaultLocation,
+            completion: completion)
+#else
+        let context = CallbackContext(
+            completion: { urls, _ in completion(urls) },
+            filters: [],
+            defaultLocation: defaultLocation)
+        let userdata = Unmanaged.passRetained(context).toOpaque()
+
+        if let location = context.defaultLocationPointer {
+            SDL_ShowOpenFolderDialog(
+                nativeDialogCallback, userdata, window, location, allowMultiple)
+        } else {
+            SDL_ShowOpenFolderDialog(
+                nativeDialogCallback, userdata, window, nil, allowMultiple)
+        }
+#endif
+    }
 
     // MARK: - Show Save Dialog
 

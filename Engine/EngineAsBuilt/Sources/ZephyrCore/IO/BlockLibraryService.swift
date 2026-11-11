@@ -45,31 +45,58 @@ public enum BlockLibraryService {
 
     // MARK: - Folder scan (instant, no parsing)
 
+    /// Build one library row for a file URL, or nil when the URL is not an
+    /// existing supported drawing file (wrong extension, missing, directory).
+    /// Shared by `scanFolder` and by session file picks so both paths agree
+    /// on what is listable.
+    public static func entry(for url: URL) -> FileEntry? {
+        let ext = url.pathExtension.lowercased()
+        guard supportedExtensions.contains(ext) else { return nil }
+        var isDir = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir),
+              !isDir.boolValue
+        else { return nil }
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
+        return FileEntry(
+            path: url.path,
+            displayName: url.deletingPathExtension().lastPathComponent,
+            modified: values?.contentModificationDate ?? .distantPast,
+            size: UInt64(values?.fileSize ?? 0))
+    }
+
     public static func scanFolder(at folder: URL) -> [FileEntry] {
-        let fm = FileManager.default
-        guard let urls = try? fm.contentsOfDirectory(
+        guard let urls = try? FileManager.default.contentsOfDirectory(
             at: folder,
             includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
             options: [.skipsHiddenFiles])
         else { return [] }
-        var out: [FileEntry] = []
-        for url in urls {
-            let ext = url.pathExtension.lowercased()
-            guard supportedExtensions.contains(ext) else { continue }
-            var isDir = ObjCBool(false)
-            guard fm.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else {
-                continue
-            }
-            let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
-            out.append(FileEntry(
-                path: url.path,
-                displayName: url.deletingPathExtension().lastPathComponent,
-                modified: values?.contentModificationDate ?? .distantPast,
-                size: UInt64(values?.fileSize ?? 0)))
+        return urls.compactMap(entry(for:)).sorted {
+            $0.displayName.caseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    /// Merge session-picked files into a folder scan: deduped by path,
+    /// vanished files dropped, result kept in display order.
+    public static func merging(_ entries: [FileEntry], withExtraPaths extraPaths: [String])
+        -> [FileEntry]
+    {
+        var out = entries
+        var known = Set(entries.map(\.path))
+        for path in extraPaths {
+            guard !known.contains(path) else { continue }
+            guard let picked = entry(for: URL(fileURLWithPath: path)) else { continue }
+            known.insert(path)
+            out.append(picked)
         }
         return out.sorted {
             $0.displayName.caseInsensitiveCompare($1.displayName) == .orderedAscending
         }
+    }
+
+    /// Drop session-picked paths that no longer resolve to a listable file
+    /// (deleted, replaced by a directory, or an unsupported extension).
+    public static func pruningVanished(_ extraPaths: [String]) -> [String] {
+        extraPaths.filter { entry(for: URL(fileURLWithPath: $0)) != nil }
     }
 
     // MARK: - ODA cache

@@ -25,6 +25,22 @@ public enum BlockLibraryPolicy {
         return true
     }
 
+    /// MRU bookkeeping for library folders (cap 10, most-recent first,
+    /// deduped). Backs the Libraries tab recent-libraries list; the first
+    /// entry is the current library folder and the whole array persists via
+    /// `blockLibraryFolders`.
+    public static func recordLibraryFolder(
+        _ path: String, into folders: inout [String], cap: Int = 10
+    ) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        folders.removeAll { $0 == trimmed }
+        folders.insert(trimmed, at: 0)
+        if folders.count > cap {
+            folders = Array(folders.prefix(cap))
+        }
+    }
+
     /// LRU bookkeeping for Recent (cap 50, most-recent first, deduped).
     public static func recordRecent(
         _ ref: BlockLibraryRef, into recent: inout [BlockLibraryRef], cap: Int = 50

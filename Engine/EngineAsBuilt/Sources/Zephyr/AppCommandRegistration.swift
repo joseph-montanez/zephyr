@@ -838,12 +838,12 @@ struct AppCommandRegistration {
         engine.commandProcessor.registerFeatureCommand(
             name: "WBLOCK",
             aliases: ["W"],
-            factory: { WblockCommand() }
+            factory: { WblockCommand(useFileDialog: true) }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "-WBLOCK",
             aliases: [],
-            factory: { WblockCommand() }
+            factory: { WblockCommand(useFileDialog: false) }
         )
         engine.commandProcessor.registerFeatureCommand(
             name: "BASE",
