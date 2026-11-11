@@ -137,10 +137,11 @@ struct BlockPanelUI {
         igSeparator()
 
         // Insertion parameter controls (persisted via UserSettings.capture).
+        // Each wraps below when the panel is too narrow to fit the row.
         _ = ImGuiCheckbox("Explode", &engine.ui.blockInsertExplode)
-        ImGuiSameLine(0, 8)
+        PanelWidgets.flow(itemWidth: checkboxWidth("Repeat"), gap: 8)
         _ = ImGuiCheckbox("Repeat", &engine.ui.blockInsertRepeat)
-        ImGuiSameLine(0, 8)
+        PanelWidgets.flow(itemWidth: checkboxWidth("Prompt attributes"), gap: 8)
         _ = ImGuiCheckbox("Prompt attributes", &engine.ui.blockInsertPromptAttributes)
     }
 
@@ -150,12 +151,82 @@ struct BlockPanelUI {
         igGetColorU32_Vec4(ImVec4(x: r / 255, y: g / 255, z: b / 255, w: a / 255))
     }
 
+    /// Estimated width of an `igSmallButton` label (text + frame padding).
+    /// Used with `PanelWidgets.flow` so button rows wrap instead of clipping.
+    private static func smallButtonWidth(_ label: String) -> Float {
+        let textW = ImGuiCalcTextSize(label, nil, false, -1).x
+        let padX = ImGuiGetStyle()?.pointee.FramePadding.x ?? 4.0
+        return textW + padX * 2 + 8
+    }
+
+    /// Estimated width of an `ImGuiCheckbox` row (box + label).
+    private static func checkboxWidth(_ label: String) -> Float {
+        ImGuiCalcTextSize(label, nil, false, -1).x + ImGuiGetFrameHeight() + 12
+    }
+
+    /// Middle-truncates `name` to `maxWidth`, keeping the start and end
+    /// visible (file extensions stay readable) with an ellipsis between.
+    /// Returns the full name when it fits, "" when nothing fits.
+    private static func fittedMiddle(_ name: String, maxWidth: Float) -> String {
+        if maxWidth <= 0 { return "" }
+        let ellipsis = "…"
+        if ImGuiCalcTextSize(ellipsis, nil, false, -1).x > maxWidth { return "" }
+        if ImGuiCalcTextSize(name, nil, false, -1).x <= maxWidth { return name }
+        // Binary-search the longest keepable head+tail split; validity is
+        // monotonic in the kept count, so this needs O(log n) measures.
+        var lo = 0
+        var hi = name.count
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            let headCount = (mid + 1) / 2
+            let candidate = String(name.prefix(headCount)) + ellipsis +
+                String(name.suffix(mid - headCount))
+            if ImGuiCalcTextSize(candidate, nil, false, -1).x <= maxWidth {
+                lo = mid
+            } else {
+                hi = mid - 1
+            }
+        }
+        guard lo > 0 else { return ellipsis }
+        let headCount = (lo + 1) / 2
+        return String(name.prefix(headCount)) + ellipsis +
+            String(name.suffix(lo - headCount))
+    }
+
+    /// Width budget for a file title: whatever is left after the collapse
+    /// button, the status text, and the trailing file actions, so those
+    /// actions are always reachable no matter how long the file name is.
+    private static func titleMaxWidth(avail: Float, statusText: String, actionsWidth: Float) -> Float {
+        let collapseW = smallButtonWidth("+")
+        let statusW = ImGuiCalcTextSize(statusText, nil, false, -1).x
+        return max(32, avail - collapseW - 4 - statusW - 8 - actionsWidth - 4)
+    }
+
+    /// Title text that middle-truncates to `maxWidth` and reveals the full
+    /// name in a hover tooltip whenever truncation kicked in.
+    private static func titleText(_ full: String, maxWidth: Float) {
+        let title = fittedMiddle(full, maxWidth: maxWidth)
+        ImGuiTextV(title)
+        if title != full, ImGuiIsItemHovered(0) {
+            ImGuiBeginTooltip()
+            ImGuiTextV(full)
+            ImGuiEndTooltip()
+        }
+    }
+
     /// Vector thumbnail cell: reserves `size` px, then draws fitted preview
     /// segments (aspect preserved, block-local origin kept).
     private static func previewCell(_ preview: BlockPreview?, size: Float) {
-        let dl = ImGuiGetWindowDrawList()!
         let origin = ImGuiGetCursorScreenPos()
         _ = igInvisibleButton("##blockpv", ImVec2(x: size, y: size), 0)
+        drawPreview(preview, origin: origin, size: size)
+    }
+
+    /// Fitted preview art inside the `size` square at `origin` (border +
+    /// aspect-preserved segments). No interaction: callers add their own
+    /// button, tooltip, or overlay around the art.
+    private static func drawPreview(_ preview: BlockPreview?, origin: ImVec2, size: Float) {
+        let dl = ImGuiGetWindowDrawList()!
         let corner = ImVec2(x: origin.x + size, y: origin.y + size)
         ImDrawListAddRect(dl, origin, corner, col(150, 150, 150, 255), 0.0, 1.0, 0)
         guard let preview, !preview.isEmpty else { return }
@@ -275,7 +346,7 @@ struct BlockPanelUI {
                 ImGuiSameLine(0, 8)
                 ImGuiTextV("[\(row.tags.joined(separator: ", "))]")
             }
-            ImGuiSameLine(0, 8)
+            PanelWidgets.flow(itemWidth: smallButtonWidth("Insert"), gap: 8)
             if igSmallButton("Insert") {
                 beginInsert(
                     engine: engine,
@@ -284,13 +355,13 @@ struct BlockPanelUI {
                     record: refForCurrentBlock(name: row.name, engine: engine),
                     sessionName: engine.tabManager.activeFileURL == nil ? row.name : nil)
             }
-            ImGuiSameLine(0, 4)
+            PanelWidgets.flow(itemWidth: smallButtonWidth("Edit"), gap: 4)
             // Enter block editor — isolates this block's geometry for in-place editing.
             if igSmallButton("Edit") {
                 engine.tabManager.enterBlockEditor(blockID: row.handle)
                 engine.cadSelection.clearSelection()
             }
-            ImGuiSameLine(0, 4)
+            PanelWidgets.flow(itemWidth: smallButtonWidth("Export"), gap: 4)
             // Write this definition to a DXF/DWG file: skips straight to
             // the destination step (no source or base-point questions —
             // block output is block-local at the origin).
@@ -300,7 +371,7 @@ struct BlockPanelUI {
                 engine.commandProcessor.activateFeatureCommand(cmd)
             }
             if let ref = refForCurrentBlock(name: row.name, engine: engine) {
-                ImGuiSameLine(0, 4)
+                PanelWidgets.flow(itemWidth: max(smallButtonWidth("Pin"), smallButtonWidth("Unpin")), gap: 4)
                 let star = isFavorite(engine: engine, ref: ref) ? "Unpin" : "Pin"
                 if igSmallButton(star) {
                     toggleFavorite(engine: engine, ref: ref)
@@ -327,7 +398,7 @@ struct BlockPanelUI {
         ImGuiTextV(label)
         ImGuiSameLine(0, 8)
         ImGuiTextV(ref.kind == .file ? "(file)" : "(block)")
-        ImGuiSameLine(0, 8)
+        PanelWidgets.flow(itemWidth: smallButtonWidth("Insert"), gap: 8)
         if igSmallButton("Insert") {
             let source: InsertCommand.Source
             switch ref.kind {
@@ -340,7 +411,7 @@ struct BlockPanelUI {
                 engine: engine, source: source, preview: nil,
                 record: ref, sessionName: nil)
         }
-        ImGuiSameLine(0, 4)
+        PanelWidgets.flow(itemWidth: max(smallButtonWidth("Remove"), smallButtonWidth("Unpin")), gap: 4)
         trailing(engine)
         ImGuiPopID()
     }
@@ -353,7 +424,7 @@ struct BlockPanelUI {
             shown = true
             ImGuiPushID("recent\n" + name)
             ImGuiTextV("\(name) (this drawing)")
-            ImGuiSameLine(0, 8)
+            PanelWidgets.flow(itemWidth: smallButtonWidth("Insert"), gap: 8)
             if igSmallButton("Insert") {
                 beginInsert(
                     engine: engine,
@@ -363,7 +434,7 @@ struct BlockPanelUI {
                     record: nil,
                     sessionName: name)
             }
-            ImGuiSameLine(0, 4)
+            PanelWidgets.flow(itemWidth: smallButtonWidth("Remove"), gap: 4)
             if igSmallButton("Remove") {
                 sessionRecent.removeAll { $0 == name }
             }
@@ -417,23 +488,38 @@ struct BlockPanelUI {
 
     private static func renderLibrariesTab(engine: PhrostEngine) {
         _ = libraryFolder(engine: engine)
+        // Folder field shares its row with the buttons when everything fits;
+        // otherwise it takes the full width and the buttons wrap below.
+        let libGap: Float = 8
+        let libButtonsW = smallButtonWidth("Load") + libGap +
+            smallButtonWidth("Browse…") + libGap +
+            smallButtonWidth("Add Files…") + libGap + 172
+        let libAvail = ImGuiGetContentRegionAvail().x
+        let libWide = libAvail >= libButtonsW + libGap + 120
+        if libWide {
+            ImGuiSetNextItemWidth(libAvail - libButtonsW - libGap)
+        }
         let committed = DataTablePanelUI.inputText(
             id: "##libraryfolder", value: &libraryFolderField, enterReturnsTrue: true)
-        ImGuiSameLine(0, 8)
+        if libWide {
+            ImGuiSameLine(0, libGap)
+        } else {
+            PanelWidgets.flow(itemWidth: smallButtonWidth("Load"), gap: libGap)
+        }
         // Load always rescans (even for an unchanged path) so drawings
         // added on disk since the last scan appear.
         if igSmallButton("Load") || committed {
             commitLibraryFolder(engine: engine)
         }
-        ImGuiSameLine(0, 8)
+        PanelWidgets.flow(itemWidth: smallButtonWidth("Browse…"), gap: libGap)
         if igSmallButton("Browse…") {
             browseLibraryFolder(engine: engine)
         }
-        ImGuiSameLine(0, 8)
+        PanelWidgets.flow(itemWidth: smallButtonWidth("Add Files…"), gap: libGap)
         if igSmallButton("Add Files…") {
             addLibraryFiles(engine: engine)
         }
-        renderLibraryRecent(engine: engine)
+        renderLibraryRecent(engine: engine, wrapped: !libWide)
         igSeparator()
         if let error = libraryError {
             ImGuiTextV(error)
@@ -510,11 +596,15 @@ struct BlockPanelUI {
 
     /// Recent-libraries dropdown (most-recent first, persisted). Picking a
     /// folder sets the field and rescans like Load.
-    private static func renderLibraryRecent(engine: PhrostEngine) {
+    private static func renderLibraryRecent(engine: PhrostEngine, wrapped: Bool) {
         let recent = engine.ui.blockLibraryFolders
         guard !recent.isEmpty else { return }
-        ImGuiSameLine(0, 8)
-        ImGuiSetNextItemWidth(160)
+        if wrapped {
+            PanelWidgets.flow(itemWidth: 172, gap: 8)
+        } else {
+            ImGuiSameLine(0, 8)
+        }
+        ImGuiSetNextItemWidth(min(160, max(ImGuiGetContentRegionAvail().x - 12, 60)))
         if ImGuiBeginCombo("##libraryrecent", "Recent", 0) {
             for folder in recent {
                 if ImGuiSelectable(
@@ -577,14 +667,124 @@ struct BlockPanelUI {
         }
     }
 
+    private static let libraryPinSize: Float = 20
+    private static let libraryTileMaxColumns = 8
+
+    /// One library block as an image tile: click the tile to insert, hover
+    /// for its name, pin overlay (top right) toggles the favorite. Leaves
+    /// the cursor at the tile's bottom-right.
+    private static func renderBlockTile(
+        engine: PhrostEngine, filePath: String, fileLabel: String,
+        block: BlockLibraryService.BlockEntry, size: Float
+    ) {
+        // Stable string scope: hash-based IDs collide (and Swift hashes
+        // vary per launch), which trips the duplicate-ID assert.
+        ImGuiPushID(filePath + "\n" + block.blockName)
+        defer { ImGuiPopID() }
+        let ref = BlockLibraryRef(kind: .container, path: filePath, block: block.blockName)
+        let pinned = isFavorite(engine: engine, ref: ref)
+        let tile = size
+        let pin = libraryPinSize
+        let origin = ImGuiGetCursorScreenPos()
+        let clicked = igInvisibleButton("##libtile", ImVec2(x: tile, y: tile), 0)
+        let tileHovered = ImGuiIsItemHovered(0)
+        let tileMin = ImGuiGetItemRectMin()
+        let tileMax = ImGuiGetItemRectMax()
+        drawPreview(block.preview, origin: origin, size: tile)
+        if tileHovered {
+            let hoverDL = ImGuiGetWindowDrawList()!
+            ImDrawListAddRect(
+                hoverDL, tileMin, tileMax,
+                igGetColorU32_Vec4(PanelWidgets.withAlpha(engine.ui.theme.brandGold, 0.7)),
+                0.0, 2.0, 0)
+        }
+        let pinMin = ImVec2(x: tileMax.x - pin - 2, y: tileMin.y + 2)
+        let pinMax = ImVec2(x: pinMin.x + pin, y: pinMin.y + pin)
+        if pinned {
+            // Opaque backdrop so the checked wash stays legible over tile art.
+            ImDrawListAddRectFilled(
+                ImGuiGetWindowDrawList()!, pinMin, pinMax,
+                igGetColorU32_Vec4(engine.ui.theme.buttonBg), 4, 0)
+        }
+        ImGuiSetCursorScreenPos(pinMin)
+        let pinFired = PanelWidgets.iconButton(
+            id: "libtilepin", icon: "pin",
+            tooltip: pinned ? "Unpin" : "Pin",
+            theme: engine.ui.theme, size: pin, checked: pinned)
+        if pinned {
+            ImDrawListAddRect(
+                ImGuiGetWindowDrawList()!, pinMin, pinMax,
+                igGetColorU32_Vec4(engine.ui.theme.brandGold), 0.0, 2.0, 0)
+        }
+        let pinHovered = ImGuiIsItemHovered(0)
+        // Leave the cursor as if the tile button were the last item, so the
+        // next tile (or row) starts from the tile's bottom-right corner.
+        ImGuiSetCursorScreenPos(tileMax)
+        if tileHovered, !pinHovered {
+            ImGuiBeginTooltip()
+            ImGuiTextV("\(block.blockName)")
+            if !block.attributeTags.isEmpty {
+                ImGuiTextV("[\(block.attributeTags.joined(separator: ", "))]")
+            }
+            ImGuiTextV(fileLabel)
+            ImGuiTextV(pinned ? "Pinned - click the pin to unpin" : "Click to insert - pin to keep")
+            ImGuiEndTooltip()
+        }
+        // The pin overlays the tile, so a press in its corner can reach the
+        // tile button first: route by location for exactly one action.
+        if pinFired {
+            toggleFavorite(engine: engine, ref: ref)
+        } else if clicked {
+            if pinHovered {
+                toggleFavorite(engine: engine, ref: ref)
+            } else {
+                beginInsert(
+                    engine: engine,
+                    source: .container(path: filePath, block: block.blockName),
+                    preview: block.preview,
+                    record: ref,
+                    sessionName: nil)
+            }
+        }
+    }
+
+    /// Block-tile grid that fills the panel width. The column count follows
+    /// the available width (and UI scale via the font size) while each tile
+    /// stretches to fill its column, so narrow panels show few tiles per row
+    /// and wide panels show more. Tiles are absolutely positioned, so rows
+    /// can never drift.
+    private static func gridBlockTiles(
+        engine: PhrostEngine, entryPath: String, fileLabel: String,
+        blocks: [BlockLibraryService.BlockEntry]
+    ) {
+        ImGuiNewLine()
+        let gap: Float = 8
+        let gridOrigin = ImGuiGetCursorScreenPos()
+        let gridAvail = ImGuiGetContentRegionAvail().x
+        let minTile = max(48, ImGuiGetFontSize() * 3.5)
+        let cols = min(max(Int((gridAvail + gap) / (minTile + gap)), 1), libraryTileMaxColumns)
+        let tile = max(24, (gridAvail - Float(cols - 1) * gap) / Float(cols))
+        for (index, block) in blocks.enumerated() {
+            let x = gridOrigin.x + Float(index % cols) * (tile + gap)
+            let y = gridOrigin.y + Float(index / cols) * (tile + gap)
+            ImGuiSetCursorScreenPos(ImVec2(x: x, y: y))
+            renderBlockTile(
+                engine: engine, filePath: entryPath, fileLabel: fileLabel,
+                block: block, size: tile)
+        }
+        let rows = (blocks.count + cols - 1) / cols
+        ImGuiSetCursorScreenPos(ImVec2(
+            x: gridOrigin.x, y: gridOrigin.y + Float(rows) * (tile + gap)))
+    }
+
     private static func renderLibraryFileRow(engine: PhrostEngine, entry: BlockLibraryService.FileEntry) {
-        // Scope the repeated "Insert file"/"Pin" labels: without this every
-        // visible file row shares one ID and Dear ImGui asserts.
+        // File group title: collapse, file name, and block count on one row
+        // with compact file actions; block tiles grid underneath. Tiles
+        // insert on click and pin via overlay (see renderBlockTile), so no
+        // dedicated text-button rows are needed anywhere.
         ImGuiPushID(entry.path)
-        // File thumbnail (model-space content): block-definition-only files
-        // show their root preview here so (0 blocks) rows are not blank.
-        previewCell(entry.rootPreview, size: 44)
-        ImGuiSameLine(0, 8)
+        let titleAvail = ImGuiGetContentRegionAvail().x
+        let fullTitle = "\(entry.displayName).\(entry.ext)"
         let collapsed = collapsedPaths.contains(entry.path)
         if igSmallButton(collapsed ? "+##\(entry.path)" : "-##\(entry.path)") {
             if collapsed {
@@ -594,15 +794,27 @@ struct BlockPanelUI {
             }
         }
         ImGuiSameLine(0, 4)
-        ImGuiTextV("\(entry.displayName).\(entry.ext)")
-        ImGuiSameLine(0, 8)
         if let error = entry.error {
-            ImGuiTextV("(\(error))")
+            let status = "(\(error))"
+            titleText(fullTitle, maxWidth: titleMaxWidth(avail: titleAvail, statusText: status, actionsWidth: 0))
+            ImGuiSameLine(0, 8)
+            ImGuiTextV(status)
         } else if let blocks = entry.containerBlocks {
             let shown = blocks.filter { matchesSearch($0.blockName) }
-            ImGuiTextV("(\(blocks.count) blocks)")
+            let status = "(\(blocks.count) blocks)"
+            titleText(
+                fullTitle,
+                maxWidth: titleMaxWidth(
+                    avail: titleAvail, statusText: status,
+                    actionsWidth: 4 + libraryPinSize + 4 + libraryPinSize))
             ImGuiSameLine(0, 8)
-            if igSmallButton("Insert file") {
+            ImGuiTextV(status)
+            PanelWidgets.flow(itemWidth: libraryPinSize, gap: 4)
+            if PanelWidgets.iconButton(
+                id: "libfileinsert", icon: "insert",
+                tooltip: "Insert file", theme: engine.ui.theme,
+                size: libraryPinSize)
+            {
                 beginInsert(
                     engine: engine,
                     source: .file(path: entry.path),
@@ -610,50 +822,30 @@ struct BlockPanelUI {
                     record: BlockLibraryRef(kind: .file, path: entry.path),
                     sessionName: nil)
             }
-            ImGuiSameLine(0, 4)
             let fileRef = BlockLibraryRef(kind: .file, path: entry.path)
-            if igSmallButton(isFavorite(engine: engine, ref: fileRef) ? "Unpin" : "Pin") {
+            let filePinned = isFavorite(engine: engine, ref: fileRef)
+            PanelWidgets.flow(itemWidth: libraryPinSize, gap: 4)
+            if PanelWidgets.iconButton(
+                id: "libfilepin", icon: "pin",
+                tooltip: filePinned ? "Unpin file" : "Pin file",
+                theme: engine.ui.theme, size: libraryPinSize,
+                checked: filePinned)
+            {
                 toggleFavorite(engine: engine, ref: fileRef)
             }
-            if !collapsed {
-                for block in shown {
-                    renderLibraryBlockRow(engine: engine, filePath: entry.path, block: block)
-                }
+            if !collapsed, !shown.isEmpty {
+                gridBlockTiles(
+                    engine: engine, entryPath: entry.path,
+                    fileLabel: "\(entry.displayName).\(entry.ext)",
+                    blocks: shown)
             }
         } else {
-            ImGuiTextV("(…)")
+            let status = "(…)"
+            titleText(fullTitle, maxWidth: titleMaxWidth(avail: titleAvail, statusText: status, actionsWidth: 0))
+            ImGuiSameLine(0, 8)
+            ImGuiTextV(status)
         }
         ImGuiPopID()
     }
 
-    private static func renderLibraryBlockRow(
-        engine: PhrostEngine, filePath: String, block: BlockLibraryService.BlockEntry
-    ) {
-        // Stable string scope: hash-based IDs collide (and Swift hashes
-        // vary per launch), which trips the duplicate-ID assert.
-        ImGuiPushID(filePath + "\n" + block.blockName)
-        previewCell(block.preview, size: 44)
-        ImGuiSameLine(0, 8)
-        ImGuiTextV("\(block.blockName)")
-        if !block.attributeTags.isEmpty {
-            ImGuiSameLine(0, 8)
-            ImGuiTextV("[\(block.attributeTags.joined(separator: ", "))]")
-        }
-        ImGuiSameLine(0, 8)
-        if igSmallButton("Insert") {
-            beginInsert(
-                engine: engine,
-                source: .container(path: filePath, block: block.blockName),
-                preview: block.preview,
-                record: BlockLibraryRef(
-                    kind: .container, path: filePath, block: block.blockName),
-                sessionName: nil)
-        }
-        ImGuiSameLine(0, 4)
-        let ref = BlockLibraryRef(kind: .container, path: filePath, block: block.blockName)
-        if igSmallButton(isFavorite(engine: engine, ref: ref) ? "Unpin" : "Pin") {
-            toggleFavorite(engine: engine, ref: ref)
-        }
-        ImGuiPopID()
-    }
 }

@@ -117,6 +117,7 @@ enum RibbonIconPainter {
             "more": moreIcon,
             "check": checkIcon,
             "chevron-down": chevronDown,
+            "pin": pinIcon,
         ]
     }
 
@@ -1041,6 +1042,15 @@ enum RibbonIconPainter {
         _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
     ) {
         stroke(dl, r, c, [(0.14, 0.54), (0.4, 0.8), (0.86, 0.2)])
+    }
+
+    private static func pinIcon(
+        _ dl: UnsafeMutablePointer<ImDrawList>?, _ r: RibbonRect, _ c: ImU32
+    ) {
+        // Map pin: ring head, filled center, tapered tail.
+        circlePath(dl, r, c, centerX: 0.5, centerY: 0.36, radius: 0.24)
+        dot(dl, r, c, x: 0.5, y: 0.36, radius: 0.055)
+        stroke(dl, r, c, [(0.37, 0.55), (0.5, 0.88), (0.63, 0.55)])
     }
 
     private static func chevronDown(

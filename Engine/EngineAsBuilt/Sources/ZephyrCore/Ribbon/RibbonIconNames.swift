@@ -39,6 +39,8 @@ public enum RibbonIconNames {
         "vp-freeze", "vp-thaw", "color-drop", "linetype", "lineweight",
         "transparency", "trash", "walk", "select", "more", "check",
         "chevron-down",
+        // Blocks palette
+        "pin",
     ]
 
     /// Icon names that only exist as aliases of a canvas name, so a
