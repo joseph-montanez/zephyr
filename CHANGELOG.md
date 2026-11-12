@@ -95,6 +95,9 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Faster hover and snap on large drawings** - pointer motion is coalesced to one hover+snap evaluation per frame, hover highlight and selection-cycling pile come from a single document walk, and every snap pass in a mousemove shares one resolver cache; pick results unchanged.
 - **Fewer draw calls on stroke-heavy drawings** - hairline strokes tessellate as 1-px quads through the triangle pipeline instead of separate line-list draws, collapsing tens of thousands of batches into a handful with no draw-order change; a [PerfStats] line beside [FrameTiming] reports verts, batches, sprites, and rebuild activity.
 - **No more main-thread stalls on zoom/pan** - zoom stability uses half-octave bands with hysteresis, in-flight vertex builds are no longer cancelled every frame (relaunches capped at 10/s), and a zoom-stale async build keeps the old buffer instead of forcing a synchronous rebuild.
+- **Text stays visible while panning** - text texture quads are no longer suppressed during pans (they use the same per-frame camera as the CAD matrix, so there was no structural lag to hide); pan-proxy outlines are never drawn.
+- **Quieter, cheaper font resolution** - TTF path lookups are cached per font name with one log line per unique mapping instead of a directory walk and a log line per text entity per regen.
+- **Zoom no longer forces full regens for mixed entities** - entities that curve-only LOD cannot refresh (text/image/table mixed with curves) keep their last tessellation while the rest refresh in place, instead of one mixed entity turning every zoom-band crossing into a full document regen; the live count is reported in [PerfStats] as unsupported.
 
 ## October 2026
 

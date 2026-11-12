@@ -1607,7 +1607,7 @@ public final class EngineRenderer {
             SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
 
             for batch in ctx.batches {
-                if batch.isPanProxy && !(plan.isPrimaryLeaf && _panProxyActiveThisFrame) { continue }
+                if batch.isPanProxy { continue }
                 let pipeline: OpaquePointer?
                 switch batch.pipelineType {
                 case .point:
@@ -2138,9 +2138,8 @@ public final class EngineRenderer {
                     
                     pushCADUniforms(cmd: cmd, matrix: cameraMatrix, includeHiddenHandles: true)
 
-                    let isPanning = _panProxyActiveThisFrame
                     for batch in actx.batches {
-                        if batch.isPanProxy && !isPanning { continue }
+                        if batch.isPanProxy { continue }
                         let pipeline: OpaquePointer?
                         switch batch.pipelineType {
                         case .point:
@@ -4318,17 +4317,9 @@ public final class EngineRenderer {
         let ip3 = ImVec2(x: p3.x, y: p3.y)
         let ip4 = ImVec2(x: p4.x, y: p4.y)
 
-        // CAD TTF glyphs are ImGui texture quads, while the rest of the drawing
-        // is transformed by the CAD GPU pipeline. On some Windows/D3D12 setups
-        // the textured path can appear a few pixels behind during rapid pans.
-        // A replacement outline is rendered in the CAD GPU path while panning,
-        // so suppress the lagging ImGui texture quad entirely.
-        if sprite.useBoundsWhilePanning
-            && _panProxyActiveThisFrame
-        {
-            return
-        }
-
+        // Text texture quads always draw: they use the same per-frame camera
+        // as the CAD matrix, so there is no structural lag to hide behind
+        // pan-proxy outlines (which are now never drawn; see batch guards).
         let clipOffset: (Double, Double)
         if let base = sprite.clipBasePosition {
             clipOffset = (sprite.position.0 - base.0, sprite.position.1 - base.1)

@@ -150,6 +150,28 @@ public enum CADFontManager {
     internal nonisolated static let cacheLock = NSRecursiveLock()
     internal static nonisolated(unsafe) var shxFontCache: [String: SHXShapeFont] = [:]
     internal static nonisolated(unsafe) var ttfFontCache: [String: CADTrueTypeFont] = [:]
+    /// Resolved DXF-font-name → file-path cache for `getTTFEquivalent`.
+    /// Path resolution walks several directories with `fileExists` per
+    /// candidate; without this, every text entity re-scans on every regen
+    /// (thousands of entities × dozens of checks) and re-prints the hit.
+    internal static nonisolated(unsafe) var ttfPathCache: [String: String] = [:]
+    /// Filenames with no resolvable TTF (avoids rescanning misses too).
+    internal static nonisolated(unsafe) var ttfPathMiss: Set<String> = []
+    /// Resolution announcements already printed (log once per mapping).
+    internal static nonisolated(unsafe) var announcedTTFResolutions: Set<String> = []
+
+    /// Stores a TTF path resolution and logs it the first time each
+    /// distinct mapping is seen, so regen-heavy files don't print (or
+    /// re-scan for) every text entity on every regeneration.
+    private static func rememberTTFResolution(filename: String, label: String, displayName: String, path: String) -> String {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        ttfPathCache[filename.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()] = path
+        if announcedTTFResolutions.insert("\(filename)→\(path)").inserted {
+            print("[CADFontManager] Using TTF font '\(displayName)' (\(label)) for DXF font '\(filename)': \(path)")
+        }
+        return path
+    }
     /// Explicitly registered SHX search directories, highest priority first.
     ///
     /// Lets an embedder pin font discovery to a known tree (for example the
@@ -446,6 +468,15 @@ public enum CADFontManager {
             }
         }
 
+        // Cached resolution (hit or miss): no directory walk, no log spam.
+        // SHX-backed names above bypass the cache; their loader caches itself.
+        cacheLock.lock()
+        let cachedHit = ttfPathCache[normName]
+        let cachedMiss = ttfPathMiss.contains(normName)
+        cacheLock.unlock()
+        if let cachedHit { return cachedHit }
+        if cachedMiss { return nil }
+
         let exeDir = URL(fileURLWithPath: Bundle.main.executablePath ?? ".")
             .deletingLastPathComponent()
 
@@ -523,7 +554,9 @@ public enum CADFontManager {
         addFallback("Monaco.ttf")
 
         /// Helper to search a list of candidates across all font directories.
-        func search(_ candidates: [String], label: String) -> String? {
+        /// Returns the resolved path and matched candidate name; logging
+        /// happens once per mapping at the call sites, not per entity.
+        func search(_ candidates: [String]) -> (path: String, name: String)? {
             for dir in fontDirectories {
                 for name in candidates {
                     let lowerName = name.lowercased()
@@ -532,8 +565,7 @@ public enum CADFontManager {
                     }
                     let fileURL = dir.appendingPathComponent(name)
                     if FileManager.default.fileExists(atPath: fileURL.path) {
-                        print("[CADFontManager] Using TTF font '\(name)' (\(label)) for DXF font '\(filename)': \(fileURL.path)")
-                        return fileURL.path
+                        return (fileURL.path, name)
                     }
                 }
             }
@@ -541,8 +573,8 @@ public enum CADFontManager {
         }
 
         // Phase 1: search for the exact requested font name in all directories.
-        if let found = search(specificCandidates, label: "specific") {
-            return found
+        if let found = search(specificCandidates) {
+            return rememberTTFResolution(filename: filename, label: "specific", displayName: found.name, path: found.path)
         }
 
 #if os(Windows)
@@ -553,19 +585,23 @@ public enum CADFontManager {
             for name in [resolvedName, resolvedName.lowercased()] {
                 let url = windowsDir.appendingPathComponent(name)
                 if FileManager.default.fileExists(atPath: url.path) {
-                    print("[CADFontManager] Using TTF font '\(resolvedName)' (from registry) for DXF font '\(filename)': \(url.path)")
-                    return url.path
+                    return rememberTTFResolution(filename: filename, label: "from registry", displayName: resolvedName, path: url.path)
                 }
             }
         }
 #endif
 
         // Phase 3: fall back to generic fonts (Arial, Helvetica, etc.).
-        if let found = search(fallbackCandidates, label: "fallback") {
-            return found
+        if let found = search(fallbackCandidates) {
+            return rememberTTFResolution(filename: filename, label: "fallback", displayName: found.name, path: found.path)
         }
 
-        print("[CADFontManager] No TTF font found for DXF font '\(filename)'")
+        cacheLock.lock()
+        let alreadyLogged = !ttfPathMiss.insert(normName).inserted
+        cacheLock.unlock()
+        if !alreadyLogged {
+            print("[CADFontManager] No TTF font found for DXF font '\(filename)'")
+        }
         return nil
     }
 

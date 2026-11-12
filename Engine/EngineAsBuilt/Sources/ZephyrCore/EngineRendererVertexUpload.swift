@@ -359,7 +359,8 @@ extension EngineRenderer {
             " syncRebuild:\(engine._statSyncRebuilds)" +
             " asyncLaunch:\(engine._statAsyncLaunches)" +
             " asyncApplied:\(engine._statAsyncApplied)" +
-            " regen:\(engine._statRegensLaunched)"
+            " regen:\(engine._statRegensLaunched)" +
+            " unsupported:\(actx.bridge.curveUnsupportedCount)"
         engine._statSyncRebuilds = 0
         engine._statAsyncLaunches = 0
         engine._statAsyncApplied = 0

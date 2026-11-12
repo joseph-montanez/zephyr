@@ -76,7 +76,10 @@ public final class CADRendererBridge {
     private var appliedCurveLOD: CurveScreenTessellationContext?
     private var appliedRevision: UInt64?
     private var appliedGeneration: Int?
-    private var curveUnsupportedCount = 0
+    /// Entities with curves that curve-only LOD cannot refresh
+    /// (text/image/table mixed with curves). They keep last full-regen
+    /// tessellation across zoom bands; reported in [PerfStats].
+    internal var curveUnsupportedCount = 0
     private var curveInFlight: CurveScreenTessellationContext?
     private var curveTask: Task<Void, Never>?
 
@@ -257,7 +260,13 @@ public final class CADRendererBridge {
         if applied == desired { return .none }
         if curveTask != nil { return .launched }
         if Self.isCurveLODContainedSatisfied(applied: applied, desired: desired) { return .none }
-        if curveUnsupportedCount > 0 { return .requiresFullRegen }
+        // No `curveUnsupportedCount` gate here: entities whose curve LOD is
+        // unsupported (text/image/table mixed with curves) keep their last
+        // full-regen tessellation while supported entities refresh in place.
+        // Gating the whole document on one mixed entity turned every zoom
+        // band crossing into a full regen (spec explosion + font
+        // re-resolution per text entity). Mixed entities self-heal on the
+        // next full regen; the live count is reported in [PerfStats].
         guard !curveSlots.isEmpty else {
             appliedCurveLOD = desired
             return .none
