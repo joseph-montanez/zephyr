@@ -1,11 +1,11 @@
 inputs: 70
 vertexCount: 564
 vertexArrayCount: 564
-batchCount: 51
+batchCount: 11
 mutationGen: 7
 region: -10.0,-10.0,200.0,200.0
 zoom: 2.5
-pipeline: aaLine batches=50
+pipeline: aaLine batches=10
 pipeline: triangle batches=1
 entityIndex: 1 vertices=24
 entityIndex: 2 vertices=6
@@ -78,4 +78,4 @@ entityIndex: 117 vertices=6
 entityIndex: 118 vertices=6
 entityIndex: 119 vertices=6
 verticesHash: cfeaace26074c69a
-DIGEST: 783b51924045eb08
+DIGEST: ab6e2ff86a1fd6c8
