@@ -1101,20 +1101,18 @@ public final class SHXShapeFont: @unchecked Sendable {
                     let candidate = currentLine.isEmpty
                         ? word
                         : currentLine + " " + word
-                    let candidateBounds = getLocalDrawableBounds(
-                        candidate,
-                        spaceAdvance: spaceAdvance)
-                    let candidateWidth = candidateBounds.map {
-                        max(0.0, $0.maxX)
-                    } ?? getLocalStringWidth(
+                    // Wrap on the same pen-advance sum the renderer lays
+                    // out with: ink bounds exclude the last glyph's right
+                    // bearing (and the old code additionally subtracted a
+                    // full space advance), so "example a b c d" tested
+                    // under the reference width it overflows when drawn.
+                    let candidateWidth = getLocalStringWidth(
                         candidate,
                         spaceAdvance: spaceAdvance)
 
-                    let wrappingWidth = max(
-                        0.0,
-                        candidateWidth - (currentLine.isEmpty ? 0.0 : spaceAdvance))
-
-                    if !currentLine.isEmpty && wrappingWidth > maxWLocal {
+                    // 1e-9 relative slack: an exact-fit candidate must not
+                    // wrap on floating-point division noise.
+                    if !currentLine.isEmpty && candidateWidth > maxWLocal * (1.0 + 1e-9) {
                         finalLines.append(currentLine)
                         currentLine = word
                     } else {
@@ -1709,24 +1707,6 @@ public final class SHXShapeFont: @unchecked Sendable {
             return (minX, maxX)
         }
 
-        func wrappingWidth(
-            _ glyphs: [FormattedGlyphLayout],
-            lineLeft: Double,
-            tabStops: [Double]
-        ) -> Double {
-            guard let bounds = drawableBounds(
-                glyphs,
-                lineLeft: lineLeft,
-                tabStops: tabStops) else {
-                return lineAdvance(
-                    glyphs,
-                    lineLeft: lineLeft,
-                    tabStops: tabStops)
-            }
-            let wrapLeft = min(lineLeft, bounds.minX)
-            return max(0.0, bounds.maxX - wrapLeft)
-        }
-
         func splitRuns(
             _ glyphs: [FormattedGlyphLayout]
         ) -> [(glyphs: [FormattedGlyphLayout], isWhitespace: Bool)] {
@@ -1807,7 +1787,12 @@ public final class SHXShapeFont: @unchecked Sendable {
                     $0.scalar.value != 0x20 && $0.scalar.value != 0x09
                 }
                 let availableWidth = max(0.0, maxWidth - currentLeft - rightIndent)
-                let candidateWidth = wrappingWidth(
+                // Wrap on the same pen-advance sum the emitter lays out
+                // with: ink bounds exclude the last glyph's right bearing
+                // (and the old code additionally subtracted the separator),
+                // so "example a b c d" tested under a reference width it
+                // overflows when drawn.
+                let candidateWidth = lineAdvance(
                     candidate,
                     lineLeft: currentLeft,
                     tabStops: tabStops)
@@ -1829,7 +1814,6 @@ public final class SHXShapeFont: @unchecked Sendable {
                     }
                     separatorWidth = cursor - separatorStart
                 }
-                let fitWidth = max(0.0, candidateWidth - separatorWidth)
 
                 // Overlong leading whitespace keeps its own (invisible) line slot:
                 // AutoCAD wraps a leading space run that already exceeds the
@@ -1842,8 +1826,11 @@ public final class SHXShapeFont: @unchecked Sendable {
                     && lineAdvance(
                         current,
                         lineLeft: currentLeft,
-                        tabStops: tabStops) > availableWidth
-                if (currentHasText && (fitWidth > availableWidth || separatorWidth > availableWidth)) || leadingOverflow {
+                        tabStops: tabStops) > availableWidth * (1.0 + 1e-9)
+                // 1e-9 relative slack, as in renderText: exact-fit
+                // candidates must not wrap on floating-point noise.
+                let limit = availableWidth * (1.0 + 1e-9)
+                if (currentHasText && (candidateWidth > limit || separatorWidth > limit)) || leadingOverflow {
                     lines.append(FormattedLineLayout(
                         glyphs: current,
                         alignment: paragraph.alignment,

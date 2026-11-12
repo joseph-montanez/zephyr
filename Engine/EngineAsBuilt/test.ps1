@@ -199,7 +199,10 @@ if (-not $SkipBuild -and -not $List) {
                      $swiftBuildSystemFlag +
                      @("--build-tests", "-Xcc", "-I`"$($env:SDL3_INCLUDE)`"")) -join " "
 
-    $buildScript = "$env:TEMP\zephyr-test-build.cmd"
+    # Unique per process: concurrent runs must not rewrite each other's
+    # wrapper while cmd.exe is blocked in it (stale byte offset -> cmd
+    # executes a line fragment of the new content).
+    $buildScript = "$env:TEMP\zephyr-test-build-$PID.cmd"
     Set-Content -Path $buildScript -Encoding ASCII -Value @(
         "@echo off",
         "cd /d `"$swiftBuildDir`"",
@@ -209,16 +212,21 @@ if (-not $SkipBuild -and -not $List) {
     )
 
     Write-Host "`n### Building test bundle ($Configuration) ###" -ForegroundColor Cyan
-    cmd.exe /c $buildScript
-    if ($LASTEXITCODE -ne 0) {
-        throw "Test bundle build failed. (Link errors naming SDL3.lib / zng_* mean a missing -DevRoot dependency, not a code error.)"
+    try {
+        cmd.exe /c "`"$buildScript`""
+        if ($LASTEXITCODE -ne 0) {
+            throw "Test bundle build failed. (Link errors naming SDL3.lib / zng_* mean a missing -DevRoot dependency, not a code error.)"
+        }
+    } finally {
+        Remove-Item -Path $buildScript -Force -ErrorAction SilentlyContinue
     }
 }
 
 # -- 7. Run the tests --------------------------------------------------
 # `swift test` links the xctest runner, which needs the SDL/zlib DLLs on
 # PATH at run time, so prepend the dependency lib dirs.
-$runScript = "$env:TEMP\zephyr-test-run.cmd"
+# Unique per process: see the wrapper-race note on $buildScript above.
+$runScript = "$env:TEMP\zephyr-test-run-$PID.cmd"
 Set-Content -Path $runScript -Encoding ASCII -Value @(
     "@echo off",
     "cd /d `"$swiftBuildDir`"",
@@ -230,8 +238,12 @@ Set-Content -Path $runScript -Encoding ASCII -Value @(
 
 Write-Host "`n### Running: $invocation ###" -ForegroundColor Cyan
 $timer = [System.Diagnostics.Stopwatch]::StartNew()
-cmd.exe /c $runScript
-$exitCode = $LASTEXITCODE
+try {
+    cmd.exe /c "`"$runScript`""
+    $exitCode = $LASTEXITCODE
+} finally {
+    Remove-Item -Path $runScript -Force -ErrorAction SilentlyContinue
+}
 $timer.Stop()
 
 $elapsed = "{0:mm\:ss}" -f $timer.Elapsed

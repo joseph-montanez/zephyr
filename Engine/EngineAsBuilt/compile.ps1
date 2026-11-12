@@ -129,7 +129,11 @@ if ((Test-Path $swiftPlatformsRoot) -and (@(Get-ChildItem $swiftPlatformsRoot -D
 $codeviewFlag = @()
 if ($isRelease) { $codeviewFlag = @("-debug-info-format=codeview") }
 $buildCommand = (@("swift build", "--configuration", $config) + $swiftBuildSystemFlag + $codeviewFlag + @("-Xcc", "-I`"$($env:SDL3_INCLUDE)`"")) -join " "
-$cmdScriptPath = "$env:TEMP\swift-compile-local.cmd"
+# Unique per process: a second compile.ps1 rewriting a fixed-name wrapper
+# while cmd.exe is blocked in swift would make cmd resume at a stale byte
+# offset and execute a line fragment (seen: `-Xcc ...` -> exit 9009 on a
+# successful build).
+$cmdScriptPath = "$env:TEMP\swift-compile-local-$PID.cmd"
 Set-Content -Path $cmdScriptPath -Encoding ASCII -Value @(
     "@echo off",
     "cd /d `"$swiftBuildDir`"",
@@ -139,8 +143,12 @@ Set-Content -Path $cmdScriptPath -Encoding ASCII -Value @(
 )
 
 Write-Host "Running Swift Compiler..."
-cmd.exe /c $cmdScriptPath
-if ($LASTEXITCODE -ne 0) { throw "Swift build failed!" }
+try {
+    cmd.exe /c "`"$cmdScriptPath`""
+    if ($LASTEXITCODE -ne 0) { throw "Swift build failed!" }
+} finally {
+    Remove-Item -Path $cmdScriptPath -Force -ErrorAction SilentlyContinue
+}
 
 # 5. Determine build output directory and stage binaries
 Push-Location "$swiftBuildDir"
@@ -192,12 +200,16 @@ if ($dxcCandidates) {
         "`"$dxcPath`" -T vs_6_0 -E main -Fo `"$dllDest\cad_id.vert.dxil`" `"$swiftBuildDir\Shaders\cad_id.vert.hlsl`"",
         "`"$dxcPath`" -T ps_6_0 -E main -Fo `"$dllDest\cad_id.frag.dxil`" `"$swiftBuildDir\Shaders\cad_id.frag.hlsl`""
     )
-    $dxcScriptPath = "$env:TEMP\compile-shaders-local.cmd"
+    $dxcScriptPath = "$env:TEMP\compile-shaders-local-$PID.cmd"
     Set-Content -Path $dxcScriptPath -Encoding ASCII -Value (@(
         "@echo off",
         "call `"$vcvarsPath`" $vcvarsArch >nul 2>&1"
     ) + $dxcLines)
-    cmd.exe /c $dxcScriptPath
+    try {
+        cmd.exe /c "`"$dxcScriptPath`""
+    } finally {
+        Remove-Item -Path $dxcScriptPath -Force -ErrorAction SilentlyContinue
+    }
 
     if ($destDirs.Count -gt 1) {
         foreach ($dest in ($destDirs | Where-Object { $_ -ne $dllDest })) {

@@ -430,6 +430,202 @@ final class TextMirroringTests: XCTestCase {
         }
     }
 
+    func testWordWrapExampleBreaksBeforeDE() throws {
+        // text.dxf handle 432: "a word wrap example a b c d e" at height 100
+        // with reference width 1217.828758992508. AutoCAD wraps as
+        // "a word wrap" / "example a b c" / "d e"; the render must not pack
+        // "d" onto the second line and overflow the box.
+        let text = "a word wrap example a b c d e"
+        let width = 1217.828758992508
+        let height = 100.0
+        let font = try shxFont()
+        let formatted = FormattedText.plain(text, font: "simplex.shx", height: height)
+        let primitives = font.renderFormattedText(
+            formatted, origin: .zero, alignH: 0, alignV: 3, maxWidth: width)
+        // Bands sort top-down by descending Y; later lines sit higher in
+        // local coordinates, so the first band is the last text line.
+        let bands = Self.yBands(primitives, gap: height * 0.5)
+        XCTAssertEqual(bands.count, 3, "must wrap into three lines")
+        for band in bands {
+            XCTAssertLessThanOrEqual(
+                band.width, width + 1.0,
+                "no wrapped line may overflow the reference width")
+        }
+        if let bottom = bands.first {
+            let singleE = font.measuredAdvanceWidth("e", height: height)
+            XCTAssertGreaterThan(
+                bottom.width, singleE * 1.5,
+                "last line must hold \"d e\", not a lone \"e\"")
+        }
+        let rawPrims = font.renderText(
+            text, origin: .zero, height: height,
+            alignH: 0, alignV: 3, maxWidth: width)
+        let rawBands = Self.yBands(rawPrims, gap: height * 0.5)
+        XCTAssertEqual(rawBands.count, 3, "renderText must wrap into three lines")
+        for band in rawBands {
+            XCTAssertLessThanOrEqual(
+                band.width, width + 1.0,
+                "no renderText line may overflow the reference width")
+        }
+    }
+
+    func testWordWrapExampleEndToEndThroughImporter() throws {
+        // Full path for text.dxf handle 432 through the DXF importer into
+        // the measurement the renderers use: the reference width must parse
+        // and the wrapped ink must stay inside it across three lines.
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        MTEXT
+          8
+        0
+         10
+        2688.19
+         20
+        2579.78
+         30
+        0.0
+         40
+        100.0
+         41
+        1217.828758992508
+         71
+        1
+         72
+        5
+          1
+        a word wrap example a b c d e
+          7
+        Simplex_100
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        let entity = try XCTUnwrap(doc.allEntities.first)
+        if case .double(let width) = entity.xdata["dxf.mtextWidth"] {
+            XCTAssertEqual(width, 1217.828758992508, accuracy: 1e-9)
+        } else {
+            XCTFail("missing mtext reference width")
+        }
+        guard case .string(let text) = entity.xdata["dxf.text"] else {
+            XCTFail("missing display text")
+            return
+        }
+        var height = 2.5
+        if case .double(let v) = entity.xdata["dxf.textHeight"] { height = v }
+        var style: String? = nil
+        if case .string(let s) = entity.xdata["dxf.textStyle"] { style = s }
+        var alignH = 0
+        if case .int(let v) = entity.xdata["dxf.alignH"] { alignH = v }
+        var alignV = 0
+        if case .int(let v) = entity.xdata["dxf.alignV"] { alignV = v }
+        var mtextWidth: Double? = nil
+        if case .double(let v) = entity.xdata["dxf.mtextWidth"] { mtextWidth = v }
+        let context = CADTextBoundsContext(
+            textStyleFonts: doc.textStyleFonts,
+            textStyles: doc.textStyles,
+            defaultXData: entity.xdata)
+        let ink = try XCTUnwrap(CADTextMeasurement.measuredBounds(
+            text: text, style: style, height: height,
+            alignH: alignH, alignV: alignV, mtextWidth: mtextWidth,
+            context: context))
+        let width = ink.maxX - ink.minX
+        XCTAssertLessThanOrEqual(width, 1217.828758992508 + 1.0,
+            "wrapped ink must stay inside the reference width")
+        XCTAssertGreaterThanOrEqual(width, 1100.0,
+            "widest line must be \"example a b c\" (AutoCAD stores 1123.81)")
+        XCTAssertGreaterThan(ink.maxY - ink.minY, 300.0,
+            "three wrapped lines must span more than two line pitches")
+    }
+
+    func testWrapBoundaryConditions() throws {
+        // Advance-exact wrapping for both SHX wrap paths: a candidate that
+        // fits exactly stays on one line, one unit less wraps, an
+        // unbreakable single word keeps today's single-line behavior, and
+        // trailing spaces never strand an extra line.
+        let font = try shxFont()
+        let height = 100.0
+        func bands(_ text: String, width: Double, formatted: Bool) -> [(y: Double, width: Double)] {
+            let primitives: [CADPrimitive]
+            if formatted {
+                primitives = font.renderFormattedText(
+                    FormattedText.plain(text, font: "simplex.shx", height: height),
+                    origin: .zero, alignH: 0, alignV: 3, maxWidth: width)
+            } else {
+                primitives = font.renderText(
+                    text, origin: .zero, height: height,
+                    alignH: 0, alignV: 3, maxWidth: width)
+            }
+            return Self.yBands(primitives, gap: height * 0.5)
+        }
+        for formatted in [false, true] {
+            let exact = font.measuredAdvanceWidth("example a b c", height: height)
+            XCTAssertEqual(
+                bands("example a b c", width: exact, formatted: formatted).count, 1,
+                "exact-fit candidate must stay on one line (formatted=\(formatted))")
+            let wrapped = bands(
+                "example a b c", width: exact - 1.0, formatted: formatted)
+            XCTAssertEqual(wrapped.count, 2,
+                "one unit less must wrap (formatted=\(formatted))")
+            for band in wrapped {
+                XCTAssertLessThanOrEqual(band.width, exact)
+            }
+            XCTAssertEqual(
+                bands("Supercalifragilisticexpialidocious", width: 100.0, formatted: formatted).count,
+                1, "unbreakable word keeps single-line behavior (formatted=\(formatted))")
+            let trailing = bands("abc   ", width: 1000.0, formatted: formatted)
+            XCTAssertEqual(trailing.count, 1,
+                "trailing spaces must not strand an extra line (formatted=\(formatted))")
+            XCTAssertLessThanOrEqual(trailing[0].width, 1000.0)
+        }
+    }
+
+    private static func yBands(
+        _ primitives: [CADPrimitive], gap: Double
+    ) -> [(y: Double, width: Double)] {
+        var points: [(y: Double, minX: Double, maxX: Double)] = []
+        for primitive in primitives {
+            switch primitive {
+            case .line(let start, let end, _):
+                points.append((
+                    y: (start.y + end.y) * 0.5,
+                    minX: min(start.x, end.x), maxX: max(start.x, end.x)))
+            case .fillPolygon(let pts, _):
+                for point in pts {
+                    points.append((y: point.y, minX: point.x, maxX: point.x))
+                }
+            case .fillComplexPolygon(let outer, let holes, _):
+                for point in outer + holes.flatMap({ $0 }) {
+                    points.append((y: point.y, minX: point.x, maxX: point.x))
+                }
+            default:
+                break
+            }
+        }
+        guard !points.isEmpty else { return [] }
+        let sorted = points.sorted { $0.y > $1.y }
+        var bands: [(ys: [Double], minX: Double, maxX: Double)] = []
+        for point in sorted {
+            if let last = bands.last,
+               abs(point.y - (last.ys.last ?? point.y)) < gap {
+                bands[bands.count - 1].ys.append(point.y)
+                bands[bands.count - 1].minX = min(last.minX, point.minX)
+                bands[bands.count - 1].maxX = max(last.maxX, point.maxX)
+            } else {
+                bands.append(([point.y], point.minX, point.maxX))
+            }
+        }
+        return bands.map {
+            (y: $0.ys.reduce(0, +) / Double($0.ys.count),
+             width: $0.maxX - $0.minX)
+        }
+    }
+
     func testDistributedMarkerSpreadsWordsAcrossReferenceWidth() throws {
         // MTEXT 534/646 "Xxp     pxX" carry the embedded columns marker
         // 70=1/71=2/72=2. AutoCAD distributes those paragraphs across the

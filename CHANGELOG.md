@@ -84,6 +84,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Distributed MTEXT paragraphs** - text with the 70=1/71=2/72=2 columns marker (text.dxf "Xxp     pxX") now spreads across the reference width like AutoCAD instead of packing left, so trailing words land in their boxes.
 - **AutoLISP crash while a script runs** - running an AutoLISP function in a document no longer crashes the app: every document read and write now serializes on the document lock, so the per-frame status bar and the background evaluator cannot race on the entity registry.
 - **Cross-tab paste left invisible geometry** - pasting into another drawing no longer lands entities on layers the target drawing does not have; layers, blocks, and styles are remapped by name (target wins) and missing definitions are imported, so pasted content renders and picks immediately.
+- **SHX word wrap** - MTEXT wrap tests now use the same pen-advance width the renderer draws with instead of ink bounds minus a space advance, so `text.dxf` handle 432 wraps `a word wrap` / `example a b c` / `d e` like AutoCAD with no line overflowing the reference width.
 
 ### Maintenance
 - **Code cleanup** - split up the REVCLOUD file and shared dimension picking; no behavior change.
