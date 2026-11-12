@@ -288,6 +288,20 @@ public final class EngineInteractionManager {
     /// Ticks of the last full CPU hover hit-test. Throttles `closestEntity`
     /// during mouse-move bursts (see `CADHoverCoordinator`).
     public var lastHoverTestTicks: UInt64 = 0
+
+    /// Pointer speed estimate (screen px/sec, EMA sampled once per frame).
+    /// While whipping the cursor the hover highlight is suppressed: nobody
+    /// aims at geometry mid-gesture, and the hit-test is pure overhead.
+    /// Snap keeps running - drafting commands need it at any speed.
+    public var hoverSpeedPxPerSec: Double = 0
+    /// Last screen position the speed estimate was sampled at.
+    public var lastHoverSpeedScreenX: Float = 0
+    public var lastHoverSpeedScreenY: Float = 0
+    /// Ticks of the last speed sample (0 = none yet, yields speed 0).
+    public var lastHoverSpeedTicks: UInt64 = 0
+    /// Whether the hover highlight is currently suppressed for speed.
+    /// Sticky with hysteresis so edge speeds do not flap the highlight.
+    public var hoverWhipSuppressed: Bool = false
     
     /// Accumulated rotation angle during grip drag (radians). Used to transform
     /// cached grip positions incrementally rather than recomputing from bounds.

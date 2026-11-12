@@ -153,7 +153,11 @@ public final class EngineRenderer {
     /// merge into a handful of draw calls on stroke-heavy drawings
     /// (verified by BatchMergeTests); joins also upgrade from butt caps
     /// to miters. Matches the golden vertex-build path (hairlineQuads).
-    internal var usesTriangleHairlines: Bool { true }
+    internal var usesTriangleHairlines: Bool {
+        // Diagnostic override: ZEPHYR_HAIRLINE_QUADS=0 restores the old
+        // 1px LINELIST path for A/B comparison against quad tessellation.
+        ProcessInfo.processInfo.environment["ZEPHYR_HAIRLINE_QUADS"] != "0"
+    }
 
     internal var lineWidthPixelScale: Float {
         max(1.0, max(engine.scaleX, engine.scaleY))
@@ -530,7 +534,13 @@ public final class EngineRenderer {
         applyPendingVertexBuildIfReady(ctx: ctx, currentLineZoom: lineZoom)
     }
 
-    internal func render(deltaSec: Double) {
+    internal func render(deltaSec: Double) {
+        // Device lost: skip all submission (input still polls in run(), so
+        // the app stays closable). See acquireRenderCommandBuffer.
+        guard !engine.gpuDeviceLost else { return }
+        // Device lost: skip all submission (input still polls in run(),
+        // so the app stays closable). See acquireRenderCommandBuffer.
+        guard !engine.gpuDeviceLost else { return }
         // Each OS window frames on its own ImGui context; start from main's
         // so prologue io reads are deterministic. (The minimized early-out
         // below skips aux frames too — pre-existing behavior, unchanged.)
@@ -1107,8 +1117,7 @@ public final class EngineRenderer {
         // Pick pass for the focused pane (pending coords are pane-local).
         if focusedShowsActive,
            let pickX = _pendingPickScreenX, let pickY = _pendingPickScreenY,
-           let pickTex = pickTexture, cadIDPipeline != nil, actx.vertexBuffer != nil,
-           actx.vertexCount > 0
+           let pickTex = pickTexture, cadIDPipeline != nil, !actx.vertexChunks.isEmpty
         {
             _pendingPickScreenX = nil
             _pendingPickScreenY = nil
@@ -1126,9 +1135,6 @@ public final class EngineRenderer {
                 if let pickPass = SDL_BeginGPURenderPass(pickCmd, &pickColorTarget, 1, nil) {
                     SDL_BindGPUGraphicsPipeline(pickPass, cadIDPipeline)
 
-                    var vertexBinding = SDL_GPUBufferBinding(buffer: actx.vertexBuffer!, offset: 0)
-                    SDL_BindGPUVertexBuffers(pickPass, 0, &vertexBinding, 1)
-
                     var pickMatrix = engine.camera.computePickMatrix(
                         cursorScreenX: pickX,
                         cursorScreenY: pickY,
@@ -1138,21 +1144,26 @@ public final class EngineRenderer {
                     SDL_PushGPUVertexUniformData(pickCmd, 0, &pickMatrix, UInt32(pickMatrix.count * 4))
 
                     var lastBoundType: CADPipelineType? = nil
-                    for batch in actx.batches {
-                        if batch.isPanProxy { continue }
-                        let pipe: OpaquePointer?
-                        switch batch.pipelineType {
-                        case .line:       pipe = cadIDLinePipeline
-                        case .point:      pipe = cadIDPointPipeline
-                        case .triangle,
-                             .aaLine:     pipe = cadIDPipeline
-                        }
-                        if lastBoundType != batch.pipelineType {
-                            SDL_BindGPUGraphicsPipeline(pickPass, pipe)
-                            lastBoundType = batch.pipelineType
-                        }
-                        if pipe != nil {
-                            SDL_DrawGPUPrimitives(pickPass, batch.vertexCount, 1, batch.firstVertex, 0)
+                    for chunk in actx.vertexChunks {
+                        guard let chunkBuf = chunk.buffer else { continue }
+                        var vertexBinding = SDL_GPUBufferBinding(buffer: chunkBuf, offset: 0)
+                        SDL_BindGPUVertexBuffers(pickPass, 0, &vertexBinding, 1)
+                        for batch in chunk.batches {
+                            if batch.isPanProxy { continue }
+                            let pipe: OpaquePointer?
+                            switch batch.pipelineType {
+                            case .line:       pipe = cadIDLinePipeline
+                            case .point:      pipe = cadIDPointPipeline
+                            case .triangle,
+                                 .aaLine:     pipe = cadIDPipeline
+                            }
+                            if lastBoundType != batch.pipelineType {
+                                SDL_BindGPUGraphicsPipeline(pickPass, pipe)
+                                lastBoundType = batch.pipelineType
+                            }
+                            if pipe != nil {
+                                SDL_DrawGPUPrimitives(pickPass, batch.vertexCount, 1, batch.firstVertex, 0)
+                            }
                         }
                     }
 
@@ -1202,8 +1213,7 @@ public final class EngineRenderer {
         uploadPaneBgQuads(leaves: leaves, plans: plans)
 
         // Swapchain: one CAD pass per leaf, then the ImGui pass.
-        guard let cmd = SDL_AcquireGPUCommandBuffer(engine.gpuDevice) else {
-            print("Failed to acquire GPU command buffer")
+        guard let cmd = acquireRenderCommandBuffer(tag: "split leaf swapchain") else {
             return
         }
 
@@ -1388,12 +1398,12 @@ public final class EngineRenderer {
     ) -> WindowRenderContext? {
         guard leaf.id == focusedID,
               let tabID = leaf.tabID, tabID == activeID,
-              tabCtx(for: tabID).vertexCount == 0
+              tabCtx(for: tabID).vertexChunks.isEmpty
         else { return nil }
         let wantView = engine.tabManager.activeTab?.activeViewIndex ?? -1
         let wantDocumentID = engine.tabManager.activeTab.map { ObjectIdentifier($0.document) }
         func ready(_ ctx: WindowRenderContext) -> Bool {
-            ctx.vertexBuffer != nil && ctx.vertexCount > 0
+            !ctx.vertexChunks.isEmpty
                 && ctx.builtTabID == tabID && ctx.builtViewIndex == wantView
                 && ctx.builtDocumentID == wantDocumentID
         }
@@ -1429,7 +1439,7 @@ public final class EngineRenderer {
         }
         let bg = leafBgs[leaf.id] ?? engine.ui.backgroundColor
         if let pane = paneCtxs[leaf.id],
-           pane.vertexBuffer != nil, pane.vertexCount > 0 {
+           !pane.vertexChunks.isEmpty {
             return LeafPassPlan(
                 bg: bg, ctx: pane,
                 camera: pane.camera, renderOrigin: pane.geometry.renderOrigin,
@@ -1528,10 +1538,13 @@ public final class EngineRenderer {
             memcpy(mapped, ptr.baseAddress!, Int(sizeInBytes))
         }
         SDL_UnmapGPUTransferBuffer(engine.gpuDevice, transferBuf)
-        guard let cmd = SDL_AcquireGPUCommandBuffer(engine.gpuDevice),
-              let cp = SDL_BeginGPUCopyPass(cmd)
-        else {
-            print("Failed to acquire command buffer for pane background upload")
+        guard let cmd = acquireRenderCommandBuffer(tag: "pane background upload") else {
+            SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
+            return
+        }
+        guard let cp = SDL_BeginGPUCopyPass(cmd) else {
+            print("Failed to begin copy pass for pane background upload")
+            SDL_CancelGPUCommandBuffer(cmd)
             SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
             return
         }
@@ -1602,30 +1615,32 @@ public final class EngineRenderer {
             SDL_DrawGPUPrimitives(renderPass, 6, 1, UInt32(leafIndex * 6), 0)
         }
 
-        if let ctx = plan.ctx, let vertexBuf = ctx.vertexBuffer, ctx.vertexCount > 0 {
-            var vertexBinding = SDL_GPUBufferBinding(buffer: vertexBuf, offset: 0)
-            SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
+        if let ctx = plan.ctx, !ctx.vertexChunks.isEmpty {
+            for chunk in ctx.vertexChunks {
+                guard let vertexBuf = chunk.buffer else { continue }
+                var vertexBinding = SDL_GPUBufferBinding(buffer: vertexBuf, offset: 0)
+                SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
+                for batch in chunk.batches {
+                    if batch.isPanProxy { continue }
+                    let pipeline: OpaquePointer?
+                    switch batch.pipelineType {
+                    case .point:
+                        pipeline = cadPointPipeline
+                    case .triangle:
+                        pipeline = cadTrianglePipeline
+                    case .line:
+                        pipeline = cadLinePipeline
+                    case .aaLine:
+                        pipeline = cadLineAAPipeline
+                    }
 
-            for batch in ctx.batches {
-                if batch.isPanProxy { continue }
-                let pipeline: OpaquePointer?
-                switch batch.pipelineType {
-                case .point:
-                    pipeline = cadPointPipeline
-                case .triangle:
-                    pipeline = cadTrianglePipeline
-                case .line:
-                    pipeline = cadLinePipeline
-                case .aaLine:
-                    pipeline = cadLineAAPipeline
+                    if lastBoundPipeline != batch.pipelineType {
+                        SDL_BindGPUGraphicsPipeline(renderPass, pipeline)
+                        lastBoundPipeline = batch.pipelineType
+                    }
+
+                    SDL_DrawGPUPrimitives(renderPass, batch.vertexCount, 1, batch.firstVertex, 0)
                 }
-
-                if lastBoundPipeline != batch.pipelineType {
-                    SDL_BindGPUGraphicsPipeline(renderPass, pipeline)
-                    lastBoundPipeline = batch.pipelineType
-                }
-
-                SDL_DrawGPUPrimitives(renderPass, batch.vertexCount, 1, batch.firstVertex, 0)
             }
         }
 
@@ -2011,8 +2026,8 @@ public final class EngineRenderer {
 
         // --- Phase 2: GPU ID-buffer pick pass ---
         if let pickX = _pendingPickScreenX, let pickY = _pendingPickScreenY,
-           let pickTex = pickTexture, cadIDPipeline != nil, actx.vertexBuffer != nil,
-           actx.vertexCount > 0
+           let pickTex = pickTexture, cadIDPipeline != nil, !actx.vertexChunks.isEmpty
+
         {
             _pendingPickScreenX = nil
             _pendingPickScreenY = nil
@@ -2031,9 +2046,6 @@ public final class EngineRenderer {
                 if let pickPass = SDL_BeginGPURenderPass(pickCmd, &pickColorTarget, 1, nil) {
                     SDL_BindGPUGraphicsPipeline(pickPass, cadIDPipeline)
 
-                    var vertexBinding = SDL_GPUBufferBinding(buffer: actx.vertexBuffer!, offset: 0)
-                    SDL_BindGPUVertexBuffers(pickPass, 0, &vertexBinding, 1)
-
                     // Upload pick matrix (9×9 viewport centered on cursor)
                     var pickMatrix = engine.camera.computePickMatrix(
                         cursorScreenX: pickX,
@@ -2045,21 +2057,26 @@ public final class EngineRenderer {
 
                     // Draw all batches with appropriate ID pipeline per primitive type
                     var lastBoundType: CADPipelineType? = nil
-                    for batch in actx.batches {
-                        if batch.isPanProxy { continue }
-                        let pipe: OpaquePointer?
-                        switch batch.pipelineType {
-                        case .line:       pipe = cadIDLinePipeline
-                        case .point:      pipe = cadIDPointPipeline
-                        case .triangle,
-                             .aaLine:     pipe = cadIDPipeline
-                        }
-                        if lastBoundType != batch.pipelineType {
-                            SDL_BindGPUGraphicsPipeline(pickPass, pipe)
-                            lastBoundType = batch.pipelineType
-                        }
-                        if pipe != nil {
-                            SDL_DrawGPUPrimitives(pickPass, batch.vertexCount, 1, batch.firstVertex, 0)
+                    for chunk in actx.vertexChunks {
+                        guard let chunkBuf = chunk.buffer else { continue }
+                        var vertexBinding = SDL_GPUBufferBinding(buffer: chunkBuf, offset: 0)
+                        SDL_BindGPUVertexBuffers(pickPass, 0, &vertexBinding, 1)
+                        for batch in chunk.batches {
+                            if batch.isPanProxy { continue }
+                            let pipe: OpaquePointer?
+                            switch batch.pipelineType {
+                            case .line:       pipe = cadIDLinePipeline
+                            case .point:      pipe = cadIDPointPipeline
+                            case .triangle,
+                                 .aaLine:     pipe = cadIDPipeline
+                            }
+                            if lastBoundType != batch.pipelineType {
+                                SDL_BindGPUGraphicsPipeline(pickPass, pipe)
+                                lastBoundType = batch.pipelineType
+                            }
+                            if pipe != nil {
+                                SDL_DrawGPUPrimitives(pickPass, batch.vertexCount, 1, batch.firstVertex, 0)
+                            }
                         }
                     }
 
@@ -2100,8 +2117,7 @@ public final class EngineRenderer {
             }
         }
 
-        guard let cmd = SDL_AcquireGPUCommandBuffer(engine.gpuDevice) else {
-            print("Failed to acquire GPU command buffer")
+        guard let cmd = acquireRenderCommandBuffer(tag: "primary swapchain") else {
             return
         }
 
@@ -2126,38 +2142,41 @@ public final class EngineRenderer {
 
             let renderPass = SDL_BeginGPURenderPass(cmd, &colorTarget, 1, nil)
             if renderPass != nil {
-                if let vertexBuf = actx.vertexBuffer, actx.vertexCount > 0 {
+                if !actx.vertexChunks.isEmpty {
                     var lastBoundPipeline: CADPipelineType? = nil
-                    var vertexBinding = SDL_GPUBufferBinding(buffer: vertexBuf, offset: 0)
-                    SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
 
                     let cameraMatrix = engine.camera.computeMatrix(
                         windowW: Double(engine.windowWidth),
                         windowH: Double(engine.windowHeight),
                         renderOrigin: engine.geometryManager.renderOrigin)
-                    
+
                     pushCADUniforms(cmd: cmd, matrix: cameraMatrix, includeHiddenHandles: true)
 
-                    for batch in actx.batches {
-                        if batch.isPanProxy { continue }
-                        let pipeline: OpaquePointer?
-                        switch batch.pipelineType {
-                        case .point:
-                            pipeline = cadPointPipeline
-                        case .triangle:
-                            pipeline = cadTrianglePipeline
-                        case .line:
-                            pipeline = cadLinePipeline
-                        case .aaLine:
-                            pipeline = cadLineAAPipeline
-                        }
+                    for chunk in actx.vertexChunks {
+                        guard let vertexBuf = chunk.buffer else { continue }
+                        var vertexBinding = SDL_GPUBufferBinding(buffer: vertexBuf, offset: 0)
+                        SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
+                        for batch in chunk.batches {
+                            if batch.isPanProxy { continue }
+                            let pipeline: OpaquePointer?
+                            switch batch.pipelineType {
+                            case .point:
+                                pipeline = cadPointPipeline
+                            case .triangle:
+                                pipeline = cadTrianglePipeline
+                            case .line:
+                                pipeline = cadLinePipeline
+                            case .aaLine:
+                                pipeline = cadLineAAPipeline
+                            }
 
-                        if lastBoundPipeline != batch.pipelineType {
-                            SDL_BindGPUGraphicsPipeline(renderPass, pipeline)
-                            lastBoundPipeline = batch.pipelineType
-                        }
+                            if lastBoundPipeline != batch.pipelineType {
+                                SDL_BindGPUGraphicsPipeline(renderPass, pipeline)
+                                lastBoundPipeline = batch.pipelineType
+                            }
 
-                        SDL_DrawGPUPrimitives(renderPass, batch.vertexCount, 1, batch.firstVertex, 0)
+                            SDL_DrawGPUPrimitives(renderPass, batch.vertexCount, 1, batch.firstVertex, 0)
+                        }
                     }
                 }
 
@@ -2306,8 +2325,7 @@ public final class EngineRenderer {
 
         let imguiDrawDataReady = uploadImGuiDrawData()
 
-        guard let cmd = SDL_AcquireGPUCommandBuffer(engine.gpuDevice) else {
-            print("Failed to acquire GPU command buffer (secondary window)")
+        guard let cmd = acquireRenderCommandBuffer(tag: "secondary swapchain") else {
             return
         }
 
@@ -2329,10 +2347,8 @@ public final class EngineRenderer {
             colorTarget.cycle = true
 
             if let renderPass = SDL_BeginGPURenderPass(cmd, &colorTarget, 1, nil) {
-                if let ctx, let vertexBuf = ctx.vertexBuffer, ctx.vertexCount > 0 {
+                if let ctx, !ctx.vertexChunks.isEmpty {
                     var lastBoundPipeline: CADPipelineType? = nil
-                    var vertexBinding = SDL_GPUBufferBinding(buffer: vertexBuf, offset: 0)
-                    SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
 
                     let cameraMatrix = ctx.camera.computeMatrix(
                         windowW: Double(dims.w),
@@ -2347,26 +2363,31 @@ public final class EngineRenderer {
 
                     SDL_PushGPUVertexUniformData(cmd, 0, &uniformData, UInt32(MemoryLayout<CameraUniformData>.size))
 
-                    for batch in ctx.batches {
-                        if batch.isPanProxy { continue }
-                        let pipeline: OpaquePointer?
-                        switch batch.pipelineType {
-                        case .point:
-                            pipeline = cadPointPipeline
-                        case .triangle:
-                            pipeline = cadTrianglePipeline
-                        case .line:
-                            pipeline = cadLinePipeline
-                        case .aaLine:
-                            pipeline = cadLineAAPipeline
-                        }
+                    for chunk in ctx.vertexChunks {
+                        guard let vertexBuf = chunk.buffer else { continue }
+                        var vertexBinding = SDL_GPUBufferBinding(buffer: vertexBuf, offset: 0)
+                        SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
+                        for batch in chunk.batches {
+                            if batch.isPanProxy { continue }
+                            let pipeline: OpaquePointer?
+                            switch batch.pipelineType {
+                            case .point:
+                                pipeline = cadPointPipeline
+                            case .triangle:
+                                pipeline = cadTrianglePipeline
+                            case .line:
+                                pipeline = cadLinePipeline
+                            case .aaLine:
+                                pipeline = cadLineAAPipeline
+                            }
 
-                        if lastBoundPipeline != batch.pipelineType {
-                            SDL_BindGPUGraphicsPipeline(renderPass, pipeline)
-                            lastBoundPipeline = batch.pipelineType
-                        }
+                            if lastBoundPipeline != batch.pipelineType {
+                                SDL_BindGPUGraphicsPipeline(renderPass, pipeline)
+                                lastBoundPipeline = batch.pipelineType
+                            }
 
-                        SDL_DrawGPUPrimitives(renderPass, batch.vertexCount, 1, batch.firstVertex, 0)
+                            SDL_DrawGPUPrimitives(renderPass, batch.vertexCount, 1, batch.firstVertex, 0)
+                        }
                     }
                 }
 
@@ -2593,8 +2614,7 @@ public final class EngineRenderer {
 
         let imguiDrawDataReady = uploadImGuiDrawData()
 
-        guard let cmd = SDL_AcquireGPUCommandBuffer(engine.gpuDevice) else {
-            print("Failed to acquire GPU command buffer (aux window)")
+        guard let cmd = acquireRenderCommandBuffer(tag: "aux swapchain") else {
             return
         }
 

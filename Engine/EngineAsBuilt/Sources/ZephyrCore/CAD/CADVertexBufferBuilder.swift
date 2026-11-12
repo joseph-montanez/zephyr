@@ -153,6 +153,97 @@ public final class CADVertexBufferBuilder {
     /// Returns a valid (possibly empty) `VertexBuildResult` otherwise.
     ///
     /// The body is lifted directly from `rebuildCadVertexBuffer()`.
+    /// Maximum bytes for one vertex-buffer upload. Drivers reject larger
+    /// single allocations (observed as device removal, DXGI 0x887A0006),
+    /// so oversized builds are refused with a clear message instead of
+    /// killing the GPU device. Chunked upload is the follow-up.
+    internal static let maxSingleVertexUploadBytes: UInt64 = 512 * 1024 * 1024
+
+    /// Upload size for a vertex count, or nil when it cannot be created:
+    /// empty, overflowing a 32-bit GPU size, or over the single-buffer
+    /// budget. Callers keep the previous buffer on nil.
+    internal static func vertexUploadByteSize(vertexCount: Int) -> UInt64? {
+        guard vertexCount > 0 else { return nil }
+        let bytes = UInt64(vertexCount) * UInt64(MemoryLayout<CADVertex>.stride)
+        guard bytes <= UInt64(UInt32.max), bytes <= maxSingleVertexUploadBytes else { return nil }
+        return bytes
+    }
+
+    /// Maximum vertices per uploaded chunk (4M verts = 128 MB at 32 B/vert).
+    /// Tessellated output is split into chunk-sized batch groups so no
+    /// single GPU allocation can exceed driver limits.
+    internal static let maxVertsPerChunk = 4_194_304
+
+    /// Splits a tessellated batch list into chunk-sized groups with
+    /// chunk-local first-vertex offsets. All pipelines use LIST topologies,
+    /// so cutting a batch mid-run into consecutive same-pipeline draws is
+    /// pixel-identical (same state, same order); pan-proxy and pipeline
+    /// boundaries are never crossed, only subdivided.
+    internal static func chunkBatches(
+        _ batches: [CADDrawBatch],
+        maxVertsPerChunk: Int = maxVertsPerChunk
+    ) -> [[CADDrawBatch]] {
+        guard maxVertsPerChunk > 0, maxVertsPerChunk <= Int(UInt32.max) else {
+            return batches.isEmpty ? [] : [batches]
+        }
+        let cap = UInt32(maxVertsPerChunk)
+        var chunks: [[CADDrawBatch]] = []
+        var current: [CADDrawBatch] = []
+        var currentVerts: UInt32 = 0
+        var base: UInt32 = 0
+        func closeChunk() {
+            base += currentVerts
+            currentVerts = 0
+            chunks.append(current)
+            current = []
+        }
+        for batch in batches {
+            // Splits must land on primitive boundaries: cutting a triangle
+            // batch at a non-multiple of 3 phase-shifts every following
+            // triangle in the next chunk (corners from neighboring
+            // triangles draw as long streaks across the map).
+            let granularity: UInt32
+            switch batch.pipelineType {
+            case .triangle, .aaLine: granularity = 3
+            case .line: granularity = 2
+            case .point: granularity = 1
+            }
+            var start = batch.firstVertex
+            var remaining = batch.vertexCount
+            while remaining > 0 {
+                if currentVerts >= cap {
+                    closeChunk()
+                    continue
+                }
+                var take = min(remaining, cap - currentVerts)
+                if take < remaining {
+                    take -= take % granularity
+                }
+                if take == 0 {
+                    if currentVerts == 0 {
+                        // Cap below one primitive: overshoot by one primitive
+                        // rather than spin forever closing empty chunks.
+                        take = min(remaining, granularity)
+                    } else {
+                        closeChunk()
+                        continue
+                    }
+                }
+                current.append(CADDrawBatch(
+                    pipelineType: batch.pipelineType,
+                    firstVertex: start - base,
+                    vertexCount: take,
+                    isPanProxy: batch.isPanProxy,
+                    lineWeight: batch.lineWeight))
+                start += take
+                remaining -= take
+                currentVerts += take
+            }
+        }
+        if !current.isEmpty { chunks.append(current) }
+        return chunks
+    }
+
     public nonisolated static func tessellate(
         _ inputs: [TessInput],
         cameraZoom: Double,
@@ -215,6 +306,10 @@ public final class CADVertexBufferBuilder {
         }
 
         func appendLineSegment(_ p1: SDL_FPoint, _ p2: SDL_FPoint, _ r: Float, _ g: Float, _ b: Float, _ a: Float) {
+            // Non-finite endpoints produce undefined GPU behavior (and have
+            // removed devices in the wild): drop the segment. The quad path
+            // below already rejects these via its length guard.
+            guard p1.x.isFinite, p1.y.isFinite, p2.x.isFinite, p2.y.isFinite else { return }
             appendLineVertex(p1, r, g, b, a)
             appendLineVertex(p2, r, g, b, a)
         }
@@ -796,6 +891,9 @@ public final class CADVertexBufferBuilder {
             case .fillRect, .fillRects:
                 pipeType = .triangle
             case .line, .lines:
+                // NOTE: .rect/.rects deliberately NOT in this case - their
+                // emission appends raw corner vertices as line pairs (never
+                // quads), so they belong on the .line pipeline via default:
                 if !input.segmentLineWeights.isEmpty || input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines {
                     pipeType = antiAliasLines ? .aaLine : .triangle
                 } else if hairlineQuads {

@@ -133,86 +133,174 @@ extension EngineRenderer {
     /// releases the old buffers and swaps in the new. Cache metadata is written
     /// at swap time so the cache always describes the live buffer.
     ///
+    /// Acquires a command buffer for a render pass, with device-loss backoff:
+    /// after a streak of failures the GPU is assumed removed and further
+    /// submission stops (one clear message instead of an endless error wall
+    /// every frame). Callers treat nil as "skip this frame".
+    internal func acquireRenderCommandBuffer(tag: String) -> OpaquePointer? {
+        if engine.gpuDeviceLost { return nil }
+        guard let cmd = SDL_AcquireGPUCommandBuffer(engine.gpuDevice) else {
+            engine._gpuAcquireFailStreak += 1
+            if engine._gpuAcquireFailStreak >= 5 {
+                if !engine.gpuDeviceLost {
+                    engine.gpuDeviceLost = true
+                    print("[GPU] Device lost: the GPU stopped responding (likely an oversized or invalid command). Rendering is paused; save your work and restart. (\(tag))")
+                }
+            } else {
+                print("Failed to acquire GPU command buffer (\(tag))")
+            }
+            return nil
+        }
+        engine._gpuAcquireFailStreak = 0
+        return cmd
+    }
+
     /// Called from both the sync `rebuildCadVertexBuffer()` and the async
     /// `applyPendingVertexBuildIfReady()` paths.
-    internal func applyVertexBuild(_ result: VertexBuildResult, paletteGen: Int, ctx: WindowRenderContext) {
+    /// Creates GPU buffers from a `VertexBuildResult`, uploads them chunk by
+    /// chunk, then releases the old buffers and swaps in the new set. Cache
+    /// metadata is written at swap time so the cache always describes the
+    /// live buffers. Returns false when nothing was applied (upload refused
+    /// or a chunk failed); the previous buffer stays live then.
+    @discardableResult
+    internal func applyVertexBuild(_ result: VertexBuildResult, paletteGen: Int, ctx: WindowRenderContext) -> Bool {
         let vertices = result.vertices
 
-        // --- Build NEW GPU buffers into locals ---
-        var newVertexBuffer: OpaquePointer? = nil
-
+        // --- Build NEW GPU buffers into locals, one chunk at a time ---
+        // Copies are submitted WITH fences and transfer buffers stay alive
+        // until their fence completes: releasing (and potentially reusing)
+        // transfer memory while an earlier copy is still in flight tears
+        // vertex data across chunks — triangles whose corners came from
+        // different chunks drew as map-spanning streaks on huge drawings.
+        var newChunks: [WindowRenderContext.VertexGPUChunk] = []
+        // Diagnostic override (ZEPHYR_CHUNK_VERTS): force a chunk size to
+        // A/B multi-buffer draw behavior against the default 4M-vert chunks.
+        let chunkCap: Int = {
+            if let raw = ProcessInfo.processInfo.environment["ZEPHYR_CHUNK_VERTS"],
+               let parsed = Int(raw), parsed > 0 {
+                return parsed
+            }
+            return CADVertexBufferBuilder.maxVertsPerChunk
+        }()
+        var pendingFences: [OpaquePointer?] = []
+        var pendingTransfers: [OpaquePointer] = []
+        func drainPendingCopies() {
+            if !pendingFences.isEmpty {
+                var fences = pendingFences
+                _ = SDL_WaitForGPUFences(engine.gpuDevice, true, &fences, UInt32(fences.count))
+                for fence in fences { SDL_ReleaseGPUFence(engine.gpuDevice, fence) }
+                pendingFences.removeAll()
+            }
+            for tb in pendingTransfers {
+                SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, tb)
+            }
+            pendingTransfers.removeAll()
+        }
         if !vertices.isEmpty {
-            let sizeInBytes = UInt32(vertices.count * MemoryLayout<CADVertex>.stride)
-            var bufferCreateInfo = SDL_GPUBufferCreateInfo(
-                usage: SDL_GPU_BUFFERUSAGE_VERTEX, size: sizeInBytes, props: 0)
-            newVertexBuffer = SDL_CreateGPUBuffer(engine.gpuDevice, &bufferCreateInfo)
-            guard let vb = newVertexBuffer else {
-                print("Failed to create CAD GPU vertex buffer: \(String(cString: SDL_GetError()))")
-                return
-            }
+            let groups = CADVertexBufferBuilder.chunkBatches(result.batches, maxVertsPerChunk: chunkCap)
+            var globalOffset = 0
+            var failed = false
+            for group in groups {
+                let count = group.reduce(0) { $0 + Int($1.vertexCount) }
+                guard count > 0,
+                      let uploadBytes = CADVertexBufferBuilder.vertexUploadByteSize(vertexCount: count)
+                else {
+                    let approxMB = Double(count * MemoryLayout<CADVertex>.stride) / 1_048_576.0
+                    print("[CADVertex] Upload refused: chunk of \(count) verts (~\(String(format: "%.0f", approxMB)) MB) exceeds the single-buffer budget; keeping the previous buffer.")
+                    failed = true
+                    break
+                }
+                let sizeInBytes = UInt32(uploadBytes)
+                var bufferCreateInfo = SDL_GPUBufferCreateInfo(
+                    usage: SDL_GPU_BUFFERUSAGE_VERTEX, size: sizeInBytes, props: 0)
+                guard let vb = SDL_CreateGPUBuffer(engine.gpuDevice, &bufferCreateInfo) else {
+                    print("Failed to create CAD GPU vertex buffer: \(String(cString: SDL_GetError()))")
+                    failed = true
+                    break
+                }
 
-            var transferInfo = SDL_GPUTransferBufferCreateInfo()
-            transferInfo.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
-            transferInfo.size = sizeInBytes
-            guard let transferBuf = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &transferInfo) else {
-                print("Failed to create CAD GPU transfer buffer: \(String(cString: SDL_GetError()))")
-                SDL_ReleaseGPUBuffer(engine.gpuDevice, vb)
-                return
-            }
+                var transferInfo = SDL_GPUTransferBufferCreateInfo()
+                transferInfo.usage = SDL_GPUTransferBufferUsage(rawValue: 0)
+                transferInfo.size = sizeInBytes
+                guard let transferBuf = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &transferInfo) else {
+                    print("Failed to create CAD GPU transfer buffer: \(String(cString: SDL_GetError()))")
+                    SDL_ReleaseGPUBuffer(engine.gpuDevice, vb)
+                    failed = true
+                    break
+                }
 
-            guard let mapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, transferBuf, false) else {
-                print("Failed to map CAD GPU transfer buffer: \(String(cString: SDL_GetError()))")
-                SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
-                SDL_ReleaseGPUBuffer(engine.gpuDevice, vb)
-                return
-            }
-            _ = vertices.withUnsafeBytes { ptr in
-                memcpy(mapped, ptr.baseAddress!, Int(sizeInBytes))
-            }
-            SDL_UnmapGPUTransferBuffer(engine.gpuDevice, transferBuf)
+                guard let mapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, transferBuf, false) else {
+                    print("Failed to map CAD GPU transfer buffer: \(String(cString: SDL_GetError()))")
+                    SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
+                    SDL_ReleaseGPUBuffer(engine.gpuDevice, vb)
+                    failed = true
+                    break
+                }
+                vertices.withUnsafeBytes { ptr in
+                    let src = ptr.baseAddress!.advanced(by: globalOffset * MemoryLayout<CADVertex>.stride)
+                    memcpy(mapped, src, Int(sizeInBytes))
+                }
+                SDL_UnmapGPUTransferBuffer(engine.gpuDevice, transferBuf)
 
-            guard let cmd = SDL_AcquireGPUCommandBuffer(engine.gpuDevice) else {
-                print("Failed to acquire command buffer for CAD upload")
-                SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
-                SDL_ReleaseGPUBuffer(engine.gpuDevice, vb)
-                return
+                guard let cmd = acquireRenderCommandBuffer(tag: "CAD upload") else {
+                    SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
+                    SDL_ReleaseGPUBuffer(engine.gpuDevice, vb)
+                    failed = true
+                    break
+                }
+
+                let copyPass = SDL_BeginGPUCopyPass(cmd)
+                guard let cp = copyPass else {
+                    print("Failed to begin copy pass for CAD buffer upload")
+                    SDL_CancelGPUCommandBuffer(cmd)
+                    SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
+                    SDL_ReleaseGPUBuffer(engine.gpuDevice, vb)
+                    failed = true
+                    break
+                }
+
+                var sourceLocation = SDL_GPUTransferBufferLocation(transfer_buffer: transferBuf, offset: 0)
+                var destLocation = SDL_GPUBufferRegion(buffer: vb, offset: 0, size: sizeInBytes)
+                SDL_UploadToGPUBuffer(cp, &sourceLocation, &destLocation, false)
+
+                SDL_EndGPUCopyPass(cp)
+
+                guard let fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd) else {
+                    print("Failed to submit command buffer for CAD buffer upload")
+                    SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
+                    SDL_ReleaseGPUBuffer(engine.gpuDevice, vb)
+                    failed = true
+                    break
+                }
+                pendingFences.append(fence)
+                pendingTransfers.append(transferBuf)
+                newChunks.append(WindowRenderContext.VertexGPUChunk(
+                    buffer: vb, vertexCount: count, batches: group))
+                globalOffset += count
             }
-
-            let copyPass = SDL_BeginGPUCopyPass(cmd)
-            guard let cp = copyPass else {
-                print("Failed to begin copy pass for CAD buffer upload")
-                SDL_CancelGPUCommandBuffer(cmd)
-                SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
-                SDL_ReleaseGPUBuffer(engine.gpuDevice, vb)
-                return
+            if failed {
+                drainPendingCopies()
+                for chunk in newChunks {
+                    if let buf = chunk.buffer {
+                        SDL_ReleaseGPUBuffer(engine.gpuDevice, buf)
+                    }
+                }
+                return false
             }
-
-            var sourceLocation = SDL_GPUTransferBufferLocation(transfer_buffer: transferBuf, offset: 0)
-            var destLocation = SDL_GPUBufferRegion(buffer: vb, offset: 0, size: sizeInBytes)
-            SDL_UploadToGPUBuffer(cp, &sourceLocation, &destLocation, false)
-
-            SDL_EndGPUCopyPass(cp)
-
-            if !SDL_SubmitGPUCommandBuffer(cmd) {
-                print("Failed to submit command buffer for CAD buffer upload")
+            drainPendingCopies()
+            if ProcessInfo.processInfo.environment["ZEPHYR_VERIFY_UPLOAD"] == "1" {
+                verifyUploadedChunks(newChunks, source: vertices)
             }
-            SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, transferBuf)
         }
 
         // --- Swap: release old, assign new (atomic with metadata write) ---
-        if let oldBuf = ctx.vertexBuffer {
-            SDL_ReleaseGPUBuffer(engine.gpuDevice, oldBuf)
+        for chunk in ctx.vertexChunks {
+            if let buf = chunk.buffer {
+                SDL_ReleaseGPUBuffer(engine.gpuDevice, buf)
+            }
         }
 
-        ctx.vertexBuffer = newVertexBuffer
-
-        if newVertexBuffer != nil {
-            ctx.vertexCount = vertices.count
-            ctx.batches = result.batches
-        } else {
-            ctx.vertexCount = 0
-            ctx.batches.removeAll()
-        }
+        ctx.vertexChunks = newChunks
 
         // --- Write cache metadata at swap time (atomic with buffer replacement) ---
         ctx.cachedViewportMinX = result.regionMinX
@@ -223,6 +311,75 @@ extension EngineRenderer {
         ctx.lastCameraZoom = result.builtZoom
         ctx.cachedMutationGen = result.mutationGen
         ctx.cachedPaletteGen = paletteGen
+        return true
+    }
+
+    /// Diagnostic (ZEPHYR_VERIFY_UPLOAD=1): downloads each just-uploaded
+    /// chunk buffer and byte-compares it against the CPU source slice.
+    /// Splits upload corruption from draw-side corruption conclusively.
+    private func verifyUploadedChunks(
+        _ chunks: [WindowRenderContext.VertexGPUChunk],
+        source: [CADVertex]
+    ) {
+        let stride = MemoryLayout<CADVertex>.stride
+        var globalStart = 0
+        for (ci, chunk) in chunks.enumerated() {
+            defer { globalStart += chunk.vertexCount }
+            guard let buf = chunk.buffer, chunk.vertexCount > 0 else { continue }
+            let bytes = chunk.vertexCount * stride
+            var info = SDL_GPUTransferBufferCreateInfo()
+            info.usage = SDL_GPUTransferBufferUsage(rawValue: 1)
+            info.size = UInt32(bytes)
+            guard let tb = SDL_CreateGPUTransferBuffer(engine.gpuDevice, &info) else {
+                print("[VerifyUpload] chunk \(ci): transfer buffer creation failed")
+                continue
+            }
+            defer { SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, tb) }
+            guard let cmd = acquireRenderCommandBuffer(tag: "verify download"),
+                  let cp = SDL_BeginGPUCopyPass(cmd)
+            else {
+                print("[VerifyUpload] chunk \(ci): no command buffer")
+                continue
+            }
+            var src = SDL_GPUBufferRegion(buffer: buf, offset: 0, size: UInt32(bytes))
+            var dst = SDL_GPUTransferBufferLocation(transfer_buffer: tb, offset: 0)
+            SDL_DownloadFromGPUBuffer(cp, &src, &dst)
+            SDL_EndGPUCopyPass(cp)
+            guard let fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd) else {
+                print("[VerifyUpload] chunk \(ci): submit failed")
+                continue
+            }
+            var fences: [OpaquePointer?] = [fence]
+            _ = SDL_WaitForGPUFences(engine.gpuDevice, true, &fences, 1)
+            SDL_ReleaseGPUFence(engine.gpuDevice, fence)
+            guard let mapped = SDL_MapGPUTransferBuffer(engine.gpuDevice, tb, false) else {
+                print("[VerifyUpload] chunk \(ci): map failed")
+                continue
+            }
+            var firstBadVertex = -1
+            source.withUnsafeBytes { raw in
+                let srcBase = raw.baseAddress!.advanced(by: globalStart * stride)
+                if memcmp(mapped, srcBase, bytes) != 0 {
+                    let got = UnsafeRawBufferPointer(start: mapped, count: bytes)
+                    let want = UnsafeRawBufferPointer(start: srcBase, count: bytes)
+                    var byte = 0
+                    while byte < bytes, got[byte] == want[byte] { byte += 1 }
+                    firstBadVertex = byte / stride
+                }
+            }
+            if firstBadVertex < 0 {
+                print("[VerifyUpload] chunk \(ci): OK (\(chunk.vertexCount) verts, globalStart \(globalStart))")
+            } else {
+                let gi = globalStart + firstBadVertex
+                var gotV = CADVertex(x: 0, y: 0, r: 0, g: 0, b: 0, a: 0)
+                _ = withUnsafeMutableBytes(of: &gotV) { dst in
+                    memcpy(dst.baseAddress!, mapped.advanced(by: firstBadVertex * stride), stride)
+                }
+                let wantV = source[gi]
+                print("[VerifyUpload] chunk \(ci): MISMATCH at global vertex \(gi): got (\(gotV.x), \(gotV.y)) want (\(wantV.x), \(wantV.y))")
+            }
+            SDL_UnmapGPUTransferBuffer(engine.gpuDevice, tb)
+        }
     }
 
     // MARK: - Async Launch / Apply (main actor)
@@ -340,8 +497,9 @@ extension EngineRenderer {
         }
 
         let paletteGen = ctx.vbInFlightPaletteGen
-        applyVertexBuild(result, paletteGen: paletteGen, ctx: ctx)
-        engine._statAsyncApplied += 1
+        if applyVertexBuild(result, paletteGen: paletteGen, ctx: ctx) {
+            engine._statAsyncApplied += 1
+        }
 
         ctx.vbInFlightToken = nil
         ctx.vbTask = nil
@@ -353,8 +511,10 @@ extension EngineRenderer {
     /// last window. Printed beside `[FrameTiming]`; counters reset here.
     internal func perfStatsLine() -> String {
         let actx = engine.tabManager.activeTab.map { tabCtx(for: $0.id) } ?? primaryCtx
+        let totalVerts = actx.vertexChunks.reduce(0) { $0 + $1.vertexCount }
+        let totalBatches = actx.vertexChunks.reduce(0) { $0 + $1.batches.count }
         let line =
-            "[PerfStats] verts:\(actx.vertexCount) batches:\(actx.batches.count)" +
+            "[PerfStats] verts:\(totalVerts) batches:\(totalBatches) chunks:\(actx.vertexChunks.count)" +
             " sprites:\(actx.sprites.spriteCount)" +
             " syncRebuild:\(engine._statSyncRebuilds)" +
             " asyncLaunch:\(engine._statAsyncLaunches)" +

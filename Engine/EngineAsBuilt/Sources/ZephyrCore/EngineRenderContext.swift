@@ -49,9 +49,16 @@ public final class WindowRenderContext {
 
     // MARK: CAD GPU buffer (primary: migrated from the renderer)
 
-    public var vertexBuffer: OpaquePointer? = nil
-    public var vertexCount: Int = 0
-    public var batches: [CADDrawBatch] = []
+    /// One uploaded GPU buffer plus the draw batches that reference it
+    /// (chunk-local first-vertex offsets). Large drawings upload as several
+    /// modest buffers instead of one giant allocation that drivers reject.
+    public struct VertexGPUChunk {
+        public var buffer: OpaquePointer?
+        public var vertexCount: Int
+        public var batches: [CADDrawBatch]
+    }
+
+    public var vertexChunks: [VertexGPUChunk] = []
 
     // MARK: Async vertex-build state (primary: migrated from the renderer)
 
@@ -145,12 +152,12 @@ public final class WindowRenderContext {
         vbInFlightToken = nil
         vbInFlightRegion = nil
         vbBuilder.cancelPending()
-        if let buf = vertexBuffer {
-            SDL_ReleaseGPUBuffer(device, buf)
-            vertexBuffer = nil
+        for chunk in vertexChunks {
+            if let buf = chunk.buffer {
+                SDL_ReleaseGPUBuffer(device, buf)
+            }
         }
-        vertexCount = 0
-        batches.removeAll()
+        vertexChunks.removeAll()
     }
 
     /// Drop built state so the next frame rebuilds from scratch.
@@ -161,12 +168,12 @@ public final class WindowRenderContext {
         vbInFlightToken = nil
         vbInFlightRegion = nil
         vbBuilder.cancelPending()
-        if let buf = vertexBuffer {
-            SDL_ReleaseGPUBuffer(device, buf)
-            vertexBuffer = nil
+        for chunk in vertexChunks {
+            if let buf = chunk.buffer {
+                SDL_ReleaseGPUBuffer(device, buf)
+            }
         }
-        vertexCount = 0
-        batches.removeAll()
+        vertexChunks.removeAll()
         lastCameraZoom = -1.0
         cachedMutationGen = -1
         cachedPaletteGen = -1

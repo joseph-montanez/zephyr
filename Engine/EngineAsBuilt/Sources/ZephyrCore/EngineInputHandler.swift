@@ -30,6 +30,11 @@ internal final class EngineInputHandler {
     /// swallowed too (first click focuses, it doesn't select).
     private var swallowNextMouseUp = false
 
+    /// Whether the latest motion event landed on ImGui instead of canvas.
+    /// The main loop uses this to clear (not refresh) hover state while the
+    /// pointer sits over a panel, docked or floating.
+    internal var lastMotionWasOverUI = false
+
     /// Latest unconsumed pointer position for hover/snap work. Mouse, pen,
     /// and touch motion events arrive faster than rendered frames; the main
     /// loop consumes this once per frame so hover hit-tests and snap
@@ -356,6 +361,7 @@ internal final class EngineInputHandler {
                 let motionLocal = paneLocal(x: e.motion.x, y: e.motion.y, isMain: isMain)
                 engine.interaction.lastMouseX = motionLocal.x
                 engine.interaction.lastMouseY = motionLocal.y
+                lastMotionWasOverUI = handledByImGui
                 if !handledByImGui {
                     handleMouseMotion(x: motionLocal.x, y: motionLocal.y, xrel: e.motion.xrel, yrel: e.motion.yrel)
                 }
@@ -500,6 +506,7 @@ internal final class EngineInputHandler {
                 engine.interaction.penState.worldY = wy
                 sampleActivePenStroke()
                 // Also forward pen axis as mouse motion for cursor update.
+                lastMotionWasOverUI = handledByImGui
                 if !handledByImGui {
                     handleMouseMotion(x: penLocal.x, y: penLocal.y, xrel: 0, yrel: 0)
                 }
@@ -515,6 +522,7 @@ internal final class EngineInputHandler {
                 engine.interaction.penState.worldX = wx
                 engine.interaction.penState.worldY = wy
                 sampleActivePenStroke()
+                lastMotionWasOverUI = handledByImGui
                 if !handledByImGui {
                     handleMouseMotion(x: penLocal.x, y: penLocal.y, xrel: 0, yrel: 0)
                 }

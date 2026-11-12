@@ -60,6 +60,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **SHX text bounds** - selection and picking now use true glyph widths instead of an estimate.
 - **Hatch gaps** - gaps around text in hatches no longer fill in.
 - **Hatch highlight** - selected hatches outline instead of recoloring the pattern.
+- **Streak triangles on huge drawings** - chunked vertex uploads now split only on primitive boundaries; cutting a triangle batch at a non-multiple of 3 phase-shifted every following triangle into map-spanning streaks. Uploads are also fenced (transfer buffers outlive their copies), oversized uploads are refused instead of removing the GPU device, and non-finite segment endpoints never reach the GPU.
 - **HATCH crossing edges** - a line through a shape hatches only the picked side.
 - **Click inside hatches** - clicking anywhere inside a hatch selects it.
 - **Block editor framing** - opening the block editor now fits the block in view, like AutoCAD.
@@ -98,6 +99,12 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Text stays visible while panning** - text texture quads are no longer suppressed during pans (they use the same per-frame camera as the CAD matrix, so there was no structural lag to hide); pan-proxy outlines are never drawn.
 - **Quieter, cheaper font resolution** - TTF path lookups are cached per font name with one log line per unique mapping instead of a directory walk and a log line per text entity per regen.
 - **Zoom no longer forces full regens for mixed entities** - entities that curve-only LOD cannot refresh (text/image/table mixed with curves) keep their last tessellation while the rest refresh in place, instead of one mixed entity turning every zoom-band crossing into a full document regen; the live count is reported in [PerfStats] as unsupported.
+- **Quieter hover: panels never highlight, whips never highlight** - moving onto any UI panel clears the hover highlight and selection-cycling pile instead of leaving them glowing underneath, and fast cursor whips skip hover hit-tests entirely until the pointer slows or stops (snap keeps running so drafting is unaffected); explicitly armed Shift+Space cycles are preserved.
+- **Hover pile parity tests** - HoverScanTests pins single-walk hover results to hitTest/allHitsAt, and HoverVelocityTests pins the whip-suppression thresholds and hysteresis.
+- **Survive GPU device loss instead of spamming forever** - command-buffer acquires go through one choke point that stops submission after a streak of failures (one clear message instead of an error per frame), keeping the app closable so work can be saved.
+- **Chunked vertex uploads for huge drawings** - tessellated geometry uploads as multiple driver-safe buffers (4M verts each) instead of one giant allocation that removes the device; batches are split mid-run without changing draw order or pixels. Oversized single uploads are refused with the vertex/MB count instead of killing the GPU.
+- **Chunked uploads are fenced** - each 128 MB copy submits with a GPU fence and its transfer buffer stays alive until the fence completes; releasing/reusing transfer memory mid-copy tore vertex data across chunks on huge drawings (map-spanning streak triangles).
+- **Chunked rendering proven pixel-identical** - TessellationTilingTests pins batch tiling on real tessellator output (including degenerate inputs) and proves chunk splits preserve every vertex and the full draw coverage; non-finite segment endpoints are dropped instead of reaching the GPU.
 
 ## October 2026
 

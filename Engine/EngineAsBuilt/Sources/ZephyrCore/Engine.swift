@@ -385,6 +385,10 @@ public final class PhrostEngine {
     // Render-activity counters, printed and reset with the frame-timing
     // window. Distinguish a too-big static buffer (GPU-bound submit) from
     // a rebuild storm (sync rebuilds / async relaunches every frame).
+    // Set when the GPU stops responding: submission halts instead of
+    // spamming one error per frame until the process is killed.
+    internal var gpuDeviceLost = false
+    internal var _gpuAcquireFailStreak = 0
     internal var _statSyncRebuilds: Int = 0
     internal var _statAsyncLaunches: Int = 0
     internal var _statAsyncApplied: Int = 0

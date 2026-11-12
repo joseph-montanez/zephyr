@@ -19,6 +19,35 @@ final class CADHoverCoordinator {
     /// fresh between CPU runs.
     static let hoverRetestIntervalTicks: UInt64 = 8
 
+    /// Above this screen speed (px/sec) the hover highlight is suppressed:
+    /// nobody aims at geometry mid-gesture, and the hit-test is pure
+    /// overhead. Snap keeps running - drafting commands need it at speed.
+    static let hoverWhipSpeedPxPerSec: Double = 1500
+    /// Below this speed a suppressed highlight re-arms. The gap between
+    /// the two thresholds is hysteresis against edge-speed flapping.
+    static let hoverReacquireSpeedPxPerSec: Double = 600
+
+    /// Pure whip decision with hysteresis: fast always suppresses, slow
+    /// always re-arms, and speeds in between hold the current state.
+    static func shouldSuppressHover(
+        speedPxPerSec: Double,
+        currentlySuppressed: Bool
+    ) -> Bool {
+        if speedPxPerSec >= hoverWhipSpeedPxPerSec { return true }
+        if speedPxPerSec <= hoverReacquireSpeedPxPerSec { return false }
+        return currentlySuppressed
+    }
+
+    /// Clears auto hover state (highlight, grip hover, cycling pile) while
+    /// preserving an explicitly armed Shift+Space cycle.
+    static func clearAutoHover(in interaction: EngineInteractionManager) {
+        guard !interaction.hasActiveHoverCycle else { return }
+        interaction.hoveredEntityHandle = nil
+        interaction.hoveredGrip = nil
+        interaction.hoveredGripHandle = nil
+        interaction.clearHoverCycle()
+    }
+
     /// Pure throttle decision for CPU hover hit-tests. With no current
     /// hover target the test always runs so the first highlight appears
     /// promptly; otherwise bursts are coalesced to one test per interval.
@@ -34,8 +63,41 @@ final class CADHoverCoordinator {
     }
 
     func update(worldX: Double, worldY: Double, screenX: Float, screenY: Float) {
+        trackSpeed(screenX: screenX, screenY: screenY)
+        let interaction = engine.interaction
+        let suppress = Self.shouldSuppressHover(
+            speedPxPerSec: interaction.hoverSpeedPxPerSec,
+            currentlySuppressed: interaction.hoverWhipSuppressed)
+        if suppress {
+            if !interaction.hoverWhipSuppressed {
+                interaction.hoverWhipSuppressed = true
+                Self.clearAutoHover(in: interaction)
+            }
+            return
+        }
+        interaction.hoverWhipSuppressed = false
         updateGrip(screenX: screenX, screenY: screenY)
         updateEntity(worldX: worldX, worldY: worldY)
+    }
+
+    /// Samples pointer speed once per frame (motion is already coalesced,
+    /// so one sample per rendered frame). An exponential moving average
+    /// smooths polling jitter; teleport jumps are clamped so one jump
+    /// cannot pin suppression on.
+    private func trackSpeed(screenX: Float, screenY: Float) {
+        let interaction = engine.interaction
+        let nowTicks = SDL_GetTicks()
+        let dtMs = Double(nowTicks &- interaction.lastHoverSpeedTicks)
+        if interaction.lastHoverSpeedTicks != 0, dtMs > 0 {
+            let dx = Double(screenX - interaction.lastHoverSpeedScreenX)
+            let dy = Double(screenY - interaction.lastHoverSpeedScreenY)
+            let instant = min(hypot(dx, dy) / (dtMs / 1000.0), 20000.0)
+            interaction.hoverSpeedPxPerSec =
+                interaction.hoverSpeedPxPerSec * 0.65 + instant * 0.35
+        }
+        interaction.lastHoverSpeedScreenX = screenX
+        interaction.lastHoverSpeedScreenY = screenY
+        interaction.lastHoverSpeedTicks = nowTicks
     }
 
     private func updateGrip(screenX: Float, screenY: Float) {

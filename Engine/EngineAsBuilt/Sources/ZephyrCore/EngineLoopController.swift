@@ -156,9 +156,13 @@ public final class EngineLoopController {
             }
 
             // Flush deferred pointer motion once per frame: a burst of
-            // motion events cost a single hover+snap evaluation at the
-            // latest position instead of one pass per SDL event.
-            if let motion = inputHandler.consumePendingMotion() {
+            // motion events costs a single hover+snap evaluation at the
+            // latest position instead of one pass per SDL event. Motion
+            // over a UI panel clears auto-hover instead of refreshing it.
+            if inputHandler.lastMotionWasOverUI {
+                _ = inputHandler.consumePendingMotion()
+                CADHoverCoordinator.clearAutoHover(in: engine.interaction)
+            } else if let motion = inputHandler.consumePendingMotion() {
                 handleToolMouseMotion(x: motion.x, y: motion.y)
             }
 

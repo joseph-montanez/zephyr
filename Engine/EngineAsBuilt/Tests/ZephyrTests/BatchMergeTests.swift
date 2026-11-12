@@ -107,6 +107,44 @@ final class BatchMergeTests: XCTestCase {
         XCTAssertEqual(entityOrder.last, 1)
     }
 
+    /// `.rect` emission appends raw corner vertices as line pairs (never
+    /// quads, at any weight), so it must stay on the LINELIST pipeline at
+    /// every weight - routing it to triangles would reinterpret segment
+    /// endpoints as triangle corners.
+    func testRectStaysOnLinePipelineWhenWeighted() {
+        let input = TessInput(
+            type: .rect,
+            points: [], rects: [],
+            corners: [
+                SDL_FPoint(x: 0, y: 0), SDL_FPoint(x: 4, y: 0),
+                SDL_FPoint(x: 4, y: 3), SDL_FPoint(x: 0, y: 3),
+            ],
+            color: (255, 255, 255, 255),
+            lineWeight: 0.5, geomWidth: 0.0,
+            entityIndex: 5)
+        let result = tessellate([input])
+        XCTAssertEqual(result?.batches.count, 1)
+        XCTAssertEqual(result?.batches.first?.pipelineType, .line)
+        XCTAssertEqual(result?.batches.first?.vertexCount, 8)
+    }
+
+    /// Thin rects stay on the plain line pipeline (emission is segments).
+    func testThinRectStaysOnLinePipeline() {
+        let input = TessInput(
+            type: .rect,
+            points: [], rects: [],
+            corners: [
+                SDL_FPoint(x: 0, y: 0), SDL_FPoint(x: 4, y: 0),
+                SDL_FPoint(x: 4, y: 3), SDL_FPoint(x: 0, y: 3),
+            ],
+            color: (255, 255, 255, 255),
+            lineWeight: 0.25, geomWidth: 0.0,
+            entityIndex: 5)
+        let result = tessellate([input])
+        XCTAssertEqual(result?.batches.count, 1)
+        XCTAssertEqual(result?.batches.first?.pipelineType, .line)
+    }
+
     /// Pan-proxy runs stay isolated from normal runs of the same pipeline.
     func testPanProxyStaysIsolated() {
         let proxy = TessInput(
