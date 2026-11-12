@@ -256,24 +256,34 @@ extension EngineRenderer {
         let lineZoom = zoom * Double(pixelScale)
         let mutationGen = geometry.mutationGeneration
 
-        // Dedup: is the in-flight build already going to satisfy the current desire?
+        // Coalesce: while a build for the current mutation/palette is in
+        // flight and its region still covers the viewport, let it land
+        // instead of cancelling every frame — a cancel storm means no build
+        // ever completes during a continuous pan/zoom. Zoom drift is settled
+        // at apply time, which relaunches when the landed widths are stale.
         if let inFlightRegion = ctx.vbInFlightRegion,
-           ctx.vbInFlightToken != nil
+           ctx.vbInFlightToken != nil,
+           ctx.vbInFlightMutationGen == mutationGen,
+           ctx.vbInFlightPaletteGen == paletteGen
         {
             let vpInsideInFlight =
                 vp.minX >= inFlightRegion.minX && vp.maxX <= inFlightRegion.maxX &&
                 vp.minY >= inFlightRegion.minY && vp.maxY <= inFlightRegion.maxY
-
-            let zoomStable = isLineWidthZoomStable(lineZoom, ctx.vbInFlightZoom)
-            if vpInsideInFlight && zoomStable
-                && ctx.vbInFlightMutationGen == mutationGen
-                && ctx.vbInFlightPaletteGen == paletteGen
-            {
-                return  // Already computing exactly what we need
+            if vpInsideInFlight {
+                return  // Already computing what we need; wait for it to land
             }
         }
 
-        // Cancel stale in-flight build and launch fresh.
+        // Cancel a stale in-flight build and launch fresh, rate-limited:
+        // relaunches during a continuous pan/zoom are capped at one per
+        // 100 ms so the main thread is not re-gathering every frame. The
+        // current buffer keeps displaying in between.
+        if ctx.vbTask != nil {
+            let now = SDL_GetTicks()
+            guard now &- ctx.vbLastLaunchTicks >= 100 else { return }
+        }
+        ctx.vbLastLaunchTicks = SDL_GetTicks()
+        engine._statAsyncLaunches += 1
         ctx.vbTask?.cancel()
 
         ctx.vbToken += 1
@@ -317,20 +327,44 @@ extension EngineRenderer {
         guard let wantToken = ctx.vbInFlightToken else { return }
         guard let result = ctx.vbBuilder.takePending(forToken: wantToken) else { return }
 
-        if !isLineWidthZoomStable(currentLineZoom, result.builtZoom) {
+        if !Self.isLineWidthZoomStable(currentLineZoom, result.builtZoom) {
+            // Zoom moved on while the build was in flight: keep displaying
+            // the current buffer (geometry is still current; only line
+            // widths are stale) and let the next frame launch a fresh async
+            // build. Must NOT poison cachedMutationGen here — that forces a
+            // full synchronous rebuild on the main thread.
             ctx.vbInFlightToken = nil
             ctx.vbTask = nil
             ctx.vbInFlightRegion = nil
-            ctx.cachedMutationGen = -1
             return
         }
 
         let paletteGen = ctx.vbInFlightPaletteGen
         applyVertexBuild(result, paletteGen: paletteGen, ctx: ctx)
+        engine._statAsyncApplied += 1
 
         ctx.vbInFlightToken = nil
         ctx.vbTask = nil
         ctx.vbInFlightRegion = nil
+    }
+
+    /// One-line GPU-load snapshot for the frame-timing window: active-tab
+    /// vertex/batch counts, sprite count, and rebuild activity since the
+    /// last window. Printed beside `[FrameTiming]`; counters reset here.
+    internal func perfStatsLine() -> String {
+        let actx = engine.tabManager.activeTab.map { tabCtx(for: $0.id) } ?? primaryCtx
+        let line =
+            "[PerfStats] verts:\(actx.vertexCount) batches:\(actx.batches.count)" +
+            " sprites:\(actx.sprites.spriteCount)" +
+            " syncRebuild:\(engine._statSyncRebuilds)" +
+            " asyncLaunch:\(engine._statAsyncLaunches)" +
+            " asyncApplied:\(engine._statAsyncApplied)" +
+            " regen:\(engine._statRegensLaunched)"
+        engine._statSyncRebuilds = 0
+        engine._statAsyncLaunches = 0
+        engine._statAsyncApplied = 0
+        engine._statRegensLaunched = 0
+        return line
     }
 
     // MARK: - Dashed Line Rendering

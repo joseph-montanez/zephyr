@@ -236,6 +236,22 @@ public final class CADSelectionManager {
             simplifyComplexBlocks: simplifyComplexBlocks)
     }
 
+    /// Single-walk hover scan: best hit plus the full pile in shared pick
+    /// order. The hover coordinator uses this instead of three separate
+    /// walks (`hitTest` + `hasMultipleHitsAt` + `allHitsAt`).
+    public func hoverScan(
+        worldX: Double, worldY: Double,
+        document: CADDocument,
+        threshold: Double = 3.0,
+        simplifyComplexBlocks: Bool = true
+    ) -> (best: UUID?, pile: [UUID]) {
+        return CADHitTesting.hoverScan(
+            worldX: worldX, worldY: worldY,
+            document: document,
+            threshold: threshold,
+            simplifyComplexBlocks: simplifyComplexBlocks)
+    }
+
     /// Returns true if the entity's geometry is within threshold of the point.
     public func hitEntity(
         _ entity: CADEntity,

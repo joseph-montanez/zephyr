@@ -30,6 +30,20 @@ internal final class EngineInputHandler {
     /// swallowed too (first click focuses, it doesn't select).
     private var swallowNextMouseUp = false
 
+    /// Latest unconsumed pointer position for hover/snap work. Mouse, pen,
+    /// and touch motion events arrive faster than rendered frames; the main
+    /// loop consumes this once per frame so hover hit-tests and snap
+    /// evaluations run at most once per frame instead of once per SDL event.
+    /// Pan deltas stay per-event (they accumulate into the camera directly).
+    private var pendingMotion: (x: Float, y: Float)?
+
+    /// Returns the latest deferred motion position, if any, and clears it.
+    /// Called once per frame by the main loop.
+    internal func consumePendingMotion() -> (x: Float, y: Float)? {
+        defer { pendingMotion = nil }
+        return pendingMotion
+    }
+
     internal init(engine: PhrostEngine) {
         self.engine = engine
     }
@@ -1199,7 +1213,11 @@ internal final class EngineInputHandler {
             engine.camera.panByScreenDelta(dx: screenDx, dy: screenDy)
             engine.interaction.clearSelectionCyclingTransient()
         } else {
-            engine.loopController.handleToolMouseMotion(x: x, y: y)
+            // Deferred: the main loop flushes the latest position once per
+            // frame, so a burst of motion events costs one hover+snap pass.
+            // Drag/grip/lasso transitions then run once per frame on the
+            // latest position, matching the render rate.
+            pendingMotion = (x, y)
         }
     }
 

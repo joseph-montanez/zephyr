@@ -74,6 +74,11 @@ public enum CADHitTesting {
         } else {
             var minDist: Double = .infinity
             let grid = entity.blockID.flatMap { document.spatialGrid(forBlock: $0) }
+            // Text measurement context is per-entity (style tables + xdata),
+            // not per-primitive: build it once, and only when text exists.
+            let hasTextPrimitives = geometry.contains(where: {
+                if case .text = $0 { return true }; return false })
+            let textContext = hasTextPrimitives ? document.textBoundsContext(for: entity) : nil
             for transform in transforms {
                 let candidates = gridCandidates(
                     grid: grid, geometryCount: geometry.count,
@@ -81,7 +86,7 @@ public enum CADHitTesting {
                 for primIndex in candidates {
                     guard CADPrimitiveVisibility.isVisible(
                         style: primStyles[primIndex], layersByName: layersByName) else { continue }
-                    if let d = distanceSqToPrimitive(geometry[primIndex], point: point, transform: transform, t2: t2, textContext: document.textBoundsContext(for: entity), textIndex: primIndex) {
+                    if let d = distanceSqToPrimitive(geometry[primIndex], point: point, transform: transform, t2: t2, textContext: textContext, textIndex: primIndex) {
                         if d < minDist { minDist = d }
                     }
                 }
@@ -346,6 +351,41 @@ public enum CADHitTesting {
             }
         }
         return found
+    }
+
+    /// Single-walk hover scan: best hit plus the full pile in shared pick
+    /// order. Replaces up to three walks (`hitTest` + `hasMultipleHitsAt` +
+    /// `allHitsAt`) on the hover path with one enumeration; pile order
+    /// matches `allHitsAt` exactly (labels excluded â€” the click path still
+    /// builds those when the Selection list actually opens).
+    public static func hoverScan(
+        worldX: Double, worldY: Double,
+        document: CADDocument,
+        threshold: Double = 3.0,
+        simplifyComplexBlocks: Bool = true
+    ) -> (best: UUID?, pile: [UUID]) {
+        let point = Vector3(x: worldX, y: worldY, z: 0)
+        let layersByName = document.layersByUppercasedName()
+        var scored: [(handle: UUID, order: Int, area: Double, dist: Double)] = []
+
+        forEachCandidate(in: document, near: point, threshold: threshold) { entity, geometry in
+            guard let d = hitDistance(
+                for: entity, geometry: geometry, point: point,
+                threshold: threshold, document: document,
+                layersByName: layersByName,
+                simplifyComplexBlocks: simplifyComplexBlocks
+            ) else { return }
+            scored.append((
+                handle: entity.handle, order: entity.drawOrder,
+                area: entity.worldBoundingBox?.area ?? 0.0, dist: d))
+        }
+
+        scored.sort {
+            isBetterHit(
+                order: $0.order, area: $0.area, dist: $0.dist,
+                bestOrder: $1.order, bestArea: $1.area, bestDist: $1.dist)
+        }
+        return (scored.first?.handle, scored.map(\.handle))
     }
 
     /// A single nested pick: the closest block-member primitive under the
@@ -794,6 +834,27 @@ public enum CADHitTesting {
             // Grid not built — build lazily then fall back to full iteration
             if document.entityCount > 1 && !document.entityGridBuilt {
                 document.rebuildEntityGrid()
+            }
+            // The rebuild above usually satisfies the grid: re-query it so
+            // the first hover after an edit costs a grid lookup rather than
+            // a full document scan. Full iteration is the last resort only.
+            if let handles = document.entityHandlesInWorldRect(
+                minX: point.x - threshold, minY: point.y - threshold,
+                maxX: point.x + threshold, maxY: point.y + threshold)
+            {
+                for handle in handles {
+                    guard let entity = document.entity(for: handle) else { continue }
+                    // Derived paper-space projections are render-only.
+                    guard !entity.isViewportProjected else { continue }
+                    guard let layer = document.layer(for: entity.layerID), LayerAccess.isPickable(layer) else { continue }
+                    guard !document.isIsolatedHidden(entity.handle) else { continue }
+                    guard let wbb = entity.worldBoundingBox else { continue }
+                    let expanded = wbb.expanded(by: threshold)
+                    guard expanded.contains(point) else { continue }
+                    guard let geometry = document.resolvedGeometry(for: entity), !geometry.isEmpty else { continue }
+                    body(entity, geometry)
+                }
+                return
             }
             for entity in document.entitiesView {
                 // Derived paper-space projections are render-only.

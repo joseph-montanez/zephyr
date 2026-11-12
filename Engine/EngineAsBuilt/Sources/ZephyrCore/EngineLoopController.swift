@@ -155,6 +155,13 @@ public final class EngineLoopController {
                 framesToRender = 5
             }
 
+            // Flush deferred pointer motion once per frame: a burst of
+            // motion events cost a single hover+snap evaluation at the
+            // latest position instead of one pass per SDL event.
+            if let motion = inputHandler.consumePendingMotion() {
+                handleToolMouseMotion(x: motion.x, y: motion.y)
+            }
+
             let dialogCallbacksProcessed = NativeFileDialog.drainPendingCallbacks()
             if dialogCallbacksProcessed > 0 {
                 framesToRender = max(framesToRender, 5)
@@ -1595,13 +1602,29 @@ public final class EngineLoopController {
             } }
         }
 
+        // Per-mousemove memo: every snap pass in this call shares one
+        // resolution per candidate entity (geometry + visibility + block
+        // grid) instead of re-resolving through document locks per pass.
+        // `primitiveVisibility` alone allocates a per-primitive array, so
+        // this also removes one allocation per entity per fallback pass.
+        var memoCache: [UUID: (geometry: [CADPrimitive]?, visibility: [Bool]?, grid: CADBlockSpatialGrid?)] = [:]
+        func memoResolved(for entity: CADEntity) -> (geometry: [CADPrimitive]?, visibility: [Bool]?, grid: CADBlockSpatialGrid?) {
+            if let cached = memoCache[entity.handle] { return cached }
+            let resolved = (
+                geometry: engine.document.resolvedGeometry(for: entity),
+                visibility: engine.document.primitiveVisibility(for: entity),
+                grid: engine.document.spatialGrid(for: entity))
+            memoCache[entity.handle] = resolved
+            return resolved
+        }
+
         let discreteAnchorSnap = engine.snap.snapEngine.nearestSnap(
             worldX: worldX, worldY: worldY,
             entities: Array(visibleEntities),
             threshold: acquireThreshold,
-            resolveGeometry: { [unowned self] in self.engine.document.resolvedGeometry(for: $0) },
-            primitiveVisibility: { [unowned self] in self.engine.document.primitiveVisibility(for: $0) },
-            spatialGrid: { [unowned self] in self.engine.document.spatialGrid(for: $0) },
+            resolveGeometry: { entity in memoResolved(for: entity).geometry },
+            primitiveVisibility: { entity in memoResolved(for: entity).visibility },
+            spatialGrid: { entity in memoResolved(for: entity).grid },
             extensionSnapEnabled: snapMgr.extensionSnapEnabled,
             extensionThresholdPx: 12.0,
             pixelsPerWorldUnit: ppwu,
@@ -1650,9 +1673,9 @@ public final class EngineLoopController {
                 worldX: worldX, worldY: worldY,
                 entities: Array(visibleEntities),
                 threshold: acquireThreshold,
-                resolveGeometry: { [unowned self] in self.engine.document.resolvedGeometry(for: $0) },
-                primitiveVisibility: { [unowned self] in self.engine.document.primitiveVisibility(for: $0) },
-                spatialGrid: { [unowned self] in self.engine.document.spatialGrid(for: $0) },
+                resolveGeometry: { entity in memoResolved(for: entity).geometry },
+                primitiveVisibility: { entity in memoResolved(for: entity).visibility },
+                spatialGrid: { entity in memoResolved(for: entity).grid },
                 extensionSnapEnabled: snapMgr.extensionSnapEnabled,
                 extensionThresholdPx: snapMgr.trajectoryTrackingAperturePixels,
                 pixelsPerWorldUnit: ppwu,
@@ -1794,9 +1817,9 @@ public final class EngineLoopController {
                     worldX: worldX, worldY: worldY,
                     entities: Array(visibleEntities),
                     threshold: acquireThreshold,
-                    resolveGeometry: { [unowned self] in self.engine.document.resolvedGeometry(for: $0) },
-                    primitiveVisibility: { [unowned self] in self.engine.document.primitiveVisibility(for: $0) },
-                    spatialGrid: { [unowned self] in self.engine.document.spatialGrid(for: $0) },
+                    resolveGeometry: { entity in memoResolved(for: entity).geometry },
+                    primitiveVisibility: { entity in memoResolved(for: entity).visibility },
+                    spatialGrid: { entity in memoResolved(for: entity).grid },
                     extensionSnapEnabled: false,
                     gridSnapEnabled: false,
                     nearestOnCurveOverride: true,
@@ -1834,9 +1857,9 @@ public final class EngineLoopController {
                 worldX: worldX, worldY: worldY,
                 entities: Array(visibleEntities),
                 threshold: acquireThreshold,
-                resolveGeometry: { [unowned self] in self.engine.document.resolvedGeometry(for: $0) },
-                primitiveVisibility: { [unowned self] in self.engine.document.primitiveVisibility(for: $0) },
-                spatialGrid: { [unowned self] in self.engine.document.spatialGrid(for: $0) },
+                resolveGeometry: { entity in memoResolved(for: entity).geometry },
+                primitiveVisibility: { entity in memoResolved(for: entity).visibility },
+                spatialGrid: { entity in memoResolved(for: entity).grid },
                 extensionSnapEnabled: false,
                 extensionThresholdPx: snapMgr.trajectoryTrackingAperturePixels,
                 pixelsPerWorldUnit: ppwu,
@@ -1954,9 +1977,9 @@ public final class EngineLoopController {
                     worldX: worldX, worldY: worldY,
                     entities: Array(visibleEntities),
                     threshold: acquireThreshold,
-                    resolveGeometry: { [unowned self] in self.engine.document.resolvedGeometry(for: $0) },
-                    primitiveVisibility: { [unowned self] in self.engine.document.primitiveVisibility(for: $0) },
-                    spatialGrid: { [unowned self] in self.engine.document.spatialGrid(for: $0) },
+                    resolveGeometry: { entity in memoResolved(for: entity).geometry },
+                    primitiveVisibility: { entity in memoResolved(for: entity).visibility },
+                    spatialGrid: { entity in memoResolved(for: entity).grid },
                     extensionSnapEnabled: false,
                     gridSnapEnabled: false,
                     nearestOnCurveOverride: true,

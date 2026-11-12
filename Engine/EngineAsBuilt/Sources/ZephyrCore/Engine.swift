@@ -382,6 +382,14 @@ public final class PhrostEngine {
     internal var _frameTimingPrimMs: Double = 0
     internal var _frameTimingImGuiMs: Double = 0
 
+    // Render-activity counters, printed and reset with the frame-timing
+    // window. Distinguish a too-big static buffer (GPU-bound submit) from
+    // a rebuild storm (sync rebuilds / async relaunches every frame).
+    internal var _statSyncRebuilds: Int = 0
+    internal var _statAsyncLaunches: Int = 0
+    internal var _statAsyncApplied: Int = 0
+    internal var _statRegensLaunched: Int = 0
+
     /// FPS string cache (recomputed every 15 frames).
     public var _cachedFpsText: String = ""
     public var _fpsCacheFrame: Int = 0

@@ -63,6 +63,11 @@ public final class WindowRenderContext {
     public var vbInFlightZoom: Double = -1.0
     public var vbInFlightMutationGen: Int = -1
     public var vbInFlightPaletteGen: Int = -1
+    /// Last `SDL_GetTicks()` at which an async vertex build was launched.
+    /// Relaunches during a continuous pan/zoom are rate-limited against
+    /// this so the main thread is not re-gathering tessellation inputs
+    /// every frame.
+    public var vbLastLaunchTicks: UInt64 = 0
 
     // MARK: Render-cache metadata (primary: migrated from renderer/engine)
 

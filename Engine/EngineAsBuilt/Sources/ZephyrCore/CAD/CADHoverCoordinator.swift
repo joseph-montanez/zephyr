@@ -92,29 +92,28 @@ final class CADHoverCoordinator {
             return
         }
 
-        interaction.hoveredEntityHandle = engine.cadSelection.hitTest(
+        // Single document walk yields both the highlight target and the
+        // cycling pile (shared pick order), replacing three walks.
+        let scan = engine.cadSelection.hoverScan(
             worldX: worldX,
             worldY: worldY,
             document: engine.document,
             threshold: threshold,
             simplifyComplexBlocks: engine.simplifyComplexBlocks)
+        interaction.hoveredEntityHandle = scan.best
         interaction.lastHoverTestWorldX = worldX
         interaction.lastHoverTestWorldY = worldY
         interaction.lastHoverTestTicks = nowTicks
-        refreshHoverCycle(worldX: worldX, worldY: worldY, threshold: threshold)
+        refreshHoverCycle(pile: scan.pile, worldX: worldX, worldY: worldY, threshold: threshold)
     }
 
     /// Rebuilds the hover pile after each hover test. Clears the cycle when
     /// the cursor leaves geometry or cycling is disabled.
-    private func refreshHoverCycle(worldX: Double, worldY: Double, threshold: Double) {
+    private func refreshHoverCycle(pile: [UUID], worldX: Double, worldY: Double, threshold: Double) {
         let interaction = engine.interaction
         guard SelectionCyclingSettings.isEnabled,
               interaction.hoveredEntityHandle != nil,
-              engine.cadSelection.hasMultipleHitsAt(
-                worldX: worldX, worldY: worldY,
-                document: engine.document,
-                threshold: threshold,
-                simplifyComplexBlocks: engine.simplifyComplexBlocks)
+              pile.count >= 2
         else {
             interaction.clearHoverCycle()
             return
@@ -129,12 +128,7 @@ final class CADHoverCoordinator {
            interaction.hoverCycleHandles.contains(hovered) {
             return
         }
-        let hits = engine.cadSelection.allHitsAt(
-            worldX: worldX, worldY: worldY,
-            document: engine.document,
-            threshold: threshold,
-            simplifyComplexBlocks: engine.simplifyComplexBlocks)
-        interaction.hoverCycleHandles = hits.map { $0.handle }
+        interaction.hoverCycleHandles = pile
         interaction.hoverCycleIndex = 0
         interaction.hasActiveHoverCycle = false
         interaction.hoverCycleAnchorX = worldX

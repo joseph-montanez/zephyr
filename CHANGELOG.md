@@ -92,6 +92,9 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Contained zoom refresh** - viewports inside the tessellated curves skip needless regens.
 - **Faster zoom refresh** - curve-only refresh costs a fraction of a full regen.
 - **Snappier snap and trim** - fewer wasted passes; geometry unchanged.
+- **Faster hover and snap on large drawings** - pointer motion is coalesced to one hover+snap evaluation per frame, hover highlight and selection-cycling pile come from a single document walk, and every snap pass in a mousemove shares one resolver cache; pick results unchanged.
+- **Fewer draw calls on stroke-heavy drawings** - hairline strokes tessellate as 1-px quads through the triangle pipeline instead of separate line-list draws, collapsing tens of thousands of batches into a handful with no draw-order change; a [PerfStats] line beside [FrameTiming] reports verts, batches, sprites, and rebuild activity.
+- **No more main-thread stalls on zoom/pan** - zoom stability uses half-octave bands with hysteresis, in-flight vertex builds are no longer cancelled every frame (relaunches capped at 10/s), and a zoom-stale async build keeps the old buffer instead of forcing a synchronous rebuild.
 
 ## October 2026
 

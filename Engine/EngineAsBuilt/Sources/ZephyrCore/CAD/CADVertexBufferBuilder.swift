@@ -807,10 +807,14 @@ public final class CADVertexBufferBuilder {
                 pipeType = .line
             }
 
+            // Line weight is baked per-vertex (world width + AA falloff in
+            // the vertex UVs) and never read from the batch at draw time, so
+            // it must not split batches: runs of the same pipeline merge
+            // across weight changes. Only pipeline and pan-proxy (a
+            // visibility gate evaluated per frame) may start a new batch.
             if !batches.isEmpty
                 && batches.last!.pipelineType == pipeType
                 && batches.last!.isPanProxy == input.isPanProxy
-                && batches.last!.lineWeight == input.lineWeight
             {
                 batches[batches.count - 1].vertexCount += vtxCount
             } else {

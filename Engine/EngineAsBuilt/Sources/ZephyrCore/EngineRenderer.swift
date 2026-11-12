@@ -147,7 +147,13 @@ public final class EngineRenderer {
     internal var imguiIdxTransferCapacityBytes: Int = 0
 
 
-    internal var usesTriangleHairlines: Bool { false }
+    /// Thin (hairline) strokes render as 1px world-space quads through the
+    /// triangle pipeline instead of 1px LINELIST lines. Widths are baked
+    /// per-vertex, so this is what lets consecutive same-pipeline runs
+    /// merge into a handful of draw calls on stroke-heavy drawings
+    /// (verified by BatchMergeTests); joins also upgrade from butt caps
+    /// to miters. Matches the golden vertex-build path (hairlineQuads).
+    internal var usesTriangleHairlines: Bool { true }
 
     internal var lineWidthPixelScale: Float {
         max(1.0, max(engine.scaleX, engine.scaleY))
@@ -157,10 +163,24 @@ public final class EngineRenderer {
         engine.camera.zoom * Double(lineWidthPixelScale)
     }
 
-    internal func isLineWidthZoomStable(_ zoom: Double, _ referenceZoom: Double) -> Bool {
-        guard referenceZoom > 0 else { return false }
+    /// Quantized zoom band for screen-constant line widths, in half-octave
+    /// steps. World-space line quads bake `pixels/zoom` at build time; a
+    /// wheel tick (x1.375) usually lands in the same band, so a zoom storm
+    /// costs at most one async rebuild per band crossing instead of a
+    /// synchronous rebuild per tick.
+    internal static func lineWidthZoomBand(_ zoom: Double) -> Int {
+        guard zoom > 0 else { return 0 }
+        return Int(floor(log2(zoom) * 2.0))
+    }
+
+    /// Band equality wins; near an edge the reference band holds unless the
+    /// move exceeds ~15% (mirrors curve-LOD band stickiness, so hovering
+    /// near an edge does not flap rebuilds).
+    internal static func isLineWidthZoomStable(_ zoom: Double, _ referenceZoom: Double) -> Bool {
+        guard zoom > 0, referenceZoom > 0 else { return false }
+        if lineWidthZoomBand(zoom) == lineWidthZoomBand(referenceZoom) { return true }
         let ratio = zoom / referenceZoom
-        return ratio > 0.995 && ratio < 1.005
+        return ratio > 1.0 / 1.15 && ratio < 1.15
     }
 
     /// Anti-aliased line rendering toggle.
@@ -225,6 +245,7 @@ public final class EngineRenderer {
         viewportBackground: (UInt8, UInt8, UInt8, UInt8)
     ) {
         // Cancel any in-flight async build — this sync rebuild supersedes it.
+        engine._statSyncRebuilds += 1
         ctx.vbTask?.cancel()
         ctx.vbTask = nil
         ctx.vbInFlightToken = nil
@@ -407,6 +428,7 @@ public final class EngineRenderer {
             let simplify = simplifyComplexBlocks
             let tessDiv = splineTessellationDivisor
             let revision = doc.renderRevision
+            engine._statRegensLaunched += 1
             ctx.regenTask = Task.detached { [weak self] in
                 guard let self else { return }
                 await self.runContextRegen(
@@ -478,7 +500,7 @@ public final class EngineRenderer {
             vp.minX >= ctx.cachedViewportMinX && vp.maxX <= ctx.cachedViewportMaxX &&
             vp.minY >= ctx.cachedViewportMinY && vp.maxY <= ctx.cachedViewportMaxY
         let lineZoom = camera.zoom * Double(pixelScale)
-        let zoomStable = isLineWidthZoomStable(lineZoom, ctx.bufferedZoom)
+        let zoomStable = Self.isLineWidthZoomStable(lineZoom, ctx.bufferedZoom)
 
         let renderCacheHit = !pendingApplied && interactive && insideBuffer
             && zoomStable
@@ -1251,6 +1273,7 @@ public final class EngineRenderer {
             engine._frameTimingPrimMs = 0
             engine._frameTimingImGuiMs = 0
             engine._frameTimingCount = 0
+            print(perfStatsLine())
         }
     }
 
@@ -2172,6 +2195,7 @@ public final class EngineRenderer {
             engine._frameTimingPrimMs = 0
             engine._frameTimingImGuiMs = 0
             engine._frameTimingCount = 0
+            print(perfStatsLine())
         }
     }
 
