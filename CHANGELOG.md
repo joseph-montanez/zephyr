@@ -8,9 +8,9 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Blocks palette** - browse and insert blocks with thumbnails and search.
 - **Model-space plotting** - plot, page setup, and preview work from Model space.
 - **Batch publishing** - publish multiple sheets to PDF at once.
-- **Save As DWG** - save directly to DWG.
 - **Sheet sets** - organize drawings, place views, and publish the set.
 - **Callouts and transmit** - tag sheets and package a set for sharing.
+- **Save As DWG** - save directly to DWG.
 - **New themes** - dark purple starfield theme and a vivid pink theme.
 - **MCP server for AI driving** - lets AI tools inspect and drive the app.
 - **Native dimensions from Lisp** - create dimensions from Lisp with matching export.
@@ -19,6 +19,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **PUBLISH / +PUBLISH / -PUBLISH** - publish multiple sheets to PDF.
 - **Sheet-set commands** - `SHEETSET`, `SHEETSETHIDE`, `NEWSHEETSET`, `OPENSHEETSET`, `PLACEVIEW`, `PLACECALLOUT`, `SHEETLISTTABLE`, `-PUBLISHSET`, `-TRANSMITSET`.
 - **Blocks palette** - `BLOCKSPALETTE` / `BLOCKSPALETTECLOSE`.
+- **BLOCKLOD** - toggle automatic zoom-gated collapsing of small block inserts on or off.
 - **Layer commands** - `LAYFRZ`, `LAYTHW`, `LAYLCK`, `LAYULK`, `LAYDEL`, `LAYMRG`, `LAYWALK`, `COPYTOLAYER`, `VPLAYER`, `LAYERSTATE`, `LAYERP`, and richer `-LAYER`.
 - **UCS / PLAN** - set custom drawing planes and align the view.
 - **MIRROR (`MI`)** - mirror objects across a line.
@@ -28,7 +29,6 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **SNAP / GRIDSPACING / GRIDMAJOR** - grid snap with separate X/Y spacing.
 - **STARFIELD (`STARS`)** - toggle the starfield on or off.
 - **VIEWCTR / VIEWSIZE** - show the viewport center and height.
-- **BLOCKLOD** - toggle automatic zoom-gated collapsing of small block inserts on or off.
 
 ### Improvements
 - **Fit/Aligned text** - spans its two points.
@@ -42,9 +42,9 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **PDF Extents framing** - Extents plots stay on the page.
 - **PDF plot-style ink** - pen tables color dimensions and table text.
 - **Shared TRIM/EXTEND modes** - both share Quick/Project/Edge modes.
+- **Consistent trim at any zoom** - trim no longer changes with zoom.
 - **Smoother curves when zooming** - curves refine with zoom.
 - **Faster spline math** - intersections are faster, same accuracy.
-- **Consistent trim at any zoom** - trim no longer changes with zoom.
 - **Layers panel refresh** - multi-select, bulk actions, search, sort.
 - **LAYOUT SAveas** - duplicate the current layout under a new name.
 - **MEASUREGEOM Angle mode** - three-click angle with an arc overlay.
@@ -58,39 +58,39 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 
 ### Bug Fixes
 - **Simplify frame thickness** - collapsed-block outlines render as thin 2px frames instead of giant solid-looking slabs.
+- **Block editor framing** - fits the block in view on open.
 - **Imported text width** - uses the correct default width.
 - **Text spaces** - leading and trailing spaces are preserved.
 - **SHX text bounds** - picking uses the rendered size.
+- **Wrapped MTEXT leading spaces** - keeps its own line so following words align.
+- **Distributed MTEXT paragraphs** - spreads across the styled width.
+- **SHX word wrap** - wraps like AutoCAD without overflowing the width.
+- **Text edits keep position** - editing centered or fitted text no longer shifts it off its anchor; edited MTEXT keeps its horizontal alignment and exports its text.
+- **UTF-8 text support** - non-ASCII text is preserved correctly when opening DWG/DXF files.
 - **Hatch gaps** - blanks around text in hatches stay blank.
 - **Hatch highlight** - selected hatches outline instead of recoloring.
-- **Huge-drawing streaks** - uploads no longer tear into streaks or kill the GPU.
 - **HATCH crossing edges** - hatches only the picked side.
 - **Click inside hatches** - clicking inside a hatch selects it.
-- **Block editor framing** - fits the block in view on open.
+- **Open hatch boundaries no longer fill** - a loop with a real gap is dropped instead of painting its closing chord across the drawing, and file-ordered loop edges stitch in order so dense shared-vertex boundaries stay closed.
+- **Huge-drawing streaks** - uploads no longer tear into streaks or kill the GPU.
 - **EXPORTPDF prompt** - no longer hangs after export.
 - **Table edges on PDFs** - plotted tables keep visible edges.
 - **Table title heights** - use the correct height.
 - **Table merges on import** - merged cells import correctly.
 - **Panning memory use** - text no longer leaks while panning.
-- **Lisp `atof` overflow** - huge numbers clamp instead of returning infinity.
 - **PAN behavior** - pans only while the mouse button is held.
+- **Lisp `atof` overflow** - huge numbers clamp instead of returning infinity.
+- **AutoLISP crash while a script runs** - no longer crashes; reads and writes are serialized.
 - **Layout colors** - follow Model layer colors.
 - **Spline trim** - stops at the cutting edge.
 - **Snaps with OTRACK on** - endpoint and midpoint snaps work again.
-- **Measurement overlays** - stay on the canvas.
 - **Grid visibility and snap** - clearer grid, exact snap interval.
+- **Measurement overlays** - stay on the canvas.
 - **MCP thumbnails** - match the window orientation.
 - **Overlapping picks** - shows a choice list again.
 - **Zoom extents after scripts** - refreshes correctly after edits.
-- **Wrapped MTEXT leading spaces** - keeps its own line so following words align.
-- **Distributed MTEXT paragraphs** - spreads across the styled width.
-- **AutoLISP crash while a script runs** - no longer crashes; reads and writes are serialized.
-- **Cross-tab paste left invisible geometry** - paste lands on the right layers.
-- **SHX word wrap** - wraps like AutoCAD without overflowing the width.
 - **Stale nested dimensions no longer explode extents** - rebuilt from the definition points so zoom lands on the drawing.
-- **Text edits keep position** - editing centered or fitted text no longer shifts it off its anchor; edited MTEXT keeps its horizontal alignment and exports its text.
-- **UTF-8 text support** - non-ASCII text is preserved correctly when opening DWG/DXF files.
-- **Open hatch boundaries no longer fill** - a loop with a real gap is dropped instead of painting its closing chord across the drawing, and file-ordered loop edges stitch in order so dense shared-vertex boundaries stay closed.
+- **Cross-tab paste left invisible geometry** - paste lands on the right layers.
 
 ### Maintenance
 - **Code cleanup** - internal cleanup, no behavior change.
@@ -98,14 +98,14 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 ### Performance
 - **Zoom and pan stay smooth on large drawings** - zoom no longer stalls or forces full rebuilds; curves refine in place and text stays visible while panning.
 - **Faster hover and snap** - moving the cursor is cheaper on big drawings; snaps feel instant.
-- **Fewer draw calls on line-heavy drawings** - renders much faster without changing the picture.
 - **Quieter hover** - panels and fast cursor moves no longer highlight.
+- **Fewer draw calls on line-heavy drawings** - renders much faster without changing the picture.
+- **Adaptive hairline rendering** - huge drawings fall back to 1px line pairs past the vertex budget, and a hard total-vertex cap with a `capped` PerfStats flag stops uploads that would remove the GPU device.
 - **Survives GPU trouble** - reports one clear message instead of spamming, so you can still save and close.
 - **Huge drawings keep working** - geometry uploads in safe chunks instead of killing the GPU.
 - **Zoom-gated block LOD** - small blocks collapse to batch-friendly triangle boxes when zoomed out and return to full detail on zoom-in.
-- **Tessellate-time polyline decimation** - sub-pixel interior vertices are dropped at build time; dashed lines keep their dots and tiny closed parcels vanish instead of emitting degenerate segments.
 - **Zoom-gated text and hatch density** - sub-legible text fades out and sub-pixel hatch lines are skipped when zoomed out.
-- **Adaptive hairline rendering** - huge drawings fall back to 1px line pairs past the vertex budget, and a hard total-vertex cap with a `capped` PerfStats flag stops uploads that would remove the GPU device.
+- **Tessellate-time polyline decimation** - sub-pixel interior vertices are dropped at build time; dashed lines keep their dots and tiny closed parcels vanish instead of emitting degenerate segments.
 - **PerfStats breakdown in the header** - the FPS display now includes verts, batches, sprites, line/tri/hatch verts, and the content census.
 - **Hatch selection on huge boundaries** - the hatch ribbon payload is cached per document revision, solid fills highlight by boundary outline, and midpoint grips stop past 1,024 points, so selecting a large water hatch no longer pins the CPU.
 
