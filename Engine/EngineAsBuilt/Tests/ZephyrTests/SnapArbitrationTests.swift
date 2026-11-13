@@ -11,7 +11,7 @@ import XCTest
 @MainActor
 final class SnapArbitrationTests: XCTestCase {
 
-    private func snap(_ x: Double, _ y: Double, anchor: AnchorPoint) -> SnapResult {
+    private func snap(_ x: Double, _ y: Double, anchor: ZephyrCore.AnchorPoint) -> SnapResult {
         SnapResult(
             entityHandle: UUID(),
             anchor: anchor,

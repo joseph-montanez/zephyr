@@ -15,10 +15,16 @@ public struct TextEditorState: Sendable {
     public var fontName: String
     public var height: Double
     public var rotation: Double
-    public var alignH: Int       // 0=left, 1=center, 2=right
+    public var alignH: Int       // 0=left, 1=center, 2=right (3=aligned, 4=middle, 5=fit pass through untouched)
     public var alignV: Int       // 0=baseline, 1=bottom, 2=middle, 3=top
     public var mtextWidth: Double // 0 = no wrap (TEXT), >0 = wrap width (MTEXT)
     public var targetHandle: UUID? // nil = creating new, non-nil = editing existing
+    /// Decoded `dxf.formattedText` at edit time, so OK preserves paragraph
+    /// alignment/indents/run formatting instead of rebuilding plain text.
+    public var originalFormatted: FormattedText?
+    /// Entity's stored `dxf.mtextWidth` at edit time, restored if the user
+    /// toggles the MTEXT checkbox off and back on within one edit.
+    public var originalMTextWidth: Double
 
     public init(
         text: String = "",
@@ -29,7 +35,9 @@ public struct TextEditorState: Sendable {
         alignH: Int = 0,
         alignV: Int = 0,
         mtextWidth: Double = 0,
-        targetHandle: UUID? = nil
+        targetHandle: UUID? = nil,
+        originalFormatted: FormattedText? = nil,
+        originalMTextWidth: Double = 0
     ) {
         self.text = text
         self.styleName = styleName
@@ -40,6 +48,8 @@ public struct TextEditorState: Sendable {
         self.alignV = alignV
         self.mtextWidth = mtextWidth
         self.targetHandle = targetHandle
+        self.originalFormatted = originalFormatted
+        self.originalMTextWidth = originalMTextWidth
     }
 }
 

@@ -88,6 +88,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Cross-tab paste left invisible geometry** - paste lands on the right layers.
 - **SHX word wrap** - wraps like AutoCAD without overflowing the width.
 - **Stale nested dimensions no longer explode extents** - rebuilt from the definition points so zoom lands on the drawing.
+- **Text edits keep position** - editing centered or fitted text no longer shifts it off its anchor; edited MTEXT keeps its horizontal alignment and exports its text.
 
 ### Maintenance
 - **Code cleanup** - internal cleanup, no behavior change.

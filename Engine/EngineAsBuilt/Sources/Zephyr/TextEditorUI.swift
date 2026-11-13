@@ -180,7 +180,11 @@ public struct TextEditorUI {
         // ---- MTEXT Width ----
         var isMText = state.mtextWidth > 0
         if ImGuiCheckbox("MTEXT (word wrap)", &isMText) {
-            state.mtextWidth = isMText ? 100.0 : 0.0
+            // Toggling off/on within one edit restores the entity's stored
+            // width; only a TEXT entity with no stored width falls back to 100.
+            state.mtextWidth = isMText
+                ? (state.originalMTextWidth > 0 ? state.originalMTextWidth : 100.0)
+                : 0.0
         }
 
         if isMText {

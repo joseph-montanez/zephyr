@@ -2852,10 +2852,25 @@ public enum DXFWriterBridge {
             if shouldUseMText {
                 let entity = DXFMTextEntity()
                 entity.basePoint = toDXF(worldPosition)
-                entity.text = rawMText ?? text
-                    .replacingOccurrences(of: "\r\n", with: "\\P")
-                    .replacingOccurrences(of: "\n", with: "\\P")
-                    .replacingOccurrences(of: "\r", with: "\\P")
+                // Legacy entities edited before the DDEDIT fix carry
+                // mtextRaw = "" (non-nil), which used to blank the exported
+                // text. Fall back to the serialized formatted text, then to
+                // the plain primitive text.
+                let effectiveRawMText: String
+                if let rawMText, !rawMText.isEmpty {
+                    effectiveRawMText = rawMText
+                } else if let json = xdataString(xdata, "dxf.formattedText"),
+                          let data = json.data(using: .utf8),
+                          let formatted = try? JSONDecoder().decode(
+                              FormattedText.self, from: data) {
+                    effectiveRawMText = MTEXTFormatter.serialize(formatted)
+                } else {
+                    effectiveRawMText = text
+                        .replacingOccurrences(of: "\r\n", with: "\\P")
+                        .replacingOccurrences(of: "\n", with: "\\P")
+                        .replacingOccurrences(of: "\r", with: "\\P")
+                }
+                entity.text = effectiveRawMText
                 entity.height = exportedHeight
                 entity.widthScale = (mtextWidth ?? xdataDouble(xdata, "dxf.mtextWidth") ?? 0)
                     * max(xScale, 1e-12)

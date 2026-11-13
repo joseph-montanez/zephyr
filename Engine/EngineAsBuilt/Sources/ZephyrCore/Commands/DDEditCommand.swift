@@ -186,9 +186,23 @@ public final class DDEditCommand: FeatureCommand {
             return
         }
 
+        let originalFormatted: FormattedText?
+        if case .string(let json) = entity.xdata["dxf.formattedText"],
+           let data = json.data(using: .utf8),
+           let decoded = try? JSONDecoder().decode(FormattedText.self, from: data) {
+            originalFormatted = decoded
+        } else {
+            originalFormatted = nil
+        }
+
         let text: String
-        if case .string(let s) = entity.xdata["dxf.text"] { text = s }
-        else { text = "" }
+        if let originalFormatted {
+            text = originalFormatted.toPlainText()
+        } else if case .string(let s) = entity.xdata["dxf.text"] {
+            text = s
+        } else {
+            text = ""
+        }
 
         let styleReference: String
         if case .string(let value) = entity.xdata["dxf.textStyle"] { styleReference = value }
@@ -226,7 +240,9 @@ public final class DDEditCommand: FeatureCommand {
             alignH: alignH,
             alignV: alignV,
             mtextWidth: mtextWidth,
-            targetHandle: handle
+            targetHandle: handle,
+            originalFormatted: originalFormatted,
+            originalMTextWidth: mtextWidth
         )
         engine.textManager.isEditorActive = true
         engine.textManager.editorResult = .active
@@ -474,10 +490,28 @@ public final class DDEditCommand: FeatureCommand {
         } else {
             originalHeight = editorState.height
         }
-        let contentChanged = text != originalText
+        // The edit buffer was seeded from toPlainText(), so compare against
+        // that (not the cleaned dxf.text) or a no-op OK looks like a change
+        // for stacked/formatted text.
+        let originalBufferText = editorState.originalFormatted?.toPlainText() ?? originalText
+        let contentChanged = text != originalBufferText
+        let heightChanged = abs(editorState.height - originalHeight) > 1e-12
+        let originalAlignH: Int
+        if case .int(let value) = entity.xdata["dxf.alignH"] {
+            originalAlignH = value
+        } else {
+            originalAlignH = 0
+        }
+        let originalStyle: String
+        if case .string(let value) = entity.xdata["dxf.textStyle"] {
+            originalStyle = value
+        } else {
+            originalStyle = ""
+        }
 
         let styleName = engine.document.resolvedTextStyleName(editorState.styleName)
         let style = engine.document.textStyle(named: styleName) ?? .standard
+        let styleChanged = styleName.caseInsensitiveCompare(originalStyle) != .orderedSame
         let height = max(editorState.height, 1e-9)
         let rotation = editorState.rotation
         let fontName = style.fontFile
@@ -485,13 +519,15 @@ public final class DDEditCommand: FeatureCommand {
         let alignV = editorState.alignV
         let mtextWidth = editorState.mtextWidth
 
-        // Update entity transform for rotation
-        let pos = entity.transform.position
-        var newTransform = Transform3D.translated(by: pos)
-        if rotation != 0 {
-            newTransform = newTransform.multiplying(by: .rotated(by: rotation))
+        // Update entity transform only when rotation actually changed, as a
+        // local delta so scale/mirroring of the original transform survives.
+        // Rebuilding translated+rotated dropped scale and shifted text.
+        let oldRotation = entity.transform.rotation
+        if abs(rotation - oldRotation) > 1e-12 {
+            let newTransform = entity.transform.multiplying(
+                by: .rotated(by: rotation - oldRotation))
+            engine.document.updateTransform(for: handle, to: newTransform)
         }
-        engine.document.updateTransform(for: handle, to: newTransform)
 
         // Update the text primitive in local geometry
         let prim: CADPrimitive = .text(
@@ -510,9 +546,16 @@ public final class DDEditCommand: FeatureCommand {
         engine.document.setXData(for: handle, key: "dxf.text", value: .string(text))
         engine.document.setXData(for: handle, key: "dxf.textStyle", value: .string(styleName))
         engine.document.setXData(for: handle, key: "dxf.textHeight", value: .double(height))
-        engine.document.setXData(for: handle, key: "dxf.textHeightOverride", value: .int(1))
+        // Only claim a height override when the height actually changed;
+        // writing it unconditionally switched style-fixed heights to the
+        // entity height on a no-op edit.
+        if heightChanged {
+            engine.document.setXData(for: handle, key: "dxf.textHeightOverride", value: .int(1))
+        }
         engine.document.setXData(for: handle, key: "dxf.alignH", value: .int(alignH))
-        if alignH != 3 && alignH != 5 {
+        // Keep the Fit/Aligned span unless the user left 3/5; deleting it on
+        // a no-op edit collapsed Fit text to natural width.
+        if alignH != 3 && alignH != 5 && (originalAlignH == 3 || originalAlignH == 5) {
             engine.document.removeXData(for: handle, key: "dxf.textFitWidth")
         }
         engine.document.setXData(for: handle, key: "dxf.alignV", value: .int(alignV))
@@ -522,40 +565,49 @@ public final class DDEditCommand: FeatureCommand {
             engine.document.removeXData(for: handle, key: "dxf.mtextWidth")
         }
 
-        if contentChanged {
-            engine.document.setXData(for: handle, key: "dxf.mtextRaw", value: .string(""))
-
-            let formatted = FormattedText.plain(
+        let originalFormatted = editorState.originalFormatted
+            ?? (entity.xdata["dxf.formattedText"].flatMap { value -> FormattedText? in
+                guard case .string(let json) = value,
+                      let data = json.data(using: .utf8) else { return nil }
+                return try? JSONDecoder().decode(FormattedText.self, from: data)
+            })
+        if contentChanged || heightChanged || styleChanged {
+            // Preserve paragraph alignment/indents/run formatting across the
+            // edit; rebuilding with FormattedText.plain reset centered MTEXT
+            // to left-anchored and shifted every line.
+            let formatted = originalFormatted?.applyingPlainText(
                 text,
                 styleName: styleName,
                 font: fontName,
                 height: height)
+                ?? FormattedText.plain(
+                    text,
+                    styleName: styleName,
+                    font: fontName,
+                    height: height)
             if let jsonData = try? JSONEncoder().encode(formatted),
                let jsonStr = String(data: jsonData, encoding: .utf8) {
                 engine.document.setXData(
                     for: handle,
                     key: "dxf.formattedText",
                     value: .string(jsonStr))
-            }
-        } else if abs(height - originalHeight) > 1e-12,
-                  case .string(let json) = entity.xdata["dxf.formattedText"],
-                  let data = json.data(using: .utf8),
-                  var formatted = try? JSONDecoder().decode(FormattedText.self, from: data) {
-            let scale = height / max(originalHeight, 1e-12)
-            formatted.defaultHeight *= scale
-            for paragraphIndex in formatted.paragraphs.indices {
-                for runIndex in formatted.paragraphs[paragraphIndex].runs.indices {
-                    if let runHeight = formatted.paragraphs[paragraphIndex].runs[runIndex].height {
-                        formatted.paragraphs[paragraphIndex].runs[runIndex].height = runHeight * scale
-                    }
+                // Keep the raw MTEXT string in sync so export does not fall
+                // back to blank or stale text. The writer prefers mtextRaw for
+                // the DXF group-1 value; "" used to blank exported text.
+                // Only MTEXT-context entities carry raw (a stray raw forces
+                // the writer down the MTEXT path for plain TEXT).
+                let isMTextContext = entity.xdata["dxf.textEntityType"].map { value -> Bool in
+                    guard case .string(let type) = value else { return false }
+                    return type.uppercased() == "MTEXT"
+                } ?? false
+                if isMTextContext || mtextWidth > 0 || text.contains("\n") {
+                    engine.document.setXData(
+                        for: handle,
+                        key: "dxf.mtextRaw",
+                        value: .string(MTEXTFormatter.serialize(formatted)))
+                } else {
+                    engine.document.removeXData(for: handle, key: "dxf.mtextRaw")
                 }
-            }
-            if let jsonData = try? JSONEncoder().encode(formatted),
-               let jsonStr = String(data: jsonData, encoding: .utf8) {
-                engine.document.setXData(
-                    for: handle,
-                    key: "dxf.formattedText",
-                    value: .string(jsonStr))
             }
         }
 

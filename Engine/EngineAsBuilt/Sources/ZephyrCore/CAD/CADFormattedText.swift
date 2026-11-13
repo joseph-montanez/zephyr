@@ -199,6 +199,76 @@ public struct FormattedText: Codable, Sendable, Hashable {
             paragraphs: paragraphs
         )
     }
+
+    /// Returns a copy with the plain text replaced, preserving paragraph
+    /// alignment, indents, tab stops, stack alignment, and run formatting.
+    ///
+    /// When the new line count matches the old paragraph count, text is
+    /// replaced in place: each paragraph keeps its properties and (for
+    /// single-run paragraphs) the run keeps its own formatting. Otherwise
+    /// paragraphs are rebuilt keeping the old alignment per index (new
+    /// lines beyond the old count inherit alignment 0).
+    ///
+    /// If `height` differs from the current default height, explicit run
+    /// heights are scaled by the same ratio so relative sizing survives.
+    public func applyingPlainText(
+        _ newText: String,
+        styleName: String?,
+        font: String,
+        height: Double
+    ) -> FormattedText {
+        let newLines = newText.components(separatedBy: "\n")
+        var newParagraphs: [FormattedParagraph]
+        if newLines.count == paragraphs.count {
+            newParagraphs = zip(paragraphs, newLines).map { paragraph, line in
+                var updated = paragraph
+                if line == updated.plainText {
+                    // Unchanged line: keep runs exactly (height-only edits
+                    // must not collapse \H runs).
+                    return updated
+                }
+                if updated.runs.isEmpty {
+                    updated.runs = line.isEmpty ? [] : [FormattedTextRun(text: line)]
+                } else {
+                    // Changed line: keep the first run's formatting; drop
+                    // any extra runs (the editor edits plain text).
+                    var first = updated.runs[0]
+                    first.text = line
+                    first.stack = nil
+                    updated.runs = line.isEmpty ? [] : [first]
+                }
+                return updated
+            }
+        } else {
+            newParagraphs = newLines.enumerated().map { index, line in
+                let old = index < paragraphs.count ? paragraphs[index] : nil
+                return FormattedParagraph(
+                    alignment: old?.alignment ?? 0,
+                    firstLineIndent: old?.firstLineIndent,
+                    leftIndent: old?.leftIndent,
+                    rightIndent: old?.rightIndent,
+                    tabStops: old?.tabStops,
+                    runs: line.isEmpty ? [] : [FormattedTextRun(text: line)],
+                    stackAlignment: old?.stackAlignment)
+            }
+        }
+        let heightScale = abs(defaultHeight) > 1e-12 ? height / defaultHeight : 1.0
+        if abs(heightScale - 1.0) > 1e-12 {
+            for i in newParagraphs.indices {
+                for j in newParagraphs[i].runs.indices {
+                    if let runHeight = newParagraphs[i].runs[j].height {
+                        newParagraphs[i].runs[j].height = runHeight * heightScale
+                    }
+                }
+            }
+        }
+        return FormattedText(
+            styleName: styleName,
+            defaultFont: font,
+            defaultHeight: height,
+            defaultColor: defaultColor,
+            paragraphs: newParagraphs)
+    }
 }
 
 // =========================================================================
