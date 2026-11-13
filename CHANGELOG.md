@@ -89,7 +89,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **SHX word wrap** - wraps like AutoCAD without overflowing the width.
 - **Stale nested dimensions no longer explode extents** - rebuilt from the definition points so zoom lands on the drawing.
 - **Text edits keep position** - editing centered or fitted text no longer shifts it off its anchor; edited MTEXT keeps its horizontal alignment and exports its text.
-- **Accented text on import** - `Ubicación`/`Diseño` and other non-ASCII names no longer show as `UbicaciÃ³n`/`DiseÃ±o` when opening DWG/DXF files.
+- **UTF-8 text support** - non-ASCII text is preserved correctly when opening DWG/DXF files.
 
 ### Maintenance
 - **Code cleanup** - internal cleanup, no behavior change.
