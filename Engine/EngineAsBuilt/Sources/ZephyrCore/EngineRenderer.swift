@@ -429,6 +429,17 @@ public final class EngineRenderer {
         {
             ctx.regenGeneration &+= 1
         }
+        // Zoom-gated dense-hatch solidification: a band change can flip the
+        // solid-vs-pattern choice, and only a full regen can add or remove
+        // hatch specs (curve-only refresh cannot — plain hatches are not
+        // curve-bearing). Independent of block auto-collapse; the hatch
+        // census gate keeps this to one async regen per 2x zoom step in
+        // hatch-bearing drawings.
+        if !engine.commandProcessor.isLispActivelyEvaluating,
+           ctx.bridge.desiredHatchBand(pixelsPerUnit: pixelsPerUnit) != nil
+        {
+            ctx.regenGeneration &+= 1
+        }
         let wantGen = ctx.regenGeneration
         let desiredCurveLOD = ctx.bridge.desiredCurveLOD(
             pixelsPerUnit: pixelsPerUnit,
@@ -463,6 +474,7 @@ public final class EngineRenderer {
                     band: blockBandForRegen)
                 : nil
             ctx.bridge.blockLODBandInFlight = blockLODForRegen?.band
+            ctx.bridge.hatchBandInFlight = desiredCurveLOD?.band
             engine._statRegensLaunched += 1
             ctx.regenTask = Task.detached { [weak self] in
                 guard let self else { return }

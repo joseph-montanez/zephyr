@@ -408,3 +408,48 @@ public enum BlockLOD: Sendable {
         }
     }
 }
+
+// =========================================================================
+// MARK: - HatchLOD
+//
+// Zoom-gated dense-hatch solidification (screen viewport only).
+//
+// Patterned hatches whose on-screen line spacing is too small to read
+// render as their boundary silhouette (outer loop minus holes) instead of
+// thousands of sub-pixel lines — or instead of vanishing at the tessellate
+// `<1px` skip. The decision is anchored at the curve band's `designZoom`
+// (band upper edge, stable within the band), so it cannot flap mid-band.
+//
+// With the default `solidifyThresholdPx = 4.0` design-px, a hatch solidifies
+// while its live on-screen spacing is somewhere in the ~2-4px window
+// (2x band width, plus the 1.15 hysteresis dip below the lower edge). The
+// cutoff stays above 2.3 design-px on purpose: the worst in-band live
+// spacing (`threshold / 2.3`) never drops below the tessellate `<1px`
+// skip, so there is no zoom window where a pattern both fails to solidify
+// and gets culled to nothing.
+//
+// Print/export paths (PDF, DXF, explode, thumbnails) never consult this:
+// they have no screen zoom and must keep faithful pattern lines.
+// =========================================================================
+
+public enum HatchLOD: Sendable {
+    /// Design-zoom spacing below which a patterned hatch renders solid.
+    /// Aggressive vs the tessellate `<1px` vanish threshold by design.
+    public static let solidifyThresholdPx = 4.0
+
+    /// True when `nominalSpacing` (authored world spacing from
+    /// `DXFHatchGenerator.effectiveSpacing`, *not* the `diag/4096`-capped
+    /// generation spacing) is unreadable at `designZoom`.
+    /// Nil/degenerate inputs never solidify (pattern path is the safe
+    /// fallback for previews and tests without a zoom context).
+    public static func shouldSolidify(
+        nominalSpacing: Double,
+        designZoom: Double,
+        thresholdPx: Double = solidifyThresholdPx
+    ) -> Bool {
+        guard nominalSpacing.isFinite, designZoom.isFinite,
+              thresholdPx.isFinite,
+              nominalSpacing > 0, designZoom > 0, thresholdPx > 0 else { return false }
+        return nominalSpacing * designZoom < thresholdPx
+    }
+}

@@ -723,10 +723,15 @@ public final class CADVertexBufferBuilder {
                 break
             }
 
-            // Hatch LOD: pattern lines closer than a pixel merge into a
+            // Hatch backstop: pattern lines closer than a pixel merge into a
             // solid mass on screen; skip them instead of tessellating
             // thousands of invisible lines. Runs at tessellate time with
             // live zoom, so no regen invalidation is needed.
+            // This is a cross-band stale-buffer backstop only: regen-time
+            // `HatchLOD` solidification (cutoff 4 design-px) normally replaces
+            // dense patterns with a fill before they reach tessellation, and
+            // its in-band invariant keeps live spacing above 1px whenever the
+            // pattern path is taken.
             if input.isHatchLine, input.hatchSpacing > 0,
                input.hatchSpacing * Double(safePixelZoom) < 1.0 {
                 continue

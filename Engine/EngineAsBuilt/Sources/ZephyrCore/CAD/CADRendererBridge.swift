@@ -65,6 +65,7 @@ public final class CADRendererBridge {
         curvePlans: [CurveLODEntityPlan],
         unsupportedCurveEntities: Int,
         blockLODBand: Int?,
+        hatchLODBand: Int?,
         census: BlockLOD.ContentCensus
     )? = nil
     private let pendingLock = NSLock()
@@ -90,6 +91,30 @@ public final class CADRendererBridge {
             pixelsPerUnit: pixelsPerUnit,
             current: blockLODBandInFlight ?? appliedBlockLODBand)
         if want == appliedBlockLODBand || want == blockLODBandInFlight { return nil }
+        return want
+    }
+
+    /// Hatch solidification band applied by the last full regen (nil = unknown).
+    /// Main-thread only, like `appliedBlockLODBand`. Tracked separately from
+    /// the curve band: curve-only refreshes advance `appliedCurveLOD` without
+    /// touching hatch specs, so hatches need their own full-regen key.
+    var appliedHatchBand: Int?
+    /// Hatch band of the regen currently in flight (optimistic; cleared on apply).
+    /// Main-thread only.
+    var hatchBandInFlight: Int?
+
+    /// Band key for zoom-gated dense-hatch solidification, with hysteresis
+    /// against the applied or in-flight hatch band. Returns nil when no regen
+    /// is needed: the drawing has no hatch entities, the zoom is degenerate,
+    /// or the band matches. Deliberately independent of block auto-collapse:
+    /// hatches solidify whether or not inserts collapse.
+    func desiredHatchBand(pixelsPerUnit: Double) -> Int? {
+        guard lastContentCensus.hatchEntities > 0 else { return nil }
+        guard pixelsPerUnit.isFinite, pixelsPerUnit > 0 else { return nil }
+        let want = BlockLOD.stickyBand(
+            pixelsPerUnit: pixelsPerUnit,
+            current: hatchBandInFlight ?? appliedHatchBand)
+        if want == appliedHatchBand || want == hatchBandInFlight { return nil }
         return want
     }
 
@@ -150,7 +175,7 @@ public final class CADRendererBridge {
                 generation, revision, renderOrigin, snapshot.autoContrastTrueColor,
                 snapshot.pointDisplayMode, snapshot.pointDisplaySize, plan.results,
                 curveTessellation, plan.curvePlans, plan.unsupportedCurveEntities,
-                blockLOD?.band, plan.census)
+                blockLOD?.band, curveTessellation?.band, plan.census)
         }
     }
 
@@ -172,7 +197,7 @@ public final class CADRendererBridge {
         let applied = pendingLock.withLock { () -> (
             CADRenderOrigin, Bool, Int, Double, [EntityResult],
             UInt64, CurveScreenTessellationContext?, [CurveLODEntityPlan], Int,
-            Int?, BlockLOD.ContentCensus
+            Int?, Int?, BlockLOD.ContentCensus
         )? in
             guard let p = pendingResults else { return nil }
             if p.generation != wantGen {
@@ -187,12 +212,12 @@ public final class CADRendererBridge {
                 p.renderOrigin, p.autoContrastTrueColor, p.pointDisplayMode,
                 p.pointDisplaySize, p.results, p.revision, p.curveLOD,
                 p.curvePlans, p.unsupportedCurveEntities,
-                p.blockLODBand, p.census)
+                p.blockLODBand, p.hatchLODBand, p.census)
         }
         guard let (
             renderOrigin, autoContrastTrueColor, pointDisplayMode, pointDisplaySize,
             results, revision, curveLOD, curvePlans, unsupportedCurveEntities,
-            blockLODBand, census
+            blockLODBand, hatchLODBand, census
         ) = applied else { return false }
         geometryManager.renderOrigin = renderOrigin
         geometryManager.autoContrastTrueColor = autoContrastTrueColor
@@ -215,6 +240,8 @@ public final class CADRendererBridge {
         curveInFlight = nil
         appliedBlockLODBand = blockLODBand
         blockLODBandInFlight = nil
+        appliedHatchBand = hatchLODBand
+        hatchBandInFlight = nil
         lastContentCensus = census
         print("[CADBridge] applySpecs (gen \(wantGen)) done, geomMgr has \(geometryManager.primitiveCount) primitives")
         return true
@@ -225,6 +252,7 @@ public final class CADRendererBridge {
     public func cancelPending() {
         pendingLock.withLock { pendingResults = nil }
         blockLODBandInFlight = nil
+        hatchBandInFlight = nil
         cancelCurveTask()
     }
 
@@ -240,6 +268,8 @@ public final class CADRendererBridge {
         curveInFlight = nil
         appliedBlockLODBand = nil
         blockLODBandInFlight = nil
+        appliedHatchBand = nil
+        hatchBandInFlight = nil
         lastContentCensus = BlockLOD.ContentCensus()
     }
 

@@ -1200,9 +1200,30 @@ public enum CADPrimitiveGenerator {
                     renderOrigin: renderOrigin,
                     isTrueColor: effectiveIsTrueColor))
             } else {
-                // Patterned hatch: generate line pattern with zoom-aware adaptive spacing.
-                // When zoomed out, scale up spacing so hatch lines don't explode primitive count
-                // for features smaller than a pixel.
+                // Patterned hatch: dense patterns render as a solid silhouette
+                // at the band design zoom (screen viewport only — print/export
+                // paths never solidify). Uses the authored nominal spacing so
+                // the `diag/4096` generation cap cannot mask a dense pattern.
+                // Anchored at designZoom (band-stable); the 4px cutoff keeps
+                // the worst in-band live spacing above the tessellate `<1px`
+                // skip, so no zoom window both skips the pattern and misses
+                // the solid.
+                let nominalSpacing = DXFHatchGenerator.effectiveSpacing(patternName: pattern, scale: transformedHatchScale)
+                if let designZoom = curveTessellation?.designZoom,
+                   HatchLOD.shouldSolidify(nominalSpacing: nominalSpacing, designZoom: designZoom) {
+                    specs.append(CADTessellator.computeMultiLoopFillSpecs(
+                        outer: hatchLoops.outer,
+                        holes: hatchLoops.holes,
+                        transform: transform,
+                        color: finalColor,
+                        z: foregroundZ,
+                        renderOrigin: renderOrigin,
+                        isTrueColor: effectiveIsTrueColor))
+                    break
+                }
+                // Zoom-aware adaptive spacing for the readable case: scale up
+                // spacing so hatch lines don't explode primitive count for
+                // features smaller than a pixel.
                 // Work in world space.  The previous code generated lines from an
                 // already-transformed polygon and then transformed each generated
                 // line a second time.  That is harmless only for identity transforms
@@ -1210,7 +1231,6 @@ public enum CADPrimitiveGenerator {
                 let polyPoints = boundary.map { transform.transformPoint($0) }
 
                 let adaptiveMinimumSpacing = DXFHatchGenerator.adaptiveMinimumSpacing(for: polyPoints)
-                let nominalSpacing = DXFHatchGenerator.effectiveSpacing(patternName: pattern, scale: transformedHatchScale)
                 let spacing = max(nominalSpacing, adaptiveMinimumSpacing)
 
                 let hatchLines = DXFHatchGenerator.generatePatternHatch(
@@ -1306,13 +1326,29 @@ public enum CADPrimitiveGenerator {
                     renderOrigin: renderOrigin,
                     isTrueColor: effectiveIsTrueColor))
             } else {
+                // Dense patterned hatchPath: solid silhouette at the band
+                // design zoom (screen viewport only). Same contract as the
+                // `.hatch` branch above: authored nominal spacing, stable
+                // within the band, no vanish window vs the tessellate skip.
+                let nominalSpacing = DXFHatchGenerator.effectiveSpacing(patternName: pattern, scale: transformedHatchScale)
+                if let designZoom = curveTessellation?.designZoom,
+                   HatchLOD.shouldSolidify(nominalSpacing: nominalSpacing, designZoom: designZoom) {
+                    specs.append(CADTessellator.computeMultiLoopFillSpecs(
+                        outer: outer,
+                        holes: holes,
+                        transform: transform,
+                        color: finalColor,
+                        z: foregroundZ,
+                        renderOrigin: renderOrigin,
+                        isTrueColor: effectiveIsTrueColor))
+                    break
+                }
                 let transformedOuter = outer.map { transform.transformPoint($0) }
                 let transformedHoles = holes.map { $0.map { transform.transformPoint($0) } }
                 let patternPolygon = transformedHoles.isEmpty
                     ? transformedOuter
                     : DXFHatchGenerator.connectHoles(outer: transformedOuter, holes: transformedHoles)
                 let adaptiveMinimumSpacing = DXFHatchGenerator.adaptiveMinimumSpacing(for: patternPolygon)
-                let nominalSpacing = DXFHatchGenerator.effectiveSpacing(patternName: pattern, scale: transformedHatchScale)
                 let spacing = max(nominalSpacing, adaptiveMinimumSpacing)
 
                 let hatchLines = DXFHatchGenerator.generatePatternHatch(

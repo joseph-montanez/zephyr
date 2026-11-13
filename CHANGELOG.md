@@ -44,6 +44,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Shared TRIM/EXTEND modes** - both share Quick/Project/Edge modes.
 - **Consistent trim at any zoom** - trim no longer changes with zoom.
 - **Smoother curves when zooming** - curves refine with zoom.
+- **Dense hatches render solid when zoomed out** - pattern hatches too fine to read collapse to a solid fill instead of vanishing, and the pattern returns on zoom-in.
 - **Faster spline math** - intersections are faster, same accuracy.
 - **Layers panel refresh** - multi-select, bulk actions, search, sort.
 - **LAYOUT SAveas** - duplicate the current layout under a new name.
