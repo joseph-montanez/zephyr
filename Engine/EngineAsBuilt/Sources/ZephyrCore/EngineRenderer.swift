@@ -1317,7 +1317,7 @@ public final class EngineRenderer {
             engine._frameTimingImGuiMs = 0
             engine._frameTimingCount = 0
             let perfLine = perfStatsLine()
-            engine._cachedPerfText = perfLine
+            engine._cachedPerfText = perfStatsShortLine()
             print(perfLine)
         }
     }
@@ -2250,7 +2250,7 @@ public final class EngineRenderer {
             engine._frameTimingImGuiMs = 0
             engine._frameTimingCount = 0
             let perfLine = perfStatsLine()
-            engine._cachedPerfText = perfLine
+            engine._cachedPerfText = perfStatsShortLine()
             print(perfLine)
         }
     }

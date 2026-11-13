@@ -542,6 +542,18 @@ extension EngineRenderer {
         return line
     }
 
+    /// Short header line: verts/batches/text only. The full breakdown
+    /// stays in `perfStatsLine()` for the terminal.
+    internal func perfStatsShortLine() -> String {
+        let actx = engine.tabManager.activeTab.map { tabCtx(for: $0.id) } ?? primaryCtx
+        let totalVerts = actx.vertexChunks.reduce(0) { $0 + $1.vertexCount }
+        let totalBatches = actx.vertexChunks.reduce(0) { $0 + $1.batches.count }
+        return PerfStatsHeaderPolicy.shortStats(
+            verts: totalVerts,
+            batches: totalBatches,
+            textEntities: actx.bridge.lastContentCensus.textEntities)
+    }
+
     // MARK: - Dashed Line Rendering
 
     /// Draws a dashed line using ImGui's draw list.

@@ -243,6 +243,18 @@ public enum StatusBarUIPolicy {
     }
 }
 
+/// Header overlay for the perf stats. Only the basics belong in the
+/// header; the full `[PerfStats]` breakdown still prints to the terminal.
+public enum PerfStatsHeaderPolicy {
+    public static func shortStats(verts: Int, batches: Int, textEntities: Int) -> String {
+        "verts:\(verts) batches:\(batches) text:\(textEntities)"
+    }
+
+    public static func headerText(fps: Float, shortStats: String) -> String {
+        String(format: "FPS: %.0f  %@", fps, shortStats)
+    }
+}
+
 /// Capture policy for the radial nav's mouse handling.
 ///
 /// Only pan/zoom/rotate (zones 2, 3, 4, 6) consume relative deltas and need

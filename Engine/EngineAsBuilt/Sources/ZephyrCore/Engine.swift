@@ -407,7 +407,7 @@ public final class PhrostEngine {
     /// FPS string cache (recomputed every 15 frames).
     public var _cachedFpsText: String = ""
     public var _fpsCacheFrame: Int = 0
-    /// Last printed PerfStats line, shown in the header next to FPS.
+    /// Short PerfStats line for the header next to FPS (full detail prints to the terminal).
     public var _cachedPerfText: String = ""
 
     /// Render cache: avoid grid query + sort + map on static frames.
