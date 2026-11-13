@@ -187,6 +187,13 @@ public final class EngineRenderer {
         return ratio > 1.0 / 1.15 && ratio < 1.15
     }
 
+    /// Live zoom context for block auto-LOD hit-test/highlight decisions.
+    internal func liveBlockLODContext(zoom: Double, scaleX: Double, scaleY: Double) -> BlockLODContext {
+        BlockLOD.liveContext(
+            zoom: zoom, scaleX: scaleX, scaleY: scaleY,
+            autoEnabled: engine.autoCollapseSmallBlocks)
+    }
+
     /// Anti-aliased line rendering toggle.
     public var antiAliasLines: Bool = false {
         didSet {
@@ -349,7 +356,8 @@ public final class EngineRenderer {
         simplify: Bool,
         renderOrigin: CADRenderOrigin,
         tessDiv: Double,
-        curveLOD: CurveScreenTessellationContext?
+        curveLOD: CurveScreenTessellationContext?,
+        blockLOD: BlockLODContext?
     ) async {
         let ctx: WindowRenderContext
         if let ctxID {
@@ -366,7 +374,8 @@ public final class EngineRenderer {
             into: ctx.geometry,
             renderOrigin: renderOrigin,
             splineTessellationDivisor: tessDiv,
-            curveTessellation: curveLOD
+            curveTessellation: curveLOD,
+            blockLOD: blockLOD
         )
     }
 
@@ -409,6 +418,17 @@ public final class EngineRenderer {
            ctx.pendingRevision != doc.renderRevision {
             ctx.regenGeneration &+= 1
         }
+        // Zoom-gated block auto-collapse: a band change can flip the collapse
+        // set, and only a full regen can add or remove specs (curve-only
+        // refresh cannot). The sticky band + insert-count gate keep this to
+        // one async regen per 2x zoom step in block-bearing drawings.
+        if !engine.commandProcessor.isLispActivelyEvaluating,
+           ctx.bridge.desiredBlockLODBand(
+               pixelsPerUnit: pixelsPerUnit,
+               autoEnabled: engine.autoCollapseSmallBlocks) != nil
+        {
+            ctx.regenGeneration &+= 1
+        }
         let wantGen = ctx.regenGeneration
         let desiredCurveLOD = ctx.bridge.desiredCurveLOD(
             pixelsPerUnit: pixelsPerUnit,
@@ -432,13 +452,25 @@ public final class EngineRenderer {
             let simplify = simplifyComplexBlocks
             let tessDiv = splineTessellationDivisor
             let revision = doc.renderRevision
+            // Block auto-collapse is evaluated at the band design zoom so
+            // the collapse set is stable within the band (no regen thrash).
+            let blockBandForRegen = BlockLOD.stickyBand(
+                pixelsPerUnit: pixelsPerUnit,
+                current: ctx.bridge.blockLODBandInFlight ?? ctx.bridge.appliedBlockLODBand)
+            let blockLODForRegen: BlockLODContext? = engine.autoCollapseSmallBlocks
+                ? BlockLODContext(
+                    pixelsPerUnit: CurveScreenTessellation.designZoom(for: blockBandForRegen),
+                    band: blockBandForRegen)
+                : nil
+            ctx.bridge.blockLODBandInFlight = blockLODForRegen?.band
             engine._statRegensLaunched += 1
             ctx.regenTask = Task.detached { [weak self] in
                 guard let self else { return }
                 await self.runContextRegen(
                     ctxID: ctxID, snapshot: docSnapshot, generation: wantGen,
                     revision: revision, simplify: simplify, renderOrigin: origin,
-                    tessDiv: tessDiv, curveLOD: desiredCurveLOD)
+                    tessDiv: tessDiv, curveLOD: desiredCurveLOD,
+                    blockLOD: blockLODForRegen)
             }
         }
 
@@ -886,7 +918,8 @@ public final class EngineRenderer {
             renderSprite(
                 sprite, deltaSec: deltaSec, cam: transform,
                 viewportWidth: viewportWidth, viewportHeight: viewportHeight,
-                cullOrigin: cullOrigin)
+                cullOrigin: cullOrigin,
+                pixelsPerUnit: BlockLOD.livePixelsPerUnit(zoom: engine.camera.zoom, scaleX: Double(engine.scaleX), scaleY: Double(engine.scaleY)))
             backgroundVertexEstimate += 4
         }
     }
@@ -1283,7 +1316,9 @@ public final class EngineRenderer {
             engine._frameTimingPrimMs = 0
             engine._frameTimingImGuiMs = 0
             engine._frameTimingCount = 0
-            print(perfStatsLine())
+            let perfLine = perfStatsLine()
+            engine._cachedPerfText = perfLine
+            print(perfLine)
         }
     }
 
@@ -1323,7 +1358,8 @@ public final class EngineRenderer {
             renderSprite(
                 sprite, deltaSec: deltaSec, cam: st,
                 viewportWidth: leaf.rect.w, viewportHeight: leaf.rect.h,
-                useLightPalette: isLight, cullOrigin: (leaf.rect.x, leaf.rect.y))
+                useLightPalette: isLight, cullOrigin: (leaf.rect.x, leaf.rect.y),
+                pixelsPerUnit: BlockLOD.livePixelsPerUnit(zoom: st.camZoom, scaleX: Double(engine.scaleX), scaleY: Double(engine.scaleY)))
             spriteEstimate += 4
         }
         popBackgroundClip()
@@ -2213,7 +2249,9 @@ public final class EngineRenderer {
             engine._frameTimingPrimMs = 0
             engine._frameTimingImGuiMs = 0
             engine._frameTimingCount = 0
-            print(perfStatsLine())
+            let perfLine = perfStatsLine()
+            engine._cachedPerfText = perfLine
+            print(perfLine)
         }
     }
 
@@ -2311,7 +2349,8 @@ public final class EngineRenderer {
                 renderSprite(
                     sprite, deltaSec: deltaSec, cam: transform,
                     viewportWidth: Float(dims.w), viewportHeight: Float(dims.h),
-                    useLightPalette: isLight)
+                    useLightPalette: isLight,
+                    pixelsPerUnit: BlockLOD.livePixelsPerUnit(zoom: ctx.camera.zoom, scaleX: Double(dims.sx), scaleY: Double(dims.sy)))
                 spriteEstimate += 4
             }
             if let tab {
@@ -2504,13 +2543,18 @@ public final class EngineRenderer {
                 if let hover = CADHitTesting.hitTest(
                         worldX: wx, worldY: wy, document: doc,
                         threshold: threshold,
-                        simplifyComplexBlocks: engine.simplifyComplexBlocks),
+                        simplifyComplexBlocks: engine.simplifyComplexBlocks,
+                        blockLOD: liveBlockLODContext(zoom: ctx.camera.zoom, scaleX: Double(target.scaleX), scaleY: Double(target.scaleY))),
                    !handles.contains(hover),
                    let entity = doc.entity(for: hover),
                    let layer = doc.layer(for: entity.layerID), layer.isEffectivelyVisible {
                     let hc = makeImCol32(r: 64, g: 224, b: 208, a: 180)
                     let geomCount = doc.resolvedGeometry(for: entity)?.count ?? 0
-                    if engine.simplifyComplexBlocks && geomCount > 50 {
+                    let secondaryLOD = liveBlockLODContext(zoom: ctx.camera.zoom, scaleX: Double(target.scaleX), scaleY: Double(target.scaleY))
+                    let secondaryIsXref = entity.blockID.map { doc.block(for: $0)?.isXref == true } ?? false
+                    let secondaryDiag = entity.worldBoundingBox.map { hypot($0.size.x, $0.size.y) }
+                    if (engine.simplifyComplexBlocks && geomCount > 50)
+                        || secondaryLOD.kind(worldDiagonal: secondaryDiag, geometryCount: geomCount, isXref: secondaryIsXref, manualSimplify: false) != nil {
                         if let wbb = entity.worldBoundingBox {
                             let s0 = EngineCameraManager.worldToScreen(worldX: wbb.min.x, worldY: wbb.min.y, cam: transform)
                             let s1 = EngineCameraManager.worldToScreen(worldX: wbb.max.x, worldY: wbb.min.y, cam: transform)
@@ -2939,7 +2983,11 @@ public final class EngineRenderer {
         let lineWidth: Float = 2.0
 
         // Massive blocks (loaded xrefs) highlight as a frame, not a segment walk.
-        if geometry.count > 50 && (engine.simplifyComplexBlocks || geometry.count > CADBlockSpatialGrid.buildThreshold) {
+        let hoverLOD = liveBlockLODContext(zoom: cam.camZoom, scaleX: Double(engine.scaleX), scaleY: Double(engine.scaleY))
+        let hoverIsXref = entity.blockID.map { engine.document.block(for: $0)?.isXref == true } ?? false
+        let hoverDiag = entity.worldBoundingBox.map { hypot($0.size.x, $0.size.y) }
+        let hoverAutoCollapsed = hoverLOD.kind(worldDiagonal: hoverDiag, geometryCount: geometry.count, isXref: hoverIsXref, manualSimplify: false) != nil
+        if geometry.count > 50 && (engine.simplifyComplexBlocks || hoverAutoCollapsed || geometry.count > CADBlockSpatialGrid.buildThreshold) {
             if let wbb = entity.worldBoundingBox {
                 let s0 = EngineCameraManager.worldToScreen(worldX: wbb.min.x, worldY: wbb.min.y, cam: cam)
                 let s1 = EngineCameraManager.worldToScreen(worldX: wbb.max.x, worldY: wbb.min.y, cam: cam)
@@ -3041,7 +3089,11 @@ public final class EngineRenderer {
 
             let drawList = igGetBackgroundDrawList(nil)
             // Massive blocks (loaded xrefs) highlight as a frame, not a segment walk.
-        if geometry.count > 50 && (engine.simplifyComplexBlocks || geometry.count > CADBlockSpatialGrid.buildThreshold) {
+        let hoverLOD = liveBlockLODContext(zoom: cam.camZoom, scaleX: Double(engine.scaleX), scaleY: Double(engine.scaleY))
+        let hoverIsXref = entity.blockID.map { engine.document.block(for: $0)?.isXref == true } ?? false
+        let hoverDiag = entity.worldBoundingBox.map { hypot($0.size.x, $0.size.y) }
+        let hoverAutoCollapsed = hoverLOD.kind(worldDiagonal: hoverDiag, geometryCount: geometry.count, isXref: hoverIsXref, manualSimplify: false) != nil
+        if geometry.count > 50 && (engine.simplifyComplexBlocks || hoverAutoCollapsed || geometry.count > CADBlockSpatialGrid.buildThreshold) {
                 if let wbb = entity.worldBoundingBox {
                     let s0 = EngineCameraManager.worldToScreen(worldX: wbb.min.x, worldY: wbb.min.y, cam: cam)
                     let s1 = EngineCameraManager.worldToScreen(worldX: wbb.max.x, worldY: wbb.min.y, cam: cam)
@@ -4266,7 +4318,8 @@ public final class EngineRenderer {
     private func renderSprite(
         _ sprite: Sprite, deltaSec: Double, cam: CameraTransform,
         viewportWidth: Float? = nil, viewportHeight: Float? = nil,
-        useLightPalette: Bool? = nil, cullOrigin: (x: Float, y: Float) = (0, 0)
+        useLightPalette: Bool? = nil, cullOrigin: (x: Float, y: Float) = (0, 0),
+        pixelsPerUnit: Double? = nil
     ) {
         if sprite.speed.0 != 0 || sprite.speed.1 != 0 {
             sprite.position.0 += sprite.speed.0 * deltaSec
@@ -4327,10 +4380,24 @@ public final class EngineRenderer {
             return
         }
 
+        // TTF legibility fade (text sprites only): skip rasterization
+        // and the draw entirely below 3px; fade 3-5px instead of popping.
+        // Images and other sprites are unaffected.
+        var spriteFade: Float = 1.0
+        if sprite.text != nil,
+           let ppu = pixelsPerUnit, ppu.isFinite, ppu > 0 {
+            let sizePx = max(w, h) * ppu
+            if sizePx <= 3.0 { return }
+            if sizePx < 5.0 {
+                spriteFade = Float((sizePx - 3.0) / 2.0)
+            }
+        }
+
         let isLight = useLightPalette ?? engine.ui.isViewportBackgroundLight
         let drawList = igGetBackgroundDrawList(nil)
         let spriteColor = isLight ? sprite.adjustedColorLight : sprite.adjustedColorDark
-        let col = makeImCol32(r: spriteColor.0, g: spriteColor.1, b: spriteColor.2, a: spriteColor.3)
+        let fadedAlpha = UInt8(max(0, min(255, Int((Float(spriteColor.3) * spriteFade).rounded()))))
+        let col = makeImCol32(r: spriteColor.0, g: spriteColor.1, b: spriteColor.2, a: fadedAlpha)
 
         let ip1 = ImVec2(x: p1.x, y: p1.y)
         let ip2 = ImVec2(x: p2.x, y: p2.y)

@@ -311,6 +311,8 @@ extension EngineRenderer {
         ctx.lastCameraZoom = result.builtZoom
         ctx.cachedMutationGen = result.mutationGen
         ctx.cachedPaletteGen = paletteGen
+        ctx.lastHatchVerts = result.hatchVerts
+        ctx.lastVertexCapped = result.capped
         return true
     }
 
@@ -513,9 +515,21 @@ extension EngineRenderer {
         let actx = engine.tabManager.activeTab.map { tabCtx(for: $0.id) } ?? primaryCtx
         let totalVerts = actx.vertexChunks.reduce(0) { $0 + $1.vertexCount }
         let totalBatches = actx.vertexChunks.reduce(0) { $0 + $1.batches.count }
+        var lineVerts = 0
+        var otherVerts = 0
+        for chunk in actx.vertexChunks {
+            for batch in chunk.batches {
+                if batch.pipelineType == .line { lineVerts += Int(batch.vertexCount) }
+                else { otherVerts += Int(batch.vertexCount) }
+            }
+        }
+        let census = actx.bridge.lastContentCensus
         let line =
             "[PerfStats] verts:\(totalVerts) batches:\(totalBatches) chunks:\(actx.vertexChunks.count)" +
             " sprites:\(actx.sprites.spriteCount)" +
+            " lineVerts:\(lineVerts) triVerts:\(otherVerts) hatchVerts:\(actx.lastHatchVerts)" +
+            " capped:\(actx.lastVertexCapped ? 1 : 0)" +
+            " census:b\(census.blockInserts)t\(census.textEntities)h\(census.hatchEntities)d\(census.dashedEntities)" +
             " syncRebuild:\(engine._statSyncRebuilds)" +
             " asyncLaunch:\(engine._statAsyncLaunches)" +
             " asyncApplied:\(engine._statAsyncApplied)" +

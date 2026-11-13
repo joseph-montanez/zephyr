@@ -223,7 +223,10 @@ struct TopChromeUI {
                 engine._fpsCacheFrame += 1
                 if engine._fpsCacheFrame >= engine.ui.fpsCacheFrame {
                     engine._fpsCacheFrame = 0
-                    engine._cachedFpsText = String(format: "FPS: %.0f", io?.pointee.Framerate ?? 0)
+                    engine._cachedFpsText = String(
+                        format: "FPS: %.0f  %@",
+                        io?.pointee.Framerate ?? 0,
+                        engine._cachedPerfText)
                 }
 
                 let fpsTextSize = ImGuiCalcTextSize(engine._cachedFpsText, nil, false, -1)

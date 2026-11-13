@@ -161,7 +161,12 @@ final class CADHoverCoordinator {
             worldY: worldY,
             document: engine.document,
             threshold: threshold,
-            simplifyComplexBlocks: engine.simplifyComplexBlocks)
+            simplifyComplexBlocks: engine.simplifyComplexBlocks,
+            blockLOD: BlockLOD.liveContext(
+                zoom: engine.camera.zoom,
+                scaleX: Double(engine.scaleX),
+                scaleY: Double(engine.scaleY),
+                autoEnabled: engine.autoCollapseSmallBlocks))
         interaction.hoveredEntityHandle = scan.best
         interaction.lastHoverTestWorldX = worldX
         interaction.lastHoverTestWorldY = worldY

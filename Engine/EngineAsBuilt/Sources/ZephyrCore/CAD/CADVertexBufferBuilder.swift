@@ -100,10 +100,20 @@ public struct VertexBuildResult: Sendable {
     /// Mutation generation the build targeted.
     public let mutationGen: Int
 
+    /// Vertices emitted for hatch-pattern lines (diagnostic: zoomed-out
+    /// hatch density dominates the vertex budget in hatched drawings).
+    public let hatchVerts: Int
+
+    /// True when the hard total-vertex guard dropped trailing inputs.
+    /// Displayed in PerfStats; zoom in to recover full detail.
+    public let capped: Bool
+
     public init(
         vertices: [CADVertex],
         batches: [CADDrawBatch],
         vertexCount: Int,
+        hatchVerts: Int = 0,
+        capped: Bool = false,
         regionMinX: Double,
         regionMinY: Double,
         regionMaxX: Double,
@@ -114,6 +124,8 @@ public struct VertexBuildResult: Sendable {
         self.vertices = vertices
         self.batches = batches
         self.vertexCount = vertexCount
+        self.hatchVerts = hatchVerts
+        self.capped = capped
         self.regionMinX = regionMinX
         self.regionMinY = regionMinY
         self.regionMaxX = regionMaxX
@@ -172,7 +184,34 @@ public final class CADVertexBufferBuilder {
     /// Maximum vertices per uploaded chunk (4M verts = 128 MB at 32 B/vert).
     /// Tessellated output is split into chunk-sized batch groups so no
     /// single GPU allocation can exceed driver limits.
-    internal static let maxVertsPerChunk = 4_194_304
+    internal nonisolated static let maxVertsPerChunk = 4_194_304
+
+    /// Hairline-quad estimate above which plain hairlines fall back to
+    /// 1px line pairs (same pixels, ~3x fewer verts). Env override
+    /// `ZEPHYR_HAIRLINE_VERT_BUDGET`. The quad upgrade exists to unify
+    /// pipelines; past one chunk of hairline verts the memory cost wins.
+    internal nonisolated static let defaultHairlineVertBudget = maxVertsPerChunk
+
+    /// Hard total-vertex ceiling per build (last-resort OOM guard).
+    /// Env override `ZEPHYR_MAX_TOTAL_VERTS`. Excess inputs are skipped
+    /// with a warning and a `capped` flag instead of removing the device.
+    internal nonisolated static let defaultMaxTotalVerts = 16_777_216
+
+    internal nonisolated static func hairlineVertBudget() -> Int {
+        if let raw = ProcessInfo.processInfo.environment["ZEPHYR_HAIRLINE_VERT_BUDGET"],
+           let parsed = Int(raw), parsed > 0 {
+            return parsed
+        }
+        return defaultHairlineVertBudget
+    }
+
+    internal nonisolated static func maxTotalVerts() -> Int {
+        if let raw = ProcessInfo.processInfo.environment["ZEPHYR_MAX_TOTAL_VERTS"],
+           let parsed = Int(raw), parsed > 0 {
+            return parsed
+        }
+        return defaultMaxTotalVerts
+    }
 
     /// Splits a tessellated batch list into chunk-sized groups with
     /// chunk-local first-vertex offsets. All pipelines use LIST topologies,
@@ -251,21 +290,52 @@ public final class CADVertexBufferBuilder {
         antiAliasLines: Bool,
         hairlineQuads: Bool,
         region: (minX: Double, minY: Double, maxX: Double, maxY: Double),
-        mutationGen: Int
+        mutationGen: Int,
+        hairlineBudgetOverride: Int? = nil,
+        maxTotalVertsOverride: Int? = nil
     ) -> VertexBuildResult? {
         // Pre-allocate array capacities.
         var estimatedVertices = 0
+        var hairlineEstimate = 0
         for input in inputs {
             estimatedVertices += input.points.count * 6
             estimatedVertices += input.corners.count
             estimatedVertices += input.rects.count * 6
+            // Hairline-eligible inputs mirror the pipeType branch below:
+            // plain hairlines that would be upgraded to 1px quads.
+            switch input.type {
+            case .line, .lines:
+                if input.segmentLineWeights.isEmpty
+                    && input.lineWeight <= 0.25
+                    && input.geomWidth <= 0.0
+                    && !antiAliasLines {
+                    hairlineEstimate += input.points.count * 6
+                }
+            default:
+                break
+            }
         }
         estimatedVertices = max(estimatedVertices, 1024)
+
+        // Budget-gated hairline degrade: the quad upgrade unifies pipelines
+        // (fewer draws), but past one chunk of hairline verts the memory
+        // cost dominates — fall back to 1px line pairs (same pixels).
+        // Input-driven, never zoom-driven, so no band flip-flop.
+        // Overrides are test seams; production passes nil for env/defaults.
+        let hairlineBudget = hairlineBudgetOverride ?? Self.hairlineVertBudget()
+        let hardCap = maxTotalVertsOverride ?? Self.maxTotalVerts()
+        let allowHairlineQuads = hairlineEstimate <= hairlineBudget
+        // Effective flag used by BOTH the batch pipeline key and the
+        // emission paths below — they must agree, or quads get drawn
+        // as lines (wasted verts) or vice versa.
+        let effHairlineQuads = hairlineQuads && allowHairlineQuads
+        var cappedInputs = 0
 
         var vertices: [CADVertex] = []
         vertices.reserveCapacity(estimatedVertices)
         
         var batches: [CADDrawBatch] = []
+        var hatchVerts = 0
         let safeZoom = max(Float(cameraZoom), 0.000001)
         let safePixelScale = max(pixelScale, 0.000001)
         let safePixelZoom = max(safeZoom * safePixelScale, 0.000001)
@@ -349,7 +419,7 @@ public final class CADVertexBufferBuilder {
         }
 
         func appendRenderableSegment(_ p1: SDL_FPoint, _ p2: SDL_FPoint, _ input: TessInput, _ r: Float, _ g: Float, _ b: Float, _ a: Float) {
-            if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines || hairlineQuads {
+            if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines || effHairlineQuads {
                 appendQuadSegment(p1, p2, lineRasterMetrics(for: input), r, g, b, a)
             } else {
                 appendLineSegment(p1, p2, r, g, b, a)
@@ -629,7 +699,7 @@ public final class CADVertexBufferBuilder {
             if input.segmentLineWeights.count == points.count - 1 {
                 appendVariableWidthJoinedPath(
                     points, input.segmentLineWeights, r, g, b, a)
-            } else if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines || hairlineQuads {
+            } else if input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines || effHairlineQuads {
                 appendJoinedQuadPath(points, lineRasterMetrics(for: input), r, g, b, a)
             } else {
                 for i in 0..<(points.count - 1) {
@@ -642,6 +712,24 @@ public final class CADVertexBufferBuilder {
             // Cooperative cancellation: check every 256 primitives.
             if i & 0xFF == 0 && Task.isCancelled {
                 return nil
+            }
+
+            // Hard total-vertex guard: last-resort OOM protection. Stops
+            // tessellating further inputs instead of handing the driver a
+            // device-removing upload. Zoom in to recover (the region
+            // pre-filter shrinks the input set).
+            if vertices.count >= hardCap {
+                cappedInputs = inputs.count - i
+                break
+            }
+
+            // Hatch LOD: pattern lines closer than a pixel merge into a
+            // solid mass on screen; skip them instead of tessellating
+            // thousands of invisible lines. Runs at tessellate time with
+            // live zoom, so no regen invalidation is needed.
+            if input.isHatchLine, input.hatchSpacing > 0,
+               input.hatchSpacing * Double(safePixelZoom) < 1.0 {
+                continue
             }
 
             let color = input.color
@@ -736,7 +824,16 @@ public final class CADVertexBufferBuilder {
 
             case .lines:
                 guard input.points.count >= 2 else { break }
-                appendRenderablePath(input.points, input, r, g, b, a)
+                // Screen-space running-anchor decimation. Open inputs
+                // always keep their endpoints (sub-pixel dashes still draw
+                // their dot, so dashed lines can never vanish); closed
+                // sub-pixel loops collapse to nothing. Dash-safe: dash
+                // splitting happens upstream at regen, and fragments are
+                // open paths that survive here by construction.
+                let pathPoints = BlockLOD.decimatedPolyline(
+                    input.points, pixelsPerUnit: Double(safePixelZoom))
+                guard pathPoints.count >= 2 else { break }
+                appendRenderablePath(pathPoints, input, r, g, b, a)
 
             case .rect, .rects:
                 if input.corners.count == 4 {
@@ -883,6 +980,7 @@ public final class CADVertexBufferBuilder {
 
             let vtxCount = UInt32(vertices.count) - firstVtx
             guard vtxCount > 0 else { continue }
+            if input.isHatchLine { hatchVerts += Int(vtxCount) }
 
             let pipeType: CADPipelineType
             switch input.type {
@@ -896,7 +994,7 @@ public final class CADVertexBufferBuilder {
                 // quads), so they belong on the .line pipeline via default:
                 if !input.segmentLineWeights.isEmpty || input.lineWeight > 0.25 || input.geomWidth > 0.0 || antiAliasLines {
                     pipeType = antiAliasLines ? .aaLine : .triangle
-                } else if hairlineQuads {
+                } else if effHairlineQuads {
                     pipeType = .triangle
                 } else {
                     pipeType = .line
@@ -925,10 +1023,16 @@ public final class CADVertexBufferBuilder {
             }
         }
 
+        if cappedInputs > 0 {
+            print("[CADVertex] vertex budget exceeded (\(vertices.count) verts) — dropping \(cappedInputs) inputs; zoom in to recover full detail")
+        }
+
         return VertexBuildResult(
             vertices: vertices,
             batches: batches,
             vertexCount: vertices.count,
+            hatchVerts: hatchVerts,
+            capped: cappedInputs > 0,
             regionMinX: region.minX,
             regionMinY: region.minY,
             regionMaxX: region.maxX,

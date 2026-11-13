@@ -87,6 +87,10 @@ public final class WindowRenderContext {
     public var cachedPaletteGen: Int = -1
     public var cachedUsingGrid: Bool = false
     public var lastCameraZoom: Double = -1.0
+    /// Hatch-pattern verts in the last applied build (diagnostic).
+    public var lastHatchVerts: Int = 0
+    /// Whether the last applied build hit the hard vertex cap.
+    public var lastVertexCapped: Bool = false
 
     // MARK: Secondary camera scratch
 

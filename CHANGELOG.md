@@ -28,6 +28,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **SNAP / GRIDSPACING / GRIDMAJOR** - grid snap with separate X/Y spacing.
 - **STARFIELD (`STARS`)** - toggle the starfield on or off.
 - **VIEWCTR / VIEWSIZE** - show the viewport center and height.
+- **BLOCKLOD** - toggle automatic zoom-gated collapsing of small block inserts on or off.
 
 ### Improvements
 - **Fit/Aligned text** - spans its two points.
@@ -56,6 +57,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Real spline export** - keep true spline definitions.
 
 ### Bug Fixes
+- **Simplify frame thickness** - collapsed-block outlines render as thin 2px frames instead of giant solid-looking slabs.
 - **Imported text width** - uses the correct default width.
 - **Text spaces** - leading and trailing spaces are preserved.
 - **SHX text bounds** - picking uses the rendered size.
@@ -97,6 +99,11 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Quieter hover** - panels and fast cursor moves no longer highlight.
 - **Survives GPU trouble** - reports one clear message instead of spamming, so you can still save and close.
 - **Huge drawings keep working** - geometry uploads in safe chunks instead of killing the GPU.
+- **Zoom-gated block LOD** - small blocks collapse to batch-friendly triangle boxes when zoomed out and return to full detail on zoom-in.
+- **Tessellate-time polyline decimation** - sub-pixel interior vertices are dropped at build time; dashed lines keep their dots and tiny closed parcels vanish instead of emitting degenerate segments.
+- **Zoom-gated text and hatch density** - sub-legible text fades out and sub-pixel hatch lines are skipped when zoomed out.
+- **Adaptive hairline rendering** - huge drawings fall back to 1px line pairs past the vertex budget, and a hard total-vertex cap with a `capped` PerfStats flag stops uploads that would remove the GPU device.
+- **PerfStats breakdown in the header** - the FPS display now includes verts, batches, sprites, line/tri/hatch verts, and the content census.
 
 ## October 2026
 

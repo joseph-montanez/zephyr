@@ -63,9 +63,35 @@ public final class CADRendererBridge {
         results: [EntityResult],
         curveLOD: CurveScreenTessellationContext?,
         curvePlans: [CurveLODEntityPlan],
-        unsupportedCurveEntities: Int
+        unsupportedCurveEntities: Int,
+        blockLODBand: Int?,
+        census: BlockLOD.ContentCensus
     )? = nil
     private let pendingLock = NSLock()
+    /// Block-LOD band applied by the last full regen (nil = unknown).
+    /// Main-thread only, like `appliedCurveLOD`.
+    var appliedBlockLODBand: Int?
+    /// Band of the regen currently in flight (optimistic; cleared on apply).
+    /// Main-thread only.
+    var blockLODBandInFlight: Int?
+    /// Content census seen by the last regen. Band-change regens are
+    /// skipped while no zoom-dependent content exists. Main-thread only.
+    var lastContentCensus = BlockLOD.ContentCensus()
+
+    /// Band key for zoom-gated LOD (block collapse, SHX text cull), with
+    /// hysteresis against the applied or in-flight band. Returns nil when
+    /// no regen is needed: auto is off, the drawing has no zoom-dependent
+    /// content, or the band matches.
+    func desiredBlockLODBand(pixelsPerUnit: Double, autoEnabled: Bool) -> Int? {
+        guard autoEnabled,
+              lastContentCensus.blockInserts > 0 || lastContentCensus.textEntities > 0
+        else { return nil }
+        let want = BlockLOD.stickyBand(
+            pixelsPerUnit: pixelsPerUnit,
+            current: blockLODBandInFlight ?? appliedBlockLODBand)
+        if want == appliedBlockLODBand || want == blockLODBandInFlight { return nil }
+        return want
+    }
 
     struct CurveLODSlot {
         var plan: CurveLODEntityPlan
@@ -102,14 +128,16 @@ public final class CADRendererBridge {
         into geometryManager: GeometryManager,
         renderOrigin: CADRenderOrigin = .zero,
         splineTessellationDivisor: Double = 5000.0,
-        curveTessellation: CurveScreenTessellationContext? = nil
+        curveTessellation: CurveScreenTessellationContext? = nil,
+        blockLOD: BlockLODContext? = nil
     ) async {
         let plan = await Self.computeSpecsWithCurvePlan(
             fromSnapshot: snapshot,
             simplifyComplexBlocks: simplifyComplexBlocks,
             renderOrigin: renderOrigin,
             splineTessellationDivisor: splineTessellationDivisor,
-            curveTessellation: curveTessellation)
+            curveTessellation: curveTessellation,
+            blockLOD: blockLOD)
         print("[CADBridge] computeSpecs (gen \(generation)) returned \(plan.results.count) entity results")
         // Best-effort early-out: if a newer tab/edit cancelled this task, don't publish.
         // The generation guards below + in applyPendingIfNeeded are the authoritative checks.
@@ -121,7 +149,8 @@ public final class CADRendererBridge {
             pendingResults = (
                 generation, revision, renderOrigin, snapshot.autoContrastTrueColor,
                 snapshot.pointDisplayMode, snapshot.pointDisplaySize, plan.results,
-                curveTessellation, plan.curvePlans, plan.unsupportedCurveEntities)
+                curveTessellation, plan.curvePlans, plan.unsupportedCurveEntities,
+                blockLOD?.band, plan.census)
         }
     }
 
@@ -142,7 +171,8 @@ public final class CADRendererBridge {
     ) -> Bool {
         let applied = pendingLock.withLock { () -> (
             CADRenderOrigin, Bool, Int, Double, [EntityResult],
-            UInt64, CurveScreenTessellationContext?, [CurveLODEntityPlan], Int
+            UInt64, CurveScreenTessellationContext?, [CurveLODEntityPlan], Int,
+            Int?, BlockLOD.ContentCensus
         )? in
             guard let p = pendingResults else { return nil }
             if p.generation != wantGen {
@@ -156,11 +186,13 @@ public final class CADRendererBridge {
             return (
                 p.renderOrigin, p.autoContrastTrueColor, p.pointDisplayMode,
                 p.pointDisplaySize, p.results, p.revision, p.curveLOD,
-                p.curvePlans, p.unsupportedCurveEntities)
+                p.curvePlans, p.unsupportedCurveEntities,
+                p.blockLODBand, p.census)
         }
         guard let (
             renderOrigin, autoContrastTrueColor, pointDisplayMode, pointDisplaySize,
-            results, revision, curveLOD, curvePlans, unsupportedCurveEntities
+            results, revision, curveLOD, curvePlans, unsupportedCurveEntities,
+            blockLODBand, census
         ) = applied else { return false }
         geometryManager.renderOrigin = renderOrigin
         geometryManager.autoContrastTrueColor = autoContrastTrueColor
@@ -181,6 +213,9 @@ public final class CADRendererBridge {
         appliedGeneration = wantGen
         curveUnsupportedCount = unsupportedCurveEntities
         curveInFlight = nil
+        appliedBlockLODBand = blockLODBand
+        blockLODBandInFlight = nil
+        lastContentCensus = census
         print("[CADBridge] applySpecs (gen \(wantGen)) done, geomMgr has \(geometryManager.primitiveCount) primitives")
         return true
     }
@@ -189,6 +224,7 @@ public final class CADRendererBridge {
     /// stale results from a previous document being applied to the new active document.
     public func cancelPending() {
         pendingLock.withLock { pendingResults = nil }
+        blockLODBandInFlight = nil
         cancelCurveTask()
     }
 
@@ -202,6 +238,9 @@ public final class CADRendererBridge {
         appliedGeneration = nil
         curveUnsupportedCount = 0
         curveInFlight = nil
+        appliedBlockLODBand = nil
+        blockLODBandInFlight = nil
+        lastContentCensus = BlockLOD.ContentCensus()
     }
 
     private func cancelCurveTask() {
@@ -916,14 +955,16 @@ public final class CADRendererBridge {
         simplifyComplexBlocks: Bool,
         renderOrigin: CADRenderOrigin = .zero,
         splineTessellationDivisor: Double = 5000.0,
-        curveTessellation: CurveScreenTessellationContext? = nil
+        curveTessellation: CurveScreenTessellationContext? = nil,
+        blockLOD: BlockLODContext? = nil
     ) async -> [EntityResult] {
         let plan = await computeSpecsWithCurvePlan(
             fromSnapshot: snapshot,
             simplifyComplexBlocks: simplifyComplexBlocks,
             renderOrigin: renderOrigin,
             splineTessellationDivisor: splineTessellationDivisor,
-            curveTessellation: curveTessellation)
+            curveTessellation: curveTessellation,
+            blockLOD: blockLOD)
         return plan.results
     }
 
@@ -932,11 +973,13 @@ public final class CADRendererBridge {
         simplifyComplexBlocks: Bool,
         renderOrigin: CADRenderOrigin = .zero,
         splineTessellationDivisor: Double = 5000.0,
-        curveTessellation: CurveScreenTessellationContext? = nil
+        curveTessellation: CurveScreenTessellationContext? = nil,
+        blockLOD: BlockLODContext? = nil
     ) async -> (
         results: [EntityResult],
         curvePlans: [CurveLODEntityPlan],
-        unsupportedCurveEntities: Int
+        unsupportedCurveEntities: Int,
+        census: BlockLOD.ContentCensus
     ) {
         var visible:
             [(
@@ -970,6 +1013,9 @@ public final class CADRendererBridge {
                             formattedText: FormattedText?, textBackgroundScale: Double?,
                             textBackgroundColor: ColorRGBA?, textBackgroundUsesViewportColor: Bool, fitWidth: Double?)] = []
         var index = 0
+        // Content census for this regen. Gates zoom-band regens: when no
+        // zoom-dependent content exists, no band change can matter.
+        var census = BlockLOD.ContentCensus()
         let layersByName = Dictionary(
             snapshot.layers.values.map { ($0.name.uppercased(), $0) },
             uniquingKeysWith: { first, _ in first })
@@ -1200,6 +1246,7 @@ public final class CADRendererBridge {
                     entityTextBackgroundScale, entityTextBackgroundColor,
                     entityTextBackgroundUsesViewportColor, textFitWidth))
                 index += 1
+                census.textEntities += 1
                 continue
             }
 
@@ -1211,6 +1258,7 @@ public final class CADRendererBridge {
                 // ACAD_TABLE entities are imported as references to their anonymous
                 // *T display blocks. Render those references so table cell text and
                 // borders survive DXF/EAB/DXF round-trips.
+                if !block.isXref { census.blockInserts += 1 }
                 resolved = block.geometry
                 primitiveStyles = block.primitiveStyles
                 primitiveXData = block.primitiveXData
@@ -1249,20 +1297,77 @@ public final class CADRendererBridge {
                 }
             }
 
-            // Xrefs are exempt from SIMPLIFY collapse: a floorplan must
+            // Content census (pre-collapse geometry): text and hatch drive
+            // the zoom-band regen gate alongside block inserts.
+            if geometry.contains(where: {
+                if case .text = $0 { return true }; return false
+            }) {
+                census.textEntities += 1
+            }
+            if geometry.contains(where: {
+                switch $0 {
+                case .hatch, .hatchPath: return true
+                default: return false
+                }
+            }) {
+                census.hatchEntities += 1
+            }
+            // Xrefs are exempt from collapse: a floorplan must
             // not vanish because furniture blocks are simplified.
             let isXrefEntity = entity.blockID.map {
                 snapshot.blocks[$0]?.isXref == true
             } ?? false
-            if simplifyComplexBlocks && geometry.count > 50 && !isXrefEntity {
-                let simplificationBox: BoundingBox3D?
-                if entity.arrayData != nil, let blockID = entity.blockID {
-                    simplificationBox = snapshot.blocks[blockID]?.localBoundingBox
+            let worldDiag = entity.worldBoundingBox.map { hypot($0.size.x, $0.size.y) }
+            if let lodKind = BlockLOD.collapseKind(
+                worldDiagonal: worldDiag,
+                geometryCount: geometry.count,
+                isXref: isXrefEntity,
+                manualSimplify: simplifyComplexBlocks,
+                context: blockLOD)
+            {
+                // Prefer the visible-only box: hidden construction geometry
+                // (clearance circles, DEFPOINTS frames) must not inflate the
+                // collapsed footprint. Falls back to the legacy full box.
+                var localBox: BoundingBox3D?
+                if let visibleBox = BlockLOD.visibleBoundingBox(
+                    geometry: geometry,
+                    styles: primitiveStyles,
+                    layersByName: layersByName)
+                {
+                    localBox = visibleBox
+                } else if entity.arrayData != nil, let blockID = entity.blockID {
+                    localBox = snapshot.blocks[blockID]?.localBoundingBox
                 } else {
-                    simplificationBox = entity.localBoundingBox
+                    localBox = entity.localBoundingBox
                 }
-                if let localBox = simplificationBox {
-                    geometry = [.rect(origin: localBox.min, size: localBox.size, color: nil)]
+                if let localBox {
+                    // Clamp to >=1px world so sub-pixel triangle boxes cannot
+                    // twinkle across pixel centers while panning.
+                    let livePPU = curveTessellation?.pixelsPerUnit ?? 0
+                    let worldBox = entity.worldBoundingBox
+                        ?? BoundingBox3D(transforming: localBox, by: entity.transform)
+                    let clamped = BlockLOD.clampedToMinPixels(
+                        localBox: localBox,
+                        worldBox: worldBox,
+                        scale: entity.transform.scale,
+                        pixelsPerUnit: livePPU)
+                    let boxColor = BlockLOD.representativeColor(
+                        geometry: geometry,
+                        styles: primitiveStyles,
+                        layersByName: layersByName,
+                        entityColor: entityColor)
+                    let minBorderWorld = livePPU > 0 ? 2.0 / livePPU : 0
+                    geometry = BlockLOD.collapsedPrimitives(
+                        kind: lodKind,
+                        box: clamped,
+                        color: boxColor,
+                        minBorderWorld: minBorderWorld,
+                        scale: entity.transform.scale)
+                    primitiveStyles = [:]
+                    primitiveXData = [:]
+                } else {
+                    // Nothing visible: collapse to empty instead of a box.
+                    geometry = []
                     primitiveStyles = [:]
                     primitiveXData = [:]
                 }
@@ -1273,6 +1378,9 @@ public final class CADRendererBridge {
                 lineType = s
             } else {
                 lineType = layer.lineType
+            }
+            if lineType.uppercased() != "CONTINUOUS" {
+                census.dashedEntities += 1
             }
 
             let lineWeight: Double
@@ -1570,6 +1678,15 @@ public final class CADRendererBridge {
                                         ? height
                                         : textStyle.fixedHeight
                                     let worldHeight = effectiveHeight * heightScale
+                                    // Text LOD: skip sprite emission and stroke
+                                    // vectorization for sub-legible glyphs at
+                                    // this zoom band (regen re-evaluates per
+                                    // band via the content-census gate).
+                                    if let lod = curveTessellation,
+                                       worldHeight * lod.designZoom < 4.0 {
+                                        currentZ += 0.01
+                                        continue
+                                    }
                                     primitiveForRender = .text(
                                         position: pos,
                                         text: text,
@@ -1912,6 +2029,14 @@ public final class CADRendererBridge {
                                 ? vt.height
                                 : textStyle.fixedHeight
                             let worldHeight = effectiveHeight * heightScale
+                            // Text LOD: skip sprite emission and stroke
+                            // vectorization for sub-legible loose text at
+                            // this zoom band (regen re-evaluates per band
+                            // via the content-census gate).
+                            if let lod = curveTessellation,
+                               worldHeight * lod.designZoom < 4.0 {
+                                continue
+                            }
                             let effectiveOblique = vt.obliqueOverride
                                 ? vt.oblique
                                 : textStyle.obliqueAngle
@@ -2125,7 +2250,8 @@ public final class CADRendererBridge {
             return (
                 results: collected,
                 curvePlans: curvePlans,
-                unsupportedCurveEntities: unsupportedCurveEntities)
+                unsupportedCurveEntities: unsupportedCurveEntities,
+                census: census)
         }
     }
 

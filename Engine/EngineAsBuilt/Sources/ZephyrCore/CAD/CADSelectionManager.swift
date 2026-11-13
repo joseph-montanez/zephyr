@@ -180,13 +180,15 @@ public final class CADSelectionManager {
         worldX: Double, worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> UUID? {
         return CADHitTesting.hitTest(
             worldX: worldX, worldY: worldY,
             document: document,
             threshold: threshold,
-            simplifyComplexBlocks: simplifyComplexBlocks)
+            simplifyComplexBlocks: simplifyComplexBlocks,
+            blockLOD: blockLOD)
     }
 
     /// Returns the entity closest to the given world point (for hover
@@ -195,13 +197,15 @@ public final class CADSelectionManager {
         at worldX: Double, _ worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> UUID? {
         return CADHitTesting.closestEntity(
             at: worldX, worldY,
             document: document,
             threshold: threshold,
-            simplifyComplexBlocks: simplifyComplexBlocks)
+            simplifyComplexBlocks: simplifyComplexBlocks,
+            blockLOD: blockLOD)
     }
 
     /// Returns all entities whose geometry is within threshold of the point,
@@ -211,13 +215,15 @@ public final class CADSelectionManager {
         worldX: Double, worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> [(handle: UUID, label: String)] {
         return CADHitTesting.allHitsAt(
             worldX: worldX, worldY: worldY,
             document: document,
             threshold: threshold,
-            simplifyComplexBlocks: simplifyComplexBlocks)
+            simplifyComplexBlocks: simplifyComplexBlocks,
+            blockLOD: blockLOD)
     }
 
     /// True when two or more distinct entities are within threshold of the
@@ -227,13 +233,15 @@ public final class CADSelectionManager {
         worldX: Double, worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> Bool {
         return CADHitTesting.hasMultipleHitsAt(
             worldX: worldX, worldY: worldY,
             document: document,
             threshold: threshold,
-            simplifyComplexBlocks: simplifyComplexBlocks)
+            simplifyComplexBlocks: simplifyComplexBlocks,
+            blockLOD: blockLOD)
     }
 
     /// Single-walk hover scan: best hit plus the full pile in shared pick
@@ -243,13 +251,15 @@ public final class CADSelectionManager {
         worldX: Double, worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> (best: UUID?, pile: [UUID]) {
         return CADHitTesting.hoverScan(
             worldX: worldX, worldY: worldY,
             document: document,
             threshold: threshold,
-            simplifyComplexBlocks: simplifyComplexBlocks)
+            simplifyComplexBlocks: simplifyComplexBlocks,
+            blockLOD: blockLOD)
     }
 
     /// Returns true if the entity's geometry is within threshold of the point.
@@ -258,12 +268,14 @@ public final class CADSelectionManager {
         point: Vector3,
         threshold: Double,
         document: CADDocument,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> Bool {
         return CADHitTesting.hitEntity(
             entity, point: point, threshold: threshold,
             document: document,
-            simplifyComplexBlocks: simplifyComplexBlocks)
+            simplifyComplexBlocks: simplifyComplexBlocks,
+            blockLOD: blockLOD)
     }
 
     // MARK: - Rectangle Select (Delegated)

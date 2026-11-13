@@ -41,7 +41,8 @@ public enum CADHitTesting {
         threshold: Double,
         document: CADDocument,
         layersByName: [String: Layer],
-        simplifyComplexBlocks: Bool
+        simplifyComplexBlocks: Bool,
+        blockLOD: BlockLODContext? = nil
     ) -> Double? {
         let t2 = threshold * threshold
         let frameDistance = CADClipFrameSettings.isVisible(for: entity)
@@ -53,7 +54,13 @@ public enum CADHitTesting {
         let transforms = instanceTransforms(for: entity, document: document)
         let primStyles = document.primitiveStyles(for: entity)
         let isXrefEntity = entity.blockID.map { document.block(for: $0)?.isXref == true } ?? false
-        if simplifyComplexBlocks && geometry.count > 50 && !isXrefEntity {
+        let useBoxShortcut = blockLOD?.usesBoundingBoxShortcut(
+            geometryCount: geometry.count,
+            isXref: isXrefEntity,
+            manualSimplify: simplifyComplexBlocks,
+            worldDiagonal: entity.worldBoundingBox.map { hypot($0.size.x, $0.size.y) })
+            ?? (simplifyComplexBlocks && geometry.count > 50 && !isXrefEntity)
+        if useBoxShortcut {
             guard document.anyPrimitiveVisible(for: entity, layersByName: layersByName)
                     || hitDist != nil else { return nil }
             var minDist = Double.infinity
@@ -177,7 +184,8 @@ public enum CADHitTesting {
         worldX: Double, worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> UUID? {
         let point = Vector3(x: worldX, y: worldY, z: 0)
         let t2 = threshold * threshold
@@ -199,7 +207,13 @@ public enum CADHitTesting {
             let transforms = instanceTransforms(for: entity, document: document)
             let primStyles = document.primitiveStyles(for: entity)
             let isXrefEntity = entity.blockID.map { document.block(for: $0)?.isXref == true } ?? false
-            if simplifyComplexBlocks && geometry.count > 50 && !isXrefEntity {
+            let useBoxShortcut = blockLOD?.usesBoundingBoxShortcut(
+                geometryCount: geometry.count,
+                isXref: isXrefEntity,
+                manualSimplify: simplifyComplexBlocks,
+                worldDiagonal: entity.worldBoundingBox.map { hypot($0.size.x, $0.size.y) })
+                ?? (simplifyComplexBlocks && geometry.count > 50 && !isXrefEntity)
+            if useBoxShortcut {
                 guard document.anyPrimitiveVisible(for: entity, layersByName: layersByName)
                         || hitDist != nil else { return }
                 var minDist = Double.infinity
@@ -261,14 +275,16 @@ public enum CADHitTesting {
         at worldX: Double, _ worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> UUID? {
         // closestEntity shares the exact same logic as hitTest
         return hitTest(
             worldX: worldX, worldY: worldY,
             document: document,
             threshold: threshold,
-            simplifyComplexBlocks: simplifyComplexBlocks
+            simplifyComplexBlocks: simplifyComplexBlocks,
+            blockLOD: blockLOD
         )
     }
 
@@ -280,7 +296,8 @@ public enum CADHitTesting {
         worldX: Double, worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> [(handle: UUID, label: String)] {
         let point = Vector3(x: worldX, y: worldY, z: 0)
         let layersByName = document.layersByUppercasedName()
@@ -291,7 +308,8 @@ public enum CADHitTesting {
                 for: entity, geometry: geometry, point: point,
                 threshold: threshold, document: document,
                 layersByName: layersByName,
-                simplifyComplexBlocks: simplifyComplexBlocks
+                simplifyComplexBlocks: simplifyComplexBlocks,
+                blockLOD: blockLOD
             ) else { return }
             scored.append((
                 handle: entity.handle, order: entity.drawOrder,
@@ -335,7 +353,8 @@ public enum CADHitTesting {
         worldX: Double, worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> Bool {
         let point = Vector3(x: worldX, y: worldY, z: 0)
         var seen: [UUID] = []
@@ -344,6 +363,7 @@ public enum CADHitTesting {
             guard !found else { return }
             guard hitEntity(entity, point: point, threshold: threshold,
                              document: document, simplifyComplexBlocks: simplifyComplexBlocks,
+                             blockLOD: blockLOD,
                              geometry: geometry) else { return }
             if !seen.contains(entity.handle) {
                 seen.append(entity.handle)
@@ -362,7 +382,8 @@ public enum CADHitTesting {
         worldX: Double, worldY: Double,
         document: CADDocument,
         threshold: Double = 3.0,
-        simplifyComplexBlocks: Bool = true
+        simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil
     ) -> (best: UUID?, pile: [UUID]) {
         let point = Vector3(x: worldX, y: worldY, z: 0)
         let layersByName = document.layersByUppercasedName()
@@ -373,7 +394,8 @@ public enum CADHitTesting {
                 for: entity, geometry: geometry, point: point,
                 threshold: threshold, document: document,
                 layersByName: layersByName,
-                simplifyComplexBlocks: simplifyComplexBlocks
+                simplifyComplexBlocks: simplifyComplexBlocks,
+                blockLOD: blockLOD
             ) else { return }
             scored.append((
                 handle: entity.handle, order: entity.drawOrder,
@@ -487,6 +509,7 @@ public enum CADHitTesting {
         threshold: Double,
         document: CADDocument,
         simplifyComplexBlocks: Bool = true,
+        blockLOD: BlockLODContext? = nil,
         geometry: [CADPrimitive]? = nil
     ) -> Bool {
         let frameDistance = CADClipFrameSettings.isVisible(for: entity)
@@ -507,7 +530,13 @@ public enum CADHitTesting {
         let layersByName = document.layersByUppercasedName()
         let primStyles = document.primitiveStyles(for: entity)
         let isXrefEntity = entity.blockID.map { document.block(for: $0)?.isXref == true } ?? false
-        if simplifyComplexBlocks && geom.count > 50 && !isXrefEntity {
+        let useBoxShortcut = blockLOD?.usesBoundingBoxShortcut(
+            geometryCount: geom.count,
+            isXref: isXrefEntity,
+            manualSimplify: simplifyComplexBlocks,
+            worldDiagonal: entity.worldBoundingBox.map { hypot($0.size.x, $0.size.y) })
+            ?? (simplifyComplexBlocks && geom.count > 50 && !isXrefEntity)
+        if useBoxShortcut {
             guard document.anyPrimitiveVisible(for: entity, layersByName: layersByName) else {
                 return false
             }

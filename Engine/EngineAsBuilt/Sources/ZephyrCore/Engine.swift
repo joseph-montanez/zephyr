@@ -319,6 +319,16 @@ public final class PhrostEngine {
         print("[Engine] simplifyComplexBlocks: \(simplifyComplexBlocks)")
     }
 
+    /// Whether zoomed-out block inserts auto-collapse to triangle boxes.
+    /// Zoom-independent manual `SIMPLIFY` is unaffected by this flag.
+    public var autoCollapseSmallBlocks: Bool = true
+
+    public func toggleAutoCollapseSmallBlocks() {
+        autoCollapseSmallBlocks.toggle()
+        renderer.bumpAllContextGenerations()
+        print("[Engine] autoCollapseSmallBlocks: \(autoCollapseSmallBlocks)")
+    }
+
     /// When more than this many entities are selected, suppress all grips
     /// (mirrors AutoCAD GRIPOBJLIMIT). Entities keep geometry highlight.
     public var gripObjectMax: Int = 100
@@ -397,6 +407,8 @@ public final class PhrostEngine {
     /// FPS string cache (recomputed every 15 frames).
     public var _cachedFpsText: String = ""
     public var _fpsCacheFrame: Int = 0
+    /// Last printed PerfStats line, shown in the header next to FPS.
+    public var _cachedPerfText: String = ""
 
     /// Render cache: avoid grid query + sort + map on static frames.
     internal var _cachedPrimitivesToRender: [RenderPrimitive] = []

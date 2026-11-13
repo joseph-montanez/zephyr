@@ -472,6 +472,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "SPLINETESS",  aliases: ["SPLINESEGS"],   category: .settings, syntax: "[value]", description: "Set or show the legacy spline fallback density divisor (higher = smoother, default 5000); interactive curves use automatic screen-space tessellation"),
         CommandDescriptor(canonicalName: "SIMPLIFY",        aliases: ["SIMP", "COMPLEX", "COMPLEXBLOCKS"], category: .settings, syntax: "[ON|OFF]", description: "Toggle or set the simplification of complex block references to bounding boxes on/off"),
         CommandDescriptor(canonicalName: "SIMPLIFYPOLY",    aliases: ["SIMPPOLY", "COMPLEXPOLY", "SIMPLIFYPOLYLINES"], category: .settings, syntax: "[ON|OFF]", description: "Toggle or set the simplification of dense polylines on/off"),
+        CommandDescriptor(canonicalName: "BLOCKLOD",        aliases: [],                category: .settings, syntax: "[ON|OFF]", description: "Toggle or set automatic zoom-gated collapsing of small block inserts to triangle boxes on/off"),
         // --- Snap Toggles ---
         CommandDescriptor(canonicalName: "POLAR",           aliases: [],                category: .settings, syntax: "", description: "Toggle polar tracking on/off"),
         CommandDescriptor(canonicalName: "POLARANG",        aliases: [],                category: .settings, syntax: "<degrees>", description: "Set polar angle increment (e.g. 15, 30, 45, 90)"),
@@ -2323,6 +2324,27 @@ public final class CADCommandProcessor {
                 if engine.simplifyPolylines { engine.toggleSimplifyPolylines() }
             default:
                 print("[CAD] Usage: SIMPLIFYPOLY ON|OFF")
+            }
+            clearCommand()
+        // --- Block Auto-LOD ---
+        case "BLOCKLOD":
+            if !_inPendingCompletion {
+                startPendingPrompt(command: "BLOCKLOD", engine: engine)
+                return
+            }
+            guard let engine = engine else { clearCommand(); return }
+            engine.toggleAutoCollapseSmallBlocks()
+            clearCommand()
+        case _ where upper.hasPrefix("BLOCKLOD ") :
+            guard let engine = engine else { clearCommand(); return }
+            let arg = String(upper.dropFirst(9)).trimmingCharacters(in: .whitespaces)
+            switch arg {
+            case "ON", "1", "TRUE":
+                if !engine.autoCollapseSmallBlocks { engine.toggleAutoCollapseSmallBlocks() }
+            case "OFF", "0", "FALSE":
+                if engine.autoCollapseSmallBlocks { engine.toggleAutoCollapseSmallBlocks() }
+            default:
+                print("[CAD] Usage: BLOCKLOD ON|OFF")
             }
             clearCommand()
         // --- Grip Settings ---
