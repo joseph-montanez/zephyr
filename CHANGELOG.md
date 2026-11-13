@@ -90,6 +90,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Stale nested dimensions no longer explode extents** - rebuilt from the definition points so zoom lands on the drawing.
 - **Text edits keep position** - editing centered or fitted text no longer shifts it off its anchor; edited MTEXT keeps its horizontal alignment and exports its text.
 - **UTF-8 text support** - non-ASCII text is preserved correctly when opening DWG/DXF files.
+- **Open hatch boundaries no longer fill** - a loop with a real gap is dropped instead of painting its closing chord across the drawing, and file-ordered loop edges stitch in order so dense shared-vertex boundaries stay closed.
 
 ### Maintenance
 - **Code cleanup** - internal cleanup, no behavior change.
@@ -106,6 +107,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Zoom-gated text and hatch density** - sub-legible text fades out and sub-pixel hatch lines are skipped when zoomed out.
 - **Adaptive hairline rendering** - huge drawings fall back to 1px line pairs past the vertex budget, and a hard total-vertex cap with a `capped` PerfStats flag stops uploads that would remove the GPU device.
 - **PerfStats breakdown in the header** - the FPS display now includes verts, batches, sprites, line/tri/hatch verts, and the content census.
+- **Hatch selection on huge boundaries** - the hatch ribbon payload is cached per document revision, solid fills highlight by boundary outline, and midpoint grips stop past 1,024 points, so selecting a large water hatch no longer pins the CPU.
 
 ## October 2026
 

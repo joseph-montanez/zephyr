@@ -4232,4 +4232,171 @@ final class DXFImportTests: XCTestCase {
             "A sheet with only invisible/raster paper content keeps the synthetic fit fallback"
         )
     }
+
+    /// An edge-defined SOLID hatch whose boundary loop is open (last edge
+    /// end far from first edge start, like river hatch 39ED in
+    /// historical-center-of-krasnoyarsk.dwg) must not be chord-filled.
+    /// AutoCAD reports an open hatch boundary as an error; filling it paints
+    /// the implicit closing chord across the drawing. A closed loop in the
+    /// same hatch still fills.
+    func testOpenSolidHatchLoopIsNotFilled() throws {
+        // Loop 1: U-shape, three 10-unit sides, 10-unit gap — must be dropped.
+        // Loop 2: closed 5-unit square at (100,100) — must fill.
+        let dxf = """
+        0
+        SECTION
+          2
+        ENTITIES
+          0
+        HATCH
+          8
+        0
+          2
+        SOLID
+         70
+        1
+         71
+        0
+         91
+        2
+         92
+        1
+         93
+        3
+         72
+        1
+         10
+        0.0
+         20
+        0.0
+         11
+        10.0
+         21
+        0.0
+         72
+        1
+         10
+        10.0
+         20
+        0.0
+         11
+        10.0
+         21
+        10.0
+         72
+        1
+         10
+        10.0
+         20
+        10.0
+         11
+        0.0
+         21
+        10.0
+         97
+        0
+         92
+        1
+         93
+        4
+         72
+        1
+         10
+        100.0
+         20
+        100.0
+         11
+        105.0
+         21
+        100.0
+         72
+        1
+         10
+        105.0
+         20
+        100.0
+         11
+        105.0
+         21
+        105.0
+         72
+        1
+         10
+        105.0
+         20
+        105.0
+         11
+        100.0
+         21
+        105.0
+         72
+        1
+         10
+        100.0
+         20
+        105.0
+         11
+        100.0
+         21
+        100.0
+         97
+        0
+         75
+        0
+         76
+        1
+          0
+        ENDSEC
+          0
+        EOF
+        """
+        let doc = try importDXFString(dxf)
+        var fills: [[Vector3]] = []
+        for entity in doc.allEntities {
+            guard let geom = doc.resolvedGeometry(for: entity) else { continue }
+            for prim in geom {
+                if case .fillComplexPolygon(let outer, _, _) = prim {
+                    fills.append(outer)
+                }
+            }
+        }
+        XCTAssertEqual(
+            fills.count, 1,
+            "Only the closed loop must fill (got \(fills.map(\.count)))")
+        let xs = fills[0].map(\.x)
+        XCTAssertGreaterThanOrEqual(xs.min() ?? 0, 100.0, "Fill must be the square, not the U")
+    }
+
+    /// Edge stitching must preserve stored file order when every joint
+    /// already connects: greedy nearest-neighbor stitching can take a
+    /// wrong branch at shared vertices on dense maps (river hatch 9017),
+    /// reordering edges and opening a closed loop.
+    func testStitchHatchPathsPreservesFileOrder() {
+        func edge(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double) -> CADPolyline {
+            CADPolyline(points: [
+                Vector3(x: x1, y: y1, z: 0), Vector3(x: x2, y: y2, z: 0),
+            ])
+        }
+        // Open U in file order: kept as-is, still open.
+        let u = [
+            edge(0, 0, 10, 0), edge(10, 0, 10, 10), edge(10, 10, 0, 10),
+        ]
+        let stitchedU = DXFEntityConverter.stitchHatchPathsInFileOrder(u, toleranceSquared: 1.0)
+        let uPts = try? XCTUnwrap(stitchedU?.tessellatedPoints())
+        XCTAssertFalse(stitchedU?.isClosed ?? true, "Open loop must stay open, not chord-closed")
+        XCTAssertEqual(uPts?.first, Vector3(x: 0, y: 0, z: 0))
+        XCTAssertEqual(uPts?.last, Vector3(x: 0, y: 10, z: 0))
+        // Closed square in file order: closed, order preserved.
+        let square = [
+            edge(0, 0, 10, 0), edge(10, 0, 10, 10),
+            edge(10, 10, 0, 10), edge(0, 10, 0, 0),
+        ]
+        let stitchedSquare = DXFEntityConverter.stitchHatchPathsInFileOrder(square, toleranceSquared: 1.0)
+        XCTAssertTrue(stitchedSquare?.isClosed ?? false)
+        // Closed loop repeats its first point at the end (4 edges + closure).
+        XCTAssertEqual(stitchedSquare?.tessellatedPoints().count, 5)
+        // Unordered input falls back to greedy: in-order returns nil.
+        let shuffled = [square[2], square[0], square[3], square[1]]
+        XCTAssertNil(DXFEntityConverter.stitchHatchPathsInFileOrder(shuffled, toleranceSquared: 1.0))
+    }
 }

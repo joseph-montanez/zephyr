@@ -855,13 +855,13 @@ public enum DXFEntityConverter {
         // applies them as holes after region building.
         let boundaryLoops = h.loops.filter { ($0.type & 8) == 0 }
 
-        let candidates: [(loop: DXFHatchLoop, path: CADPolyline, points: [Vector3], area: Double)] = boundaryLoops.compactMap { loop in
+        let candidates: [(loop: DXFHatchLoop, path: CADPolyline, points: [Vector3], area: Double, closed: Bool)] = boundaryLoops.compactMap { loop in
             guard let path = buildHatchLoopPath(
                 loop,
                 storedBoundaryTransform: storedBoundaryTransform) else { return nil }
             let points = cleanAdjacentPoints(path.tessellatedPoints())
             guard points.count >= 3 else { return nil }
-            return (loop: loop, path: path, points: points, area: abs(signedArea(points)))
+            return (loop: loop, path: path, points: points, area: abs(signedArea(points)), closed: hatchLoopIsClosed(path))
         }
         guard !candidates.isEmpty else { return [] }
 
@@ -900,12 +900,32 @@ public enum DXFEntityConverter {
             if let p = parent[index] { children[p].append(index) }
         }
 
+        // Open boundary loops cannot bound a fill: AutoCAD reports them
+        // as errors, and triangulating one paints its implicit closing
+        // chord (river hatch 39ED in historical-center-of-krasnoyarsk.dwg
+        // spanned the city on a 3824-unit gap). Drop an open loop together
+        // with everything nested inside it; an open hole simply stops
+        // excluding, so its region paints over it.
+        var dropped = Set<Int>()
+        for index in candidates.indices {
+            var cursor: Int? = index
+            var visited = Set<Int>()
+            while let current = cursor, visited.insert(current).inserted {
+                if !candidates[current].closed {
+                    dropped.insert(index)
+                    break
+                }
+                cursor = parent[current]
+            }
+        }
+        guard dropped.count < candidates.count else { return [] }
+
         let outerIndices: [Int]
         switch h.hStyle {
         case 1, 2:
-            outerIndices = candidates.indices.filter { depths[$0] == 0 }
+            outerIndices = candidates.indices.filter { depths[$0] == 0 && !dropped.contains($0) }
         default:
-            outerIndices = candidates.indices.filter { depths[$0] % 2 == 0 }
+            outerIndices = candidates.indices.filter { depths[$0] % 2 == 0 && !dropped.contains($0) }
         }
 
         return outerIndices
@@ -917,7 +937,7 @@ public enum DXFEntityConverter {
                     holes = []
                 default:
                     holes = children[outerIndex]
-                        .filter { depths[$0] == depths[outerIndex] + 1 }
+                        .filter { depths[$0] == depths[outerIndex] + 1 && !dropped.contains($0) }
                         .sorted { candidates[$0].area > candidates[$1].area }
                         .map { candidates[$0].path }
                 }
@@ -1389,13 +1409,55 @@ public enum DXFEntityConverter {
         return max(hypot(maxX - minX, maxY - minY) * 1e-8, 1e-9)
     }
 
+    /// Concatenate loop edges in stored file order when every joint
+    /// already connects within tolerance. Returns nil when any joint is
+    /// broken so the caller falls back to greedy stitching. An open loop
+    /// (last end far from first start, like river hatch 39ED in
+    /// historical-center-of-krasnoyarsk.dwg) is returned as-is with
+    /// `isClosed == false` so region building can drop it instead of
+    /// chord-filling it; greedy must not reorder it.
+    static func stitchHatchPathsInFileOrder(
+        _ paths: [CADPolyline], toleranceSquared: Double
+    ) -> CADPolyline? {
+        func endPoint(of path: CADPolyline) -> Vector3? {
+            path.hatchEdges.last?.endPoint ?? path.vertices.last?.position
+        }
+        func startPoint(of path: CADPolyline) -> Vector3? {
+            path.hatchEdges.first?.startPoint ?? path.vertices.first?.position
+        }
+        for index in 0..<(paths.count - 1) {
+            guard let tail = endPoint(of: paths[index]),
+                  let head = startPoint(of: paths[index + 1])
+            else { return nil }
+            let dx = tail.x - head.x
+            let dy = tail.y - head.y
+            let dz = tail.z - head.z
+            guard dx * dx + dy * dy + dz * dz <= toleranceSquared else { return nil }
+        }
+        var out = paths[0]
+        for index in 1..<paths.count {
+            appendHatchPath(paths[index], to: &out, toleranceSquared: toleranceSquared)
+        }
+        closeHatchPath(&out, toleranceSquared: toleranceSquared)
+        return out.tessellatedPoints().count >= 3 ? out : nil
+    }
+
     private static func stitchHatchPaths(_ paths: [CADPolyline]) -> CADPolyline? {
         guard !paths.isEmpty else { return nil }
+        let toleranceSquared = hatchPathStitchToleranceSquared(for: paths)
+        // DXF hatch-loop edges are stored in boundary order. Join them
+        // in file order when every joint already connects: greedy
+        // nearest-neighbor stitching can take a wrong branch at shared
+        // vertices on dense maps (e.g. river hatch 9017 in
+        // historical-center-of-krasnoyarsk.dwg), reordering edges and
+        // opening a closed loop. Fall back to greedy only for unordered input.
+        if let inOrder = stitchHatchPathsInFileOrder(paths, toleranceSquared: toleranceSquared) {
+            return inOrder
+        }
         var used = Array(repeating: false, count: paths.count)
         var out = paths[0]
         used[0] = true
         var usedCount = 1
-        let toleranceSquared = hatchPathStitchToleranceSquared(for: paths)
 
         func distSq(_ a: Vector3, _ b: Vector3) -> Double {
             let dx = a.x - b.x
@@ -1500,6 +1562,18 @@ public enum DXFEntityConverter {
                   nearlySamePoint(edgeStart, edgeEnd, toleranceSquared: toleranceSquared) {
             path.isClosed = true
         }
+    }
+
+    /// Whether a built hatch loop counts as closed for region building.
+    /// Honors the DXF closed flag (`path.isClosed`) and, for paths built
+    /// without it, the same stitch tolerance used to join edges, so a
+    /// sloppy-but-shut loop still fills while a genuinely open one (like
+    /// river hatch 39ED's 3824-unit gap) does not.
+    private static func hatchLoopIsClosed(_ path: CADPolyline) -> Bool {
+        if path.isClosed { return true }
+        var probe = path
+        closeHatchPath(&probe, toleranceSquared: hatchPathStitchToleranceSquared(for: [path]))
+        return probe.isClosed
     }
 
     private static func hatchPathStitchToleranceSquared(for paths: [CADPolyline]) -> Double {

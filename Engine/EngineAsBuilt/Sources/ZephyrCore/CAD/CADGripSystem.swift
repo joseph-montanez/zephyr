@@ -17,6 +17,12 @@ import SwiftSDL
 @MainActor
 public enum CADGripSystem {
 
+    /// Midpoint grips are skipped for primitives with more points than
+    /// this: on a 14k-vertex river boundary they double grip generation
+    /// and per-mousemove hit-testing while drawing stays capped at
+    /// `gripMax` anyway. Vertex grips (which drive edits) are unaffected.
+    public static let midpointGripPointLimit = 1024
+
     // MARK: - Grip Hit Testing
 
     /// Returns the grip (if any) at the given screen position within a
@@ -240,19 +246,24 @@ public enum CADGripSystem {
                             screenPos: screen,
                             worldPos: point))
                     }
-                    for segment in 0..<path.segmentCount {
-                        let midpoint = entity.transform.transformPoint(
-                            path.segmentMidpoint(segment))
-                        let screen = EngineCameraManager.worldToScreen(
-                            worldX: midpoint.x, worldY: midpoint.y, cam: cam)
-                        results.append(CADSelectionManager.CadGripInfo(
-                            handle: handle,
-                            grip: .midpoint(
-                                entity: handle,
-                                betweenA: globalIdx + segment,
-                                andB: globalIdx + path.endVertexIndex(forSegment: segment)),
-                            screenPos: screen,
-                            worldPos: midpoint))
+                    // Midpoint grips are skipped on huge boundaries (see
+                    // `midpointGripPointLimit`): vertex grips, which drive
+                    // edits, are unaffected.
+                    if path.vertices.count <= midpointGripPointLimit {
+                        for segment in 0..<path.segmentCount {
+                            let midpoint = entity.transform.transformPoint(
+                                path.segmentMidpoint(segment))
+                            let screen = EngineCameraManager.worldToScreen(
+                                worldX: midpoint.x, worldY: midpoint.y, cam: cam)
+                            results.append(CADSelectionManager.CadGripInfo(
+                                handle: handle,
+                                grip: .midpoint(
+                                    entity: handle,
+                                    betweenA: globalIdx + segment,
+                                    andB: globalIdx + path.endVertexIndex(forSegment: segment)),
+                                screenPos: screen,
+                                worldPos: midpoint))
+                        }
                     }
                     globalIdx += path.vertices.count
                     continue
@@ -292,19 +303,21 @@ public enum CADGripSystem {
                             screenPos: screen,
                             worldPos: point))
                     }
-                    for segment in 0..<boundary.segmentCount {
-                        let midpoint = entity.transform.transformPoint(
-                            boundary.segmentMidpoint(segment))
-                        let screen = EngineCameraManager.worldToScreen(
-                            worldX: midpoint.x, worldY: midpoint.y, cam: cam)
-                        results.append(CADSelectionManager.CadGripInfo(
-                            handle: handle,
-                            grip: .midpoint(
-                                entity: handle,
-                                betweenA: globalIdx + segment,
-                                andB: globalIdx + boundary.endVertexIndex(forSegment: segment)),
-                            screenPos: screen,
-                            worldPos: midpoint))
+                    if boundary.vertices.count <= midpointGripPointLimit {
+                        for segment in 0..<boundary.segmentCount {
+                            let midpoint = entity.transform.transformPoint(
+                                boundary.segmentMidpoint(segment))
+                            let screen = EngineCameraManager.worldToScreen(
+                                worldX: midpoint.x, worldY: midpoint.y, cam: cam)
+                            results.append(CADSelectionManager.CadGripInfo(
+                                handle: handle,
+                                grip: .midpoint(
+                                    entity: handle,
+                                    betweenA: globalIdx + segment,
+                                    andB: globalIdx + boundary.endVertexIndex(forSegment: segment)),
+                                screenPos: screen,
+                                worldPos: midpoint))
+                        }
                     }
                     globalIdx += boundary.vertices.count
                     continue
@@ -323,7 +336,8 @@ public enum CADGripSystem {
                         screenPos: sp, worldPos: pt))
                 }
 
-                if shouldCreateMidpointGrips(for: prim) && pts.count >= 2 {
+                if shouldCreateMidpointGrips(for: prim) && pts.count >= 2
+                    && pts.count <= midpointGripPointLimit {
                     for i in 0..<(pts.count - 1) {
                         let a = pts[i]
                         let b = pts[i + 1]
@@ -364,7 +378,7 @@ public enum CADGripSystem {
                         grip: .vertex(entity: handle, index: globalIdx + i),
                         screenPos: sp, worldPos: pt))
                 }
-                if pts.count >= 2 {
+                if pts.count >= 2 && pts.count <= midpointGripPointLimit {
                     for i in 0..<(pts.count - 1) {
                         let a = pts[i]
                         let b = pts[i + 1]

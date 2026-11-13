@@ -695,6 +695,19 @@ struct AppUI {
     private static var hatchDragPreEditSnapshot: CADDocumentSnapshot?
     private static var hatchDragEntityHandle: UUID?
 
+    /// Cached hatch-edit payloads by entity handle. Building a payload
+    /// re-tessellates every boundary loop and runs island classification
+    /// (O(loops² × vertices)) — on a 14k-vertex river that is ~100ms of
+    /// main-thread work, and this ribbon renders every frame while the
+    /// hatch stays selected. The payload derives purely from the stored
+    /// entity, so the document revision is a complete invalidation key.
+    private struct HatchPayloadCacheEntry {
+        var revision: UInt64
+        var payload: HatchEditPayload
+    }
+
+    private static var hatchPayloadCache: [UUID: HatchPayloadCacheEntry] = [:]
+
     private static func renderHatchEditingRibbonIfNeeded(entity: CADEntity, engine: PhrostEngine) {
         if let activeHandle = hatchDragEntityHandle, activeHandle != entity.handle {
             if let snapshot = hatchDragPreEditSnapshot {
@@ -704,7 +717,20 @@ struct AppUI {
             hatchDragEntityHandle = nil
         }
 
-        guard let payload = hatchEditPayload(from: entity) else { return }
+        let payload: HatchEditPayload
+        let revision = engine.document.renderRevision
+        if let cached = hatchPayloadCache[entity.handle], cached.revision == revision {
+            payload = cached.payload
+        } else {
+            guard let fresh = hatchEditPayload(from: entity) else {
+                hatchPayloadCache.removeValue(forKey: entity.handle)
+                return
+            }
+            if hatchPayloadCache.count > 16 { hatchPayloadCache.removeAll() }
+            hatchPayloadCache[entity.handle] = HatchPayloadCacheEntry(
+                revision: revision, payload: fresh)
+            payload = fresh
+        }
 
         var settings = HatchRibbonUI.Settings(
             fillType: payload.fillType,

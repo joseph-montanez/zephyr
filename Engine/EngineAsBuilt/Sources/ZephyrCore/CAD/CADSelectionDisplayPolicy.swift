@@ -85,12 +85,15 @@ public enum CADSelectionDisplayPolicy {
     // MARK: - Hatch boundary highlight
 
     /// Boundary outline loops (outer + holes, model space, closed) for
-    /// pattern-hatch primitives. Selecting a hatch highlights only its
-    /// boundary outline in the selection color — the pattern lines keep
-    /// their own colors (AutoCAD shows grips on the boundary, not a
-    /// re-tinted fill). Returns [] when the geometry has no `.hatch` /
-    /// `.hatchPath` content. Loops shorter than 2 points are dropped;
-    /// closed loops repeat their first point at the end.
+    /// hatch and solid-fill primitives. Selecting a hatch highlights only
+    /// its boundary outline in the selection color — the pattern lines
+    /// keep their own colors (AutoCAD shows grips on the boundary, not a
+    /// re-tinted fill). Solid fills (`.fillComplexPolygon`/`.gradient`,
+    /// the import form of SOLID hatches) highlight the same way so a
+    /// 14k-vertex river does not fall through to a per-frame walk over
+    /// every tessellated triangle corner. Returns [] when the geometry
+    /// has no hatch/fill content. Loops shorter than 2 points are
+    /// dropped; closed loops repeat their first point at the end.
     public static func hatchBoundaryLoops(in geometry: [CADPrimitive]) -> [[Vector3]] {
         var loops: [[Vector3]] = []
         for primitive in geometry {
@@ -110,6 +113,16 @@ public enum CADSelectionDisplayPolicy {
                     loops.append(outer)
                 }
                 for hole in split.holes {
+                    if let loop = closedLoop(hole) {
+                        loops.append(loop)
+                    }
+                }
+            case .fillComplexPolygon(let outer, let holes, _),
+                 .gradient(let outer, let holes, _, _, _, _):
+                if let loop = closedLoop(outer) {
+                    loops.append(loop)
+                }
+                for hole in holes {
                     if let loop = closedLoop(hole) {
                         loops.append(loop)
                     }

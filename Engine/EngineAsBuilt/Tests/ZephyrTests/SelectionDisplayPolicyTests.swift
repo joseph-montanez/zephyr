@@ -249,13 +249,60 @@ final class SelectionDisplayPolicyTests: XCTestCase {
         XCTAssertTrue(CADSelectionDisplayPolicy.hatchBoundaryLoops(in: []).isEmpty)
         XCTAssertTrue(CADSelectionDisplayPolicy.hatchBoundaryLoops(in: [
             .line(start: .zero, end: Vector3(x: 1, y: 0, z: 0)),
+        ]).isEmpty)
+    }
+
+    /// SOLID hatches import as `.fillComplexPolygon` and must highlight by
+    /// their boundary outline like pattern hatches, not fall through to a
+    /// per-frame walk over every tessellated triangle corner.
+    func testHatchBoundaryLoopsForSolidFill() {
+        let loops = CADSelectionDisplayPolicy.hatchBoundaryLoops(in: [
             .fillComplexPolygon(
                 outer: [
-                    Vector3(x: 0, y: 0, z: 0), Vector3(x: 1, y: 0, z: 0),
-                    Vector3(x: 1, y: 1, z: 0),
+                    Vector3(x: 0, y: 0, z: 0), Vector3(x: 10, y: 0, z: 0),
+                    Vector3(x: 10, y: 10, z: 0), Vector3(x: 0, y: 10, z: 0),
                 ],
-                holes: [], color: nil),
-        ]).isEmpty)
+                holes: [[
+                    Vector3(x: 2, y: 2, z: 0), Vector3(x: 4, y: 2, z: 0),
+                    Vector3(x: 4, y: 4, z: 0), Vector3(x: 2, y: 4, z: 0),
+                ]],
+                color: nil),
+        ])
+        XCTAssertEqual(loops.count, 2)
+        XCTAssertEqual(loops[0].first, loops[0].last)
+        XCTAssertEqual(loops[1].first, loops[1].last)
+    }
+
+    func testHugeFillSkipsMidpointGrips() {
+        // A 14k-vertex river boundary must not double its grip count with
+        // midpoints: generation and per-mousemove hit-testing pay per grip
+        // while drawing stays capped at gripMax anyway. Vertex grips, which
+        // drive edits, are unaffected.
+        let count = CADGripSystem.midpointGripPointLimit + 100
+        var outer: [Vector3] = []
+        outer.reserveCapacity(count)
+        for i in 0..<count {
+            let a = Double(i) / Double(count) * 2.0 * .pi
+            outer.append(Vector3(x: cos(a) * 1000, y: sin(a) * 1000, z: 0))
+        }
+        let doc = CADDocument()
+        let layer = Layer(name: "0")
+        let fill = CADEntity(
+            layerID: layer.handle,
+            localGeometry: [.fillComplexPolygon(outer: outer, holes: [], color: nil)],
+            transform: .identity)
+        doc.importLayersBlocksEntities(layers: [layer], blocks: [], entities: [fill])
+        let cam = CameraTransform(
+            camX: 0, camY: 0, camZoom: 1, camSin: 0, camCos: 1,
+            screenCenterX: 400, screenCenterY: 300)
+        let grips = CADGripSystem.getAllGrips(
+            document: doc, cam: cam, simplifyComplexBlocks: true,
+            selectedHandles: [fill.handle], gripObjectLimit: 100)
+        XCTAssertEqual(grips.count, count)
+        XCTAssertTrue(grips.allSatisfy {
+            if case .vertex = $0.grip { return true }
+            return false
+        })
     }
 
     func testDrawHatchBoundaryHighlightHandlesHatchOnly() {
