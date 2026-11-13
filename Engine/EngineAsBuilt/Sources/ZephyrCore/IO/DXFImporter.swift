@@ -90,6 +90,11 @@ public struct DXFImportResult: Sendable {
     /// Source drawing's $PSTYLEMODE (plot-style mode, 0 = .stb, 1 = .ctb).
     /// Defaults to 1 when the header omits it, matching AutoCAD.
     public let pstyleMode: Int
+    /// The `*ACTIVE` VPORT camera (Model-space saved view), in Zephyr
+    /// world coordinates. Nil when the file carries no usable record
+    /// (absent, non-plan view direction, twisted, or non-finite/height).
+    /// The open flow restores it only if it also overlaps the content.
+    public let modelSavedView: SavedModelView?
     /// Named page setups (standalone PLOTSETTINGS, owner = ACAD_PLOTSETTINGS).
     /// Empty for files without named setups; `<None>` layouts carry no entry.
     public let namedPageSetups: [CADNamedPageSetup]
@@ -110,7 +115,8 @@ public struct DXFImportResult: Sendable {
                 groups: [CADGroup] = [],
                 paperSpaceLinetypeScale: Int = 1,
                 pstyleMode: Int = 1,
-                namedPageSetups: [CADNamedPageSetup] = []) {
+                namedPageSetups: [CADNamedPageSetup] = [],
+                modelSavedView: SavedModelView? = nil) {
         self.layers = layers; self.blocks = blocks; self.entities = entities
         self.textStyles = textStyles; self.linetypePatterns = linetypePatterns
         self.dimensionStyles = dimensionStyles
@@ -127,6 +133,7 @@ public struct DXFImportResult: Sendable {
         self.paperSpaceLinetypeScale = paperSpaceLinetypeScale
         self.pstyleMode = (pstyleMode == 0) ? 0 : 1
         self.namedPageSetups = namedPageSetups
+        self.modelSavedView = modelSavedView
     }
 
     public init(layers: [Layer], blocks: [CADBlock], entities: [CADEntity],
@@ -1102,13 +1109,29 @@ public enum DXFImporter {
                     // historically baked verbatim, so un-shift to preserve exact output.
                     let childGeometry = convertBlockGeometry(named: dimension.name, visited: nextVisited)
                     let childBase = blockBaseByName[dimension.name] ?? .zero
+                    let placed: [StyledPrimitive]
                     if childBase.x == 0 && childBase.y == 0 && childBase.z == 0 {
-                        geometry.append(contentsOf: childGeometry)
+                        placed = childGeometry
                     } else {
                         let unrebase = Transform3D.translated(by: childBase)
-                        geometry.append(contentsOf: childGeometry.map {
+                        placed = childGeometry.map {
                             StyledPrimitive(primitive: Self.transformPrimitive($0.primitive, by: unrebase), style: $0.style, xdata: Self.transformedPrimitiveXData($0.xdata, by: unrebase))
-                        })
+                        }
+                    }
+                    // Associative dimensions regenerate their anonymous display
+                    // block on load; stale stored content (e.g. absolute WCS
+                    // coordinates for a dimension nested in a block definition)
+                    // would double-transform at every INSERT and explode zoom
+                    // extents, so rebuild it from the definition points.
+                    // Healthy content overlaps those points and bakes verbatim.
+                    if let repaired = Self.regeneratedStaleNestedDimension(
+                        dimension,
+                        placed: placed,
+                        dimensionStyles: dimensionStyles,
+                        globalLineTypeScale: globalLineTypeScale) {
+                        geometry.append(contentsOf: repaired)
+                    } else {
+                        geometry.append(contentsOf: placed)
                     }
                     continue
                 }
@@ -2169,6 +2192,40 @@ public enum DXFImporter {
             if let value = reader.header.headerVars["$PSTYLEMODE"] as? Int32 { return value == 0 ? 0 : 1 }
             return 1
         }()
+        // The *ACTIVE VPORT is the Model-space camera active at save time.
+        // Only plan (top-down), untwisted records are usable: anything else
+        // cannot map onto the 2D camera, and the open-flow overlap gate
+        // rejects stale records that miss the content.
+        // Deliberately uses the record's view center WITHOUT adding
+        // view_target: converters (ODA included) demonstrably emit records
+        // whose target+center contradicts the file's own save-time preview
+        // thumbnail (Vivienda Unifamiliar 2: combined it frames a zoomed-in
+        // partial view while the thumbnail shows the full drawing), so a
+        // combined restore would lock onto stale data. The overlap gate plus
+        // extents fallback matches what web viewers observably do; desktop
+        // AutoCAD restores such records blindly, staleness included.
+        let modelSavedView: SavedModelView? = {
+            guard let active = reader.vports.first(where: {
+                $0.name.caseInsensitiveCompare("*ACTIVE") == .orderedSame
+            }) else { return nil }
+            // Direction vectors are not guaranteed unit-length (converters
+            // have emitted magnitudes in the hundreds), so normalize before
+            // the top-down check instead of comparing the raw components.
+            let dirLen = (active.viewDir.x * active.viewDir.x
+                + active.viewDir.y * active.viewDir.y
+                + active.viewDir.z * active.viewDir.z).squareRoot()
+            guard dirLen.isFinite, dirLen > 1e-12,
+                  abs(active.viewDir.x / dirLen) < 1e-9,
+                  abs(active.viewDir.y / dirLen) < 1e-9,
+                  active.viewDir.z / dirLen > 1 - 1e-9,
+                  abs(active.twistAngle) < 1e-9,
+                  active.center.x.isFinite,
+                  active.center.y.isFinite,
+                  active.height.isFinite,
+                  active.height > 1e-9 else { return nil }
+            let center = Self.cadPoint(Vector3(x: active.center.x, y: active.center.y, z: 0))
+            return SavedModelView(centerX: center.x, centerY: center.y, height: active.height)
+        }()
         return DXFImportResult(
             layers: layers,
             blocks: blocks,
@@ -2201,7 +2258,8 @@ public enum DXFImporter {
             pstyleMode: pstyleMode,
             namedPageSetups: reader.plotSettingsEntries.map {
                 CADNamedPageSetup(name: $0.name, settings: $0.settings, isModelType: $0.isModelType)
-            })
+            },
+            modelSavedView: modelSavedView)
     }
 
     /// Moves `CADGroup.stagingPrefix` keys staged during conversion out of
@@ -3212,6 +3270,126 @@ public enum DXFImporter {
         }
 
         return metadata
+    }
+
+    /// Procedural replacement for a nested DIMENSION whose cached anonymous-block
+    /// content is stale, or nil when the cached content is trustworthy and
+    /// should keep baking verbatim.
+    ///
+    /// A healthy nested display block is authored in the containing block's
+    /// frame, so it always overlaps the dimension's own definition points.
+    /// Content far from every definition point is stale (associative
+    /// dimensions regenerate on load; converters may preserve pre-regen
+    /// absolute coordinates), and baking it verbatim double-transforms it at
+    /// each INSERT — exploding the world bounds and the initial zoom-extents.
+    /// Stale content is rebuilt with the same procedural generator every
+    /// dimension edit uses, in the containing block's local frame.
+    private static func regeneratedStaleNestedDimension(
+        _ dimension: DXFDimensionEntity,
+        placed: [StyledPrimitive],
+        dimensionStyles: [String: CADDimensionStyle],
+        globalLineTypeScale: Double
+    ) -> [StyledPrimitive]? {
+        guard var metadata = Self.dimensionMetadata(from: dimension),
+              !placed.isEmpty else { return nil }
+        var metaPoints = [metadata.defPoint, metadata.defPoint2, metadata.textMidpoint]
+        if let p = metadata.defPoint3 { metaPoints.append(p) }
+        if let p = metadata.defPoint4 { metaPoints.append(p) }
+        if let p = metadata.defPoint5 { metaPoints.append(p) }
+        guard metaPoints.allSatisfy({ $0.x.isFinite && $0.y.isFinite && $0.z.isFinite }) else { return nil }
+        let metaBox = BoundingBox3D(from: metaPoints)
+        let contentBox = CADBlock.computeBoundingBox(from: placed.map(\.primitive))
+        let contentFinite = [contentBox.min.x, contentBox.min.y, contentBox.max.x, contentBox.max.y]
+            .allSatisfy { $0.isFinite }
+        if contentFinite {
+            let dx = max(metaBox.min.x - contentBox.max.x, contentBox.min.x - metaBox.max.x, 0)
+            let dy = max(metaBox.min.y - contentBox.max.y, contentBox.min.y - metaBox.max.y, 0)
+            let gap = hypot(dx, dy)
+            let metaSize = metaBox.size
+            let contentSize = contentBox.size
+            let scale = max(hypot(metaSize.x, metaSize.y), hypot(contentSize.x, contentSize.y), 1e-9)
+            // Healthy pictures always touch the definition points; stale
+            // ones sit thousands of picture-diameters away.
+            guard gap > 25 * scale else { return nil }
+        }
+
+        var style = (metadata.styleOverrides
+            ?? dimensionStyles.first {
+                $0.key.caseInsensitiveCompare(metadata.styleName) == .orderedSame
+            }?.value
+            ?? CADDimensionStyle.default).scaled()
+        // Keep the file's text size/face (placement-independent), mirroring
+        // preservingCachedDimensionText without adopting stale positions.
+        for item in placed {
+            guard case .text(_, _, let height, let rotation, let textStyle, _, _, _, _) = item.primitive else { continue }
+            style.textHeight = height
+            style.textStyle = textStyle
+            if metadata.textRotationAngle == nil { metadata.textRotationAngle = rotation }
+            if let backgroundScale = item.style?.textBackgroundScale {
+                style.textBackgroundScale = backgroundScale
+                style.textBackgroundColor = item.style?.textBackgroundColor
+                style.textBackgroundUsesViewportColor =
+                    item.style?.textBackgroundUsesViewportColor ?? false
+            }
+            break
+        }
+
+        let dimStyle = Self.primitiveStyle(from: dimension)
+        let generated = DimensionPrimitives.generatePrimitives(
+            for: metadata, style: style, color: .white)
+        let backgroundStyles = DimensionPrimitives.primitiveStyles(
+            for: generated, dimensionStyle: style)
+        let dimXData = Self.entityStyleXData(
+            from: dimension, globalLineTypeScale: globalLineTypeScale)
+        return generated.enumerated().map { index, primitive in
+            StyledPrimitive(
+                primitive: Self.withReplacedPrimitiveColor(primitive, dimStyle.color),
+                style: backgroundStyles[index] ?? dimStyle,
+                xdata: dimXData)
+        }
+    }
+
+    /// Returns `primitive` with its color payload set to `color`
+    /// (nil = BYLAYER, resolved via the primitive style's layer).
+    private static func withReplacedPrimitiveColor(_ primitive: CADPrimitive, _ color: ColorRGBA?) -> CADPrimitive {
+        switch primitive {
+        case let .point(position, _): return .point(position: position, color: color)
+        case let .line(start, end, _): return .line(start: start, end: end, color: color)
+        case let .rect(origin, size, _): return .rect(origin: origin, size: size, color: color)
+        case let .fillRect(origin, size, _): return .fillRect(origin: origin, size: size, color: color)
+        case let .polygon(points, _): return .polygon(points: points, color: color)
+        case let .polyline(path, _): return .polyline(path: path, color: color)
+        case let .fillPolygon(points, _): return .fillPolygon(points: points, color: color)
+        case let .fillComplexPolygon(outer, holes, _):
+            return .fillComplexPolygon(outer: outer, holes: holes, color: color)
+        case let .gradient(outer, holes, name, angle, color1, color2):
+            return .gradient(outer: outer, holes: holes, gradientName: name, angle: angle, color1: color1, color2: color2)
+        case let .circle(center, radius, _):
+            return .circle(center: center, radius: radius, color: color)
+        case let .arc(center, radius, startAngle, endAngle, _):
+            return .arc(center: center, radius: radius, startAngle: startAngle, endAngle: endAngle, color: color)
+        case let .spline(controlPoints, knots, degree, weights, _):
+            return .spline(controlPoints: controlPoints, knots: knots, degree: degree, weights: weights, color: color)
+        case let .penStroke(vertices, baseLineWeight, _):
+            return .penStroke(vertices: vertices, baseLineWeight: baseLineWeight, color: color)
+        case let .text(position, text, height, rotation, styleName, alignH, alignV, mtextWidth, _):
+            return .text(position: position, text: text, height: height, rotation: rotation,
+                           style: styleName, alignH: alignH, alignV: alignV, mtextWidth: mtextWidth, color: color)
+        case let .ellipse(center, majorAxis, minorRatio, _):
+            return .ellipse(center: center, majorAxis: majorAxis, minorRatio: minorRatio, color: color)
+        case let .hatch(boundary, pattern, scale, angle, _, background):
+            return .hatch(boundary: boundary, pattern: pattern, scale: scale, angle: angle,
+                          color: color, backgroundColor: background)
+        case let .hatchPath(boundary, holes, pattern, scale, angle, _, background):
+            return .hatchPath(boundary: boundary, holes: holes, pattern: pattern, scale: scale, angle: angle,
+                              color: color, backgroundColor: background)
+        case let .ray(start, direction, _): return .ray(start: start, direction: direction, color: color)
+        case let .xline(point, direction, _): return .xline(point: point, direction: direction, color: color)
+        case let .image(insertion, uAxis, vAxis, imageName, clipBoundary, _):
+            return .image(insertion: insertion, uAxis: uAxis, vAxis: vAxis, imageName: imageName,
+                          clipBoundary: clipBoundary, tint: color)
+        case let .table(data, origin, _): return .table(data: data, origin: origin, color: color)
+        }
     }
 
     private static func fallbackDimensionMeasurement(

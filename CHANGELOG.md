@@ -5,107 +5,98 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 ## November 2026
 
 ### New Features
-- **Blocks palette (`BLOCKSPALETTE`)** - browse and insert blocks with thumbnails, search, and favorites; library folders with Browse/Add Files/Recent, background parsing with per-file and per-block previews, file-row thumbnails, stable row IDs, and one-click block Export to DXF/DWG.
-- **Model-space plotting** - `PLOT`, `PAGESETUP`, and `PREVIEW` now work from Model space.
-- **Batch publishing (`PUBLISH`)** - publish multiple sheets to PDF at once from a sheet list.
-- **Save As DWG** - save directly to DWG; version follows `DXFVERSION`.
-- **Sheet sets** - organize drawings into sets, place views, and publish the set.
-- **Callouts and transmit** - tag sheets with callouts and package a set for sharing.
-- **Galactic Purple and Cotton Candy themes** - new dark purple theme with animated starfield canvas, plus a vivid pink theme.
-- **MCP server for AI driving** - local server lets AI tools inspect and drive the app (see `docs/mcp.md`).
-- **Native dimensions from Lisp** - create all dimension types from `entmake` with matching export.
+- **Blocks palette** - browse and insert blocks with thumbnails and search.
+- **Model-space plotting** - plot, page setup, and preview work from Model space.
+- **Batch publishing** - publish multiple sheets to PDF at once.
+- **Save As DWG** - save directly to DWG.
+- **Sheet sets** - organize drawings, place views, and publish the set.
+- **Callouts and transmit** - tag sheets and package a set for sharing.
+- **New themes** - dark purple starfield theme and a vivid pink theme.
+- **MCP server for AI driving** - lets AI tools inspect and drive the app.
+- **Native dimensions from Lisp** - create dimensions from Lisp with matching export.
 
 ### New Commands
-- **PUBLISH / +PUBLISH / -PUBLISH** - dialog or command-line publishing with a CSV log.
-- **-EXPORTPDF** - export the current layout to PDF without dialogs.
+- **PUBLISH / +PUBLISH / -PUBLISH** - publish multiple sheets to PDF.
+- **Sheet-set commands** - `SHEETSET`, `SHEETSETHIDE`, `NEWSHEETSET`, `OPENSHEETSET`, `PLACEVIEW`, `PLACECALLOUT`, `SHEETLISTTABLE`, `-PUBLISHSET`, `-TRANSMITSET`.
+- **Blocks palette** - `BLOCKSPALETTE` / `BLOCKSPALETTECLOSE`.
 - **Layer commands** - `LAYFRZ`, `LAYTHW`, `LAYLCK`, `LAYULK`, `LAYDEL`, `LAYMRG`, `LAYWALK`, `COPYTOLAYER`, `VPLAYER`, `LAYERSTATE`, `LAYERP`, and richer `-LAYER`.
-- **UCS / PLAN** - set custom drawing planes and align the view to them.
-- **MIRROR (`MI`)** - mirror objects across a line with preview.
-- **STRETCH (`S`)** - move points inside a crossing window with preview.
-- **BREAK (`BR`) / BREAKATPOINT** - erase a span between two points or split at a point.
-- **EXTEND (`EX`)** - extend objects to boundary edges, with Quick mode and TRIM crossover.
-- **SNAP with Aspect spacing** - grid snap with separate X/Y spacing (`F9`), plus `GRIDMAJOR`.
-- **STARFIELD (`STARS`)** - toggle the Galactic starfield on or off.
+- **UCS / PLAN** - set custom drawing planes and align the view.
+- **MIRROR (`MI`)** - mirror objects across a line.
+- **STRETCH (`S`)** - stretch points inside a crossing window.
+- **BREAK (`BR`) / BREAKATPOINT** - erase a span or split at a point.
+- **EXTEND (`EX`)** - extend objects to boundary edges.
+- **SNAP / GRIDSPACING / GRIDMAJOR** - grid snap with separate X/Y spacing.
+- **STARFIELD (`STARS`)** - toggle the starfield on or off.
+- **VIEWCTR / VIEWSIZE** - show the viewport center and height.
 
 ### Improvements
-- **Fit/Aligned text** - TEXT with justification 3/5 spans its two definition points.
-- **Space acts as Enter** - Space submits commands like Enter does.
-- **Dropdown option lists** - common prompts show a pick list with the current value marked.
-- **Clickable prompt chips** - command keywords show as clickable chips.
-- **THEME prompt** - bare `THEME` lists themes and switches by name or prefix.
-- **Feature options palette** - Enter picks the highlighted option; clearer selection colors.
-- **PDF font handling** - choose searchable text, outlines, or SHX geometry; options persist.
-- **PDF table text sizing** - scaled title-block tables print at the right size.
-- **PDF Extents framing** - Extents plots no longer shift a full sheet off the page.
-- **PDF plot-style ink** - pen tables now color dimension and table text correctly.
-- **Planar UCS groundwork** - internal math for custom planes; no visible change yet.
-- **Ribbon PATTERN icon** - fallback Draw panel shows `HATCH` then `PATTERN`.
-- **Shared TRIM/EXTEND modes** - both share Quick/Project/Edge modes and Shift-crossover.
-- **Smoother curves when zooming** - curves refine with zoom instead of showing facets.
-- **Faster spline math** - intersection polishing is much faster with the same accuracy.
-- **Consistent trim at any zoom** - trim results no longer change with zoom level.
-- **Layers panel refresh** - multi-select, bulk actions, search, sort, and cleaner rows.
-- **LAYOUT SAveas** - duplicates the current layout under a new name; template-file export is still pending.
-- **MEASUREGEOM Angle mode** - three-click vertex/first/second angle with an arc overlay (`N` hotkey, `AN` keyword, prompt chip).
-- **WBLOCK file export** - DXF or DWG output chosen by extension (DWG via ODA), native save dialog with the extension auto-applied, object selections shifted to the origin with pruned symbol tables and dimension-aware shifting, noun/verb preselection, Enter/Space step confirmation, block-reference picking, xref refusal, and object snaps for the base point.
-- **Cross-tab clipboard** - `COPYCLIP` / `COPYBASE` / `PASTECLIP` / `PASTEBLOCK` now work across open drawings: layers, blocks, and styles resolve by name with the target drawing winning collisions, anonymous blocks clone per paste, attributes/text styles/images/units carry over, and one paste is one Undo; `PASTECLIP` / `PASTEBLOCK` prompt for an insertion point with a cursor ghost and accept typed `x,y[,z]`, `COPYBASE` accepts a snapped click or typed base point, and `PASTEORIG` keeps original coordinates. `Ctrl+C` / `Ctrl+Shift+C` / `Ctrl+V` / `Ctrl+Shift+V` read the event modifier state (physical Ctrl counts on macOS).
+- **Fit/Aligned text** - spans its two points.
+- **Space acts as Enter** - Space submits commands like Enter.
+- **Dropdown option lists** - prompts show a pick list with the current value.
+- **Clickable prompt chips** - command keywords are clickable.
+- **THEME prompt** - bare `THEME` lists and switches themes.
+- **Feature options palette** - Enter picks the highlighted option.
+- **PDF font handling** - choose searchable text, outlines, or SHX geometry.
+- **PDF table text sizing** - scaled tables print at the right size.
+- **PDF Extents framing** - Extents plots stay on the page.
+- **PDF plot-style ink** - pen tables color dimensions and table text.
+- **Shared TRIM/EXTEND modes** - both share Quick/Project/Edge modes.
+- **Smoother curves when zooming** - curves refine with zoom.
+- **Faster spline math** - intersections are faster, same accuracy.
+- **Consistent trim at any zoom** - trim no longer changes with zoom.
+- **Layers panel refresh** - multi-select, bulk actions, search, sort.
+- **LAYOUT SAveas** - duplicate the current layout under a new name.
+- **MEASUREGEOM Angle mode** - three-click angle with an arc overlay.
+- **WBLOCK file export** - export blocks to DXF or DWG.
+- **Cross-tab clipboard** - copy and paste across open drawings.
+- **Restore saved Model view on open** - open at the saved view when it overlaps the drawing, else zoom to extents.
 
 ### DXF & File Formats
 - **Mirrored geometry round-trips** - mirrored blocks and arcs survive save and reopen.
-- **Real spline export** - DXF/EAB keep true `SPLINE` definitions.
+- **Real spline export** - keep true spline definitions.
 
 ### Bug Fixes
-- **Imported text width** - text without an explicit width now uses the DXF default (1.0) instead of the style width.
-- **Text spaces** - import preserves leading/trailing spaces, so alignment columns stay aligned.
-- **SHX text bounds** - selection and picking now use true glyph widths instead of an estimate.
-- **Hatch gaps** - gaps around text in hatches no longer fill in.
-- **Hatch highlight** - selected hatches outline instead of recoloring the pattern.
-- **Streak triangles on huge drawings** - chunked vertex uploads now split only on primitive boundaries; cutting a triangle batch at a non-multiple of 3 phase-shifted every following triangle into map-spanning streaks. Uploads are also fenced (transfer buffers outlive their copies), oversized uploads are refused instead of removing the GPU device, and non-finite segment endpoints never reach the GPU.
-- **HATCH crossing edges** - a line through a shape hatches only the picked side.
-- **Click inside hatches** - clicking anywhere inside a hatch selects it.
-- **Block editor framing** - opening the block editor now fits the block in view, like AutoCAD.
-- **EXPORTPDF prompt** - command line no longer hangs after export.
+- **Imported text width** - uses the correct default width.
+- **Text spaces** - leading and trailing spaces are preserved.
+- **SHX text bounds** - picking uses the rendered size.
+- **Hatch gaps** - blanks around text in hatches stay blank.
+- **Hatch highlight** - selected hatches outline instead of recoloring.
+- **Huge-drawing streaks** - uploads no longer tear into streaks or kill the GPU.
+- **HATCH crossing edges** - hatches only the picked side.
+- **Click inside hatches** - clicking inside a hatch selects it.
+- **Block editor framing** - fits the block in view on open.
+- **EXPORTPDF prompt** - no longer hangs after export.
 - **Table edges on PDFs** - plotted tables keep visible edges.
-- **Table title heights** - style-less titles use the right default height.
-- **Table merges on import** - merged cells and alignment import correctly.
-- **Panning memory use** - panned text sprites no longer leak GPU textures.
-- **Lisp `atof` overflow** - huge exponents now clamp instead of returning infinity.
+- **Table title heights** - use the correct height.
+- **Table merges on import** - merged cells import correctly.
+- **Panning memory use** - text no longer leaks while panning.
+- **Lisp `atof` overflow** - huge numbers clamp instead of returning infinity.
 - **PAN behavior** - pans only while the mouse button is held.
-- **Layout colors** - layouts follow Model layer colors; only ACI 7 inverts on white paper.
-- **Spline trim** - trims stop at the cutting edge instead of overshooting.
-- **Snaps with OTRACK on** - endpoint and midpoint snaps work again with tracking on.
-- **Measurement overlays** - helpers stay on the canvas instead of painting over panels.
-- **Grid visibility and snap** - clearer grid lines; F9 snap uses the exact snap interval.
-- **MCP thumbnails** - thumbnails match the app window orientation.
-- **MCP port failure** - a busy `--mcp-port` exits with an error instead of silently disabling.
-- **Overlapping picks** - clicking stacked objects shows a choice list again.
-- **Zoom extents after scripts** - extents refresh correctly after Lisp/MCP edits.
-- **Wrapped MTEXT leading spaces** - a leading space run wider than the reference width now keeps its own invisible line instead of collapsing, so following words land on AutoCAD's line slots.
-- **Distributed MTEXT paragraphs** - text with the 70=1/71=2/72=2 columns marker (text.dxf "Xxp     pxX") now spreads across the reference width like AutoCAD instead of packing left, so trailing words land in their boxes.
-- **AutoLISP crash while a script runs** - running an AutoLISP function in a document no longer crashes the app: every document read and write now serializes on the document lock, so the per-frame status bar and the background evaluator cannot race on the entity registry.
-- **Cross-tab paste left invisible geometry** - pasting into another drawing no longer lands entities on layers the target drawing does not have; layers, blocks, and styles are remapped by name (target wins) and missing definitions are imported, so pasted content renders and picks immediately.
-- **SHX word wrap** - MTEXT wrap tests now use the same pen-advance width the renderer draws with instead of ink bounds minus a space advance, so `text.dxf` handle 432 wraps `a word wrap` / `example a b c` / `d e` like AutoCAD with no line overflowing the reference width.
+- **Layout colors** - follow Model layer colors.
+- **Spline trim** - stops at the cutting edge.
+- **Snaps with OTRACK on** - endpoint and midpoint snaps work again.
+- **Measurement overlays** - stay on the canvas.
+- **Grid visibility and snap** - clearer grid, exact snap interval.
+- **MCP thumbnails** - match the window orientation.
+- **Overlapping picks** - shows a choice list again.
+- **Zoom extents after scripts** - refreshes correctly after edits.
+- **Wrapped MTEXT leading spaces** - keeps its own line so following words align.
+- **Distributed MTEXT paragraphs** - spreads across the styled width.
+- **AutoLISP crash while a script runs** - no longer crashes; reads and writes are serialized.
+- **Cross-tab paste left invisible geometry** - paste lands on the right layers.
+- **SHX word wrap** - wraps like AutoCAD without overflowing the width.
+- **Stale nested dimensions no longer explode extents** - rebuilt from the definition points so zoom lands on the drawing.
 
 ### Maintenance
-- **Code cleanup** - split up the REVCLOUD file and shared dimension picking; no behavior change.
-- **CRLF-safe icon test** - ribbon icon check passes on Windows checkouts.
+- **Code cleanup** - internal cleanup, no behavior change.
 
 ### Performance
-- **Contained zoom refresh** - viewports inside the tessellated curves skip needless regens.
-- **Faster zoom refresh** - curve-only refresh costs a fraction of a full regen.
-- **Snappier snap and trim** - fewer wasted passes; geometry unchanged.
-- **Faster hover and snap on large drawings** - pointer motion is coalesced to one hover+snap evaluation per frame, hover highlight and selection-cycling pile come from a single document walk, and every snap pass in a mousemove shares one resolver cache; pick results unchanged.
-- **Fewer draw calls on stroke-heavy drawings** - hairline strokes tessellate as 1-px quads through the triangle pipeline instead of separate line-list draws, collapsing tens of thousands of batches into a handful with no draw-order change; a [PerfStats] line beside [FrameTiming] reports verts, batches, sprites, and rebuild activity.
-- **No more main-thread stalls on zoom/pan** - zoom stability uses half-octave bands with hysteresis, in-flight vertex builds are no longer cancelled every frame (relaunches capped at 10/s), and a zoom-stale async build keeps the old buffer instead of forcing a synchronous rebuild.
-- **Text stays visible while panning** - text texture quads are no longer suppressed during pans (they use the same per-frame camera as the CAD matrix, so there was no structural lag to hide); pan-proxy outlines are never drawn.
-- **Quieter, cheaper font resolution** - TTF path lookups are cached per font name with one log line per unique mapping instead of a directory walk and a log line per text entity per regen.
-- **Zoom no longer forces full regens for mixed entities** - entities that curve-only LOD cannot refresh (text/image/table mixed with curves) keep their last tessellation while the rest refresh in place, instead of one mixed entity turning every zoom-band crossing into a full document regen; the live count is reported in [PerfStats] as unsupported.
-- **Quieter hover: panels never highlight, whips never highlight** - moving onto any UI panel clears the hover highlight and selection-cycling pile instead of leaving them glowing underneath, and fast cursor whips skip hover hit-tests entirely until the pointer slows or stops (snap keeps running so drafting is unaffected); explicitly armed Shift+Space cycles are preserved.
-- **Hover pile parity tests** - HoverScanTests pins single-walk hover results to hitTest/allHitsAt, and HoverVelocityTests pins the whip-suppression thresholds and hysteresis.
-- **Survive GPU device loss instead of spamming forever** - command-buffer acquires go through one choke point that stops submission after a streak of failures (one clear message instead of an error per frame), keeping the app closable so work can be saved.
-- **Chunked vertex uploads for huge drawings** - tessellated geometry uploads as multiple driver-safe buffers (4M verts each) instead of one giant allocation that removes the device; batches are split mid-run without changing draw order or pixels. Oversized single uploads are refused with the vertex/MB count instead of killing the GPU.
-- **Chunked uploads are fenced** - each 128 MB copy submits with a GPU fence and its transfer buffer stays alive until the fence completes; releasing/reusing transfer memory mid-copy tore vertex data across chunks on huge drawings (map-spanning streak triangles).
-- **Chunked rendering proven pixel-identical** - TessellationTilingTests pins batch tiling on real tessellator output (including degenerate inputs) and proves chunk splits preserve every vertex and the full draw coverage; non-finite segment endpoints are dropped instead of reaching the GPU.
+- **Zoom and pan stay smooth on large drawings** - zoom no longer stalls or forces full rebuilds; curves refine in place and text stays visible while panning.
+- **Faster hover and snap** - moving the cursor is cheaper on big drawings; snaps feel instant.
+- **Fewer draw calls on line-heavy drawings** - renders much faster without changing the picture.
+- **Quieter hover** - panels and fast cursor moves no longer highlight.
+- **Survives GPU trouble** - reports one clear message instead of spamming, so you can still save and close.
+- **Huge drawings keep working** - geometry uploads in safe chunks instead of killing the GPU.
 
 ## October 2026
 

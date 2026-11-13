@@ -967,6 +967,94 @@ public final class PhrostEngine {
             boundsCenterY - worldShiftY)
     }
 
+    /// Live camera readout for the `VIEWCTR` / `VIEWSIZE` echo: the world
+    /// point at the viewport center and the world-units-tall visible height.
+    public func liveViewCenterAndHeight() -> (center: Vector3, height: Double) {
+        let viewportX: Double
+        let viewportY: Double
+        let viewportWidth: Double
+        let viewportHeight: Double
+        if let viewport = ui.mainViewportRect() {
+            viewportX = Double(viewport.x)
+            viewportY = Double(viewport.y)
+            viewportWidth = max(Double(viewport.w), 1.0)
+            viewportHeight = max(Double(viewport.h), 1.0)
+        } else {
+            viewportX = 0
+            viewportY = 0
+            viewportWidth = max(Double(windowWidth), 1.0)
+            viewportHeight = max(Double(windowHeight), 1.0)
+        }
+        let readout = SavedInitialView.liveView(
+            offsetX: camera.offset.0,
+            offsetY: camera.offset.1,
+            zoom: camera.zoom,
+            rotation: camera.rotation,
+            viewportX: viewportX,
+            viewportY: viewportY,
+            viewportWidth: viewportWidth,
+            viewportHeight: viewportHeight,
+            windowWidth: Double(windowWidth),
+            windowHeight: Double(windowHeight))
+        return (
+            center: Vector3(x: readout.centerX, y: readout.centerY, z: 0),
+            height: readout.height)
+    }
+
+    /// Frame the Model view on open: restore the drawing's saved `*ACTIVE`
+    /// view when it is sane and overlaps the visible content (desktop
+    /// AutoCAD parity), otherwise zoom to extents (the previous behavior,
+    /// matching the AutoCAD Web-style fit). Only the file-open flow calls
+    /// this; the explicit Zoom Extents command keeps unconditional fitting.
+    public func frameInitialView() {
+        guard let tab = tabManager.activeTab,
+              tab.drawingViews.indices.contains(tab.activeViewIndex),
+              tab.drawingViews[tab.activeViewIndex].kind == .model,
+              let saved = tab.initialModelView
+        else {
+            zoomExtents()
+            return
+        }
+
+        let viewportX: Double
+        let viewportY: Double
+        let viewportWidth: Double
+        let viewportHeight: Double
+        if let viewport = ui.mainViewportRect() {
+            viewportX = Double(viewport.x)
+            viewportY = Double(viewport.y)
+            viewportWidth = max(Double(viewport.w), 1.0)
+            viewportHeight = max(Double(viewport.h), 1.0)
+        } else {
+            viewportX = 0
+            viewportY = 0
+            viewportWidth = max(Double(windowWidth), 1.0)
+            viewportHeight = max(Double(windowHeight), 1.0)
+        }
+
+        guard SavedInitialView.shouldRestore(
+            saved: saved,
+            content: tabManager.activeDocument.renderableWorldBoundingBox(),
+            viewportWidth: viewportWidth,
+            viewportHeight: viewportHeight
+        ) else {
+            zoomExtents()
+            return
+        }
+
+        let framed = SavedInitialView.camera(
+            saved: saved,
+            viewportX: viewportX,
+            viewportY: viewportY,
+            viewportWidth: viewportWidth,
+            viewportHeight: viewportHeight,
+            windowWidth: Double(windowWidth),
+            windowHeight: Double(windowHeight),
+            rotation: camera.rotation)
+        camera.zoom = max(0.000001, min(framed.zoom, 1e15))
+        camera.offset = (framed.offsetX, framed.offsetY)
+    }
+
     // MARK: - Auxiliary Windows
 
     /// Create an additional OS window on the shared GPU device and register

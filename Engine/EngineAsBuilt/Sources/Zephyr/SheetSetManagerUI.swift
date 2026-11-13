@@ -137,6 +137,7 @@ struct SheetSetManagerUI {
             if igButton("Open Drawing", ImVec2(x: 0, y: 0)) {
                 do {
                     try engine.tabManager.openTab(url: URL(fileURLWithPath: sheet.absoluteFile))
+                    engine.frameInitialView()
                 } catch {
                     print("[SheetSet] Open drawing failed: \(error.localizedDescription)")
                 }
@@ -232,6 +233,7 @@ struct SheetSetManagerUI {
                     if igButton("Open Drawing", ImVec2(x: 0, y: 0)) {
                         do {
                             try engine.tabManager.openTab(url: URL(fileURLWithPath: path))
+                            engine.frameInitialView()
                             selectedModelFile = nil
                         } catch {
                             print("[SheetSet] Open drawing failed: \(error.localizedDescription)")

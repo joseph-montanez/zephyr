@@ -447,6 +447,7 @@ public final class RecoverCommand: FeatureCommand {
             return .finished
         }
         let document = engine.tabManager.tabs[index].document
+        engine.frameInitialView()
         let found = AuditEngine.validate(document: document)
         let fixed = found.errorCount > 0
             ? AuditEngine.applyFixes(report: found, to: document) : 0

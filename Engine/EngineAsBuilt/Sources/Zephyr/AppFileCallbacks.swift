@@ -15,11 +15,12 @@ import ImGui
 struct AppFileCallbacks {
     static func configure(on engine: PhrostEngine) {
         // Callback invoked when the user selects a file in the Open dialog.
-        // Opens the DXF/EAB file in a new tab and fits the view to content.
+        // Opens the DXF/EAB file in a new tab and frames the initial view
+        // (saved *ACTIVE view when sane, else zoom to extents).
         engine.fileBrowser.onFileSelected = { url in
             do {
                 try engine.tabManager.openTab(url: url)
-                engine.zoomExtents()
+                engine.frameInitialView()
                 print("DXF opened in new tab: \(url.lastPathComponent)")
             } catch {
                 print("DXF import failed: \(error)")

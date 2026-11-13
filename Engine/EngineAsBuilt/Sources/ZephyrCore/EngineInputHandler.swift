@@ -750,7 +750,7 @@ internal final class EngineInputHandler {
                             }
                         }
                         if !urls.isEmpty {
-                            engine.zoomExtents()
+                            engine.frameInitialView()
                         }
                     }
                 case SDL_SCANCODE_N:
@@ -1254,7 +1254,7 @@ internal final class EngineInputHandler {
         if cadExtensions.contains(ext) {
             do {
                 try engine.tabManager.openTab(url: URL(fileURLWithPath: pathStr))
-                engine.zoomExtents()
+                engine.frameInitialView()
                 print("[Drop] Opened CAD file: \(pathStr)")
             } catch {
                 print("[Drop] Failed to open CAD file \(pathStr): \(error)")

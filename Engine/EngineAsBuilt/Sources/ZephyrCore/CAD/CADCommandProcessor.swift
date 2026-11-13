@@ -384,6 +384,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "UCS",        aliases: [],                category: .view,    syntax: "[World/3point/View/Z/Origin/Prev] <World>", description: "Define the planar user coordinate system"),
         CommandDescriptor(canonicalName: "PLAN",       aliases: [],                category: .view,    syntax: "[Current ucs/Ucs/World] <Current>", description: "Align the view to the current or World UCS XY plane and zoom to extents"),
         CommandDescriptor(canonicalName: "DVIEW",      aliases: ["DV"],            category: .view,    syntax: "", description: "Dynamic view: twist the 2D view angle"),
+        CommandDescriptor(canonicalName: "VIEWCTR",    aliases: [],                category: .view,    syntax: "", description: "Display the center of the current viewport (read-only system variable)"),
+        CommandDescriptor(canonicalName: "VIEWSIZE",   aliases: [],                category: .view,    syntax: "", description: "Display the height of the current viewport (read-only system variable)"),
         CommandDescriptor(canonicalName: "SNAPANG",    aliases: [],                category: .settings, syntax: "<degrees>", description: "Set the crosshair and ortho rotation angle"),
         // --- Layer ---
         CommandDescriptor(canonicalName: "LAYER",      aliases: ["LA"],            category: .layer,   syntax: "", description: "Show/hide the layer panel"),
@@ -1447,7 +1449,7 @@ public final class CADCommandProcessor {
                     }
                 }
                 if !urls.isEmpty {
-                    eng.zoomExtents()
+                    eng.frameInitialView()
                 }
             }
         case "PDFI", "PDFIMPORT", "PDF":
@@ -2699,6 +2701,19 @@ public final class CADCommandProcessor {
             else if let eng = engine {
                 let parts = upper.split(maxSplits: 1, whereSeparator: \.isWhitespace)
                 let commandName = parts.first.map(String.init) ?? upper
+                // Bare read-only view sysvars echo the live camera
+                // (AutoCAD parity); anything with arguments stays unknown.
+                if parts.count == 1 {
+                    let readout = eng.liveViewCenterAndHeight()
+                    if let echo = Self.liveSysvarEcho(
+                        name: commandName,
+                        center: readout.center,
+                        height: readout.height) {
+                        print(echo)
+                        clearCommand()
+                        return
+                    }
+                }
                 guard let factory = featureCommandRegistry[commandName] else {
                     // Reserved LT names land here until their phase ships:
                     // report honestly instead of "unknown command".
@@ -2726,6 +2741,25 @@ public final class CADCommandProcessor {
             } else {
                 clearCommand()
             }
+        }
+    }
+
+    /// Bare read-only view sysvars echo the live camera (AutoCAD prints the
+    /// value when the name is typed). Returns nil for anything else so the
+    /// normal unknown-command flow applies. `SETVAR`-style assignment is
+    /// unsupported: anything with arguments falls through as unknown.
+    /// Pure over explicit values so the mapping is unit-testable; the
+    /// engine call site supplies the live readout.
+    static func liveSysvarEcho(name: String, center: Vector3, height: Double) -> String? {
+        switch name {
+        case "VIEWCTR":
+            return String(
+                format: "VIEWCTR = %.6f,%.6f,%.6f (read-only)",
+                center.x, center.y, center.z)
+        case "VIEWSIZE":
+            return String(format: "VIEWSIZE = %.6f (read-only)", height)
+        default:
+            return nil
         }
     }
 

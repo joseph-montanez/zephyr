@@ -160,6 +160,10 @@ public struct DocumentTab {
     /// File-level DXF records shared by model space and every layout.
     /// Kept at tab scope so switching/replacing a drawing view cannot discard them.
     public var dxfRoundTripPayload: DXFRoundTripPayload?
+    /// The drawing's saved `*ACTIVE` Model-space view (`DXFImportResult.modelSavedView`).
+    /// The open flow restores it when the overlap gate passes, else zooms to
+    /// extents. Nil for EAB/new tabs (EAB carries its own per-view cameras).
+    public var initialModelView: SavedModelView?
     /// Per-tab camera state (zoom, pan, rotation). Preserved across tab switches.
     public var cameraState: CameraState {
         get { drawingViews[activeViewIndex].cameraState }
@@ -623,13 +627,14 @@ public final class TabManager {
             let drawingViews = DrawingViewFactory.makeDrawingViews(
                 from: imported, sourceFileName: url.lastPathComponent)
             let displayName = url.lastPathComponent
-            let tab = DocumentTab(
+            var tab = DocumentTab(
                 document: drawingViews[0].document,
                 fileURL: url,
                 displayName: displayName,
                 drawingViews: drawingViews,
                 namedPageSetups: imported.namedPageSetups
             )
+            tab.initialModelView = imported.modelSavedView
             tabs.append(tab)
         kickXrefLoads(for: tab)
             let idx = tabs.count - 1
@@ -649,13 +654,14 @@ public final class TabManager {
             from: imported, sourceFileName: url.lastPathComponent)
         let doc = drawingViews[0].document
         let displayName = url.lastPathComponent
-        let tab = DocumentTab(
+        var tab = DocumentTab(
             document: doc,
             fileURL: url,
             displayName: displayName,
             drawingViews: drawingViews,
             namedPageSetups: imported.namedPageSetups
         )
+        tab.initialModelView = imported.modelSavedView
         tabs.append(tab)
         kickXrefLoads(for: tab)
         let idx = tabs.count - 1
