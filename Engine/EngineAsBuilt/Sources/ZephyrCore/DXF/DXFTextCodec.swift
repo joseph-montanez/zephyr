@@ -104,6 +104,42 @@ public class DXFTextCodec {
         }
     }
 
+    /// Decode one raw DXF value's file bytes to a Unicode String.
+    ///
+    /// Unlike `toUtf8(_:)`, which expects a byte-per-scalar String (Latin-1
+    /// surfaced), this takes the exact file bytes for one group-code value.
+    /// R2007+ values are UTF-8 (with per-value code-page fallback when a
+    /// value is not valid UTF-8); pre-2007 values use the declared code page.
+    /// ASCII values pass through without a codec conversion.
+    public func decodeBytes(_ data: Data) -> String {
+        var isASCII = true
+        var hasBackslash = false
+        for byte in data {
+            if byte >= 0x80 { isASCII = false; break }
+            if byte == 0x5C { hasBackslash = true }
+        }
+        if isASCII {
+            guard let ascii = String(data: data, encoding: .ascii) else { return "" }
+            return hasBackslash ? decodeUnicodeEscapes(ascii) : ascii
+        }
+        if storesStringsAsUTF8 || codePage == "UTF-8" || codePage == "UTF-16" {
+            if let decoded = String(data: data, encoding: .utf8) {
+                let hasEscapes = decoded.contains("\\")
+                return hasEscapes ? decodeUnicodeEscapes(decoded) : decoded
+            }
+            // A single invalid UTF-8 value (e.g. a CP1252 degree byte inside an
+            // otherwise UTF-8 file): fall back to the declared code page for
+            // this value only, so valid UTF-8 values elsewhere are untouched.
+            let latin = String(data: data, encoding: .isoLatin1) ?? ""
+            return decodeUnicodeEscapes(foundationDecode(latin))
+        }
+        // Pre-2007: bytes are in the declared code page. Surface bytes 1:1 as
+        // Latin-1 scalars, then use the same conversion `toUtf8` uses for
+        // byte-per-scalar strings.
+        let latin = String(data: data, encoding: .isoLatin1) ?? ""
+        return decodeUnicodeEscapes(foundationDecode(latin))
+    }
+
     // MARK: - Foundation Conversion
 
     /// Decode string from DXF code page using Foundation String.Encoding.

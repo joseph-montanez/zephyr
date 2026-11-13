@@ -23,10 +23,10 @@ public struct DXFSortEntsTable: Sendable {
 /// The byte scanner and the historical decode-then-split parser are kept side by side so their output
 /// can be compared on real drawings (`ZephyrBench dxf-digest --compare`). The default is `automatic`.
 public enum DXFPairParsingMode: Sendable {
-    /// Byte scanner for pure-ASCII files (the overwhelmingly common case), legacy path for anything
-    /// containing non-ASCII bytes so ANSI/Latin-1 drawings keep decoding exactly as they used to.
+    /// Byte scanner for pure-ASCII files, byte-preserving tokenization with per-value
+    /// decoding for anything containing non-ASCII bytes.
     case automatic
-    /// Force the byte scanner. Falls back to the legacy path if the file is not pure ASCII.
+    /// Force the byte scanner (same fallback as `automatic`).
     case byteScanner
     /// Force the historical `String` + `components(separatedBy:)` parser.
     case legacyStrings
@@ -170,23 +170,25 @@ public class DXFReader {
 
     /// Parse DXF from raw bytes — the entry point both `readFile` and `readString` funnel through.
     ///
-    /// Pure-ASCII files (which is what DXF is, and what the reference drawings are) never materialise
-    /// a whole-file `String`: the group codes and values are scanned straight out of the byte buffer.
-    /// Files containing non-ASCII bytes fall back to the original decode-then-split path so that ANSI
-    /// / Latin-1 drawings keep decoding exactly as before (accented layer names must not degrade into
-    /// replacement characters).
+    /// Pure-ASCII files never materialise a whole-file `String`: the group codes and values
+    /// are scanned straight out of the byte buffer. Files containing non-ASCII bytes are
+    /// tokenized byte-preservingly, with `$ACADVER`/`$DWGCODEPAGE` sniffed first so each
+    /// value is decoded once by the version-aware codec — valid UTF-8 values cannot be
+    /// poisoned by one unrelated code-page byte elsewhere in the file.
     public func readData(_ data: Data, mode: DXFPairParsingMode = .automatic) throws -> DXFReader {
         DXFProfile.reset("DXFReader.readData")
         let scannedPairs = mode == .legacyStrings ? nil : parsePairsFromBytes(data)
         if let scannedPairs {
             pairs = scannedPairs
-        } else {
+        } else if mode == .legacyStrings {
             guard let content = String(data: data, encoding: .ascii)
                     ?? String(data: data, encoding: .utf8)
                     ?? String(data: data, encoding: .isoLatin1) else {
                 throw ReaderError.invalidFormat("Cannot decode DXF file as ASCII.")
             }
             pairs = try parsePairs(content)
+        } else {
+            pairs = parsePairsPreservingBytes(data)
         }
         DXFProfile.mark("tokenize pairs")
         pos = 0
@@ -347,6 +349,101 @@ public class DXFReader {
         }
 
         return failure ? nil : result
+    }
+
+    /// Byte-preserving tokenization for files containing non-ASCII bytes.
+    ///
+    /// Splits the file into `(code, valueBytes)` on CR/LF only — treating a raw
+    /// `0x85`/VT/FF byte as a terminator would split inside UTF-8 sequences — then
+    /// sniffs `$ACADVER`/`$DWGCODEPAGE` (either order) and decodes each value once
+    /// via the version-aware codec, so one invalid UTF-8 byte cannot corrupt every
+    /// other value as whole-file decoding does.
+    private func parsePairsPreservingBytes(_ data: Data) -> [(code: Int, value: String)] {
+        let bytesPairs = tokenizeValueBytes(data)
+        let header = sniffHeader(from: bytesPairs)
+        let codec = DXFTextCodec()
+        codec.setVersion(header.version)
+        codec.setCodePage(header.codePage)
+        textCodec.setVersion(header.version)
+        textCodec.setCodePage(header.codePage)
+        return bytesPairs.map { pair in
+            (pair.code, codec.decodeBytes(pair.value))
+        }
+    }
+
+    private func tokenizeValueBytes(_ data: Data) -> [(code: Int, value: Data)] {
+        var result: [(code: Int, value: Data)] = []
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            guard let baseAddress = raw.baseAddress, raw.count > 0 else { return }
+            let bytes = Span<UInt8>(
+                _unsafeStart: baseAddress.assumingMemoryBound(to: UInt8.self),
+                count: raw.count)
+            result.reserveCapacity(raw.count / 12)
+            var index = 0
+            while index < bytes.count {
+                let codeStart = index
+                while index < bytes.count, bytes[index] != 0x0A, bytes[index] != 0x0D {
+                    index += 1
+                }
+                let codeEnd = index
+                if index < bytes.count, bytes[index] == 0x0D,
+                   index + 1 < bytes.count, bytes[index + 1] == 0x0A {
+                    index += 2
+                } else if index < bytes.count {
+                    index += 1
+                }
+                if codeStart == codeEnd { continue }
+                guard let code = Self.parseInt(bytes, codeStart, codeEnd) else { continue }
+                guard index < bytes.count else { break }
+                let valueStart = index
+                while index < bytes.count, bytes[index] != 0x0A, bytes[index] != 0x0D {
+                    index += 1
+                }
+                let valueEnd = index
+                if index < bytes.count, bytes[index] == 0x0D,
+                   index + 1 < bytes.count, bytes[index + 1] == 0x0A {
+                    index += 2
+                } else if index < bytes.count {
+                    index += 1
+                }
+                var trimmedStart = valueStart
+                var trimmedEnd = valueEnd
+                if code != 1 && code != 3 {
+                    while trimmedStart < trimmedEnd, Self.isValuePadding(bytes[trimmedStart]) { trimmedStart += 1 }
+                    while trimmedEnd > trimmedStart, Self.isValuePadding(bytes[trimmedEnd - 1]) { trimmedEnd -= 1 }
+                }
+                result.append((code, data.subdata(in: trimmedStart..<trimmedEnd)))
+            }
+        }
+        return result
+    }
+
+    private func sniffHeader(from bytesPairs: [(code: Int, value: Data)]) -> (version: DXFVersion, codePage: String) {
+        var version: DXFVersion = .r2007
+        var codePageValue: String? = nil
+        var pendingHeaderName: String? = nil
+        for pair in bytesPairs {
+            if pair.code == 9 {
+                let name = String(decoding: pair.value, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                pendingHeaderName = name
+                continue
+            }
+            guard let headerName = pendingHeaderName else { continue }
+            if pair.code == 1, headerName == "$ACADVER" {
+                let raw = String(decoding: pair.value, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+                version = DXFVersion(rawValue: raw) ?? .unknown
+            } else if pair.code == 3, headerName == "$DWGCODEPAGE" {
+                codePageValue = String(decoding: pair.value, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            // $ACADVER/$DWGCODEPAGE are single-pair values; the next group-code
+            // pair is a different variable, so the pending name is spent.
+            pendingHeaderName = nil
+        }
+        let codePage = codePageValue.map { DXFTextCodec().normalizeCodePage($0) } ?? "ANSI_1252"
+        return (version, codePage)
     }
 
     // MARK: - Section parsing
