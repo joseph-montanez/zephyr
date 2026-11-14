@@ -12,7 +12,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Callouts and transmit** - tag sheets and package a set for sharing.
 - **Save As DWG** - save directly to DWG.
 - **New themes** - dark purple starfield theme and a vivid pink theme.
-- **MCP server for AI driving** - lets AI tools inspect and drive the app.
+- **MCP server for AI driving** - lets AI tools inspect and drive the app, now with headless open (`open_drawing`) on the same import path as the Open dialog.
 - **Native dimensions from Lisp** - create dimensions from Lisp with matching export.
 
 ### New Commands
@@ -93,6 +93,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Zoom extents after scripts** - refreshes correctly after edits.
 - **Stale nested dimensions no longer explode extents** - rebuilt from the definition points so zoom lands on the drawing.
 - **Cross-tab paste left invisible geometry** - paste lands on the right layers.
+- **Regen needed a mouse wiggle to show** - regenerated and imported geometry now presents without cursor input; vertex-build completions wake the frame loop instead of waiting for an event.
 
 ### Maintenance
 - **Code cleanup** - internal cleanup, no behavior change.
