@@ -60,22 +60,30 @@ public final class PlanCommand: FeatureCommand {
         worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor
     ) {}
 
+    /// AutoCAD parity: an option key typed at the PLAN prompt is command-line
+    /// input, never an immediate command. The prompt line is already active
+    /// (`openPrompt`), so raw key-downs only decline here while Space/Enter
+    /// submits the buffer through `handleCommandText`. Engine-free seam for
+    /// unit tests.
+    func bufferOptionKey(processor: CADCommandProcessor) -> CommandResult {
+        if !processor.commandLineActive {
+            processor.commandLineActive = true
+            processor.promptInputKind = .token
+        }
+        return .continue
+    }
+
     public func handleKeyDown(
         scancode: SDL_Scancode,
         engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
+        // Never execute on raw key-down: option keys buffer in the open
+        // command line and run on Space/Enter (see `bufferOptionKey`).
         switch scancode {
         case SDL_SCANCODE_ESCAPE:
             return .finished
-        case SDL_SCANCODE_C:
-            return handleCommandText(
-                "CURRENT", engine: engine, processor: processor)
-        case SDL_SCANCODE_U:
-            return handleCommandText(
-                "UCS", engine: engine, processor: processor)
-        case SDL_SCANCODE_W:
-            return handleCommandText(
-                "WORLD", engine: engine, processor: processor)
+        case SDL_SCANCODE_C, SDL_SCANCODE_U, SDL_SCANCODE_W:
+            return bufferOptionKey(processor: processor)
         default:
             return .continue
         }
@@ -193,6 +201,7 @@ public final class PlanCommand: FeatureCommand {
         processor.commandPrompt = prompt
         processor.commandBuffer = ""
         processor.commandSelectionIndex = 0
+        processor.promptInputKind = .token
         processor.commandLineActive = true
         print("[CAD] \(prompt)")
     }

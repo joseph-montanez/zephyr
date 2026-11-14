@@ -122,6 +122,22 @@ public final class UCSCommand: FeatureCommand {
         worldX: Double, worldY: Double, engine: PhrostEngine, processor: CADCommandProcessor
     ) {}
 
+    /// AutoCAD parity: an option key typed at the UCS prompt is command-line
+    /// input, never an immediate command. The prompt line is already active
+    /// (`openPrompt`), so raw key-downs only decline here while Space/Enter
+    /// submits the buffer through `handleCommandText`. Engine-free seam for
+    /// unit tests.
+    func bufferOptionKey(processor: CADCommandProcessor) -> CommandResult {
+        guard phase == .options else { return .continue }
+        // `start` keeps the line open via `openPrompt`; re-open it if a
+        // fallback path closed it so the keystroke is not lost.
+        if !processor.commandLineActive {
+            processor.commandLineActive = true
+            processor.promptInputKind = .token
+        }
+        return .continue
+    }
+
     public func handleKeyDown(
         scancode: SDL_Scancode,
         engine: PhrostEngine, processor: CADCommandProcessor
@@ -132,43 +148,12 @@ public final class UCSCommand: FeatureCommand {
         guard phase == .options else {
             return .continue
         }
+        // Never execute on raw key-down: option keys buffer in the open
+        // command line and run on Space/Enter (see `bufferOptionKey`).
         switch scancode {
-        case SDL_SCANCODE_W:
-            return applyOption(
-                .world, remainder: "",
-                document: engine.document,
-                cameraRotation: engine.camera.rotation,
-                processor: processor)
-        case SDL_SCANCODE_3, SDL_SCANCODE_KP_3:
-            return applyOption(
-                .threePoint, remainder: "",
-                document: engine.document,
-                cameraRotation: engine.camera.rotation,
-                processor: processor)
-        case SDL_SCANCODE_V:
-            return applyOption(
-                .view, remainder: "",
-                document: engine.document,
-                cameraRotation: engine.camera.rotation,
-                processor: processor)
-        case SDL_SCANCODE_Z:
-            return applyOption(
-                .z, remainder: "",
-                document: engine.document,
-                cameraRotation: engine.camera.rotation,
-                processor: processor)
-        case SDL_SCANCODE_O:
-            return applyOption(
-                .origin, remainder: "",
-                document: engine.document,
-                cameraRotation: engine.camera.rotation,
-                processor: processor)
-        case SDL_SCANCODE_P:
-            return applyOption(
-                .previous, remainder: "",
-                document: engine.document,
-                cameraRotation: engine.camera.rotation,
-                processor: processor)
+        case SDL_SCANCODE_W, SDL_SCANCODE_3, SDL_SCANCODE_KP_3, SDL_SCANCODE_V,
+             SDL_SCANCODE_Z, SDL_SCANCODE_O, SDL_SCANCODE_P:
+            return bufferOptionKey(processor: processor)
         default:
             return .continue
         }
@@ -467,6 +452,7 @@ public final class UCSCommand: FeatureCommand {
         processor.commandPrompt = prompt
         processor.commandBuffer = ""
         processor.commandSelectionIndex = 0
+        processor.promptInputKind = .token
         processor.commandLineActive = true
         print("[CAD] \(prompt)")
     }

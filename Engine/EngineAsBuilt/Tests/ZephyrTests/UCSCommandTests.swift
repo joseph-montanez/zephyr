@@ -438,4 +438,78 @@ final class UCSCommandTests: XCTestCase {
         processor.executeCommand("PLAN WORLD")
         XCTAssertNil(processor.commandPrompt)
     }
+
+    // MARK: - AutoCAD parity: option keys buffer, Space/Enter submits
+
+    func testUCSOptionKeyBuffersInsteadOfExecuting() {
+        let document = makeDocument()
+        let processor = makeProcessor()
+        let command = UCSCommand()
+        command.start(processor: processor)
+        XCTAssertEqual(processor.promptInputKind, .token)
+        // A raw option key must not start the option: phase stays
+        // .options and the frame is untouched.
+        XCTAssertEqual(command.bufferOptionKey(processor: processor), .continue)
+        XCTAssertEqual(command.phase, .options)
+        XCTAssertEqual(document.ucsState.definition, .identity)
+        // The same letter still resolves through the submit path.
+        XCTAssertEqual(
+            command.handleCommandText(
+                "W", document: document, cameraRotation: 0, processor: processor),
+            .finished)
+        XCTAssertEqual(document.ucsState.name, "*WORLD*")
+    }
+
+    func testUCSOptionKeyReopensLineWhenClosed() {
+        let processor = makeProcessor()
+        let command = UCSCommand()
+        command.start(processor: processor)
+        processor.commandLineActive = false
+        XCTAssertEqual(command.bufferOptionKey(processor: processor), .continue)
+        XCTAssertTrue(processor.commandLineActive)
+        XCTAssertEqual(processor.promptInputKind, .token)
+    }
+
+    func testUCSOptionKeyIgnoresNonOptionsPhases() {
+        let document = makeDocument()
+        let processor = makeProcessor()
+        let command = UCSCommand()
+        command.start(processor: processor)
+        XCTAssertEqual(
+            command.handleCommandText(
+                "Z", document: document, cameraRotation: 0, processor: processor),
+            .continue)
+        XCTAssertEqual(command.phase, .zAngle)
+        XCTAssertEqual(command.bufferOptionKey(processor: processor), .continue)
+        XCTAssertEqual(command.phase, .zAngle)
+    }
+
+    func testPlanOptionKeyBuffersInsteadOfExecuting() {
+        let processor = makeProcessor()
+        let command = PlanCommand()
+        command.start(processor: processor)
+        XCTAssertEqual(processor.promptInputKind, .token)
+        XCTAssertEqual(command.bufferOptionKey(processor: processor), .continue)
+        // The buffered letter still resolves through the submit path.
+        XCTAssertEqual(PlanCommand.selection(for: "W"), .world)
+        XCTAssertEqual(
+            command.handleCommandText(
+                "W",
+                ucsAngle: 0,
+                pushViewState: {},
+                applyRotation: { _ in },
+                zoomToExtents: {},
+                processor: processor),
+            .finished)
+    }
+
+    func testPlanOptionKeyReopensLineWhenClosed() {
+        let processor = makeProcessor()
+        let command = PlanCommand()
+        command.start(processor: processor)
+        processor.commandLineActive = false
+        XCTAssertEqual(command.bufferOptionKey(processor: processor), .continue)
+        XCTAssertTrue(processor.commandLineActive)
+        XCTAssertEqual(processor.promptInputKind, .token)
+    }
 }

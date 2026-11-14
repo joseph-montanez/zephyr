@@ -11,8 +11,9 @@ import SwiftSDL
 //   Realtime(drag)  Dynamic(D)  Center(C)  Left(L)  Right(R)  Scale(S)
 //
 // Typing Z or ZOOM enters the command.  The prompt shows available
-// sub-commands.  Pressing a sub-command letter selects it; clicking without
-// a typed sub-command defaults to Window mode.
+// sub-commands.  Like AutoCAD, a typed sub-option is only buffered in the
+// command line until Space/Enter submits it; clicking without a typed
+// sub-command defaults to Window mode.
 //
 // View history is pushed via engine.camera.pushViewState() just before each
 // discrete zoom operation so ZOOM Previous can roll back.
@@ -418,31 +419,41 @@ public final class ZoomCommand: FeatureCommand {
 
     // MARK: - Key Down
 
+    /// Buffers one sub-option letter typed at the ZOOM prompt into the
+    /// command line (AutoCAD parity: nothing executes until Space/Enter
+    /// submits the buffer via `handleCommandText`). The first letter opens
+    /// the line seeded with that letter and returns `.handled`; once the
+    /// line is open, further keystrokes are captured by the command-line
+    /// input itself, so this returns `.continue` and leaves the buffer
+    /// untouched. Outside the prompting phase this is always a no-op.
+    func bufferPromptingLetter(_ letter: String, processor: CADCommandProcessor) -> CommandResult {
+        guard case .prompting = subMode else { return .continue }
+        guard !processor.commandLineActive else { return .continue }
+        processor.commandLineActive = true
+        processor.commandBuffer = letter
+        processor.commandSelectionIndex = 0
+        processor.promptInputKind = .token
+        return .handled
+    }
+
     public func handleKeyDown(
         scancode: SDL_Scancode, engine: PhrostEngine, processor: CADCommandProcessor
     ) -> CommandResult {
         // ── Sub-mode key dispatch (when prompting or mid-command) ──
         switch scancode {
-        case SDL_SCANCODE_A:
-            return applyZoomToken("A", engine: engine, processor: processor)
-        case SDL_SCANCODE_C:
-            return applyZoomToken("C", engine: engine, processor: processor)
-        case SDL_SCANCODE_D:
-            return applyZoomToken("D", engine: engine, processor: processor)
-        case SDL_SCANCODE_E:
-            return applyZoomToken("E", engine: engine, processor: processor)
-        case SDL_SCANCODE_L:
-            return applyZoomToken("L", engine: engine, processor: processor)
-        case SDL_SCANCODE_O:
-            return applyZoomToken("O", engine: engine, processor: processor)
-        case SDL_SCANCODE_P:
-            return applyZoomToken("P", engine: engine, processor: processor)
-        case SDL_SCANCODE_R:
-            return applyZoomToken("R", engine: engine, processor: processor)
-        case SDL_SCANCODE_S:
-            return applyZoomToken("S", engine: engine, processor: processor)
-        case SDL_SCANCODE_W:
-            return applyZoomToken("W", engine: engine, processor: processor)
+        case SDL_SCANCODE_A, SDL_SCANCODE_C, SDL_SCANCODE_D, SDL_SCANCODE_E,
+             SDL_SCANCODE_L, SDL_SCANCODE_O, SDL_SCANCODE_P, SDL_SCANCODE_R,
+             SDL_SCANCODE_S, SDL_SCANCODE_W:
+            // AutoCAD parity: a sub-option letter typed at the prompt is
+            // buffered in the command line, never executed on key-down.
+            // Space/Enter submits the buffer through handleCommandText.
+            // Only the first letter lands here; once the line is open,
+            // later keystrokes flow through the command-line input.
+            let seeded = scancodeToChar(scancode).map(String.init) ?? ""
+            if !seeded.isEmpty {
+                return bufferPromptingLetter(seeded, processor: processor)
+            }
+            return .continue
 
         // ── Dynamic: Enter to commit ──
         case SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER:
