@@ -833,6 +833,9 @@ public final class TabManager {
     }
 
     public func switchToTab(at index: Int) {
+        if ProcessInfo.processInfo.environment["ZEPHYR_DEBUG_RENDERWAKE"] != nil {
+            print("[RenderWake] switchToTab from=\(activeIndex) to=\(index) tabs=\(tabs.count) name=\(tabs.indices.contains(index) ? tabs[index].displayName : "?")")
+        }
         guard index >= 0, index < tabs.count, index != activeIndex else { return }
         // Propagate the departing tab's layer edits to its sibling views so
         // a later return (or save) sees current layer properties everywhere.

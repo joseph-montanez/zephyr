@@ -247,6 +247,25 @@ public final class CADRendererBridge {
         return true
     }
 
+    /// Check-only peek for the lazy loop: true while a regenerated result
+    /// is waiting to be applied on a later frame. Never mutates state.
+    public func hasPendingResults() -> Bool {
+        pendingLock.lock()
+        defer { pendingLock.unlock() }
+        return pendingResults != nil
+    }
+
+    /// Check-only peek for the lazy loop: true while a curve-only LOD
+    /// refresh is running or awaiting settle. Never mutates state.
+    public var hasCurveWorkInFlight: Bool {
+        curveTask != nil || curveInFlight != nil
+    }
+
+    /// All bridge-side deferred render work, for the loop's wake predicate.
+    public var hasPendingWork: Bool {
+        hasPendingResults() || hasCurveWorkInFlight
+    }
+
     /// Discards any pending regeneration results. Called on tab switch to prevent
     /// stale results from a previous document being applied to the new active document.
     public func cancelPending() {

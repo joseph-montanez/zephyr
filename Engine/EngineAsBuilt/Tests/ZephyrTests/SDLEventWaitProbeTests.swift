@@ -27,4 +27,22 @@ final class SDLEventWaitProbeTests: XCTestCase {
         XCTAssertEqual(out.button.windowID, 3)
         XCTAssertEqual(out.button.x, 50)
     }
+
+    /// Corroborates the lazy-loop wake cadence the predicate rests on:
+    /// with an empty queue the wait must return false within a bounded
+    /// time (the loop re-evaluates its predicate every iteration).
+    func testWaitEventTimeoutNilTimesOutOnEmptyQueue() {
+        XCTAssertTrue(SDL_InitSubSystem(SDL_INIT_EVENTS))
+        defer { SDL_QuitSubSystem(SDL_INIT_EVENTS) }
+
+        // Drain any residue from a prior probe.
+        var out = SDL_Event()
+        while SDL_PollEvent(&out) {}
+
+        let started = Date()
+        let woke = SDL_WaitEventTimeout(nil, 16)
+        let elapsed = Date().timeIntervalSince(started)
+        XCTAssertFalse(woke, "empty-queue wait must time out, not report an event")
+        XCTAssertLessThan(elapsed, 1.0, "idle wait must stay bounded (loop cadence)")
+    }
 }

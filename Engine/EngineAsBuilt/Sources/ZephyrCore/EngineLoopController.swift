@@ -78,6 +78,54 @@ internal enum SnapArbitration {
 // pacing, conditional rendering, and delegates tool mouse handlers.
 // =========================================================================
 @MainActor
+// One context's deferred render work, sampled without mutating state.
+/// Plain value type for unit tests.
+// RenderGate snapshot type (see RenderGate below).
+internal struct RenderContextWorkSnapshot: Sendable {
+    var regenInFlight: Bool = false
+    var vertexBuildInFlight: Bool = false
+    var pendingVertexSwap: Bool = false
+    var generationMismatch: Bool = false
+    var bridgePending: Bool = false
+
+    var needsRender: Bool {
+        regenInFlight || vertexBuildInFlight || pendingVertexSwap
+            || generationMismatch || bridgePending
+    }
+}
+
+@MainActor
+internal enum RenderGate {
+    /// Sample one context. Check-only: never launches, applies, or clears.
+    static func snapshot(for ctx: WindowRenderContext) -> RenderContextWorkSnapshot {
+        RenderContextWorkSnapshot(
+            regenInFlight: ctx.regenInFlight != nil,
+            vertexBuildInFlight: ctx.vbInFlightToken != nil,
+            pendingVertexSwap: ctx.pendingSwapResult != nil,
+            generationMismatch: ctx.regenGeneration != ctx.appliedGeneration,
+            bridgePending: ctx.bridge.hasPendingWork
+        )
+    }
+
+    /// True when any sampled context holds unrendered work.
+    static func anyContextNeedsRender(
+        _ snapshots: [RenderContextWorkSnapshot]
+    ) -> Bool {
+        snapshots.contains { $0.needsRender }
+    }
+
+    /// Generation mismatch during active Lisp evaluation is expected (the
+    /// launch is intentionally deferred in `ensureContextRegenerated`), so
+    /// it must not alone hold the loop at full rate. The loop still revives
+    /// within one idle wait after evaluation ends via the 16 ms cadence.
+    static func generationMismatchCounts(
+        isLispActivelyEvaluating: Bool
+    ) -> Bool {
+        !isLispActivelyEvaluating
+    }
+}
+
+@MainActor
 public final class EngineLoopController {
     
     private unowned let engine: PhrostEngine
@@ -86,6 +134,109 @@ public final class EngineLoopController {
     public init(engine: PhrostEngine) {
         self.engine = engine
         self.hoverCoordinator = CADHoverCoordinator(engine: engine)
+    }
+
+    /// Env-gated diagnostics for the wake predicate. `ZEPHYR_DEBUG_RENDERWAKE=1`
+    /// logs when a render is scheduled solely for deferred render work
+    /// (pending swap, generation mismatch, bridge work, or a visible
+    /// document flag) with no input budget and no interaction active.
+    internal static let debugRenderWakeEnabled: Bool =
+        ProcessInfo.processInfo.environment["ZEPHYR_DEBUG_RENDERWAKE"] != nil
+
+    private var lastWakeLogTicks: UInt64 = 0
+
+    /// Documents a rendered frame will actually service: the active
+    /// document, each split pane's shown tab, and each float window's
+    /// hosted tab. Flags on invisible tabs/views are excluded so an
+    /// invisible tab's xref completion can't hold the loop awake.
+    internal func visibleDocuments() -> [CADDocument] {
+        var docs: [CADDocument] = [engine.document]
+        var seen: Set<ObjectIdentifier> = [ObjectIdentifier(engine.document)]
+        func add(_ doc: CADDocument) {
+            let id = ObjectIdentifier(doc)
+            if seen.insert(id).inserted { docs.append(doc) }
+        }
+        for leaf in engine.mainPanes.leaves() {
+            if case .leaf(_, let tabID) = leaf,
+               let tabID,
+               let tab = engine.tabManager.tab(for: tabID) {
+                add(tab.document)
+            }
+        }
+        for aux in engine.windowManager.auxWindows {
+            if let hosted = aux.hostedTabID,
+               let tab = engine.tabManager.tab(for: hosted) {
+                add(tab.document)
+            }
+        }
+        return docs
+    }
+
+    /// All contexts a frame renders, de-duplicated by identity. The
+    /// primary context is listed explicitly so a not-yet-adopted primary
+    /// is covered; after adoption it also appears in `secondaryCtxs`.
+    internal func allContexts() -> [WindowRenderContext] {
+        var contexts: [WindowRenderContext] = [engine.renderer.primaryCtx]
+        var seen: Set<ObjectIdentifier> = [ObjectIdentifier(engine.renderer.primaryCtx)]
+        for ctx in engine.renderer.secondaryCtxs.values {
+            if seen.insert(ObjectIdentifier(ctx)).inserted { contexts.append(ctx) }
+        }
+        for ctx in engine.renderer.paneCtxs.values {
+            if seen.insert(ObjectIdentifier(ctx)).inserted { contexts.append(ctx) }
+        }
+        return contexts
+    }
+
+    /// Bounded hands-off evidence: which new terms caused this wake.
+    private func wakeLogIfNeeded(active: Bool, framesToRender: Int) {
+        guard Self.debugRenderWakeEnabled, active, framesToRender <= 0 else { return }
+        let interaction = engine.interaction
+        let interactive =
+            interaction.dragActive || interaction.panActive || interaction.touchPanActive
+            || engine.commandProcessor.activeCommand != nil
+            || engine.commandProcessor.activeFeatureCommand != nil
+            || engine.commandProcessor.commandLineActive
+            || engine.tabManager.saveStateByTabID.count > 0
+        guard !interactive else { return }
+        let now = SDL_GetTicks()
+        guard now &- lastWakeLogTicks >= 1000 else { return }
+        lastWakeLogTicks = now
+        let snaps = allContexts().map { RenderGate.snapshot(for: $0) }
+        let hasSwap = snaps.contains { $0.pendingVertexSwap }
+        let hasMismatch = snaps.contains { $0.generationMismatch }
+        let hasBridge = snaps.contains { $0.bridgePending }
+        let hasVisibleFlag = visibleDocuments().contains { $0.needsRegeneration }
+        let hasInflight = snaps.contains { $0.regenInFlight || $0.vertexBuildInFlight }
+        print("[RenderWake] deferred-work render swap=\(hasSwap) mismatch=\(hasMismatch) bridge=\(hasBridge) visibleFlag=\(hasVisibleFlag) inflight=\(hasInflight)")
+    }
+
+    /// Fresh evaluation of whether a frame is needed. Called both before
+    /// the wait (to decide whether to sleep) and after polling (to decide
+    /// whether to render), so changes delivered mid-wait (dialog
+    /// callbacks, RunLoop tasks, save updates) are never one iteration
+    /// stale.
+    internal func currentIsActionActive() -> Bool {
+        let interaction = engine.interaction
+        let saveStateCount = engine.tabManager.saveStateByTabID.count
+        let isLispEvaluating = engine.commandProcessor.isLispActivelyEvaluating
+        let contexts = allContexts()
+        let snaps = contexts.map { RenderGate.snapshot(for: $0) }
+        var contextNeedsRender = RenderGate.anyContextNeedsRender(snaps)
+        if isLispEvaluating,
+           snaps.allSatisfy({ $0.generationMismatch && !$0.regenInFlight && !$0.vertexBuildInFlight && !$0.pendingVertexSwap && !$0.bridgePending }) {
+            // Mismatch alone must not hold the loop at full rate while Lisp
+            // is evaluating; the 16 ms idle cadence revives it at the end.
+            contextNeedsRender = false
+        }
+        let visibleFlag = visibleDocuments().contains { $0.needsRegeneration }
+        return interaction.dragActive || interaction.panActive || interaction.touchPanActive
+            || engine.commandProcessor.activeCommand != nil
+            || engine.commandProcessor.activeFeatureCommand != nil
+            || engine.commandProcessor.commandLineActive
+            || visibleFlag
+            || contextNeedsRender
+            || (engine.ribbonLoader?.hasPendingWork == true)
+            || saveStateCount > 0
     }
 
     // MARK: - Main Loop
@@ -127,25 +278,16 @@ public final class EngineLoopController {
             // 1. Thread Sleeping:
             // If the application is idle, put the thread to sleep until an event
             // is fired or 16ms elapses. This drops idle CPU/GPU usage to near 0%.
-            let interaction = engine.interaction
             let saveStateCount = engine.tabManager.saveStateByTabID.count
             if saveStateCount != lastSaveStateCount {
                 framesToRender = max(framesToRender, 5)
                 lastSaveStateCount = saveStateCount
             }
-            let secondaryBuildActive = engine.renderer.secondaryCtxs.values.contains {
-                $0.regenInFlight != nil || $0.vbInFlightToken != nil
-            } || engine.renderer.paneCtxs.values.contains {
-                $0.regenInFlight != nil || $0.vbInFlightToken != nil
-            }
-            let isActionActive =
-                interaction.dragActive || interaction.panActive || interaction.touchPanActive
-                || engine.commandProcessor.activeCommand != nil || engine.commandProcessor.activeFeatureCommand != nil
-                || engine.commandProcessor.commandLineActive || engine.document.needsRegeneration
-                || secondaryBuildActive
-                || saveStateCount > 0
+            // Deferred render work sampled fresh via RenderGate
+            // (pre-wait below, post-poll for the render decision).
             
-            if framesToRender <= 0 && !isActionActive {
+            let preActive = currentIsActionActive()
+            if framesToRender <= 0 && !preActive {
                 SDL_WaitEventTimeout(nil, 16)
             }
 
@@ -226,8 +368,12 @@ public final class EngineLoopController {
 
             updateBlock?()
 
-            // 3. Conditional Rendering
-            if framesToRender > 0 || isActionActive {
+            // 3. Conditional Rendering (re-sampled after polling so
+            // mid-wait completions are never one iteration stale).
+            let postActive = currentIsActionActive()
+            wakeLogIfNeeded(active: postActive, framesToRender: framesToRender)
+
+            if framesToRender > 0 || postActive {
                 engine.renderer.render(deltaSec: deltaSec)
                 framesToRender -= 1
             }
@@ -236,7 +382,7 @@ public final class EngineLoopController {
             let frameTime = Double(frameWorkEnd &- frameStart)
             let sleepMs = targetMs - frameTime
 
-            if sleepMs > 0 && (framesToRender > 0 || isActionActive) {
+            if sleepMs > 0 && (framesToRender > 0 || postActive) {
                 SDL_Delay(UInt32(sleepMs))
             }
             frameCount &+= 1

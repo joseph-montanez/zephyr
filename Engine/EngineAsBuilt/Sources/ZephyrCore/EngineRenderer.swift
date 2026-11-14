@@ -632,6 +632,11 @@ public final class EngineRenderer {
         // Sync for cold-start, async for pan/zoom. applyPendingVertexBuildIfReady
         // acquires+submits its own command buffer, so it MUST run before the
         // render pass acquires its command buffer below.
+        if ProcessInfo.processInfo.environment["ZEPHYR_DEBUG_RENDERWAKE"] != nil {
+            let pendingSwap = ctx.pendingSwapResult != nil
+            let gen = "\(ctx.regenGeneration)/\(ctx.appliedGeneration)"
+            print("[RenderWake] route cachedMutationGen=\(ctx.cachedMutationGen) mutationGen=\(mutationGen) pendingSwap=\(pendingSwap) gen=\(gen)")
+        }
         if ctx.cachedMutationGen == -1 {
             rebuildCadVertexBuffer(
                 ctx: ctx, camera: camera,

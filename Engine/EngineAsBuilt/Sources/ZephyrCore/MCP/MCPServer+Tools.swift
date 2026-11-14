@@ -25,6 +25,11 @@ enum MCPToolDefs {
          "inputSchema": ["type": "object",
                          "properties": ["path": ["type": "string"]],
                          "required": ["path"]]],
+        ["name": "open_drawing",
+         "description": "Open a DXF, DWG or EAB file in a new tab (same funnel as the Open dialog, no dialog shown).",
+         "inputSchema": ["type": "object",
+                         "properties": ["path": ["type": "string"]],
+                         "required": ["path"]]],
         ["name": "run_command",
          "description": "Run a scripted native command, e.g. {\"name\": \"LINE\", \"args\": \"10,20 30,40\"}. Args tokenize like .scr lines.",
          "inputSchema": ["type": "object",
@@ -151,6 +156,11 @@ extension MCPServer {
                 throw MCPError.toolFailed("cannot read \(path): \(error)")
             }
             return try beginEval(kind: .loadText(text))
+        case "open_drawing":
+            guard let path = args["path"] as? String, !path.isEmpty else {
+                throw MCPError.badParams("open_drawing needs a path")
+            }
+            return try openDrawing(path: path)
         case "run_command":
             guard let cmd = args["name"] as? String, !cmd.isEmpty else {
                 throw MCPError.badParams("run_command needs a name")
@@ -382,6 +392,35 @@ extension MCPServer {
             }
         } as @MainActor () -> Void)
         return ["status": "cancelled"] as [String: Any]
+    }
+
+    // MARK: File open
+
+    /// Opens a drawing on the frame thread through the same public
+    /// funnel as the native Open dialog (`TabManager.openTab` +
+    /// `frameInitialView`), so headless callers exercise the real
+    /// import/regen path, not a test double.
+    private func openDrawing(path: String) throws -> Any {
+        try submitFrame({ [weak self] () -> [String: Any] in
+            guard let self, let engine = self.engine else {
+                return ["error": "engine gone"] as [String: Any]
+            }
+            do {
+                let index = try engine.tabManager.openTab(url: URL(fileURLWithPath: path))
+                engine.frameInitialView()
+                let tab = engine.tabManager.tabs[index]
+                return ["status": "opened",
+                        "name": tab.displayName,
+                        "entities": tab.document.allEntities.count,
+                        "needsRegeneration": tab.document.needsRegeneration,
+                        "renderRevision": Int(tab.document.renderRevision),
+                        "activeTabName": engine.tabManager.activeTab?.displayName ?? "nil",
+                        "activeIndex": engine.tabManager.activeIndex,
+                        "tabCount": engine.tabManager.tabs.count] as [String: Any]
+            } catch {
+                return ["status": "failed", "error": "\(error)"] as [String: Any]
+            }
+        } as @MainActor () -> [String: Any])
     }
 
     // MARK: Summaries

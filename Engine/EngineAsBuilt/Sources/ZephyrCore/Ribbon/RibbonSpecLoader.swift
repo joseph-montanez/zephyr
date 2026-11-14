@@ -105,6 +105,14 @@ public final class RibbonSpecLoader {
 
     public var isLoading: Bool { task != nil }
 
+    /// Check-only peek for the lazy loop's wake predicate. True when a
+    /// finished load (or a queued reload) is waiting for `poll()` to run
+    /// on a later frame. Callers must not treat this as a reason to spin:
+    /// a hanging load (timeout path) still needs some other wake to drain.
+    public var hasPendingWork: Bool {
+        completion?.hasPendingResult() == true || pendingReloadReason != nil
+    }
+
     // MARK: - Definition file resolution
 
     /// `<appSupport>/Zephyr/lisp/ribbon.lsp` — the user-editable definition.
@@ -484,6 +492,10 @@ final class RibbonLoadCompletionBox: @unchecked Sendable {
 
     func store(_ outcome: RibbonLoadOutcome) {
         lock.withLock { value = outcome }
+    }
+
+    func hasPendingResult() -> Bool {
+        lock.withLock { value != nil }
     }
 
     func take() -> RibbonLoadOutcome? {
