@@ -598,6 +598,61 @@ enum LispScriptedCommands {
                 }
                 center = solved.center
                 radius = solved.radius
+            case .word("T"), .word("TTR"):
+                let p1 = try takePoint(&operands, command: "CIRCLE", what: "first object point")
+                let p2 = try takePoint(&operands, command: "CIRCLE", what: "second object point")
+                let supports = try resolveTangentSupports(p1: p1, p2: p2, host: host)
+                guard let (s1, s2) = supports else {
+                    throw LispError.hostError("command: CIRCLE TTR cannot create tangent circle for those objects")
+                }
+                // radius operand: number, Enter (default), or expression evaluated by script layer
+                var r: Double?
+                if let kw = takeKeyword(&operands) {
+                    if case .enter = kw {
+                        if let last = CircleSettings.lastRadius { r = last } else {
+                            throw LispError.hostError("command: CIRCLE needs a radius")
+                        }
+                    } else { throw LispError.hostError("command: CIRCLE TTR needs a radius") }
+                } else {
+                    // peek for number operand
+                    if let next = operands.first, let v = next.asDouble {
+                        operands.removeFirst()
+                        r = v
+                    } else if let next = operands.first, case .string(let raw) = next, let v = Double(raw) {
+                        operands.removeFirst()
+                        r = v
+                    } else if let last = CircleSettings.lastRadius, operands.isEmpty {
+                        r = last
+                    } else {
+                        r = try takeNumber(&operands, command: "CIRCLE", what: "a radius")
+                    }
+                }
+                guard let rVal = r, rVal > 0 else {
+                    throw LispError.hostError("command: CIRCLE needs a positive radius")
+                }
+                var cands = TangentCircleSolver.circlesTangentTo(radius: rVal, first: s1.infinite, second: s2.infinite, nearPicks: [p1, p2])
+                cands = cands.filter { c in
+                    guard let t1 = TangentCircleSolver.tangentPointPublic(on: s1.infinite, center: c, radius: rVal),
+                          let t2 = TangentCircleSolver.tangentPointPublic(on: s2.infinite, center: c, radius: rVal) else { return false }
+                    return s1.containsTangentPoint(t1) && s2.containsTangentPoint(t2)
+                }
+                guard let chosen = cands.first else {
+                    throw LispError.hostError("command: CIRCLE TTR cannot create tangent circle for those objects")
+                }
+                center = chosen
+                radius = rVal
+            case .word("TTT"), .word("TANTANTAN"):
+                let p1 = try takePoint(&operands, command: "CIRCLE", what: "first object point")
+                let p2 = try takePoint(&operands, command: "CIRCLE", what: "second object point")
+                let p3 = try takePoint(&operands, command: "CIRCLE", what: "third object point")
+                guard let sups = try resolveTangentSupportsTriple(p1: p1, p2: p2, p3: p3, host: host) else {
+                    throw LispError.hostError("command: CIRCLE TTT cannot create tangent circle for those objects")
+                }
+                guard let solved = TangentCircleSolver.circleTangentToThree(sups.0.infinite, sups.1.infinite, sups.2.infinite, nearPicks: [p1, p2, p3]) else {
+                    throw LispError.hostError("command: CIRCLE TTT cannot create tangent circle for those objects")
+                }
+                center = solved.center
+                radius = solved.radius
             case .word(let word):
                 throw LispError.hostError(
                     "command: CIRCLE does not support keyword \"\(word)\"")
@@ -609,16 +664,43 @@ enum LispScriptedCommands {
             if let keyword = takeKeyword(&operands) {
                 switch keyword {
                 case .word("D"):
-                    let diameter = try takeNumber(&operands, command: "CIRCLE", what: "a diameter")
-                    radius = diameter / 2
+                    // Allow D then number, D then Enter (default diameter), or D then R back-switch
+                    if let next = takeKeyword(&operands) {
+                        if case .word("R") = next {
+                            radius = try takeNumber(&operands, command: "CIRCLE", what: "a radius")
+                        } else if case .enter = next {
+                            guard let last = CircleSettings.lastRadius else {
+                                throw LispError.hostError("command: CIRCLE needs a diameter")
+                            }
+                            radius = last
+                        } else {
+                            throw LispError.hostError("command: CIRCLE does not support keyword")
+                        }
+                    } else {
+                        let diameter = try takeNumber(&operands, command: "CIRCLE", what: "a diameter")
+                        radius = diameter / 2
+                    }
+                case .word("R"):
+                    radius = try takeNumber(&operands, command: "CIRCLE", what: "a radius")
                 case .word(let word):
                     throw LispError.hostError(
                         "command: CIRCLE does not support keyword \"\(word)\"")
                 case .enter:
-                    throw LispError.hostError("command: CIRCLE needs a radius")
+                    guard let last = CircleSettings.lastRadius else {
+                        throw LispError.hostError("command: CIRCLE needs a radius")
+                    }
+                    radius = last
                 }
             } else {
-                radius = try takeNumber(&operands, command: "CIRCLE", what: "a radius")
+                // Try number, numeric string, or Enter-default via keyword already handled; fallback to CIRCLERAD via takeNumber failing
+                // takeNumber will throw if operands empty; treat as Enter default if CIRCLERAD present
+                if let first = operands.first, first.asDouble != nil {
+                    radius = try takeNumber(&operands, command: "CIRCLE", what: "a radius")
+                } else if let last = CircleSettings.lastRadius, isEnterTerminator(&operands) {
+                    radius = last
+                } else {
+                    radius = try takeNumber(&operands, command: "CIRCLE", what: "a radius")
+                }
             }
         }
         guard let center, let radius, radius > 0 else {
@@ -627,6 +709,150 @@ enum LispScriptedCommands {
         try await addPrimitives(
             [.circle(center: center, radius: radius, color: await currentColor(host))],
             host: host)
+        CircleSettings.lastRadius = radius
+    }
+
+    private static func isEnterTerminator(_ operands: inout [LispValue]) -> Bool {
+        guard let first = operands.first else { return false }
+        if case .string(let s) = first { return s == "" }
+        return false
+    }
+
+    private static func resolveTangentSupports(p1: Vector3, p2: Vector3, host: LispCADHost) throws -> (FiniteTangentSupport, FiniteTangentSupport)? {
+        guard let s1 = nearestTangentSupport(near: p1, host: host),
+              let s2 = nearestTangentSupport(near: p2, host: host) else { return nil }
+        return (s1, s2)
+    }
+
+    private static func resolveTangentSupportsTriple(p1: Vector3, p2: Vector3, p3: Vector3, host: LispCADHost) throws -> (FiniteTangentSupport, FiniteTangentSupport, FiniteTangentSupport)? {
+        guard let s1 = nearestTangentSupport(near: p1, host: host),
+              let s2 = nearestTangentSupport(near: p2, host: host),
+              let s3 = nearestTangentSupport(near: p3, host: host) else { return nil }
+        return (s1, s2, s3)
+    }
+
+    private static func nearestTangentSupport(near: Vector3, host: LispCADHost) -> FiniteTangentSupport? {
+        let doc = host.document
+        var best: FiniteTangentSupport? = nil
+        var bestDist = Double.infinity
+        for entity in doc.allEntities where entity.blockID == nil {
+            guard let localGeometry = entity.localGeometry else { continue }
+            for prim in localGeometry {
+                switch prim {
+                case .line(let s, let e, _):
+                    let ws = entity.transform.transformPoint(s)
+                    let we = entity.transform.transformPoint(e)
+                    let dir = we - ws
+                    let len = hypot(dir.x, dir.y)
+                    guard len > 1e-8 else { continue }
+                    let unit = Vector3(x: dir.x/len, y: dir.y/len, z: 0)
+                    let inf: TangentSupport2 = .line(origin: ws, directionUnit: unit)
+                    let finite = FiniteTangentSupport(infinite: inf, shape: .segment(start: ws, end: we))
+                    let nearest = nearestPointOnSegment(near, ws, we)
+                    let d = nearest.distance(to: near)
+                    if d < bestDist { bestDist = d; best = finite }
+                case .ray(let s, let d, _):
+                    let ws = entity.transform.transformPoint(s)
+                    let wd = entity.transform.transformPoint(s + d) - ws
+                    let len = hypot(wd.x, wd.y)
+                    guard len > 1e-8 else { continue }
+                    let unit = Vector3(x: wd.x/len, y: wd.y/len, z: 0)
+                    let inf: TangentSupport2 = .line(origin: ws, directionUnit: unit)
+                    let finite = FiniteTangentSupport(infinite: inf, shape: .ray(origin: ws, direction: unit))
+                    let t = max(0, (near - ws).x*unit.x + (near - ws).y*unit.y)
+                    let nearest = ws + unit * t
+                    let dd = nearest.distance(to: near)
+                    if dd < bestDist { bestDist = dd; best = finite }
+                case .circle(let c, let r, _):
+                    let wc = entity.transform.transformPoint(c)
+                    let p = entity.transform.transformPoint(Vector3(x: c.x+r, y: c.y, z: c.z))
+                    let rr = hypot(p.x - wc.x, p.y - wc.y)
+                    guard rr > 1e-8 else { continue }
+                    let inf: TangentSupport2 = .circle(center: wc, radius: rr)
+                    let finite = FiniteTangentSupport(infinite: inf, shape: .fullCircle)
+                    let nearest = CADGeometryMath.nearestPointOnCircle(to: near, center: wc, radius: rr) ?? wc
+                    let d = nearest.distance(to: near)
+                    if d < bestDist { bestDist = d; best = finite }
+                case .arc(let c, let r, let sa, let ea, _):
+                    guard let wg = worldCircularSupport(center: c, radius: r, start: sa, end: ea, transform: entity.transform) else { continue }
+                    let inf: TangentSupport2 = .circle(center: wg.0, radius: wg.1)
+                    let finite = FiniteTangentSupport(infinite: inf, shape: .arc(center: wg.0, radius: wg.1, start: wg.2, sweep: wg.3))
+                    let nearest = nearestPointOnArcLocal(to: near, center: wg.0, radius: wg.1, start: wg.2, sweep: wg.3) ?? wg.0
+                    let d = nearest.distance(to: near)
+                    if d < bestDist { bestDist = d; best = finite }
+                case .polyline(let path, _):
+                    let worldPath = path.transformed(by: entity.transform)
+                    for idx in 0..<worldPath.segmentCount {
+                        if worldPath.arcParameters(forSegment: idx) != nil {
+                            let arc = worldPath.arcParameters(forSegment: idx)!
+                            let inf: TangentSupport2 = .circle(center: arc.center, radius: arc.radius)
+                            let finite = FiniteTangentSupport(infinite: inf, shape: .arc(center: arc.center, radius: arc.radius, start: arc.startAngle, sweep: arc.sweep))
+                            let start = worldPath.vertices[idx].position
+                            let end = worldPath.vertices[worldPath.endVertexIndex(forSegment: idx)].position
+                            let d = nearestPointOnSegment(near, start, end).distance(to: near)
+                            if d < bestDist { bestDist = d; best = finite }
+                            continue
+                        }
+                        let start = worldPath.vertices[idx].position
+                        let end = worldPath.vertices[worldPath.endVertexIndex(forSegment: idx)].position
+                        let dir = end - start
+                        let len = hypot(dir.x, dir.y)
+                        guard len > 1e-8 else { continue }
+                        let unit = Vector3(x: dir.x/len, y: dir.y/len, z: 0)
+                        let inf: TangentSupport2 = .line(origin: start, directionUnit: unit)
+                        let finite = FiniteTangentSupport(infinite: inf, shape: .segment(start: start, end: end))
+                        let nearest = nearestPointOnSegment(near, start, end)
+                        let d = nearest.distance(to: near)
+                        if d < bestDist { bestDist = d; best = finite }
+                    }
+                default: continue
+                }
+            }
+        }
+        return best
+    }
+
+    private static func nearestPointOnSegment(_ p: Vector3, _ a: Vector3, _ b: Vector3) -> Vector3 {
+        let dx = b.x - a.x; let dy = b.y - a.y
+        let lenSq = dx*dx + dy*dy
+        if lenSq < 1e-12 { return a }
+        let t = max(0, min(1, ((p.x-a.x)*dx + (p.y-a.y)*dy)/lenSq))
+        return Vector3(x: a.x + dx*t, y: a.y + dy*t, z: a.z)
+    }
+
+    private static func worldCircularSupport(center: Vector3, radius: Double, start: Double, end: Double, transform: Transform3D) -> (Vector3, Double, Double, Double)? {
+        let wc = transform.transformPoint(center)
+        let ax = transform.transformPoint(Vector3(x: center.x+radius, y: center.y, z: center.z)) - wc
+        let ay = transform.transformPoint(Vector3(x: center.x, y: center.y+radius, z: center.z)) - wc
+        let rx = hypot(ax.x, ax.y); let ry = hypot(ay.x, ay.y)
+        guard rx > 1e-8, ry > 1e-8, abs(rx-ry) <= max(rx,ry)*1e-6 else { return nil }
+        let twoPi = 2*Double.pi
+        let isFull = abs(end-start) >= twoPi - 1e-8
+        var span = end - start
+        if !isFull && span < 0 { span += twoPi }
+        if isFull { span = twoPi }
+        let localStart = Vector3(x: center.x + cos(start)*radius, y: center.y + sin(start)*radius, z: center.z)
+        let worldStartPt = transform.transformPoint(localStart)
+        let wStart = atan2(worldStartPt.y - wc.y, worldStartPt.x - wc.x)
+        let cross = ax.x*ay.y - ax.y*ay.x
+        let orient = cross >= 0 ? 1.0 : -1.0
+        return (wc, (rx+ry)*0.5, wStart, span*orient)
+    }
+
+    private static func nearestPointOnArcLocal(to p: Vector3, center: Vector3, radius: Double, start: Double, sweep: Double) -> Vector3? {
+        let dx = p.x - center.x; let dy = p.y - center.y
+        if hypot(dx, dy) < 1e-12 { return nil }
+        let angle = atan2(dy, dx)
+        let twoPi = 2*Double.pi
+        func norm(_ v: Double) -> Double { var r = v.truncatingRemainder(dividingBy: twoPi); if r < 0 { r+=twoPi }; return r }
+        let a = sweep >= 0 ? norm(angle - start) : norm(start - angle)
+        let e = norm(abs(sweep))
+        if a >= 0 && a <= e {
+            return Vector3(x: center.x + cos(angle)*radius, y: center.y + sin(angle)*radius, z: center.z)
+        }
+        let sPt = Vector3(x: center.x + cos(start)*radius, y: center.y + sin(start)*radius, z: center.z)
+        let ePt = Vector3(x: center.x + cos(start+sweep)*radius, y: center.y + sin(start+sweep)*radius, z: center.z)
+        return sPt.distance(to: p) <= ePt.distance(to: p) ? sPt : ePt
     }
 
     static func takeNumberOrNumericString(

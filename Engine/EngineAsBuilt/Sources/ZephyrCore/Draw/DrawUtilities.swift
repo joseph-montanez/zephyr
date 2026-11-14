@@ -38,6 +38,80 @@ public enum DynamicNumericField: String, CaseIterable, Hashable, Sendable {
     case height
 }
 
+/// Inline arithmetic evaluator for CAL-style entry (`+ - * / ( )`).
+/// Headless-testable; returns nil on parse failure.
+public enum NumericExpressionEvaluator {
+    public static func evaluate(_ text: String) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var parser = Parser(trimmed)
+        guard let value = parser.parseExpression() else { return nil }
+        parser.skipSpaces()
+        guard parser.pos >= parser.chars.count else { return nil }
+        return value
+    }
+
+    private struct Parser {
+        var chars: [Character]
+        var pos: Int = 0
+
+        init(_ s: String) { chars = Array(s) }
+
+        mutating func skipSpaces() { while pos < chars.count && chars[pos].isWhitespace { pos += 1 } }
+        func peek() -> Character? { pos < chars.count ? chars[pos] : nil }
+        mutating func consume(_ c: Character) -> Bool {
+            skipSpaces()
+            if pos < chars.count && chars[pos] == c { pos += 1; return true }
+            return false
+        }
+
+        mutating func parseExpression() -> Double? {
+            guard var value = parseTerm() else { return nil }
+            while true {
+                skipSpaces()
+                if consume("+") { guard let rhs = parseTerm() else { return nil }; value += rhs }
+                else if consume("-") { guard let rhs = parseTerm() else { return nil }; value -= rhs }
+                else { return value }
+            }
+        }
+
+        mutating func parseTerm() -> Double? {
+            guard var value = parseFactor() else { return nil }
+            while true {
+                skipSpaces()
+                if consume("*") { guard let rhs = parseFactor() else { return nil }; value *= rhs }
+                else if consume("/") { guard let rhs = parseFactor(), rhs != 0 else { return nil }; value /= rhs }
+                else { return value }
+            }
+        }
+
+        mutating func parseFactor() -> Double? {
+            skipSpaces()
+            if consume("(") {
+                guard let v = parseExpression(), consume(")") else { return nil }
+                return v
+            }
+            if consume("+") { return parseFactor() }
+            if consume("-") { guard let v = parseFactor() else { return nil }; return -v }
+            return parseNumber()
+        }
+
+        mutating func parseNumber() -> Double? {
+            skipSpaces()
+            let start = pos
+            var sawDigit = false
+            while pos < chars.count && chars[pos].isNumber { pos += 1; sawDigit = true }
+            if pos < chars.count && chars[pos] == "." {
+                pos += 1
+                while pos < chars.count && chars[pos].isNumber { pos += 1; sawDigit = true }
+            }
+            guard sawDigit else { return nil }
+            let slice = String(chars[start..<pos])
+            return Double(slice)
+        }
+    }
+}
+
 /// Reusable dynamic input state machine for AutoCAD-style direct numeric entry.
 /// Owned by drawing commands (`LineCommand`, `CircleCommand`, `RectangleCommand`, etc.).
 ///
@@ -93,9 +167,11 @@ public struct DynamicNumericInput {
         buffers.values.contains { !$0.isEmpty }
     }
 
-    /// Parses the active field's buffer as Double.
+    /// Parses the active field's buffer as Double (supports CAL expressions).
     public var parsedValue: Double? {
-        Double(buffers[activeField, default: ""])
+        let raw = buffers[activeField, default: ""]
+        if let v = Double(raw) { return v }
+        return NumericExpressionEvaluator.evaluate(raw)
     }
 
     /// Parses the `.angle` buffer in degrees.
@@ -226,6 +302,10 @@ public struct DynamicNumericInput {
 
         // Plain number — commit as value for the active field's purpose
         if let val = Double(working), val != 0 {
+            return .commitValue(val)
+        }
+        // CAL-style inline arithmetic (e.g. "2*3", "(10+2)/2")
+        if let val = NumericExpressionEvaluator.evaluate(working), val != 0 {
             return .commitValue(val)
         }
 

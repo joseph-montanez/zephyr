@@ -248,7 +248,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "ID",         aliases: [],                category: .draw,    syntax: "", description: "Report the coordinates of a picked point"),
         CommandDescriptor(canonicalName: "LIST",       aliases: ["LI", "LS"],      category: .draw,    syntax: "", description: "List type, layer, and geometry of selected entities"),
         CommandDescriptor(canonicalName: "GRADIENT",   aliases: ["GD"],            category: .draw,    syntax: "", description: "Fill a closed boundary with a gradient"),
-        CommandDescriptor(canonicalName: "CIRCLE",     aliases: ["C"],             category: .draw,    syntax: "", description: "Draw a circle by center and radius"),
+        CommandDescriptor(canonicalName: "CIRCLE",     aliases: ["C"],             category: .draw,    syntax: "[3P/2P/Ttr]", description: "Draw a circle by center and radius"),
         CommandDescriptor(canonicalName: "ARC",        aliases: ["A"],             category: .draw,    syntax: "", description: "Draw an arc by center, radius, and angles"),
         CommandDescriptor(canonicalName: "RECTANG",    aliases: ["RECTANGLE", "REC", "RECT"], category: .draw, syntax: "", description: "Draw a rectangle by two opposite corners"),
         CommandDescriptor(canonicalName: "ELLIPSE",    aliases: ["EL"],            category: .draw,    syntax: "", description: "Draw an ellipse by center and axes"),
@@ -1151,6 +1151,10 @@ public final class CADCommandProcessor {
                 _ = submitTextToActiveFeatureCommand(text, engine: eng)
                 return
             }
+            if activeFeatureCommand is CircleCommand, let eng = engine {
+                _ = submitTextToActiveFeatureCommand(text, engine: eng)
+                return
+            }
             if isSelectingObjects {
                 confirmObjectSelection()
             }
@@ -1170,6 +1174,10 @@ public final class CADCommandProcessor {
         // Interactive PLAN prompts own their follow-up lines exactly like
         // UCS (bare PLAN -> "W" must reach the active PlanCommand).
         if activeFeatureCommand is PlanCommand, let eng = engine {
+            _ = submitTextToActiveFeatureCommand(text, engine: eng)
+            return
+        }
+        if activeFeatureCommand is CircleCommand, let eng = engine {
             _ = submitTextToActiveFeatureCommand(text, engine: eng)
             return
         }

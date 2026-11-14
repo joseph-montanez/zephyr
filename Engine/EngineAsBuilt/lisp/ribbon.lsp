@@ -265,7 +265,14 @@
             (list
               (zr-big   "LINE"      "Line"     "line"     nil)
               (zr-big   "POLYLINE"  "Polyline" "polyline" nil)
-              (zr-small "CIRCLE"    "Circle"   "circle"   nil)
+              (zr-drop  "Circle"
+                (list
+                  (zr-item "CIRCLE"     "Center, Radius" nil)
+                  (zr-item "CIRCLE D"   "Center, Diameter" nil)
+                  (zr-item "CIRCLE 2P"  "2-Point" nil)
+                  (zr-item "CIRCLE 3P"  "3-Point" nil)
+                  (zr-item "CIRCLE T"   "Tan, Tan, Radius" nil)
+                  (zr-item "CIRCLE TTT" "Tan, Tan, Tan" nil)))
               (zr-small "ARC"       "Arc"      "arc"      nil)
               (zr-small "RECTANGLE" "Rectangle" "rect"    nil)
               (zr-drop  "More"

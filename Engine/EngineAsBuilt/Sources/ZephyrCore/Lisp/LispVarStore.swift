@@ -91,6 +91,7 @@ final class LispVarStore: @unchecked Sendable {
         "MENUECHO": .int(0),
         "MIRRTEXT": .int(0),
         "NOMUTT": .int(0),
+        "CIRCLERAD": .real(0),
         "OFFSETDIST": .real(-1),
         "OFFSETGAPTYPE": .int(0),
         "ORTHOMODE": .int(0),
@@ -201,6 +202,9 @@ final class LispVarStore: @unchecked Sendable {
             return .string(activeCommand ?? "")
         case "MILLISECS":
             return .int(Int(Date().timeIntervalSince1970 * 1000))
+        case "CIRCLERAD":
+            // Live: shared with CIRCLE (0 = no default, last radius otherwise).
+            return .real(CircleSettings.lastRadius ?? 0)
         case "OFFSETDIST":
             // Live: shared with the OFFSET command (-1 = Through default).
             return .real(OffsetSettings.lastDistance ?? -1)
@@ -499,6 +503,18 @@ final class LispVarStore: @unchecked Sendable {
                 return "AUNITS requires an integer 0..4"
             }
             store(name, value)
+            return nil
+        case "CIRCLERAD":
+            let numeric: Double?
+            switch value {
+            case .real(let r): numeric = r
+            case .int(let i): numeric = Double(i)
+            default: numeric = nil
+            }
+            guard let numeric, numeric >= 0, numeric.isFinite else {
+                return "CIRCLERAD requires a non-negative real (0 = no default)"
+            }
+            CircleSettings.lastRadius = numeric > 0 ? numeric : nil
             return nil
         case "OFFSETDIST":
             let numeric: Double?

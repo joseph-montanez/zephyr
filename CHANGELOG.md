@@ -52,6 +52,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **WBLOCK file export** - export blocks to DXF or DWG.
 - **Cross-tab clipboard** - copy and paste across open drawings.
 - **Restore saved Model view on open** - open at the saved view when it overlaps the drawing, else zoom to extents.
+- **AutoCAD-style CIRCLE modes** - center with radius/diameter toggle (`D`/`R`), two/three-point circles, tan-tan-radius and tan-tan-tan, `CIRCLERAD` default reuse, inline `CAL` expressions, and matching ribbon and scripted command support; `OFFSET` for concentric rings is covered by existing behavior.
 
 ### DXF & File Formats
 - **Mirrored geometry round-trips** - mirrored blocks and arcs survive save and reopen.

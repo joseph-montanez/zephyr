@@ -344,7 +344,8 @@ public enum RibbonSpecParser {
                         + "drawing a letter placeholder instead")
             }
 
-            guard catalog.contains(canonical) else {
+            let validationKey = canonical.split(separator: " ", maxSplits: 1).first.map(String.init) ?? canonical
+            guard catalog.contains(validationKey) else {
                 warnings.append(
                     "\(context): command \"\(canonical)\" is not available in "
                         + "this build; item dropped")
