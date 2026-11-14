@@ -163,7 +163,7 @@ extension EngineRenderer {
     /// live buffers. Returns false when nothing was applied (upload refused
     /// or a chunk failed); the previous buffer stays live then.
     @discardableResult
-    internal func applyVertexBuild(_ result: VertexBuildResult, paletteGen: Int, ctx: WindowRenderContext) -> Bool {
+    internal func applyVertexBuild(_ result: VertexBuildResult, paletteGen: Int, ctx: WindowRenderContext, deferSwap: Bool = false) -> Bool {
         let vertices = result.vertices
 
         // --- Build NEW GPU buffers into locals, one chunk at a time ---
@@ -184,7 +184,8 @@ extension EngineRenderer {
         }()
         var pendingFences: [OpaquePointer?] = []
         var pendingTransfers: [OpaquePointer] = []
-        func drainPendingCopies() {
+        var failed = false
+        func drainPendingCopies() { if deferSwap && !failed && !newChunks.isEmpty { return }
             if !pendingFences.isEmpty {
                 var fences = pendingFences
                 _ = SDL_WaitForGPUFences(engine.gpuDevice, true, &fences, UInt32(fences.count))
@@ -199,7 +200,7 @@ extension EngineRenderer {
         if !vertices.isEmpty {
             let groups = CADVertexBufferBuilder.chunkBatches(result.batches, maxVertsPerChunk: chunkCap)
             var globalOffset = 0
-            var failed = false
+            // failed is hoisted to function scope for deferred-swap drain
             for group in groups {
                 let count = group.reduce(0) { $0 + Int($1.vertexCount) }
                 guard count > 0,
@@ -288,6 +289,18 @@ extension EngineRenderer {
                 return false
             }
             drainPendingCopies()
+            if deferSwap && !vertices.isEmpty {
+                if !ctx.pendingSwapFences.isEmpty { var of = ctx.pendingSwapFences; _ = SDL_WaitForGPUFences(engine.gpuDevice, true, &of, UInt32(of.count)) }
+                for chunk in ctx.pendingSwapChunks { if let buf = chunk.buffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) } }
+                for f in ctx.pendingSwapFences { if let f = f { SDL_ReleaseGPUFence(engine.gpuDevice, f) } }
+                for tb in ctx.pendingSwapTransfers { SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, tb) }
+                ctx.pendingSwapChunks = newChunks
+                ctx.pendingSwapFences = pendingFences
+                ctx.pendingSwapTransfers = pendingTransfers
+                ctx.pendingSwapResult = result
+                ctx.pendingSwapPaletteGen = paletteGen
+                return true
+            }
             if ProcessInfo.processInfo.environment["ZEPHYR_VERIFY_UPLOAD"] == "1" {
                 verifyUploadedChunks(newChunks, source: vertices)
             }
@@ -482,6 +495,32 @@ extension EngineRenderer {
     /// Called every frame. If a pending build matches the current in-flight
     /// token, applies it (GPU upload + swap). Also clears the in-flight marker
     /// so a new build can be launched.
+    internal func pollPendingVertexSwap(ctx: WindowRenderContext) {
+        guard let result = ctx.pendingSwapResult else { return }
+        guard !ctx.pendingSwapFences.isEmpty else { return }
+        for f in ctx.pendingSwapFences {
+            guard let f = f, SDL_QueryGPUFence(engine.gpuDevice, f) else { return }
+        }
+        for f in ctx.pendingSwapFences { if let f = f { SDL_ReleaseGPUFence(engine.gpuDevice, f) } }
+        for tb in ctx.pendingSwapTransfers { SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, tb) }
+        for chunk in ctx.vertexChunks { if let buf = chunk.buffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) } }
+        ctx.vertexChunks = ctx.pendingSwapChunks
+        ctx.cachedViewportMinX = result.regionMinX
+        ctx.cachedViewportMaxX = result.regionMaxX
+        ctx.cachedViewportMinY = result.regionMinY
+        ctx.cachedViewportMaxY = result.regionMaxY
+        ctx.bufferedZoom = result.builtZoom
+        ctx.lastCameraZoom = result.builtZoom
+        ctx.cachedMutationGen = result.mutationGen
+        ctx.cachedPaletteGen = ctx.pendingSwapPaletteGen
+        ctx.lastHatchVerts = result.hatchVerts
+        ctx.lastVertexCapped = result.capped
+        ctx.pendingSwapFences.removeAll()
+        ctx.pendingSwapTransfers.removeAll()
+        ctx.pendingSwapChunks.removeAll()
+        ctx.pendingSwapResult = nil
+    }
+
     internal func applyPendingVertexBuildIfReady(ctx: WindowRenderContext, currentLineZoom: Double) {
         guard let wantToken = ctx.vbInFlightToken else { return }
         guard let result = ctx.vbBuilder.takePending(forToken: wantToken) else { return }
@@ -499,7 +538,7 @@ extension EngineRenderer {
         }
 
         let paletteGen = ctx.vbInFlightPaletteGen
-        if applyVertexBuild(result, paletteGen: paletteGen, ctx: ctx) {
+        if applyVertexBuild(result, paletteGen: paletteGen, ctx: ctx, deferSwap: true) {
             engine._statAsyncApplied += 1
         }
 

@@ -384,6 +384,7 @@ public final class CADRendererBridge {
             entityPrimitiveMap: &entityPrimitiveMap,
             viewportBackground: viewportBackground)
         _ = appliedCount // empty refresh still settles the LOD key; prevents relaunch spin
+        if appliedCount > 0 { geometryManager.invalidateGrid() }
         appliedCurveLOD = context
     }
 

@@ -97,7 +97,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Code cleanup** - internal cleanup, no behavior change.
 
 ### Performance
-- **Zoom and pan stay smooth on large drawings** - zoom no longer stalls or forces full rebuilds; curves refine in place and text stays visible while panning.
+- **Zoom and pan stay smooth on large drawings** - zoom no longer stalls or forces full rebuilds; curves refine in place and text stays visible while panning, and tessellation rebuilds now wait for panning to settle with the next buffer prefetched, so there are no frame drops after zooming.
 - **Faster hover and snap** - moving the cursor is cheaper on big drawings; snaps feel instant.
 - **Quieter hover** - panels and fast cursor moves no longer highlight.
 - **Fewer draw calls on line-heavy drawings** - renders much faster without changing the picture.

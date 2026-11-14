@@ -87,6 +87,15 @@ public final class WindowRenderContext {
     public var cachedPaletteGen: Int = -1
     public var cachedUsingGrid: Bool = false
     public var lastCameraZoom: Double = -1.0
+    public var lastCameraMoveTicks: UInt64 = 0
+    public var lastSeenCameraOffsetX: Double = 0
+    public var lastSeenCameraOffsetY: Double = 0
+    public var lastSeenCameraZoom: Double = -1.0
+    public var pendingSwapFences: [OpaquePointer?] = []
+    public var pendingSwapTransfers: [OpaquePointer] = []
+    public var pendingSwapChunks: [VertexGPUChunk] = []
+    public var pendingSwapResult: VertexBuildResult? = nil
+    public var pendingSwapPaletteGen: Int = -1
     /// Hatch-pattern verts in the last applied build (diagnostic).
     public var lastHatchVerts: Int = 0
     /// Whether the last applied build hit the hard vertex cap.
@@ -146,6 +155,13 @@ public final class WindowRenderContext {
     /// from the renderer's teardown path.
     public func destroy(device: OpaquePointer) {
         sprites.removeAllSprites()
+        for f in pendingSwapFences { if let f = f { SDL_ReleaseGPUFence(device, f) } }
+        for tb in pendingSwapTransfers { SDL_ReleaseGPUTransferBuffer(device, tb) }
+        for chunk in pendingSwapChunks { if let buf = chunk.buffer { SDL_ReleaseGPUBuffer(device, buf) } }
+        pendingSwapFences.removeAll()
+        pendingSwapTransfers.removeAll()
+        pendingSwapChunks.removeAll()
+        pendingSwapResult = nil
         regenTask?.cancel()
         regenTask = nil
         regenInFlight = nil
@@ -165,6 +181,7 @@ public final class WindowRenderContext {
     }
 
     /// Drop built state so the next frame rebuilds from scratch.
+    /// destroy() also clears any deferred swap below.
     /// Used when display settings (e.g. anti-aliasing) invalidate every view.
     public func invalidateBuiltState(device: OpaquePointer) {
         vbTask?.cancel()
@@ -178,6 +195,13 @@ public final class WindowRenderContext {
             }
         }
         vertexChunks.removeAll()
+        for f in pendingSwapFences { if let f = f { SDL_ReleaseGPUFence(device, f) } }
+        for tb in pendingSwapTransfers { SDL_ReleaseGPUTransferBuffer(device, tb) }
+        for chunk in pendingSwapChunks { if let buf = chunk.buffer { SDL_ReleaseGPUBuffer(device, buf) } }
+        pendingSwapFences.removeAll()
+        pendingSwapTransfers.removeAll()
+        pendingSwapChunks.removeAll()
+        pendingSwapResult = nil
         lastCameraZoom = -1.0
         cachedMutationGen = -1
         cachedPaletteGen = -1

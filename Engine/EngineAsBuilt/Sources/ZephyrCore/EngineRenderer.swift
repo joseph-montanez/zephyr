@@ -180,6 +180,41 @@ public final class EngineRenderer {
     /// Band equality wins; near an edge the reference band holds unless the
     /// move exceeds ~15% (mirrors curve-LOD band stickiness, so hovering
     /// near an edge does not flap rebuilds).
+    internal static let lodIdleMs: UInt64 = 180
+
+    internal static func isCameraSettled(
+        nowTicks: UInt64,
+        lastMoveTicks: UInt64,
+        panActive: Bool = false,
+        zoomActive: Bool = false,
+        idleMs: UInt64 = lodIdleMs
+    ) -> Bool {
+        if panActive || zoomActive { return false }
+        if lastMoveTicks == 0 { return true }
+        return nowTicks &- lastMoveTicks >= idleMs
+    }
+
+    internal static func needsPrefetch(
+        viewport: ScreenTessellationViewport,
+        buffer: ScreenTessellationViewport,
+        threshold: Double
+    ) -> Bool {
+        let halfW = (buffer.maxX - buffer.minX) * 0.5
+        let halfH = (buffer.maxY - buffer.minY) * 0.5
+        guard halfW > 0, halfH > 0, threshold > 0 else { return false }
+        let t = min(threshold, 1.0)
+        let centerX = (buffer.minX + buffer.maxX) * 0.5
+        let centerY = (buffer.minY + buffer.maxY) * 0.5
+        let vCenterX = (viewport.minX + viewport.maxX) * 0.5
+        let vCenterY = (viewport.minY + viewport.maxY) * 0.5
+        if abs(vCenterX - centerX) >= t * halfW { return true }
+        if abs(vCenterY - centerY) >= t * halfH { return true }
+        if !(viewport.minX >= buffer.minX && viewport.maxX <= buffer.maxX && viewport.minY >= buffer.minY && viewport.maxY <= buffer.maxY) && t >= 1.0 {
+            return true
+        }
+        return false
+    }
+
     internal static func isLineWidthZoomStable(_ zoom: Double, _ referenceZoom: Double) -> Bool {
         guard zoom > 0, referenceZoom > 0 else { return false }
         if lineWidthZoomBand(zoom) == lineWidthZoomBand(referenceZoom) { return true }
@@ -187,6 +222,32 @@ public final class EngineRenderer {
         return ratio > 1.0 / 1.15 && ratio < 1.15
     }
 
+    internal func noteCameraMovement(ctx: WindowRenderContext, camera: EngineCameraManager) {
+        let ox = camera.offset.x
+        let oy = camera.offset.y
+        let z = camera.zoom
+        if ctx.lastSeenCameraZoom == -1.0 {
+            ctx.lastSeenCameraOffsetX = ox
+            ctx.lastSeenCameraOffsetY = oy
+            ctx.lastSeenCameraZoom = z
+            return
+        }
+        if abs(ox - ctx.lastSeenCameraOffsetX) > 1e-12 || abs(oy - ctx.lastSeenCameraOffsetY) > 1e-12 || abs(z - ctx.lastSeenCameraZoom) > 1e-12 {
+            ctx.lastCameraMoveTicks = SDL_GetTicks()
+        }
+        ctx.lastSeenCameraOffsetX = ox
+        ctx.lastSeenCameraOffsetY = oy
+        ctx.lastSeenCameraZoom = z
+    }
+
+    internal func isCameraSettled(ctx: WindowRenderContext) -> Bool {
+        Self.isCameraSettled(
+            nowTicks: SDL_GetTicks(),
+            lastMoveTicks: ctx.lastCameraMoveTicks,
+            panActive: engine.interaction.panActive || engine.interaction.touchPanActive || engine.interaction.radialPanActive,
+            zoomActive: false)
+    }
+
     /// Live zoom context for block auto-LOD hit-test/highlight decisions.
     internal func liveBlockLODContext(zoom: Double, scaleX: Double, scaleY: Double) -> BlockLODContext {
         BlockLOD.liveContext(
@@ -216,7 +277,7 @@ public final class EngineRenderer {
     /// Prefetch seam: fraction of the buffered half-extent at which a *proactive* rebuild
     /// fires. 1.0 = reactive (rebuild only when viewport actually exits the buffer) = today's
     /// behavior. Lower later (e.g. 0.7) to enable predictive prefetch with no structural change.
-    internal var cadPrefetchThreshold: Double = 1.0
+    internal var cadPrefetchThreshold: Double = 0.7
 
     /// Approximate vertex counter for foreground ImDrawList overflow guard.
     /// ImGui 16-bit index limit is 65535. We stop adding vertices at ~60000
@@ -261,7 +322,14 @@ public final class EngineRenderer {
         ctx.vbTask = nil
         ctx.vbInFlightToken = nil
         ctx.vbInFlightRegion = nil
-        ctx.vbBuilder.cancelPending()
+        ctx.vbBuilder.cancelPending()
+        for f in ctx.pendingSwapFences { if let f = f { SDL_ReleaseGPUFence(engine.gpuDevice, f) } }
+        for tb in ctx.pendingSwapTransfers { SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, tb) }
+        for chunk in ctx.pendingSwapChunks { if let buf = chunk.buffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) } }
+        ctx.pendingSwapFences.removeAll()
+        ctx.pendingSwapTransfers.removeAll()
+        ctx.pendingSwapChunks.removeAll()
+        ctx.pendingSwapResult = nil
 
         let vp = camera.worldViewportRect(windowWidth: viewportWidth, windowHeight: viewportHeight)
         let marginX = (vp.maxX - vp.minX) * cadCullMargin
@@ -390,7 +458,8 @@ public final class EngineRenderer {
         simplifyComplexBlocks: Bool,
         splineTessellationDivisor: Double,
         pixelsPerUnit: Double,
-        paddedViewport: ScreenTessellationViewport,
+        paddedViewport: ScreenTessellationViewport,
+        camera: EngineCameraManager,
         background: SDL_FColor,
         isPrimary: Bool
     ) -> Bool {
@@ -404,6 +473,8 @@ public final class EngineRenderer {
         if ctx.supersedeIfDocumentChanged(to: doc) {
             ctx.invalidateBuiltState(device: engine.gpuDevice)
         }
+        noteCameraMovement(ctx: ctx, camera: camera)
+        let cameraSettled = isCameraSettled(ctx: ctx)
         // Fold in-tab edits into the generation so they supersede any in-flight
         // task exactly the way a tab switch does.
         if doc.needsRegeneration {
@@ -423,7 +494,7 @@ public final class EngineRenderer {
         // refresh cannot). The sticky band + insert-count gate keep this to
         // one async regen per 2x zoom step in block-bearing drawings.
         if !engine.commandProcessor.isLispActivelyEvaluating,
-           ctx.bridge.desiredBlockLODBand(
+           cameraSettled, ctx.bridge.desiredBlockLODBand(
                pixelsPerUnit: pixelsPerUnit,
                autoEnabled: engine.autoCollapseSmallBlocks) != nil
         {
@@ -436,7 +507,7 @@ public final class EngineRenderer {
         // census gate keeps this to one async regen per 2x zoom step in
         // hatch-bearing drawings.
         if !engine.commandProcessor.isLispActivelyEvaluating,
-           ctx.bridge.desiredHatchBand(pixelsPerUnit: pixelsPerUnit) != nil
+           cameraSettled, ctx.bridge.desiredHatchBand(pixelsPerUnit: pixelsPerUnit) != nil
         {
             ctx.regenGeneration &+= 1
         }
@@ -516,7 +587,7 @@ public final class EngineRenderer {
         switch ctx.bridge.refreshCurveLODIfNeeded(
             generation: wantGen,
             revision: doc.renderRevision,
-            context: desiredCurveLOD,
+            context: cameraSettled ? desiredCurveLOD : nil,
             into: ctx.geometry,
             viewportBackground: bgTuple(background)) {
         case .none, .launched:
@@ -548,7 +619,10 @@ public final class EngineRenderer {
             vp.minX >= ctx.cachedViewportMinX && vp.maxX <= ctx.cachedViewportMaxX &&
             vp.minY >= ctx.cachedViewportMinY && vp.maxY <= ctx.cachedViewportMaxY
         let lineZoom = camera.zoom * Double(pixelScale)
-        let zoomStable = Self.isLineWidthZoomStable(lineZoom, ctx.bufferedZoom)
+        let zoomStable = Self.isLineWidthZoomStable(lineZoom, ctx.bufferedZoom)
+        let bufferRect = ScreenTessellationViewport(minX: ctx.cachedViewportMinX, minY: ctx.cachedViewportMinY, maxX: ctx.cachedViewportMaxX, maxY: ctx.cachedViewportMaxY)
+        let vpRect = ScreenTessellationViewport(minX: vp.minX, minY: vp.minY, maxX: vp.maxX, maxY: vp.maxY)
+        let wantPrefetch = ctx.cachedMutationGen != -1 && Self.needsPrefetch(viewport: vpRect, buffer: bufferRect, threshold: cadPrefetchThreshold)
 
         let renderCacheHit = !pendingApplied && interactive && insideBuffer
             && zoomStable
@@ -566,7 +640,7 @@ public final class EngineRenderer {
                 paletteGen: engine.ui.displayPaletteGeneration,
                 useLightDisplayPalette: useLightDisplayPalette,
                 viewportBackground: bgTuple(background))
-        } else if !renderCacheHit && interactive {
+        } else if (!renderCacheHit || wantPrefetch) && interactive {
             launchAsyncVertexBuildIfNeeded(
                 ctx: ctx, camera: camera,
                 viewportWidth: viewportWidth, viewportHeight: viewportHeight,
@@ -575,7 +649,8 @@ public final class EngineRenderer {
                 useLightDisplayPalette: useLightDisplayPalette,
                 viewportBackground: bgTuple(background))
         }
-        applyPendingVertexBuildIfReady(ctx: ctx, currentLineZoom: lineZoom)
+        applyPendingVertexBuildIfReady(ctx: ctx, currentLineZoom: lineZoom)
+        pollPendingVertexSwap(ctx: ctx)
     }
 
     internal func render(deltaSec: Double) {
@@ -695,7 +770,8 @@ public final class EngineRenderer {
                 simplifyComplexBlocks: inBlockEditor ? false : engine.simplifyComplexBlocks,
                 splineTessellationDivisor: engine.splineTessellationDivisor,
                 pixelsPerUnit: activeLOD.pixelsPerUnit,
-                paddedViewport: activeLOD.paddedViewport,
+                paddedViewport: activeLOD.paddedViewport,
+                camera: engine.camera,
                 background: engine.ui.backgroundColor,
                 isPrimary: true)
 
@@ -979,7 +1055,8 @@ public final class EngineRenderer {
             simplifyComplexBlocks: inBlockEditor ? false : engine.simplifyComplexBlocks,
             splineTessellationDivisor: engine.splineTessellationDivisor,
             pixelsPerUnit: splitPrimaryLOD.pixelsPerUnit,
-            paddedViewport: splitPrimaryLOD.paddedViewport,
+            paddedViewport: splitPrimaryLOD.paddedViewport,
+            camera: engine.camera,
             background: engine.ui.backgroundColor,
             isPrimary: true)
         routeContextVertexBuild(
@@ -1049,7 +1126,8 @@ public final class EngineRenderer {
                 simplifyComplexBlocks: tab.editingBlockID != nil ? false : engine.simplifyComplexBlocks,
                 splineTessellationDivisor: engine.splineTessellationDivisor,
                 pixelsPerUnit: leafLOD.pixelsPerUnit,
-                paddedViewport: leafLOD.paddedViewport,
+                paddedViewport: leafLOD.paddedViewport,
+                camera: ctx.camera,
                 background: bg, isPrimary: false)
             routeContextVertexBuild(
                 ctx: ctx, camera: ctx.camera,
@@ -2327,7 +2405,8 @@ public final class EngineRenderer {
                 simplifyComplexBlocks: tab.editingBlockID != nil ? false : engine.simplifyComplexBlocks,
                 splineTessellationDivisor: engine.splineTessellationDivisor,
                 pixelsPerUnit: secondaryLOD.pixelsPerUnit,
-                paddedViewport: secondaryLOD.paddedViewport,
+                paddedViewport: secondaryLOD.paddedViewport,
+                camera: c.camera,
                 background: bg, isPrimary: false)
             routeContextVertexBuild(
                 ctx: c, camera: c.camera,
