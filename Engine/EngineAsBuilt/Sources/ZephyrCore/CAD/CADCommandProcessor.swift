@@ -370,11 +370,11 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "PREVIOUSVIEW", aliases: ["PREVVIEW", "VIEWPREV"], category: .view, syntax: "", description: "Switch to the previous model or sheet view"),
         CommandDescriptor(canonicalName: "AALINES",    aliases: [],                category: .view,    syntax: "", description: "Toggle anti-aliased line rendering on/off"),
         CommandDescriptor(canonicalName: "REDRAW",     aliases: ["R"],             category: .view,    syntax: "", description: "Refresh the viewport display"),
-        CommandDescriptor(canonicalName: "REGEN",      aliases: [],                category: .view,    syntax: "", description: "Regenerate the drawing from its database"),
+        CommandDescriptor(canonicalName: "REGEN",      aliases: ["REA"],           category: .view,    syntax: "", description: "Regenerate the drawing from its database"),
         CommandDescriptor(canonicalName: "TOOLBAR",    aliases: ["TO"],            category: .view,    syntax: "", description: "Show or hide the toolbar (ribbon)"),
         CommandDescriptor(canonicalName: "PSPACE",     aliases: ["PS"],            category: .view,    syntax: "", description: "Switch to paper space"),
         CommandDescriptor(canonicalName: "MSPACE",     aliases: ["MS"],            category: .view,    syntax: "", description: "Switch to model space"),
-        CommandDescriptor(canonicalName: "MVIEW",      aliases: ["MV"],            category: .view,    syntax: "[?|x1,y1 x2,y2|ON id|OFF id|S scale id|T degrees id]", description: "List, create, or control paper-space floating viewports"),
+        CommandDescriptor(canonicalName: "MVIEW",      aliases: ["MV"],            category: .view,    syntax: "[?|NEW|x1,y1 x2,y2|ON id|OFF id|S scale id|T degrees id|LOCK id|UNLOCK id|MOVE id x,y|DELETE id]", description: "List, create, or control paper-space floating viewports"),
         CommandDescriptor(canonicalName: "CHSPACE",    aliases: [],                 category: .modify,  syntax: "", description: "Move selected entities between paper and model space"),
         CommandDescriptor(canonicalName: "PROPERTIES", aliases: ["PROPS", "PR", "CH", "MO"], category: .view, syntax: "", description: "Show/hide the properties panel"),
         CommandDescriptor(canonicalName: "GROUP",      aliases: ["G"],             category: .modify,  syntax: "", description: "Create a lightweight named or unnamed object group"),
@@ -2846,10 +2846,22 @@ public final class CADCommandProcessor {
         let argument = parts.count > 1 ? String(parts[1]).trimmingCharacters(in: .whitespaces) : ""
 
         switch command {
-        case "MODEL", "2DVIEW", "MSPACE", "MS":
-            // Phase 1: MSPACE targets the Model tab. True floating model
-            // space inside a sheet viewport lands in a later phase.
+        case "MODEL", "2DVIEW":
             if engine.tabManager.switchToModelSpace() {
+                engine.zoomExtents()
+                print("[CAD] View: \(engine.tabManager.activeViewName ?? "Model")")
+            }
+            return true
+        case "MSPACE", "MS":
+            // Floating model space inside the active sheet viewport, like
+            // AutoCAD; falls back to the Model tab when already in Model.
+            if engine.tabManager.isPaperSpace {
+                if let id = engine.tabManager.enterFloatingModelSpace() {
+                    print("[CAD] MSPACE: floating model space in viewport \(id).")
+                } else {
+                    print("[CAD] MSPACE needs a usable viewport on this sheet.")
+                }
+            } else if engine.tabManager.switchToModelSpace() {
                 engine.zoomExtents()
                 print("[CAD] View: \(engine.tabManager.activeViewName ?? "Model")")
             }
@@ -2997,6 +3009,52 @@ public final class CADCommandProcessor {
             } else {
                 print("[CAD] Unknown viewport id \(id) or layer '\(args[1])'.")
             }
+        case "LOCK", "GELOCK", "DISPLOCK":
+            guard args.count >= 2, let id = Int(args[1]) else {
+                print("[CAD] Usage: MVIEW LOCK <id>")
+                return
+            }
+            if manager.setViewportLocked(id: id, locked: true) {
+                print("[CAD] Viewport \(id) locked.")
+            } else {
+                print("[CAD] Unknown viewport id \(id).")
+            }
+        case "UNLOCK", "GEUNLOCK":
+            guard args.count >= 2, let id = Int(args[1]) else {
+                print("[CAD] Usage: MVIEW UNLOCK <id>")
+                return
+            }
+            if manager.setViewportLocked(id: id, locked: false) {
+                print("[CAD] Viewport \(id) unlocked.")
+            } else {
+                print("[CAD] Unknown viewport id \(id).")
+            }
+        case "DEL", "DELETE":
+            guard args.count >= 2, let id = Int(args[1]) else {
+                print("[CAD] Usage: MVIEW DELETE <id>")
+                return
+            }
+            if manager.deleteActiveSheetViewport(id: id) {
+                engine.zoomExtents()
+                print("[CAD] Viewport \(id) deleted.")
+                printViewportList(manager)
+            } else {
+                print("[CAD] Unknown viewport id \(id).")
+            }
+        case "MOVE":
+            guard args.count >= 3, let id = Int(args[1]),
+                  let center = parsePaperPoint(args[2]) else {
+                print("[CAD] Usage: MVIEW MOVE <id> <x,y>")
+                return
+            }
+            if manager.moveActiveSheetViewport(id: id, toPaperCenter: center) {
+                engine.zoomExtents()
+                print("[CAD] Viewport \(id) moved.")
+            } else {
+                print("[CAD] Unknown viewport id \(id).")
+            }
+        case "NEW":
+            activateFeatureCommand(MViewCreateCommand())
         default:
             // Create: two paper corners "x1,y1 x2,y2".
             guard args.count >= 2,
@@ -3018,7 +3076,7 @@ public final class CADCommandProcessor {
     }
 
     private func printMViewUsage() {
-        print("[CAD] MVIEW [<x1,y1> <x2,y2> | ? | ON <id> | OFF <id> | S <scale> <id> | T <deg> <id> | SELECT <x,y> | FREEZE <layer> <id> | THAW <layer> <id>]")
+        print("[CAD] MVIEW [<x1,y1> <x2,y2> | NEW | ? | ON <id> | OFF <id> | S <scale> <id> | T <deg> <id> | SELECT <x,y> | FREEZE <layer> <id> | THAW <layer> <id> | LOCK <id> | UNLOCK <id> | MOVE <id> <x,y> | DELETE <id>]")
     }
 
     private func printViewportList(_ manager: TabManager) {
@@ -3029,7 +3087,8 @@ public final class CADCommandProcessor {
         }
         for viewport in viewports {
             let state = viewport.isUsable ? "on" : "off"
-            print("[CAD] id=\(viewport.id) \(state) scale=1:\(String(format: "%.4g", viewport.scale)) twist=\(String(format: "%.4g", viewport.twistAngle * 180.0 / .pi))deg")
+            let lockBit = viewport.isLocked ? " locked" : ""
+            print("[CAD] id=\(viewport.id) \(state)\(lockBit) scale=1:\(String(format: "%.4g", viewport.scale)) twist=\(String(format: "%.4g", viewport.twistAngle * 180.0 / .pi))deg")
         }
     }
 

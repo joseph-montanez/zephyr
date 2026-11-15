@@ -87,7 +87,7 @@ public enum CADCommandAliasTable {
             canonicalName: "REDRAW", aliases: ["R"], category: .view,
             description: "Refresh the viewport display"),
         CADCommandAliasEntry(
-            canonicalName: "REGEN", category: .view,
+            canonicalName: "REGEN", aliases: ["REA"], category: .view,
             description: "Regenerate the drawing from its database"),
         CADCommandAliasEntry(
             canonicalName: "ROTATE", aliases: ["RO"], category: .modify,

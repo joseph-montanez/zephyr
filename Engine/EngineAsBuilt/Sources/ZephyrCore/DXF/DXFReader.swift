@@ -2209,7 +2209,7 @@ extension DXFReader {
             case 1000:
                 guard activeVPXData?.caseInsensitiveCompare(viewportXDataApp) == .orderedSame else { break }
                 let text = decode(v)
-                if text.hasPrefix("VPSTABLEID:") {
+                if text.hasPrefix("VPLOCKED:") { e.displayLocked = (text.dropFirst("VPLOCKED:".count) == "1") } else if text.hasPrefix("VPSTABLEID:") {
                     e.stableID = String(text.dropFirst("VPSTABLEID:".count))
                 } else if text.hasPrefix("VPOVR:") {
                     e.overrideRecords.append(String(text.dropFirst("VPOVR:".count)))

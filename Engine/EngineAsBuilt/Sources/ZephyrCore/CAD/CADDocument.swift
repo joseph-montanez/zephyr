@@ -77,6 +77,9 @@ public struct CADDocumentSnapshot: Sendable {
     /// Named selection groups (GROUP/UNGROUP) at snapshot time.
     public let groups: [String: CADGroup]
     public let viewportOverrides: ViewportOverrideMap
+    /// Sheet documents only: full viewport definitions (incl. OFF and
+    /// locked). Snapshotted (undoable), persisted to DXF/EAB.
+    public let storedViewportDefinitions: [DXFImporter.SheetViewport]
     public let layerStates: [String: LayerState]
     public let layerFilters: [String: LayerFilter]
 
@@ -115,11 +118,13 @@ public struct CADDocumentSnapshot: Sendable {
         isolatedHiddenHandles: Set<UUID> = [],
         groups: [String: CADGroup] = [:],
         viewportOverrides: ViewportOverrideMap = [:],
+        storedViewportDefinitions: [DXFImporter.SheetViewport] = [],
         layerStates: [String: LayerState] = [:],
         layerFilters: [String: LayerFilter] = [:]
     ) {
         self.groups = groups
         self.viewportOverrides = viewportOverrides
+        self.storedViewportDefinitions = storedViewportDefinitions
         self.layerStates = layerStates
         self.layerFilters = layerFilters
         self.isolatedHiddenHandles = isolatedHiddenHandles
@@ -632,6 +637,12 @@ public final class CADDocument {
         /// Per-viewport layer deltas (Phase 3): viewport stable key -> layer-handle string -> override.
     /// Sheet documents only; snapshotted (undoable), persisted to DXF/EAB. See CADViewportOverrides.
     public var viewportLayerOverrides: ViewportOverrideMap = [:]
+
+    /// Full floating-viewport definitions for sheet documents.
+    /// Includes OFF (status 0) and locked viewports that project no
+    /// geometry and therefore leave no xdata trace. Snapshotted
+    /// (undoable), persisted to DXF (native VIEWPORT + XDATA) and EAB.
+    public var storedViewportDefinitions: [DXFImporter.SheetViewport] = []
 
     /// PICKSTYLE (0 = none, 1 = group select, 2 = associative hatch
     /// select, 3 = both; default 1 like AutoCAD). Bit 0 drives group
@@ -5586,6 +5597,7 @@ public final class CADDocument {
             isolatedHiddenHandles: isolatedHiddenHandles,
             groups: groups,
             viewportOverrides: viewportLayerOverrides,
+            storedViewportDefinitions: storedViewportDefinitions,
             layerStates: layerStates,
             layerFilters: layerFilters
         )
@@ -5650,6 +5662,7 @@ public final class CADDocument {
             isolatedHiddenHandles: base.isolatedHiddenHandles,
             groups: base.groups,
             viewportOverrides: base.viewportOverrides,
+            storedViewportDefinitions: base.storedViewportDefinitions,
             layerStates: base.layerStates,
             layerFilters: base.layerFilters)
         }
@@ -5716,6 +5729,7 @@ public final class CADDocument {
         plotSettings = snapshot.plotSettings
         groups = snapshot.groups
         viewportLayerOverrides = snapshot.viewportOverrides
+        storedViewportDefinitions = snapshot.storedViewportDefinitions
         layerStates = snapshot.layerStates
         layerFilters = snapshot.layerFilters
         // Prune image assets no longer referenced by any entity after restore

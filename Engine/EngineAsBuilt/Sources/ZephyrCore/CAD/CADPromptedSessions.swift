@@ -353,7 +353,7 @@ extension CADCommandProcessor {
         case "MVIEW":
             return [
                 PendingPromptPhase(
-                    prompt: "Enter MVIEW option [?/ON/OFF/S/T/Select/Freeze/Thaw or two paper corners]:",
+                    prompt: "Enter MVIEW option [?/NEW/ON/OFF/S/T/Select/Freeze/Thaw/Lock/Unlock/Move/Delete or two paper corners]:",
                     kind: .token, emptyFinishes: true),
                 PendingPromptPhase(
                     prompt: "Enter option arguments (empty = none):",

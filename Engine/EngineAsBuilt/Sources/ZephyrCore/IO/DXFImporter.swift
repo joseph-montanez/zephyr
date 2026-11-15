@@ -19,6 +19,10 @@ public struct DXFDrawingView: Sendable {
     /// Full plot settings for this view (paper + device/scale/flags).
     public let plotSettings: CADPlotSettings?
     public let viewportOverrides: ViewportOverrideMap
+    /// Full viewport definitions (incl. OFF + locked) from native
+    /// VIEWPORT entities; survives even when a viewport projects no
+    /// geometry (OFF) and thus leaves no xdata trace.
+    public let storedViewportDefinitions: [DXFImporter.SheetViewport]
 
     public init(
         name: String,
@@ -28,7 +32,8 @@ public struct DXFDrawingView: Sendable {
         layoutSettings: CADLayoutSettings? = nil,
         groups: [CADGroup] = [],
         plotSettings: CADPlotSettings? = nil,
-        viewportOverrides: ViewportOverrideMap = [:]
+        viewportOverrides: ViewportOverrideMap = [:],
+        storedViewportDefinitions: [DXFImporter.SheetViewport] = []
     ) {
         self.name = name
         self.kind = kind
@@ -38,6 +43,7 @@ public struct DXFDrawingView: Sendable {
         self.groups = groups
         self.plotSettings = plotSettings
         self.viewportOverrides = viewportOverrides
+        self.storedViewportDefinitions = storedViewportDefinitions
     }
 }
 
@@ -298,13 +304,13 @@ public enum DXFImporter {
     /// One floating paper-space viewport. Internal (not private) so sheet
     /// refresh in TabManager can re-project current model geometry through
     /// the same definitions import used.
-    public struct SheetViewport {
+    public struct SheetViewport: Sendable, Equatable, Hashable {
         let paperCenterX: Double
         let paperCenterY: Double
         let paperWidth: Double
         let paperHeight: Double
         let status: Int
-        let id: Int
+        public let id: Int
         let viewCenterX: Double
         let viewCenterY: Double
         let viewTargetX: Double
@@ -313,6 +319,9 @@ public enum DXFImporter {
         let twistAngle: Double
         let layerName: String
         let stableID: String
+        /// AutoCAD "Display Locked": pan/zoom inside this viewport is
+        /// disabled; wheel input instead zooms the sheet.
+        public let isLocked: Bool
 
         init(
             paperCenterX: Double, paperCenterY: Double,
@@ -322,7 +331,8 @@ public enum DXFImporter {
             viewTargetX: Double, viewTargetY: Double,
             viewHeight: Double, twistAngle: Double,
             layerName: String,
-            stableID: String = UUID().uuidString
+            stableID: String = UUID().uuidString,
+            isLocked: Bool = false
         ) {
             self.paperCenterX = paperCenterX
             self.paperCenterY = paperCenterY
@@ -338,6 +348,7 @@ public enum DXFImporter {
             self.twistAngle = twistAngle
             self.layerName = layerName
             self.stableID = stableID
+            self.isLocked = isLocked
         }
 
         init(_ source: DXFViewportEntity) {
@@ -357,6 +368,7 @@ public enum DXFImporter {
             stableID = source.stableID.isEmpty
                 ? ViewportIdentity.fallbackKey(viewportNumber: source.vpID)
                 : source.stableID
+            isLocked = source.displayLocked
         }
 
         var isUsable: Bool {
@@ -371,7 +383,7 @@ public enum DXFImporter {
         }
 
         /// Paper-space scale: paper units per model unit.
-        var scale: Double {
+        public var scale: Double {
             guard viewHeight > 1e-9 else { return 1 }
             return paperHeight / viewHeight
         }
@@ -411,32 +423,39 @@ public enum DXFImporter {
         public var detailDescription: String {
             let rect = paperRect
             func fmt(_ v: Double) -> String { String(format: "%.4g", v) }
-            return "id=\(id) rect=(\(fmt(rect.minX)), \(fmt(rect.minY)))-(\(fmt(rect.maxX)), \(fmt(rect.maxY))) scale=1:\(fmt(scale)) twist=\(fmt(twistAngle * 180.0 / .pi))deg"
+            let lockBit = isLocked ? " locked=1" : ""
+            return "id=\(id) rect=(\(fmt(rect.minX)), \(fmt(rect.minY)))-(\(fmt(rect.maxX)), \(fmt(rect.maxY))) scale=1:\(fmt(scale)) twist=\(fmt(twistAngle * 180.0 / .pi))deg\(lockBit)"
+        }
+
+        private func copy(
+            paperCenterX: Double? = nil, paperCenterY: Double? = nil,
+            paperWidth: Double? = nil, paperHeight: Double? = nil,
+            status: Int? = nil, viewHeight: Double? = nil,
+            twistAngle: Double? = nil, layerName: String? = nil,
+            isLocked: Bool? = nil
+        ) -> SheetViewport {
+            SheetViewport(
+                paperCenterX: paperCenterX ?? self.paperCenterX,
+                paperCenterY: paperCenterY ?? self.paperCenterY,
+                paperWidth: paperWidth ?? self.paperWidth,
+                paperHeight: paperHeight ?? self.paperHeight,
+                status: status ?? self.status, id: id,
+                viewCenterX: viewCenterX, viewCenterY: viewCenterY,
+                viewTargetX: viewTargetX, viewTargetY: viewTargetY,
+                viewHeight: viewHeight ?? self.viewHeight,
+                twistAngle: twistAngle ?? self.twistAngle,
+                layerName: layerName ?? self.layerName,
+                stableID: stableID,
+                isLocked: isLocked ?? self.isLocked)
         }
 
         func withStatus(_ newStatus: Int) -> SheetViewport {
-            SheetViewport(
-                paperCenterX: paperCenterX, paperCenterY: paperCenterY,
-                paperWidth: paperWidth, paperHeight: paperHeight,
-                status: newStatus, id: id,
-                viewCenterX: viewCenterX, viewCenterY: viewCenterY,
-                viewTargetX: viewTargetX, viewTargetY: viewTargetY,
-                viewHeight: viewHeight, twistAngle: twistAngle,
-                layerName: layerName,
-                stableID: stableID)
+            copy(status: newStatus)
         }
 
         func withScale(_ newScale: Double) -> SheetViewport {
             guard newScale > 1e-9 else { return self }
-            return SheetViewport(
-                paperCenterX: paperCenterX, paperCenterY: paperCenterY,
-                paperWidth: paperWidth, paperHeight: paperHeight,
-                status: status, id: id,
-                viewCenterX: viewCenterX, viewCenterY: viewCenterY,
-                viewTargetX: viewTargetX, viewTargetY: viewTargetY,
-                viewHeight: paperHeight / newScale, twistAngle: twistAngle,
-                layerName: layerName,
-                stableID: stableID)
+            return copy(viewHeight: paperHeight / newScale)
         }
 
         func withViewTarget(x: Double, y: Double) -> SheetViewport {
@@ -448,19 +467,32 @@ public enum DXFImporter {
                 viewTargetX: x, viewTargetY: y,
                 viewHeight: viewHeight, twistAngle: twistAngle,
                 layerName: layerName,
-                stableID: stableID)
+                stableID: stableID,
+                isLocked: isLocked)
         }
 
         func withTwistDegrees(_ degrees: Double) -> SheetViewport {
-            SheetViewport(
-                paperCenterX: paperCenterX, paperCenterY: paperCenterY,
-                paperWidth: paperWidth, paperHeight: paperHeight,
-                status: status, id: id,
-                viewCenterX: viewCenterX, viewCenterY: viewCenterY,
-                viewTargetX: viewTargetX, viewTargetY: viewTargetY,
-                viewHeight: viewHeight, twistAngle: degrees * .pi / 180.0,
-                layerName: layerName,
-                stableID: stableID)
+            copy(twistAngle: degrees * .pi / 180.0)
+        }
+
+        func withLocked(_ locked: Bool) -> SheetViewport {
+            copy(isLocked: locked)
+        }
+
+        /// Move the paper frame (center in sheet coords, Y-up sheet convention).
+        func withPaperCenter(x: Double, y: Double) -> SheetViewport {
+            copy(paperCenterX: x, paperCenterY: -y)
+        }
+
+        /// Resize the paper frame; the model window follows the new aspect
+        /// (scale preserved, view height re-derived for the new height).
+        func withPaperSize(width: Double, height: Double) -> SheetViewport {
+            guard width > 1e-9, height > 1e-9 else { return self }
+            return copy(paperWidth: width, paperHeight: height, viewHeight: height / scale)
+        }
+
+        func withLayerName(_ name: String) -> SheetViewport {
+            copy(layerName: name)
         }
 
         var modelToPaperTransform: Transform3D {
@@ -491,6 +523,7 @@ public enum DXFImporter {
             result["dxf.viewport.twistDegrees"] = .double(twistAngle * 180.0 / .pi)
             result["dxf.viewport.layer"] = .string(layerName)
             result["dxf.viewport.stableID"] = .string(stableID)
+            result["dxf.viewport.locked"] = .bool(isLocked)
             return result
         }
 
@@ -668,6 +701,8 @@ public enum DXFImporter {
         if case .string(let value)? = xdata["dxf.viewport.layer"] { layerName = value }
         var stableID = ViewportIdentity.fallbackKey(viewportNumber: id)
         if case .string(let value)? = xdata["dxf.viewport.stableID"], !value.isEmpty { stableID = value }
+        var isLocked = false
+        if case .bool(let value)? = xdata["dxf.viewport.locked"] { isLocked = value }
         return SheetViewport(
             paperCenterX: paperCenterX, paperCenterY: paperCenterY,
             paperWidth: paperWidth, paperHeight: paperHeight,
@@ -677,14 +712,15 @@ public enum DXFImporter {
             viewHeight: viewHeight,
             twistAngle: twistDegrees * .pi / 180.0,
             layerName: layerName,
-            stableID: stableID)
+            stableID: stableID,
+            isLocked: isLocked)
     }
 
     /// Recover a sheet's viewport definitions from its projected entities.
     /// Viewport parameters ride on every projected copy, so definitions
-    /// survive EAB/DXF round-trips without a separate persisted field.
-    /// A viewport that projected zero entities leaves no trace and is
-    /// lost, exactly as at import today.
+    /// survive EAB/DXF round-trips. Viewports that project zero entities
+    /// (OFF) leave no xdata trace; they survive via the document's
+    /// storedViewportDefinitions instead (DXF native VIEWPORT / EAB).
     public static func sheetProjectionCache(from entities: [CADEntity]) -> SheetProjectionCache {
         var cache = SheetProjectionCache()
         var signatures = Set<String>()
@@ -733,21 +769,50 @@ public enum DXFImporter {
         xrefBlockIDs: Set<UUID> = []
     ) -> [CADEntity] {
         var projected: [CADEntity] = []
-        func appendProjected(_ modelEntity: CADEntity, projection: Transform3D, xdata: [String: XDataValue]) {
+        func appendProjected(_ modelEntity: CADEntity, projection: Transform3D, xdata: [String: XDataValue], viewport: SheetViewport? = nil) {
+            var geometry = modelEntity.localGeometry ?? []
+            var bbox = modelEntity.localBoundingBox
+            // Trim single-line geometry to the viewport frame so projected
+            // lines never draw or plot outside it (other primitive kinds
+            // rely on the PDF clip path; screen spill for them is a
+            // known limitation).
+            if let viewport, geometry.count == 1,
+               case .line(let lineStart, let lineEnd, let lineColor) = geometry[0],
+               let trimmed = Self.trimmedLine(
+                   start: lineStart, end: lineEnd,
+                   modelTransform: modelEntity.transform,
+                   projection: projection, viewport: viewport) {
+                geometry = [.line(start: trimmed.0, end: trimmed.1, color: lineColor)]
+                bbox = BoundingBox3D(
+                    min: Vector3(
+                        x: min(trimmed.0.x, trimmed.1.x),
+                        y: min(trimmed.0.y, trimmed.1.y), z: 0),
+                    max: Vector3(
+                        x: max(trimmed.0.x, trimmed.1.x),
+                        y: max(trimmed.0.y, trimmed.1.y), z: 0))
+            } else if let viewport, geometry.count == 1,
+                      case .line(let lineStart, let lineEnd, _) = geometry[0],
+                      Self.trimmedLine(
+                          start: lineStart, end: lineEnd,
+                          modelTransform: modelEntity.transform,
+                          projection: projection, viewport: viewport) == nil {
+                // Segment fully outside the frame: skip the copy.
+                return
+            }
             let projectedDrawOrder = modelEntity.drawOrder == Int.max
                 ? Int.max
                 : modelEntity.drawOrder + 1
             projected.append(CADEntity(
                 layerID: modelEntity.layerID,
                 blockID: modelEntity.blockID,
-                localGeometry: modelEntity.localGeometry,
+                localGeometry: geometry,
                 dimensionMetadata: modelEntity.dimensionMetadata,
                 leaderData: modelEntity.leaderData,
                 arrayData: modelEntity.arrayData,
                 transform: projection.multiplying(by: modelEntity.transform),
                 xdata: xdata,
                 drawOrder: projectedDrawOrder,
-                localBoundingBox: modelEntity.localBoundingBox,
+                localBoundingBox: bbox,
                 anchorPoints: modelEntity.anchorPoints))
         }
         for viewport in cache.exactViewports where viewport.isUsable && !viewport.isSystemViewport {
@@ -757,7 +822,8 @@ public enum DXFImporter {
                 || (modelEntity.blockID.map { xrefBlockIDs.contains($0) } ?? false) {
                 appendProjected(
                     modelEntity, projection: projection,
-                    xdata: viewport.projectedXData(modelEntity.xdata))
+                    xdata: viewport.projectedXData(modelEntity.xdata),
+                    viewport: viewport)
             }
         }
         if cache.exactViewports.isEmpty, let projection = cache.syntheticProjection {
@@ -769,6 +835,51 @@ public enum DXFImporter {
             }
         }
         return projected
+    }
+
+
+    /// Trim one projected model-space line to its viewport's paper frame.
+    /// Liang-Barsky clip in paper coordinates (correct under twist), then
+    /// back-mapped to model-local geometry. Returns nil when the segment
+    /// lies fully outside the frame; returns the input unchanged when the
+    /// segment is fully inside.
+    private static func trimmedLine(
+        start: Vector3, end: Vector3,
+        modelTransform: Transform3D, projection: Transform3D,
+        viewport: SheetViewport
+    ) -> (Vector3, Vector3)? {
+        let fullMap = projection.multiplying(by: modelTransform)
+        let a = fullMap.transformPoint(start)
+        let b = fullMap.transformPoint(end)
+        let rect = viewport.paperRect
+        func inside(_ p: Vector3) -> Bool {
+            p.x >= rect.minX && p.x <= rect.maxX
+                && p.y >= rect.minY && p.y <= rect.maxY
+        }
+        if inside(a), inside(b) { return (start, end) }
+        var t0 = 0.0
+        var t1 = 1.0
+        let dx = b.x - a.x
+        let dy = b.y - a.y
+        func clip(_ p: Double, _ q: Double) -> Bool {
+            if p == 0 { return q >= 0 }
+            let r = q / p
+            if p < 0 {
+                if r > t1 { return false }
+                if r > t0 { t0 = r }
+            } else {
+                if r < t0 { return false }
+                if r < t1 { t1 = r }
+            }
+            return true
+        }
+        guard clip(-dx, a.x - rect.minX), clip(dx, rect.maxX - a.x),
+              clip(-dy, a.y - rect.minY), clip(dy, rect.maxY - a.y) else { return nil }
+        guard t1 >= t0 else { return nil }
+        let ca = Vector3(x: a.x + dx * t0, y: a.y + dy * t0, z: a.z + (b.z - a.z) * t0)
+        let cb = Vector3(x: a.x + dx * t1, y: a.y + dy * t1, z: a.z + (b.z - a.z) * t1)
+        let inv = fullMap.inverse()
+        return (inv.transformPoint(ca), inv.transformPoint(cb))
     }
 
     public static func importDXF(filePath: String) throws -> (layers: [Layer], blocks: [CADBlock], entities: [CADEntity], textStyleFonts: [String: String], linetypePatterns: [String: [Double]], dimensionStyles: [String: CADDimensionStyle]) {
@@ -2023,11 +2134,18 @@ public enum DXFImporter {
                 // geometry that also exists in model space, so it must never
                 // drive projection, even when it is the only viewport present.
                 let viewports = usableViewports.filter { !$0.isSystemViewport }
+                // Full definitions (including OFF viewports) persist even
+                // though OFF viewports project no geometry.
+                let storedSheetViewports = paperSource
+                    .compactMap { $0 as? DXFViewportEntity }
+                    .map(SheetViewport.init)
+                    .filter { !$0.isSystemViewport }
                 // Phase 3: per-viewport layer deltas from VIEWPORT 331
                 // (frozen layers) and ZEPHYR_VP records (style overrides).
-                // Only projecting (usable, non-system) viewports contribute:
-                // an OFF viewport projects nothing and is already lost from
-                // xdata-derived definitions, so its deltas have no live key.
+                // Only projecting (usable, non-system) viewports contribute.
+                // OFF viewports contribute no geometry but their definitions
+                // survive via storedViewportDefinitions; their deltas have no
+                // live key until the viewport is turned back on.
                 let sheetViewportOverrides: ViewportOverrideMap = {
                     var map: ViewportOverrideMap = [:]
                     var layerNameByHandle: [UInt32: String] = [:]
@@ -2175,7 +2293,8 @@ public enum DXFImporter {
                     layoutSettings: layoutSettings,
                     groups: viewGroupStaging.map { CADGroup(name: $0.key, members: $0.value) },
                     plotSettings: effectivePlotSettings,
-                    viewportOverrides: sheetViewportOverrides))
+                    viewportOverrides: sheetViewportOverrides,
+                    storedViewportDefinitions: storedSheetViewports))
             }
             views = importedViews
         }

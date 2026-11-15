@@ -428,7 +428,11 @@ internal final class EngineInputHandler {
                     let dir = e.wheel.direction.rawValue == SDL_MouseWheelDirection.flipped.rawValue
                         ? -wy : wy
                     let factor = dir > 0 ? 1.375 : 1.0 / 1.375
-                    engine.camera.zoomView(factor: factor, screenX: engine.interaction.lastMouseX, screenY: engine.interaction.lastMouseY, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
+                    if let floating = engine.tabManager.floatingViewport(), !floating.isLocked {
+                        engine.tabManager.updateActiveSheetViewport(id: floating.id, scale: floating.scale * factor)
+                    } else {
+                        engine.camera.zoomView(factor: factor, screenX: engine.interaction.lastMouseX, screenY: engine.interaction.lastMouseY, windowWidth: engine.windowWidth, windowHeight: engine.windowHeight)
+                    }
                     engine.interaction.clearSelectionCyclingTransient()
                 }
 
@@ -557,7 +561,22 @@ internal final class EngineInputHandler {
                         let dx = Double(curX - engine.interaction.lastTouchAvgX) * Double(engine.windowWidth)
                         let dy = Double(curY - engine.interaction.lastTouchAvgY) * Double(engine.windowHeight)
                         if abs(dx) > 0.5 || abs(dy) > 0.5 {
-                            engine.camera.panByScreenDelta(dx: dx, dy: dy)
+                            if let floating = engine.tabManager.floatingViewport(), !floating.isLocked,
+                               let current = engine.tabManager.activeViewport(), current.id == floating.id {
+                                let rot = engine.camera.rotation
+                                let cr = -rot
+                                let cosR = cos(cr)
+                                let sinR = sin(cr)
+                                let zoom = max(engine.camera.zoom, 1e-9)
+                                let dWorldX = (-cosR * dx - sinR * dy) / zoom
+                                let dWorldY = (sinR * dx - cosR * dy) / zoom
+                                engine.tabManager.updateActiveSheetViewport(
+                                    id: floating.id,
+                                    viewTarget: (x: current.viewTargetX + dWorldX / floating.scale,
+                                                 y: current.viewTargetY - dWorldY / floating.scale))
+                            } else {
+                                engine.camera.panByScreenDelta(dx: dx, dy: dy)
+                            }
                         }
                         engine.interaction.lastTouchAvgX = curX
                         engine.interaction.lastTouchAvgY = curY
@@ -1218,7 +1237,25 @@ internal final class EngineInputHandler {
         if engine.interaction.panActive {
             let screenDx = Double(xrel)
             let screenDy = Double(yrel)
-            engine.camera.panByScreenDelta(dx: screenDx, dy: screenDy)
+            if let floating = engine.tabManager.floatingViewport(), !floating.isLocked,
+               let current = engine.tabManager.activeViewport(), current.id == floating.id {
+                // Floating model space: pan the model inside the viewport
+                // (world delta through the camera rotation, divided by the
+                // viewport scale; Y negated by the viewTarget convention).
+                let rot = engine.camera.rotation
+                let cr = -rot
+                let cosR = cos(cr)
+                let sinR = sin(cr)
+                let zoom = max(engine.camera.zoom, 1e-9)
+                let dWorldX = (-cosR * screenDx - sinR * screenDy) / zoom
+                let dWorldY = (sinR * screenDx - cosR * screenDy) / zoom
+                engine.tabManager.updateActiveSheetViewport(
+                    id: floating.id,
+                    viewTarget: (x: current.viewTargetX + dWorldX / floating.scale,
+                                 y: current.viewTargetY - dWorldY / floating.scale))
+            } else {
+                engine.camera.panByScreenDelta(dx: screenDx, dy: screenDy)
+            }
             engine.interaction.clearSelectionCyclingTransient()
         } else {
             // Deferred: the main loop flushes the latest position once per

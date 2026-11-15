@@ -127,6 +127,9 @@ public enum EABSectionType: UInt32, Sendable {
     /// Named layer states + filters (Phase 4). Additive section: older
     /// readers skip it via the default case, so no version bump.
     case layerStates = 24
+    /// Full sheet viewport definitions (incl. OFF + locked viewports that
+    /// project no geometry). Additive section, same no-bump rule.
+    case viewportDefinitions = 25
 }
 
 /// Compression mode for a data section.

@@ -265,6 +265,44 @@ public struct CADPlotSettings: Sendable, Equatable {
         }
     }
 
+    /// Viewport-scale label for a canonical type (`1/4"=1'`, `1:50`, ...).
+    public static func viewportScaleLabel(for type: Int) -> String? {
+        switch type {
+        case 1: return "1/128\"=1'"
+        case 2: return "1/64\"=1'"
+        case 3: return "1/32\"=1'"
+        case 4: return "1/16\"=1'"
+        case 5: return "3/32\"=1'"
+        case 6: return "1/8\"=1'"
+        case 7: return "3/16\"=1'"
+        case 8: return "1/4\"=1'"
+        case 9: return "3/8\"=1'"
+        case 10: return "1/2\"=1'"
+        case 11: return "3/4\"=1'"
+        case 12: return "1\"=1'"
+        case 13: return "3\"=1'"
+        case 14: return "6\"=1'"
+        case 15: return "1'=1\""
+        case 16: return "1:1"
+        case 17...26: return "1:\(Int(round(1.0 / (standardScaleFactor(for: type) ?? 1))))"
+        case 27...32: return "\(Int(standardScaleFactor(for: type) ?? 1)):1"
+        default: return nil
+        }
+    }
+
+    /// Viewport-scale label for an arbitrary factor: canonical label when
+    /// the factor matches the standard table, otherwise `Custom <ratio>`.
+    public static func viewportScaleLabel(factor: Double) -> String {
+        if let type = standardScaleType(forFactor: factor),
+           let label = viewportScaleLabel(for: type) {
+            return label
+        }
+        if factor < 1 {
+            return "Custom 1:\(String(format: "%.4g", 1 / factor))"
+        }
+        return "Custom \(String(format: "%.4g", factor)):1"
+    }
+
     /// Reverse lookup: exact factor → canonical type (tolerates float noise).
     /// Four imperial/metric pairs share exact factors (1.0: 15/16, 0.5: 14/17,
     /// 0.25: 13/18, 0.0625: 11/21); duplicates resolve to the lowest type

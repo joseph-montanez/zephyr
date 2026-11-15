@@ -172,7 +172,7 @@ struct PageSetupDialogUI {
         renderGroups(engine: engine, dw: dw, dh: dh)
 
         if igButton("Preview...", ImVec2(x: 90, y: 0)) {
-            message = "Live preview arrives with the PREVIEW command (Phase 3)."
+            engine.commandProcessor.executeCommand("PREVIEW")
         }
         ImGuiSameLine(0, 8)
         if igButton("OK", ImVec2(x: 90, y: 0)) {

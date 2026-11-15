@@ -105,6 +105,14 @@ struct StatusBarUI {
             ImGuiSetCursorPosX(16)
             ImGuiTextV(statusLeft)
 
+            // Paper/model space badge (AutoCAD status-bar parity).
+            if let shownTab, !shownTab.drawingViews.isEmpty {
+                let clamped = max(0, min(shownViewIndex, shownTab.drawingViews.count - 1))
+                let badge = shownTab.drawingViews[clamped].kind == .sheet ? "PAPER" : "MODEL"
+                ImGuiSameLine(0, 8)
+                ImGuiTextV(badge)
+            }
+
             // Xref attention indicator (broken/stale external references).
             if let shownTab,
                XrefPalettePolicy.hasWarning(store: shownTab.xrefStore)
@@ -130,6 +138,38 @@ struct StatusBarUI {
                 }
                 if igSmallButton(scLabel) {
                     SelectionCyclingSettings.toggle()
+                }
+            }
+
+            // Viewport scale + lock (active sheet only).
+            if shownTab?.id == engine.tabManager.activeTab?.id,
+               engine.tabManager.isPaperSpace,
+               let vp = engine.tabManager.activeViewport() {
+                let currentLabel = CADPlotSettings.viewportScaleLabel(factor: vp.scale)
+                ImGuiSameLine(0, 8)
+                if ImGuiBeginCombo("##VPScale", currentLabel, 0) {
+                    for type in 1...32 {
+                        guard let label = CADPlotSettings.viewportScaleLabel(for: type),
+                              let factor = CADPlotSettings.standardScaleFactor(for: type) else { continue }
+                        let selected = label == currentLabel
+                        if ImGuiSelectable(label, selected, 0, ImVec2(x: 0, y: 0)) {
+                            engine.tabManager.updateActiveSheetViewport(id: vp.id, scale: factor)
+                        }
+                        if selected { ImGuiSetItemDefaultFocus() }
+                    }
+                    for custom in engine.tabManager.activeTab?.customScaleFactors ?? [] {
+                        let label = CADPlotSettings.viewportScaleLabel(factor: custom)
+                        let selected = label == currentLabel
+                        if ImGuiSelectable(label, selected, 0, ImVec2(x: 0, y: 0)) {
+                            engine.tabManager.updateActiveSheetViewport(id: vp.id, scale: custom)
+                        }
+                        if selected { ImGuiSetItemDefaultFocus() }
+                    }
+                    ImGuiEndCombo()
+                }
+                ImGuiSameLine(0, 8)
+                if igSmallButton(vp.isLocked ? "Unlock VP" : "Lock VP") {
+                    engine.tabManager.setViewportLocked(id: vp.id, locked: !vp.isLocked)
                 }
             }
 

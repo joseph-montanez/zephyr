@@ -12,7 +12,7 @@ public extension TabManager {
 
     /// Next sequential default layout name (`Layout1`, `Layout2`, …) not yet
     /// used in the active tab (AutoCAD LT `<LayoutN>` prompt default).
-    func nextAvailableLayoutName() -> String {
+    public func nextAvailableLayoutName() -> String {
         var n = 1
         while layoutNameTaken("Layout\(n)") { n += 1 }
         return "Layout\(n)"
@@ -20,7 +20,7 @@ public extension TabManager {
 
     /// Next default copy destination name (`<source> (2)`, `<source> (3)`, …)
     /// matching AutoCAD LT's `LAYOUT Copy` prompt default.
-    func nextCopyLayoutName(from sourceName: String) -> String {
+    public func nextCopyLayoutName(from sourceName: String) -> String {
         let base = sourceName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !base.isEmpty else { return nextAvailableLayoutName() }
         var n = 2

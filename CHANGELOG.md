@@ -8,6 +8,10 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Blocks palette** - browse and insert blocks with thumbnails and search.
 - **Model-space plotting** - plot, page setup, and preview work from Model space.
 - **Batch publishing** - publish multiple sheets to PDF at once.
+- **Paper-space viewport editing** - lock/unlock, move, resize, delete, and undo each viewport operation; new viewports use a non-plotting `Defpoints` frame layer; interactive `MVIEW NEW` creates a viewport from two paper corners with a live preview.
+- **Floating model space** - double-click inside a sheet viewport (or run `MSPACE`) to pan and zoom the model in place; `PSPACE` or a click outside returns to paper space, and `CVPORT` reports the active viewport.
+- **Per-viewport clipping** - projected geometry is trimmed to its viewport frame on the canvas and in PDF output; geometry fully outside the frame is culled.
+- **Layout tab bar** - a trailing `+` creates a layout; right-click a sheet tab for New Layout, New Viewport, Duplicate, Rename, Delete, and Page Setup.
 - **Sheet sets** - organize drawings, place views, and publish the set.
 - **Callouts and transmit** - tag sheets and package a set for sharing.
 - **Save As DWG** - save directly to DWG.
@@ -16,6 +20,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Native dimensions from Lisp** - create dimensions from Lisp with matching export.
 
 ### New Commands
+- **MVIEW options** - `MVIEW NEW` for interactive two-corner creation, plus `LOCK`, `UNLOCK`, `MOVE <id> <x,y>`, and `DELETE`; the viewport list reports lock state.
+- **MSPACE / PSPACE** - floating model space inside a sheet viewport, with paper space restored on exit; `REGEN` gains the `REA` alias.
 - **PUBLISH / +PUBLISH / -PUBLISH** - publish multiple sheets to PDF.
 - **Sheet-set commands** - `SHEETSET`, `SHEETSETHIDE`, `NEWSHEETSET`, `OPENSHEETSET`, `PLACEVIEW`, `PLACECALLOUT`, `SHEETLISTTABLE`, `-PUBLISHSET`, `-TRANSMITSET`.
 - **Blocks palette** - `BLOCKSPALETTE` / `BLOCKSPALETTECLOSE`.
@@ -48,6 +54,10 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Faster spline math** - intersections are faster, same accuracy.
 - **Layers panel refresh** - multi-select, bulk actions, search, sort.
 - **LAYOUT SAveas** - duplicate the current layout under a new name.
+- **Layout tabs** - labels stay at full width instead of shrinking; overflow scrolls, and the active layout remains selected across redraws.
+- **Viewport scale labels** - the status bar and viewport UI show canonical imperial/metric scale labels (`1/4"=1'`, `1:50`, …) and `Custom` ratios for non-standard factors.
+- **Viewport status bar** - PAPER/MODEL badge, viewport scale picker, and Lock/Unlock button for the active sheet viewport.
+- **Page Setup preview** - the Preview button now opens the live `PREVIEW` instead of a placeholder message.
 - **MEASUREGEOM Angle mode** - three-click angle with an arc overlay.
 - **WBLOCK file export** - export blocks to DXF or DWG.
 - **Cross-tab clipboard** - copy and paste across open drawings.
@@ -55,10 +65,14 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **AutoCAD-style CIRCLE modes** - center with radius/diameter toggle (`D`/`R`), two/three-point circles, tan-tan-radius and tan-tan-tan, `CIRCLERAD` default reuse, inline `CAL` expressions, and matching ribbon and scripted command support; `OFFSET` for concentric rings is covered by existing behavior.
 
 ### DXF & File Formats
+- **Viewport persistence** - sheet viewport definitions, including OFF and locked viewports, now round-trip through DXF (native `VIEWPORT` entities plus XDATA) and EAB; definitions are stored on the sheet document so undo restores them with the viewport object.
 - **Mirrored geometry round-trips** - mirrored blocks and arcs survive save and reopen.
 - **Real spline export** - keep true spline definitions.
 
 ### Bug Fixes
+- **Viewport delete** - removing a viewport also drops its per-viewport layer overrides and restores projections through undo; unknown viewport ids fail without side effects.
+- **Viewport lock** - the locked state survives projection-xdata derivation and DXF/EAB reloads.
+- **MVIEW NEW** - a degenerate second corner re-prompts for the first corner and creates no viewport.
 - **Simplify frame thickness** - collapsed-block outlines render as thin 2px frames instead of giant solid-looking slabs.
 - **Block editor framing** - fits the block in view on open.
 - **Imported text width** - uses the correct default width.

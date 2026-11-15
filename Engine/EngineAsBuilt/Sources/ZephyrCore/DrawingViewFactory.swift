@@ -43,6 +43,7 @@ public enum DrawingViewFactory {
                 uniqueKeysWithValues: viewGroups.map { ($0.name, $0) })
             doc.plotSettings = view.plotSettings
             doc.viewportLayerOverrides = view.viewportOverrides
+            doc.storedViewportDefinitions = view.storedViewportDefinitions
             doc.paperSpaceLinetypeScale = imported.paperSpaceLinetypeScale
             doc.pstyleMode = imported.pstyleMode
             doc.insertionBase = imported.insBase

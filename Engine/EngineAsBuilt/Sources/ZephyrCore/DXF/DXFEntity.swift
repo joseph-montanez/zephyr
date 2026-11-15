@@ -1438,6 +1438,10 @@ public class DXFViewportEntity: DXFPointEntity {
     public var frozenLayerHandles: [UInt32] = []
     public var frozenLayerNames: [String] = []
     public var overrideRecords: [String] = []
+    /// 'Display Locked' (AutoCAD). Persisted via ZEPHYR_VP XDATA as
+    /// 'VPLOCKED:1' so the flag survives round-trips without group-code
+    /// differences across AutoCAD versions.
+    public var displayLocked: Bool = false
 
     public override init(eType: DXFEType = .vIEWPORT) {
         self.vpStatus = 0

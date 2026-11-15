@@ -120,6 +120,9 @@ public enum EABReader {
             doc.layoutSettings = components.layoutSettings
             doc.plotSettings = components.plotSettings
             doc.viewportLayerOverrides = components.viewportOverrides
+            if let storedDefs = readViewportDefinitions(from: data) {
+                doc.storedViewportDefinitions = storedDefs
+            }
             if let layerStates = readLayerStates(from: data) {
                 doc.layerStates = layerStates.states
                 doc.layerFilters = layerStates.filters
@@ -262,6 +265,9 @@ public enum EABReader {
             doc.layoutSettings = components.layoutSettings
             doc.plotSettings = components.plotSettings
             doc.viewportLayerOverrides = components.viewportOverrides
+            if let storedDefs = readViewportDefinitions(from: viewData) {
+                doc.storedViewportDefinitions = storedDefs
+            }
             if let layerStates = readLayerStates(from: viewData) {
                 doc.layerStates = layerStates.states
                 doc.layerFilters = layerStates.filters
@@ -522,6 +528,53 @@ public enum EABReader {
             groups.append(CADGroup(name: name, members: members, isSelectable: isSelectable))
         }
         return groups
+    }
+
+    public static func readViewportDefinitions(from data: Data) -> [DXFImporter.SheetViewport]? {
+        guard let header = try? parseHeader(from: data),
+              let tableOffset = safeInt(header.sectionTableOffset),
+              let entries = try? parseSectionTable(from: data, at: tableOffset),
+              let section = entries.first(where: { $0.type == .viewportDefinitions }),
+              let start = safeInt(section.offset) else { return nil }
+        let reader = BinaryReader(
+            data: data, startOffset: start,
+            usesLongStringSentinel: header.version >= EABVersionLongStrings)
+        return parseViewportDefinitions(reader)
+    }
+
+    static func parseViewportDefinitions(_ r: BinaryReader) -> [DXFImporter.SheetViewport] {
+        guard r.remaining >= 4 else { return [] }
+        let count = safeCount(r.readUInt32(), limit: maxSafeSectionCount, label: "viewportDefinitions")
+        var defs: [DXFImporter.SheetViewport] = []
+        defs.reserveCapacity(count)
+        for _ in 0..<count {
+            // 10 doubles + 2 ints + 2 strings (2B prefix each) + 1 byte.
+            guard r.remaining >= 93 else { return [] }
+            let paperCenterX = r.readFloat64()
+            let paperCenterY = r.readFloat64()
+            let paperWidth = r.readFloat64()
+            let paperHeight = r.readFloat64()
+            let status = Int(r.readInt32())
+            let id = Int(r.readInt32())
+            let viewCenterX = r.readFloat64()
+            let viewCenterY = r.readFloat64()
+            let viewTargetX = r.readFloat64()
+            let viewTargetY = r.readFloat64()
+            let viewHeight = r.readFloat64()
+            let twistAngle = r.readFloat64()
+            let layerName = r.readString()
+            let stableID = r.readString()
+            let isLocked = r.readUInt8() != 0
+            defs.append(DXFImporter.SheetViewport(
+                paperCenterX: paperCenterX, paperCenterY: paperCenterY,
+                paperWidth: paperWidth, paperHeight: paperHeight,
+                status: status, id: id,
+                viewCenterX: viewCenterX, viewCenterY: viewCenterY,
+                viewTargetX: viewTargetX, viewTargetY: viewTargetY,
+                viewHeight: viewHeight, twistAngle: twistAngle,
+                layerName: layerName, stableID: stableID, isLocked: isLocked))
+        }
+        return defs
     }
 
     static func parseViewportOverrides(_ r: BinaryReader) -> ViewportOverrideMap {

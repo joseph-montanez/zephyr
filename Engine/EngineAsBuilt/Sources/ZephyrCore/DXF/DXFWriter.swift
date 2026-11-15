@@ -2839,9 +2839,10 @@ public class DXFWriter {
             writeDbl(41, vp.psHeight, &out)
             writeInt(68, vp.vpStatus, &out)
             writeInt(69, vp.vpID, &out)
-            if !vp.stableID.isEmpty || !vp.overrideRecords.isEmpty {
+            if !vp.stableID.isEmpty || !vp.overrideRecords.isEmpty || vp.displayLocked {
                 writeStr(1001, "ZEPHYR_VP", &out)
                 if !vp.stableID.isEmpty { writeStr(1000, "VPSTABLEID:" + vp.stableID, &out) }
+                if vp.displayLocked { writeStr(1000, "VPLOCKED:1", &out) }
                 for record in vp.overrideRecords { writeStr(1000, "VPOVR:" + record, &out) }
             }
             for frozenName in vp.frozenLayerNames {

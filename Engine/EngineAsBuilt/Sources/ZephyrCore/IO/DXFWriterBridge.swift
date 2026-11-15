@@ -131,6 +131,7 @@ public enum DXFWriterBridge {
         var plotSettings: CADPlotSettings? = nil
         var pstyleMode: Int = 1
         var viewportOverrides: ViewportOverrideMap = [:]
+        var storedViewports: [DXFImporter.SheetViewport] = []
     }
 
 
@@ -181,7 +182,8 @@ public enum DXFWriterBridge {
             insertionBase: document.insertionBase,
             plotSettings: document.plotSettings,
             pstyleMode: document.pstyleMode,
-            viewportOverrides: document.viewportLayerOverrides)
+            viewportOverrides: document.viewportLayerOverrides,
+            storedViewports: document.storedViewportDefinitions)
         try exportToDXF(views: [view], filePath: url.path, dxfVersion: dxfVersion,
                         psltscale: document.paperSpaceLinetypeScale, sheetSetHint: sheetSetHint)
     }
@@ -216,7 +218,8 @@ public enum DXFWriterBridge {
                 insertionBase: $0.document.insertionBase,
                 plotSettings: $0.document.plotSettings,
                 pstyleMode: $0.document.pstyleMode,
-                viewportOverrides: $0.document.viewportLayerOverrides)
+                viewportOverrides: $0.document.viewportLayerOverrides,
+                storedViewports: $0.document.storedViewportDefinitions)
         }
         try exportToDXF(views: exportViews, filePath: url.path, dxfVersion: dxfVersion, tileMode: tileMode,
                         psltscale: psltscale, namedSetups: namedSetups, sheetSetHint: sheetSetHint)
@@ -1258,6 +1261,27 @@ public enum DXFWriterBridge {
 
         var projectedIndices = markedIndices
         var viewports = exactViewports(from: markedIndices.map { view.entities[$0] })
+        // Carry stored definitions that project no geometry (OFF viewports,
+        // no xdata trace) so they survive DXF round-trips as native
+        // VIEWPORT entities (with lock XDATA).
+        if !view.storedViewports.isEmpty {
+            let known = Set(viewports.map { viewport in
+                viewport.stableID.isEmpty
+                    ? ViewportIdentity.fallbackKey(viewportNumber: viewport.vpID)
+                    : viewport.stableID
+            })
+            for def in view.storedViewports where !def.isSystemViewport {
+                let key = def.stableID.isEmpty
+                    ? ViewportIdentity.fallbackKey(viewportNumber: def.id)
+                    : def.stableID
+                if known.contains(key) { continue }
+                viewports.append(makeViewportEntity(from: def))
+            }
+            viewports.sort { lhs, rhs in
+                if lhs.vpID != rhs.vpID { return lhs.vpID < rhs.vpID }
+                return lhs.vpStatus < rhs.vpStatus
+            }
+        }
         decorateViewportEntitiesForExport(&viewports, view: view)
 
         if projectedIndices.isEmpty,
@@ -1300,6 +1324,27 @@ public enum DXFWriterBridge {
             maximumLimits: limits.max)
     }
 
+
+    /// Native VIEWPORT entity for a stored sheet viewport definition.
+    private static func makeViewportEntity(from def: DXFImporter.SheetViewport) -> DXFViewportEntity {
+        let viewport = DXFViewportEntity()
+        viewport.layer = def.layerName
+        viewport.space = 1
+        viewport.basePoint = Vector3(x: def.paperCenterX, y: def.paperCenterY, z: 0)
+        viewport.psWidth = max(abs(def.paperWidth), 1e-9)
+        viewport.psHeight = max(abs(def.paperHeight), 1e-9)
+        viewport.vpStatus = def.status
+        viewport.vpID = def.id
+        viewport.centerPX = def.viewCenterX
+        viewport.centerPY = def.viewCenterY
+        viewport.viewTarget = Vector3(x: def.viewTargetX, y: def.viewTargetY, z: 0)
+        viewport.viewHeight = max(abs(def.viewHeight), 1e-9)
+        viewport.twistAngle = def.twistAngle * 180.0 / .pi
+        viewport.displayLocked = def.isLocked
+        viewport.stableID = def.stableID
+        return viewport
+    }
+
     private static func exactViewports(from entities: [CADEntity]) -> [DXFViewportEntity] {
         var result: [DXFViewportEntity] = []
         var signatures = Set<String>()
@@ -1322,6 +1367,7 @@ public enum DXFWriterBridge {
             let id = xdataInt(xdata, "dxf.viewport.id") ?? 2
             let status = xdataInt(xdata, "dxf.viewport.status") ?? max(2, id)
             let twist = xdataDouble(xdata, "dxf.viewport.twistDegrees") ?? 0
+            let locked = xdataInt(xdata, "dxf.viewport.locked") != 0
             let signature = [
                 String(id), String(status),
                 xdataString(xdata, "dxf.viewport.stableID") ?? "",
@@ -1334,7 +1380,8 @@ public enum DXFWriterBridge {
                 String(format: "%.12g", viewTargetX),
                 String(format: "%.12g", viewTargetY),
                 String(format: "%.12g", viewHeight),
-                String(format: "%.12g", twist)
+                String(format: "%.12g", twist),
+                locked ? "L1" : "L0"
             ].joined(separator: "|")
             guard signatures.insert(signature).inserted else { continue }
 
@@ -1351,6 +1398,7 @@ public enum DXFWriterBridge {
             viewport.viewTarget = Vector3(x: viewTargetX, y: viewTargetY, z: 0)
             viewport.viewHeight = max(abs(viewHeight), 1e-9)
             viewport.twistAngle = twist
+            viewport.displayLocked = locked
             viewport.stableID = xdataString(xdata, "dxf.viewport.stableID") ?? ""
             result.append(viewport)
         }

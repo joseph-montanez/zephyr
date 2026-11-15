@@ -1448,11 +1448,27 @@ public enum PDFExporter {
         for item in items {
             switch item {
             case .geometry(let entity, let color, let lineWeightMM):
-                PDFPrimitives.writeEntity(entity, in: document, entityColor: color,
-                                          lineWeightMM: lineWeightMM, pageScale: scale,
-                                          isLightBackground: isLightBackground, to: cb,
-                                          options: options, catalog: catalog,
-                                          plotInk: plotInk)
+                if entity.isViewportProjected, let clip = Self.viewportClipRect(xdata: entity.xdata) {
+                    // Clip viewport-projected geometry to its frame so it
+                    // never plots outside (PDF clips intersect the active
+                    // printable clip automatically).
+                    cb.raw("q\n")
+                    cb.num(clip.minX); cb.num(clip.minY)
+                    cb.num(clip.maxX - clip.minX); cb.num(clip.maxY - clip.minY)
+                    cb.raw("re W n\n")
+                    PDFPrimitives.writeEntity(entity, in: document, entityColor: color,
+                                              lineWeightMM: lineWeightMM, pageScale: scale,
+                                              isLightBackground: isLightBackground, to: cb,
+                                              options: options, catalog: catalog,
+                                              plotInk: plotInk)
+                    cb.raw("Q\n")
+                } else {
+                    PDFPrimitives.writeEntity(entity, in: document, entityColor: color,
+                                              lineWeightMM: lineWeightMM, pageScale: scale,
+                                              isLightBackground: isLightBackground, to: cb,
+                                              options: options, catalog: catalog,
+                                              plotInk: plotInk)
+                }
             case .textStrokes(let prims, let color, _):
                 PDFPrimitives.writeWorldPrimitives(prims, defaultColor: color,
                                                    lineWeightMM: 0.25, pageScale: scale,
@@ -1480,6 +1496,25 @@ public enum PDFExporter {
     // ---------------------------------------------------------------------
     // MARK: Helpers
     // ---------------------------------------------------------------------
+
+    /// Paper frame of a projected entity's viewport, from its xdata
+    /// (world/paper coordinates, matching `SheetViewport.paperRect`).
+    static func viewportClipRect(xdata: [String: XDataValue]) -> (minX: Double, minY: Double, maxX: Double, maxY: Double)? {
+        func dbl(_ key: String) -> Double? {
+            switch xdata[key] {
+            case .double(let v): return v
+            case .int(let v): return Double(v)
+            default: return nil
+            }
+        }
+        guard let cx = dbl("dxf.viewport.paperCenterX"),
+              let cy = dbl("dxf.viewport.paperCenterY"),
+              let w = dbl("dxf.viewport.paperWidth"),
+              let h = dbl("dxf.viewport.paperHeight"),
+              w > 0, h > 0 else { return nil }
+        return (minX: cx - w / 2.0, minY: -cy - h / 2.0,
+                maxX: cx + w / 2.0, maxY: -cy + h / 2.0)
+    }
 
     /// Conservative world-space bounds over a primitive list. Used for
     /// exploded text strokes (lines / polygons / arcs).

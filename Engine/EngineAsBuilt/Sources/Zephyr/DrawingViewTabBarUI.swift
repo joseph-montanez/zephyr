@@ -51,7 +51,11 @@ struct DrawingViewTabBarUI {
             let forceSelection = !canSwitch
                 || lastViewIndexByTabID[tab.id] != selectedIndex
 
+            // Never shrink labels: full text first (AutoCAD parity);
+            // overflow scrolls instead of ellipsizing.
+            ImGuiPushStyleVarX(Int32(ImGuiStyleVar_TabMinWidthShrink.rawValue), 1e9)
             let tabBarFlags = Int32(ImGuiTabBarFlags_NoTooltip.rawValue)
+                | Int32(ImGuiTabBarFlags_FittingPolicyScroll.rawValue)
 
             if ImGuiBeginTabBar("DrawingViews", tabBarFlags) {
                 for index in tab.drawingViews.indices {
@@ -96,9 +100,31 @@ struct DrawingViewTabBarUI {
                         }
 
                         if igBeginPopupContextItem("##DrawingView_\(tab.id.uuidString)_\(index)_ctx", Int32(ImGuiPopupFlags_MouseButtonRight.rawValue)) {
+                            if igMenuItem_Bool("New Layout", nil, false, true) {
+                                if engine.tabManager.createLayout() {
+                                    effectiveSelectedIndex = engine.tabManager.activeTab?.activeViewIndex ?? effectiveSelectedIndex
+                                }
+                            }
                             if view.kind == .sheet {
+                                if igMenuItem_Bool("New Viewport...", nil, false, true)
+                                    && engine.tabManager.switchToView(at: index) {
+                                    engine.commandProcessor.activateFeatureCommand(MViewCreateCommand())
+                                }
+                                if igMenuItem_Bool("Duplicate", nil, false, true) {
+                                    let dst = engine.tabManager.nextCopyLayoutName(from: view.name)
+                                    if engine.tabManager.copyLayout(from: view.name, to: dst) {
+                                        effectiveSelectedIndex = engine.tabManager.activeTab?.activeViewIndex ?? effectiveSelectedIndex
+                                    }
+                                }
+                                if igMenuItem_Bool("Rename...", nil, false, true) {
+                                    engine.commandProcessor.executeCommand("LAYOUT R")
+                                }
                                 if igMenuItem_Bool("Page Setup…", nil, false, true) {
                                     engine.commandProcessor.executeCommand("PAGESETUP")
+                                }
+                                if igMenuItem_Bool("Delete", nil, false, true) {
+                                    engine.tabManager.deleteLayout(named: view.name)
+                                    effectiveSelectedIndex = engine.tabManager.activeTab?.activeViewIndex ?? effectiveSelectedIndex
                                 }
                             }
                             ImGuiEndPopup()
@@ -119,8 +145,19 @@ struct DrawingViewTabBarUI {
                         ImGuiEndTabItem()
                     }
                 }
+                // Trailing "+" creates a layout (in-bar, AutoCAD-style).
+                // TabItemButton is click-only and never becomes selected,
+                // so it cannot fight the layout selection mid-frame.
+                let addLayoutFlags = Int32(ImGuiTabItemFlags_Trailing.rawValue | ImGuiTabItemFlags_NoTooltip.rawValue)
+                if canSwitch && ImGuiTabItemButton("+", addLayoutFlags) {
+                    if engine.tabManager.createLayout() {
+                        effectiveSelectedIndex = engine.tabManager.activeTab?.activeViewIndex ?? effectiveSelectedIndex
+                    }
+                    lastViewIndexByTabID[tab.id] = -1
+                }
                 ImGuiEndTabBar()
             }
+            ImGuiPopStyleVar(1)
 
             lastViewIndexByTabID[tab.id] = effectiveSelectedIndex
         }

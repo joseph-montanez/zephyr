@@ -458,6 +458,16 @@ public enum EABWriter {
             w.pad(to: 4)
         }
 
+        // Full viewport definitions (OFF/locked viewports project no
+        // geometry and leave no xdata trace, so they need their own section).
+        if !document.storedViewportDefinitions.isEmpty {
+            let defData = serializeViewportDefinitions(document: document)
+            entries.append(EABSectionEntry(type: .viewportDefinitions, offset: UInt64(w.count),
+                                            size: UInt64(defData.count), compression: .none))
+            w.writeBytes(defData)
+            w.pad(to: 4)
+        }
+
         // Named layer states + filters (Phase 4). Additive section: older
         // readers skip it via the default case, so no version bump.
         if !document.layerStates.isEmpty || !document.layerFilters.isEmpty {
@@ -1452,6 +1462,33 @@ public enum EABWriter {
                     w.writeUInt8(0)
                 }
             }
+        }
+        return w.build()
+    }
+
+    /// Full viewport definitions (OFF + locked viewports included).
+    /// Sorted by id for stable bytes. Fields are the raw storage values
+    /// (paper center positive-down, twist radians).
+    private static func serializeViewportDefinitions(document: CADDocument) -> Data {
+        let w = BinaryWriter()
+        let defs = document.storedViewportDefinitions.sorted { $0.id < $1.id }
+        w.writeUInt32(UInt32(defs.count))
+        for def in defs {
+            w.writeFloat64(def.paperCenterX)
+            w.writeFloat64(def.paperCenterY)
+            w.writeFloat64(def.paperWidth)
+            w.writeFloat64(def.paperHeight)
+            w.writeInt32(Int32(def.status))
+            w.writeInt32(Int32(def.id))
+            w.writeFloat64(def.viewCenterX)
+            w.writeFloat64(def.viewCenterY)
+            w.writeFloat64(def.viewTargetX)
+            w.writeFloat64(def.viewTargetY)
+            w.writeFloat64(def.viewHeight)
+            w.writeFloat64(def.twistAngle)
+            w.writeString(def.layerName)
+            w.writeString(def.stableID)
+            w.writeUInt8(def.isLocked ? 1 : 0)
         }
         return w.build()
     }
