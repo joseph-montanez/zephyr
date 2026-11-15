@@ -53,7 +53,7 @@ struct DrawingViewTabBarUI {
 
             // Never shrink labels: full text first (AutoCAD parity);
             // overflow scrolls instead of ellipsizing.
-            ImGuiPushStyleVarX(Int32(ImGuiStyleVar_TabMinWidthShrink.rawValue), 1e9)
+            ImGuiPushStyleVar(Int32(ImGuiStyleVar_TabMinWidthShrink.rawValue), 1e9)
             let tabBarFlags = Int32(ImGuiTabBarFlags_NoTooltip.rawValue)
                 | Int32(ImGuiTabBarFlags_FittingPolicyScroll.rawValue)
 
