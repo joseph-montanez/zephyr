@@ -797,15 +797,11 @@ internal final class EngineInputHandler {
                         allowMultiple: true
                     ) { [weak engine] urls in
                         guard let engine else { return }
+                        // Background loads: each file queues behind the
+                        // single in-flight load (concurrency 1); tabs frame
+                        // themselves on commit via `onDocumentLoadCommitted`.
                         for url in urls {
-                            do {
-                                try engine.tabManager.openTab(url: url)
-                            } catch {
-                                print("Failed to open \(url.lastPathComponent): \(error)")
-                            }
-                        }
-                        if !urls.isEmpty {
-                            engine.frameInitialView()
+                            _ = engine.tabManager.startLoad(url: url)
                         }
                     }
                 case SDL_SCANCODE_N:
@@ -1322,16 +1318,11 @@ internal final class EngineInputHandler {
         let pathStr = String(cString: filePath)
         let ext = URL(fileURLWithPath: pathStr).pathExtension.lowercased()
 
-        // ── CAD files: open in new tab ──
+        // ── CAD files: open in new tab (background load) ──
         let cadExtensions = Set(["dxf", "dwg", "eab"])
         if cadExtensions.contains(ext) {
-            do {
-                try engine.tabManager.openTab(url: URL(fileURLWithPath: pathStr))
-                engine.frameInitialView()
-                print("[Drop] Opened CAD file: \(pathStr)")
-            } catch {
-                print("[Drop] Failed to open CAD file \(pathStr): \(error)")
-            }
+            _ = engine.tabManager.startLoad(url: URL(fileURLWithPath: pathStr))
+            print("[Drop] Queued CAD file: \(pathStr)")
             return
         }
 

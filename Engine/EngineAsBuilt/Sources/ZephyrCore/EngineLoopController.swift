@@ -396,6 +396,8 @@ public final class EngineLoopController {
 
             || engine.tabManager.saveStateByTabID.count > 0
 
+            || engine.tabManager.loadStateByTabID.count > 0
+
         guard !interactive else { return }
 
         let now = SDL_GetTicks()
@@ -438,6 +440,8 @@ public final class EngineLoopController {
 
         let saveStateCount = engine.tabManager.saveStateByTabID.count
 
+        let loadStateCount = engine.tabManager.loadStateByTabID.count
+
         let isLispEvaluating = engine.commandProcessor.isLispActivelyEvaluating
 
         let contexts = allContexts()
@@ -475,6 +479,8 @@ public final class EngineLoopController {
             || (engine.ribbonLoader?.hasPendingWork == true)
 
             || saveStateCount > 0
+
+            || loadStateCount > 0
 
     }
 
@@ -520,6 +526,8 @@ public final class EngineLoopController {
 
         var lastSaveStateCount = engine.tabManager.saveStateByTabID.count
 
+        var lastLoadStateCount = engine.tabManager.loadStateByTabID.count
+
 
 
         while engine.running {
@@ -529,6 +537,12 @@ public final class EngineLoopController {
 
 
             if engine.tabManager.applyPendingSaveUpdates() {
+
+                framesToRender = max(framesToRender, 5)
+
+            }
+
+            if engine.tabManager.applyPendingLoadUpdates() {
 
                 framesToRender = max(framesToRender, 5)
 
@@ -565,6 +579,16 @@ public final class EngineLoopController {
                 framesToRender = max(framesToRender, 5)
 
                 lastSaveStateCount = saveStateCount
+
+            }
+
+            let loadStateCount = engine.tabManager.loadStateByTabID.count
+
+            if loadStateCount != lastLoadStateCount {
+
+                framesToRender = max(framesToRender, 5)
+
+                lastLoadStateCount = loadStateCount
 
             }
 
@@ -691,6 +715,8 @@ public final class EngineLoopController {
                 for tab in engine.tabManager.tabs where tab.hasUnsavedChanges {
 
                     guard engine.tabManager.saveStateByTabID[tab.id] == nil else { continue }
+
+                    guard engine.tabManager.loadStateByTabID[tab.id] == nil else { continue }
 
                     engine.tabManager.startAutosave(tabID: tab.id)
 

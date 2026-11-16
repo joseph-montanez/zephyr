@@ -102,7 +102,14 @@ struct TabBarUI {
                     guard !tab.isFloated else { continue }
                     let isActive = (i == activeIdx)
                     let hasUnsaved = tab.hasUnsavedChanges
-                    let label = tab.displayName
+                    let loadState = engine.tabManager.loadStateByTabID[tab.id]
+                    let label: String = {
+                        guard let ls = loadState else { return tab.displayName }
+                        switch ls.status {
+                        case .loading: return "\(tab.displayName) — Loading…"
+                        case .failed: return "\(tab.displayName) — Load failed"
+                        }
+                    }()
 
                     var tabFlags: Int32 = 0
                     if isActive && shouldForceSelection {
@@ -180,6 +187,14 @@ struct TabBarUI {
                         
                         if ImGuiIsItemHovered(0) {
                             ImGuiBeginTooltip()
+                            if let ls = loadState {
+                                switch ls.status {
+                                case .loading:
+                                    ImGuiTextV(ls.statusText.isEmpty ? "Loading…" : ls.statusText)
+                                case .failed(let msg):
+                                    ImGuiTextV("Load failed: \(msg)")
+                                }
+                            }
                             if let url = tab.fileURL {
                                 ImGuiTextV(url.path)
                             } else {

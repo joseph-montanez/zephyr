@@ -280,8 +280,9 @@ public enum ODADWGConverter {
         }
     }
 
-    /// Synchronous convenience (for sync TabManager methods).
-    /// Wraps the async convert in a Task and blocks. Only use where async is not available.
+    /// Synchronous convenience for already-background callers (xref/insert paths).
+    /// Wraps the async convert in a Task and blocks. Never call from the main
+    /// thread or the UI open path — use `convert` there.
     public static func convertSync(
         odaVersion: String = "ACAD2018",
         input: URL,
@@ -311,9 +312,98 @@ public enum ODADWGConverter {
         var error: (any Error)?
     }
 
+    // MARK: - Serialization gate (concurrency 1 for all conversions)
+
+    /// Serializes every ODA child-process run (interactive loads and background
+    /// saves share it). ODA FileConverter is directory-scoped with unique temp
+    /// folders per call, but concurrent runs are untested and double peak disk
+    /// and CPU; the background-load plan pins concurrency 1.
+    /// Async semaphore: `await` inside an actor method yields the actor, so a
+    /// naive `run(op:)` would interleave. `acquire`/`release` pairings are the
+    /// only correct use; every path must release exactly once.
+    private actor ConversionGate {
+        private var holders = 0
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func acquire() async {
+            if holders == 0 {
+                holders = 1
+                return
+            }
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                waiters.append(c)
+            }
+        }
+
+        func release() {
+            if !waiters.isEmpty {
+                waiters.removeFirst().resume()
+            } else {
+                holders = 0
+            }
+        }
+    }
+
+    private static let conversionGate = ConversionGate()
+
+    /// Wall-clock budget for one converter run (including the single FUSE retry
+    /// as a second run). Huge drawings can take minutes; the load can still be
+    /// cancelled sooner via task cancellation (tab close / quit). Written once
+    /// at startup/tests, read from background tasks.
+    nonisolated(unsafe) public static var conversionTimeoutSeconds: TimeInterval = 600
+
+    /// Holds the live child process so cancellation and timeout can terminate
+    /// it from outside the waiting continuation.
+    private final class ProcessBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var process: Process?
+        func store(_ p: Process) { lock.withLock { process = p } }
+        func terminate() { lock.withLock { process }?.terminate() }
+    }
+
+    private struct ConverterResult: Sendable {
+        var status: Int32
+        var stdout: String
+        var stderr: String
+    }
+
     // MARK: - Private: Process Execution
 
     private static func runConverter(
+        path: String,
+        inputDir: String,
+        outputDir: String,
+        version: String,
+        format: String,
+        recursive: String,
+        audit: String,
+        filter: String
+    ) async throws {
+        // Never run two converter children at once (see ConversionGate).
+        // The acquire/release pairing keeps concurrency 1: the heavy work runs
+        // on the caller's executor, never inside the actor (which would yield
+        // and interleave under `await`).
+        await conversionGate.acquire()
+        do {
+            try Task.checkCancellation()
+            try await runConverterSerial(
+                path: path,
+                inputDir: inputDir,
+                outputDir: outputDir,
+                version: version,
+                format: format,
+                recursive: recursive,
+                audit: audit,
+                filter: filter
+            )
+        } catch {
+            await conversionGate.release()
+            throw error
+        }
+        await conversionGate.release()
+    }
+
+    private static func runConverterSerial(
         path: String,
         inputDir: String,
         outputDir: String,
@@ -333,7 +423,7 @@ public enum ODADWGConverter {
         )
 
         let startTime = Date()
-        let first = try launchConverter(
+        let first = try await launchConverterAsync(
             path: path,
             arguments: startExtracted ? extractedArguments : baseArguments
         )
@@ -349,7 +439,7 @@ public enum ODADWGConverter {
            isAppImageBundle(path: path),
            looksLikeFuseFailure(first.stdout + "\n" + first.stderr) {
             print("[ODADWGConverter] Direct AppImage launch failed; retrying with --appimage-extract-and-run")
-            let second = try launchConverter(path: path, arguments: extractedArguments)
+            let second = try await launchConverterAsync(path: path, arguments: extractedArguments)
             if second.status == 0 {
                 logCompleted(startTime: startTime, status: second.status)
                 return
@@ -365,38 +455,104 @@ public enum ODADWGConverter {
         )
     }
 
-    private static func launchConverter(
+    /// Async child-process run. Never blocks the caller: the process writes to
+    /// temp files (not pipes, so a chatty converter cannot deadlock a full
+    /// pipe buffer against `waitUntilExit`), completion is delivered via
+    /// `terminationHandler`, and cancellation/timeout terminate the child.
+    private static func launchConverterAsync(
         path: String,
         arguments: [String]
-    ) throws -> (status: Int32, stdout: String, stderr: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: path)
-        process.arguments = arguments
-
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
+    ) async throws -> ConverterResult {
+        let box = ProcessBox()
+        let fm = FileManager.default
+        let scratch = fm.temporaryDirectory
+        let outURL = scratch.appendingPathComponent("oda-out-\(UUID().uuidString).log")
+        let errURL = scratch.appendingPathComponent("oda-err-\(UUID().uuidString).log")
+        _ = fm.createFile(atPath: outURL.path, contents: nil)
+        _ = fm.createFile(atPath: errURL.path, contents: nil)
+        defer {
+            try? fm.removeItem(at: outURL)
+            try? fm.removeItem(at: errURL)
+        }
 
         print("[ODADWGConverter] Running: \(path) \(arguments.joined(separator: " "))")
 
         do {
-            try process.run()
-            process.waitUntilExit()
-        } catch {
-            throw ODADWGConvertError.processFailed(
-                exitCode: -1,
-                stderr: "Failed to launch process: \(error.localizedDescription)"
-            )
+            return try await withTaskCancellationHandler {
+                try await withThrowingTaskGroup(of: ConverterResult.self) { group in
+                    group.addTask {
+                        try await launchAndWait(
+                            box: box, path: path, arguments: arguments,
+                            outURL: outURL, errURL: errURL)
+                    }
+                    group.addTask {
+                        let nanos = UInt64(max(1, conversionTimeoutSeconds) * 1_000_000_000)
+                        try await Task.sleep(nanoseconds: nanos)
+                        box.terminate()
+                        throw ODADWGConvertError.processFailed(
+                            exitCode: -1,
+                            stderr: "ODA FileConverter timed out after \(Int(conversionTimeoutSeconds))s and was terminated."
+                        )
+                    }
+                    guard let winner = try await group.next() else {
+                        throw ODADWGConvertError.processFailed(
+                            exitCode: -1, stderr: "ODA FileConverter produced no result.")
+                    }
+                    group.cancelAll()
+                    return winner
+                }
+            } onCancel: {
+                box.terminate()
+            }
+        } catch is CancellationError {
+            box.terminate()
+            throw CancellationError()
         }
+    }
 
-        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-        return (
-            process.terminationStatus,
-            String(data: outData, encoding: .utf8) ?? "",
-            String(data: errData, encoding: .utf8) ?? "(no stderr)"
-        )
+    /// Starts the child, suspends until `terminationHandler` fires, then reads
+    /// the redirected output files. Throws on launch failure; a non-zero exit
+    /// is returned (not thrown) so the FUSE-retry policy can inspect output.
+    private static func launchAndWait(
+        box: ProcessBox,
+        path: String,
+        arguments: [String],
+        outURL: URL,
+        errURL: URL
+    ) async throws -> ConverterResult {
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: path)
+            process.arguments = arguments
+            do {
+                let outHandle = try FileHandle(forWritingTo: outURL)
+                let errHandle = try FileHandle(forWritingTo: errURL)
+                process.standardOutput = outHandle
+                process.standardError = errHandle
+            } catch {
+                continuation.resume(throwing: ODADWGConvertError.processFailed(
+                    exitCode: -1,
+                    stderr: "Failed to redirect ODA output: \(error.localizedDescription)"))
+                return
+            }
+            box.store(process)
+            process.terminationHandler = { proc in
+                let status = proc.terminationStatus
+                let out = (try? String(contentsOf: outURL, encoding: .utf8)) ?? ""
+                let errRaw = (try? String(contentsOf: errURL, encoding: .utf8)) ?? ""
+                let err = errRaw.isEmpty ? "(no stderr)" : errRaw
+                continuation.resume(returning: ConverterResult(
+                    status: status, stdout: out, stderr: err))
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: ODADWGConvertError.processFailed(
+                    exitCode: -1,
+                    stderr: "Failed to launch process: \(error.localizedDescription)"))
+            }
+        }
     }
 
     private static func logCompleted(startTime: Date, status: Int32) {

@@ -33,6 +33,7 @@ struct StatusBarUI {
         // window reported the active drawing.
         let info = StatusBarUIPolicy.shownInfo(tab: shownTab, viewIndex: shownViewIndex)
         let saveState = shownTab.flatMap { engine.tabManager.saveStateByTabID[$0.id] }
+        let loadState = shownTab.flatMap { engine.tabManager.loadStateByTabID[$0.id] }
 
         let statusLeft: String
         if let ss = saveState {
@@ -46,6 +47,17 @@ struct StatusBarUI {
                 }
             } else {
                 statusLeft = "\(ss.statusText) \(pct)%"
+            }
+        } else if let ls = loadState {
+            // A loading tab can never have save state (saves are gated), so
+            // no priority conflict: show the load phase and coarse progress.
+            switch ls.status {
+            case .loading:
+                let pct = Int(ls.progress * 100)
+                let phase = ls.statusText.isEmpty ? "Loading…" : ls.statusText
+                statusLeft = "\(phase) \(pct)%"
+            case .failed(let msg):
+                statusLeft = "Load failed: \(msg)"
             }
         } else {
             // Build snap tracking indicators (app-global snap settings).

@@ -18,13 +18,10 @@ struct AppFileCallbacks {
         // Opens the DXF/EAB file in a new tab and frames the initial view
         // (saved *ACTIVE view when sane, else zoom to extents).
         engine.fileBrowser.onFileSelected = { url in
-            do {
-                try engine.tabManager.openTab(url: url)
-                engine.frameInitialView()
-                print("DXF opened in new tab: \(url.lastPathComponent)")
-            } catch {
-                print("DXF import failed: \(error)")
-            }
+            // Background load: the tab appears immediately and frames itself
+            // on commit via `onDocumentLoadCommitted`.
+            _ = engine.tabManager.startLoad(url: url)
+            print("DXF queued in new tab: \(url.lastPathComponent)")
         }
 
         // Callback invoked when the user selects a destination in the Save As dialog.

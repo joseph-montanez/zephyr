@@ -18,6 +18,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **New themes** - dark purple starfield theme and a vivid pink theme.
 - **MCP server for AI driving** - lets AI tools inspect and drive the app, now with headless open (`open_drawing`) on the same import path as the Open dialog.
 - **Native dimensions from Lisp** - create dimensions from Lisp with matching export.
+- **Background document loading** - large drawings open without freezing the app: a placeholder tab appears immediately with progress in the tab bar and status bar, you can keep working in other tabs while it loads, and the tab switches over automatically when ready; ODA conversion runs off the main thread with cancel, timeout, and one-at-a-time serialization.
 
 ### New Commands
 - **MVIEW options** - `MVIEW NEW` for interactive two-corner creation, plus `LOCK`, `UNLOCK`, `MOVE <id> <x,y>`, and `DELETE`; the viewport list reports lock state.

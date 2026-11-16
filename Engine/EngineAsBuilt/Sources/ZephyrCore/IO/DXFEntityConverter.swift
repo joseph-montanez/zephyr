@@ -3,7 +3,15 @@ import Foundation
 /// Converts DXF entity types into Zephyr CADPrimitive arrays.
 public enum DXFEntityConverter {
 
-    public nonisolated(unsafe) static var simplifyPolylines: Bool = false
+    private static let simplifyLock = NSLock()
+    nonisolated(unsafe) private static var _simplifyPolylines: Bool = false
+    /// Read on the import path (hot per-polyline) and written from the UI.
+    /// Locked so a background import never races a UI toggle; the toggle takes
+    /// effect on the next polyline rather than tearing.
+    public static var simplifyPolylines: Bool {
+        get { simplifyLock.withLock { _simplifyPolylines } }
+        set { simplifyLock.withLock { _simplifyPolylines = newValue } }
+    }
 
     /// Convert a DXFEntity to CADPrimitives
     internal static func convertEntityToPrimitives(

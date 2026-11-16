@@ -799,6 +799,24 @@ public final class PhrostEngine {
         tabManager.onDrawingOpened = { [weak self] path in
             Task { self?.commandProcessor.autoOpenSheetSet(for: path) }
         }
+        // Background-load commit: frame the loaded drawing once its tab is
+        // active (the commit auto-switches when idle, else this fires after
+        // the deferred switch). Matches the old synchronous open flow where
+        // each `openTab` call site framed immediately after.
+        tabManager.onDocumentLoadCommitted = { [weak self] tabID in
+            guard let self, self.tabManager.activeTab?.id == tabID else { return }
+            self.frameInitialView()
+        }
+        // A background-load commit must not yank the tab out from under an
+        // in-progress gesture or command; the switch waits for idle instead.
+        tabManager.isIdleForTabSwitch = { [weak self] in
+            guard let self else { return true }
+            let interaction = self.interaction
+            return !(interaction.dragActive || interaction.panActive || interaction.touchPanActive
+                || self.commandProcessor.activeCommand != nil
+                || self.commandProcessor.activeFeatureCommand != nil
+                || self.commandProcessor.commandLineActive)
+        }
         // Save-time stamp: a member drawing saved to DXF/DWG carries its
         // set association (`AcSheetSetData`) so LT sees it on open.
         tabManager.sheetSetHintProvider = { [weak self] filePath, layoutName in
@@ -1796,6 +1814,9 @@ public final class PhrostEngine {
     /// Immediately stops the engine. Confirmation UI should call this only
     /// after the user has explicitly chosen to discard changes and exit.
     public func stop() {
+        // Terminating in-flight loads also terminates any running ODA child
+        // via its task-cancellation handler, so no converter orphan survives.
+        tabManager.cancelAllLoads()
         // Persist user settings and ImGui docking layout before shutting down.
         let plotRegs = commandProcessor.plotRegistrySnapshot()
         UserSettings.capture(ui: ui, plotOffset: plotRegs.0, paperUpdate: plotRegs.1,

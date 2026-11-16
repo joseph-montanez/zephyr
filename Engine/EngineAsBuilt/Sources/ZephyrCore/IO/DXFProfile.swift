@@ -16,7 +16,9 @@ enum DXFProfile {
 
     static let enabled = ProcessInfo.processInfo.environment["ZEPHYR_DXF_PROFILE"] == "1"
 
-    /// Not thread-safe on purpose: the importers run on one thread and this is throwaway code.
+    /// Guarded by `lock`: background loads parse off the main thread, and two
+    /// queued loads must not interleave marks/accumulators.
+    private static let lock = NSLock()
     nonisolated(unsafe) private static var lastMark: UInt64 = DispatchTime.now().uptimeNanoseconds
     nonisolated(unsafe) private static var accumulators: [String: (ns: UInt64, calls: Int)] = [:]
 
@@ -26,30 +28,41 @@ enum DXFProfile {
 
     static func reset(_ label: String) {
         guard enabled else { return }
-        accumulators.removeAll(keepingCapacity: true)
-        lastMark = DispatchTime.now().uptimeNanoseconds
+        lock.withLock {
+            accumulators.removeAll(keepingCapacity: true)
+            lastMark = DispatchTime.now().uptimeNanoseconds
+        }
         write("[dxf-profile] === " + label + " ===")
     }
 
     /// Prints the time elapsed since the previous `mark`/`reset`.
     static func mark(_ label: String) {
         guard enabled else { return }
-        let now = DispatchTime.now().uptimeNanoseconds
-        write("[dxf-profile] " + pad(label, 44) + milliseconds(now &- lastMark))
-        lastMark = now
+        let line: String = lock.withLock {
+            let now = DispatchTime.now().uptimeNanoseconds
+            let text = "[dxf-profile] " + pad(label, 44) + milliseconds(now &- lastMark)
+            lastMark = now
+            return text
+        }
+        write(line)
     }
 
     /// Prints accumulated `tic`/`toc` totals, call counts and the mark totals.
     static func dump(_ label: String) {
         guard enabled else { return }
-        for key in accumulators.keys.sorted() {
-            guard let entry = accumulators[key] else { continue }
-            let perCall = entry.calls > 0 ? Double(entry.ns) / Double(entry.calls) / 1000 : 0
-            write("[dxf-profile] " + pad(key, 44) + milliseconds(entry.ns)
-                  + String(format: "  x%d  (%.2f us/call)", entry.calls, perCall))
+        let lines: [String] = lock.withLock {
+            var out: [String] = []
+            for key in accumulators.keys.sorted() {
+                guard let entry = accumulators[key] else { continue }
+                let perCall = entry.calls > 0 ? Double(entry.ns) / Double(entry.calls) / 1000 : 0
+                out.append("[dxf-profile] " + pad(key, 44) + milliseconds(entry.ns)
+                      + String(format: "  x%d  (%.2f us/call)", entry.calls, perCall))
+            }
+            out.append("[dxf-profile] --- " + label + " ---")
+            accumulators.removeAll(keepingCapacity: true)
+            return out
         }
-        write("[dxf-profile] --- " + label + " ---")
-        accumulators.removeAll(keepingCapacity: true)
+        for line in lines { write(line) }
     }
 
     static func tic() -> UInt64 {
@@ -59,10 +72,12 @@ enum DXFProfile {
     static func toc(_ start: UInt64, _ label: String) {
         guard enabled, start != 0 else { return }
         let elapsed = DispatchTime.now().uptimeNanoseconds &- start
-        var entry = accumulators[label] ?? (0, 0)
-        entry.ns &+= elapsed
-        entry.calls += 1
-        accumulators[label] = entry
+        lock.withLock {
+            var entry = accumulators[label] ?? (0, 0)
+            entry.ns &+= elapsed
+            entry.calls += 1
+            accumulators[label] = entry
+        }
     }
 
     private static func pad(_ text: String, _ width: Int) -> String {

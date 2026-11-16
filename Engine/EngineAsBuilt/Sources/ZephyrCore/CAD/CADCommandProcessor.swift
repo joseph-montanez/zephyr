@@ -1067,6 +1067,16 @@ public final class CADCommandProcessor {
     /// keystroke sequence `UCS` Space `Z` Space `45` Space. At a `.line`
     /// prompt the whole line is one submit (spaces are data).
     public func executeCommand(_ text: String) {
+        // A loading placeholder owns no real content: new commands would edit
+        // an empty document whose views are about to be replaced (silently
+        // losing the edits), or read a half-open state. Tab/file management
+        // and view navigation stay available so the user can keep working
+        // elsewhere while the load finishes.
+        if let eng = engine, eng.tabManager.isActiveTabLoading,
+           !Self.isSafeWhileLoading(text) {
+            print("[CAD] Document is still loading — command deferred until the load finishes.")
+            return
+        }
         if promptInputKind == .line
             && (pendingPromptCommand != nil || activeFeatureCommand != nil
                 || plotCliSession != nil || publishCliSession != nil) {
@@ -1108,6 +1118,26 @@ public final class CADCommandProcessor {
             return
         }
         executeFullLine(text)
+    }
+
+    /// Commands that stay available while the active tab is still loading:
+    /// tab/file management and view navigation. Everything else would edit
+    /// or read the placeholder document and is deferred until commit.
+    private static func isSafeWhileLoading(_ text: String) -> Bool {
+        let first = text.uppercased().trimmingCharacters(in: .whitespaces)
+            .split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+        if first.isEmpty { return true }  // bare Enter is a no-op downstream
+        switch first {
+        case "CLOSE", "CLOSEALL", "CLOSEALLOTHERS",
+             "OPEN", "NEW",
+             "TABL", "TABLEFT", "TABR", "TABRIGHT", "FILETAB", "FILETABCLOSE",
+             "MODEL", "2DVIEW", "MSPACE", "MS", "PSPACE", "PS",
+             "NEXTVIEW", "VIEWNEXT", "PREVIOUSVIEW", "PREVVIEW", "VIEWPREV",
+             "VIEW", "V", "VIEWS", "MVIEW", "MV", "CHSPACE":
+            return true
+        default:
+            return false
+        }
     }
 
     /// Full-line dispatch: the pre-existing command switch. Multi-token
@@ -1450,15 +1480,10 @@ public final class CADCommandProcessor {
                 allowMultiple: true
             ) { [weak eng] urls in
                 guard let eng else { return }
+                // Background loads: tabs frame themselves on commit via
+                // `onDocumentLoadCommitted`.
                 for url in urls {
-                    do {
-                        try eng.tabManager.openTab(url: url)
-                    } catch {
-                        print("Failed to open \(url.lastPathComponent): \(error)")
-                    }
-                }
-                if !urls.isEmpty {
-                    eng.frameInitialView()
+                    _ = eng.tabManager.startLoad(url: url)
                 }
             }
         case "PDFI", "PDFIMPORT", "PDF":

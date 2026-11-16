@@ -183,6 +183,11 @@ public struct DocumentTab {
     /// True while this tab lives in its own OS window instead of the main tab bar.
     /// Runtime UI state only — never persisted to disk.
     public var isFloated: Bool = false
+    /// True while a background load owns this tab's content. The placeholder
+    /// document is empty and must not be saved, autosaved, edited, or used for
+    /// block editing until the commit swaps in the real drawing views.
+    /// Runtime UI state only — never persisted to disk.
+    public var isDocumentLoading: Bool = false
 
     /// External-reference runtime state shared by all view documents.
     public let xrefStore = XrefRuntimeStore()
@@ -371,6 +376,116 @@ public struct SaveProgressState {
 }
 
 // =========================================================================
+// MARK: - Background document load state
+// =========================================================================
+
+/// Coarse phase of a background document load, for status text.
+public enum DocumentLoadPhase: String, Sendable, Equatable {
+    case queued
+    case converting
+    case parsing
+    case building
+    case finishing
+}
+
+public enum DocumentLoadStatus: Equatable {
+    case loading
+    case failed(String)
+}
+
+public struct DocumentLoadState {
+    public var phase: DocumentLoadPhase = .queued
+    public var progress: Float = 0
+    public var statusText: String = ""
+    public var status: DocumentLoadStatus = .loading
+    public var loadID: UUID          // generation token — stale completions are dropped
+    public var sourceURL: URL
+    public var fileKind: String      // "DXF" | "DWG" | "EAB"
+
+    public init(phase: DocumentLoadPhase = .queued, progress: Float = 0,
+                statusText: String = "", status: DocumentLoadStatus = .loading,
+                loadID: UUID, sourceURL: URL, fileKind: String) {
+        self.phase = phase
+        self.progress = progress
+        self.statusText = statusText
+        self.status = status
+        self.loadID = loadID
+        self.sourceURL = sourceURL
+        self.fileKind = fileKind
+    }
+}
+
+// =========================================================================
+
+private struct PendingLoadKey: Hashable, Sendable {
+    let tabID: UUID
+    let loadID: UUID
+}
+
+private struct PendingLoadProgress: Sendable {
+    let progress: Float
+    let phase: DocumentLoadPhase
+    let statusText: String
+}
+
+/// Assembled off the main thread, installed on it. `BuiltDocument` is not
+/// Sendable (it owns `CADDocument`s); the box is `@unchecked Sendable` and is
+/// safe because the documents are uniquely owned by the load task until the
+/// MainActor commit publishes them, global import state is lock-guarded
+/// (`DXFProfile`, `DXFHatchGenerator`, `DXFEntityConverter`,
+/// `CADFontManager`, `HatchPatternLibrary`), and loads are serialized
+/// (concurrency 1) by `DocumentLoadGate`.
+private struct BuiltDocument {
+    var drawingViews: [DrawingView]
+    var namedPageSetups: [CADNamedPageSetup]
+    var customScaleFactors: [Double]
+    var initialModelView: SavedModelView?
+}
+
+private final class BuiltDocumentBox: @unchecked Sendable {
+    let built: BuiltDocument
+    init(_ built: BuiltDocument) { self.built = built }
+}
+
+private struct PendingLoadCompletion: Sendable {
+    let tabID: UUID
+    let loadID: UUID
+    let box: BuiltDocumentBox?
+    let errorMessage: String?
+    let cancelled: Bool
+}
+
+/// Serializes heavy load work (ODA + parse + assembly) to concurrency 1 so
+/// parallel large opens cannot multiply peak memory. Async semaphore (not a
+/// `run(op:)` wrapper: `await` inside an actor method yields the actor and
+/// would interleave). The heavy work runs on the caller's executor between
+/// `acquire` and `release`; progress and completion delivery bypass the gate
+/// via the lock-guarded pending queues.
+private actor DocumentLoadGate {
+    static let shared = DocumentLoadGate()
+    private var holders = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if holders == 0 {
+            holders = 1
+            return
+        }
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            waiters.append(c)
+        }
+    }
+
+    func release() {
+        if !waiters.isEmpty {
+            waiters.removeFirst().resume()
+        } else {
+            holders = 0
+        }
+    }
+}
+
+// =========================================================================
 
 private struct PendingSaveKey: Hashable, Sendable {
     let tabID: UUID
@@ -473,6 +588,48 @@ public final class TabManager {
     public var activeSaveState: SaveProgressState? {
         guard let id = activeTab?.id else { return nil }
         return saveStateByTabID[id]
+    }
+
+    // MARK: - Load State (per-tab, background-load)
+
+    /// In-flight load tasks keyed by tab ID.
+    private var loadTasksByTabID: [UUID: (task: Task<Void, Never>, loadID: UUID)] = [:]
+    /// Progress/status for each tab's current (or most recent) load.
+    public private(set) var loadStateByTabID: [UUID: DocumentLoadState] = [:]
+
+    private nonisolated(unsafe) var pendingLoadProgress: [PendingLoadKey: PendingLoadProgress] = [:]
+    private nonisolated(unsafe) var pendingLoadCompletions: [PendingLoadCompletion] = []
+    private let pendingLoadLock = NSLock()
+
+    /// Tab ID awaiting an auto-switch once the UI is idle (a drag, pan, or
+    /// active command was running when its load committed). Drained in
+    /// `applyPendingLoadUpdates` when `isIdleForTabSwitch` allows.
+    private var pendingLoadSwitchTabID: UUID? = nil
+
+    /// Fired after a background load commits its drawing views (tab already
+    /// switched or pending). Wired by the engine to frame the initial view.
+    public var onDocumentLoadCommitted: ((UUID) -> Void)? = nil
+
+    /// True when no drag/pan/active command would be disrupted by a tab
+    /// switch. Wired by the engine; nil (e.g. headless tests) means switch
+    /// immediately.
+    public var isIdleForTabSwitch: (() -> Bool)? = nil
+
+    /// Computed — the active tab's in-flight load state, for the UI.
+    public var activeLoadState: DocumentLoadState? {
+        guard let id = activeTab?.id else { return nil }
+        return loadStateByTabID[id]
+    }
+
+    /// True when the tab with this ID is still loading its document.
+    public func isLoadingTab(id: UUID) -> Bool {
+        loadStateByTabID[id] != nil
+    }
+
+    /// True when the active tab is still loading its document.
+    public var isActiveTabLoading: Bool {
+        guard let id = activeTab?.id else { return false }
+        return loadStateByTabID[id] != nil
     }
 
     // MARK: - Computed Properties
@@ -628,44 +785,39 @@ public final class TabManager {
             let imported = try DXFImporter.importDXFViews(filePath: tempDXF.path)
             print("[TabManager] DWG import: \(imported.layers.count) layers, \(imported.blocks.count) blocks, \(imported.entities.count) entities")
 
-            for font in Set(imported.textStyles.values.map(\.fontFile)) {
-                CADFontManager.debugFontLookup(font)
-            }
-
-            let drawingViews = DrawingViewFactory.makeDrawingViews(
-                from: imported, sourceFileName: url.lastPathComponent)
-            let displayName = url.lastPathComponent
-            var tab = DocumentTab(
-                document: drawingViews[0].document,
-                fileURL: url,
-                displayName: displayName,
-                drawingViews: drawingViews,
-                namedPageSetups: imported.namedPageSetups
-            )
-            tab.initialModelView = imported.modelSavedView
-            tabs.append(tab)
-        kickXrefLoads(for: tab)
-            let idx = tabs.count - 1
-            switchToTab(at: idx)
-            notifyDrawingOpened(path: url.path)
-            return idx
+            return appendImportedTab(
+                imported: imported,
+                sourceFileName: url.lastPathComponent,
+                fileURL: url)
         }
         print("[TabManager] Importing DXF...")
         let imported = try DXFImporter.importDXFViews(filePath: url.path)
         print("[TabManager] DXF imported: \(imported.layers.count) layers, \(imported.blocks.count) blocks, \(imported.entities.count) entities, \(imported.views.count) views")
 
+        return appendImportedTab(
+            imported: imported,
+            sourceFileName: url.lastPathComponent,
+            fileURL: url)
+    }
+
+    /// Shared funnel: assemble tab-ready views from an import result and append
+    /// a new tab. Used by the synchronous `openTab` and by the background-load
+    /// commit (which assembles off-thread and installs here on the MainActor).
+    private func appendImportedTab(
+        imported: DXFImportResult,
+        sourceFileName: String,
+        fileURL: URL
+    ) -> Int {
         for font in Set(imported.textStyles.values.map(\.fontFile)) {
             CADFontManager.debugFontLookup(font)
         }
 
         let drawingViews = DrawingViewFactory.makeDrawingViews(
-            from: imported, sourceFileName: url.lastPathComponent)
-        let doc = drawingViews[0].document
-        let displayName = url.lastPathComponent
+            from: imported, sourceFileName: sourceFileName)
         var tab = DocumentTab(
-            document: doc,
-            fileURL: url,
-            displayName: displayName,
+            document: drawingViews[0].document,
+            fileURL: fileURL,
+            displayName: sourceFileName,
             drawingViews: drawingViews,
             namedPageSetups: imported.namedPageSetups
         )
@@ -674,7 +826,7 @@ public final class TabManager {
         kickXrefLoads(for: tab)
         let idx = tabs.count - 1
         switchToTab(at: idx)
-        notifyDrawingOpened(path: url.path)
+        notifyDrawingOpened(path: fileURL.path)
         return idx
     }
 
@@ -706,10 +858,11 @@ public final class TabManager {
     public func closeTab(at index: Int) -> Bool {
         guard index >= 0, index < tabs.count else { return false }
 
-        // Cancel any in-flight save for this tab before removing it.
+        // Cancel any in-flight save or load for this tab before removing it.
         let tabID = tabs[index].id
         if tabs.count == 1 {
             cancelSave(for: tabID, reason: .close)
+            cancelLoad(for: tabID, reason: .close)
             let doc = CADDocument()
             doc.importLayersBlocksEntities(
                 layers: [Layer(name: "0", color: .white)],
@@ -727,6 +880,7 @@ public final class TabManager {
         }
 
         cancelSave(for: tabID, reason: .close)
+        cancelLoad(for: tabID, reason: .close)
 
         let wasActive = (index == activeIndex)
         tabs.remove(at: index)
@@ -2560,6 +2714,9 @@ public final class TabManager {
         isExport: Bool = false,
         exportOptions: PDFExporter.PDFExportOptions = .default
     ) {
+        // A loading placeholder owns no real content: saving it would persist
+        // (or autosave-recover) an empty document over the source file.
+        guard loadStateByTabID[tab.id] == nil else { return }
         // See saveActiveTabAs: reconcile before the background snapshot.
         tab.reconcileLayersFromActiveView()
         if !isAutosave, !isExport { warnAboutDXFXrefTargets(tab: tab, url: url) }
@@ -2883,7 +3040,331 @@ public final class TabManager {
     /// Mark the active tab as dirty.
     public func markActiveDirty() {
         guard let tab = activeTab else { return }
+        // A loading placeholder owns no real content yet; marking it edited
+        // would both dirty an empty document and arm a close confirmation for
+        // a tab whose commit is about to replace it.
+        guard !isLoadingTab(id: tab.id) else { return }
         tab.document.markEdited(regenerate: true)
+    }
+
+    // MARK: - Background document load
+
+    /// Open a DXF, DWG or EAB file in a new tab without blocking the UI.
+    /// A placeholder tab appears (and becomes active) immediately; the ODA
+    /// conversion, parse, and view assembly run off the main thread,
+    /// serialized to concurrency 1. On completion the real drawing views are
+    /// installed and the tab auto-switches back when the UI is idle.
+    /// - Returns: The new tab's ID for progress tracking.
+    @discardableResult
+    public func startLoad(url: URL) -> UUID {
+        let ext = url.pathExtension.lowercased()
+        let kind = ext == "dwg" ? "DWG" : (ext == "eab" ? "EAB" : "DXF")
+        let doc = CADDocument()
+        doc.importLayersBlocksEntities(
+            layers: [Layer(name: "0", color: .white)],
+            blocks: [],
+            entities: []
+        )
+        doc.savedRevision = doc.editRevision  // placeholder is never dirty
+        var tab = DocumentTab(document: doc, fileURL: url, displayName: url.lastPathComponent)
+        tab.isDocumentLoading = true
+        let tabID = tab.id
+        let loadID = UUID()
+        tabs.append(tab)
+        let idx = tabs.count - 1
+        loadStateByTabID[tabID] = DocumentLoadState(
+            phase: .queued, progress: 0, statusText: "Queued…",
+            loadID: loadID, sourceURL: url, fileKind: kind
+        )
+        switchToTab(at: idx)
+        let task: Task<Void, Never> = Task.detached { [weak self] in
+            guard let self else { return }
+            await self.performBackgroundLoad(tabID: tabID, loadID: loadID, url: url)
+        }
+        loadTasksByTabID[tabID] = (task, loadID)
+        return tabID
+    }
+
+    public enum LoadCancelReason { case close, quit }
+
+    /// Cancel an in-flight load for a tab.
+    public func cancelLoad(for tabID: UUID, reason: LoadCancelReason) {
+        loadTasksByTabID[tabID]?.task.cancel()
+        if case .close = reason {
+            loadStateByTabID.removeValue(forKey: tabID)
+            if pendingLoadSwitchTabID == tabID { pendingLoadSwitchTabID = nil }
+        }
+        loadTasksByTabID.removeValue(forKey: tabID)
+    }
+
+    /// Cancel every in-flight load (application shutdown). Terminating the
+    /// tasks also terminates any running ODA child via its cancellation
+    /// handler, so no converter orphan survives quit.
+    public func cancelAllLoads() {
+        for entry in loadTasksByTabID.values { entry.task.cancel() }
+        loadTasksByTabID.removeAll()
+        pendingLoadSwitchTabID = nil
+    }
+
+    /// Drain pending load progress and completions (called once per frame from
+    /// the main loop, beside `applyPendingSaveUpdates`). Commits ready
+    /// drawings, auto-switches to loaded tabs when idle, and surfaces
+    /// per-tab failures.
+    @discardableResult
+    public func applyPendingLoadUpdates() -> Bool {
+        let pending = pendingLoadLock.withLock { () -> (
+            progress: [PendingLoadKey: PendingLoadProgress],
+            completions: [PendingLoadCompletion]
+        ) in
+            let result = (pendingLoadProgress, pendingLoadCompletions)
+            pendingLoadProgress.removeAll(keepingCapacity: true)
+            pendingLoadCompletions.removeAll(keepingCapacity: true)
+            return result
+        }
+
+        var changed = false
+
+        for (key, prog) in pending.progress {
+            guard loadStateByTabID[key.tabID]?.loadID == key.loadID else { continue }
+            loadStateByTabID[key.tabID]?.progress = prog.progress
+            loadStateByTabID[key.tabID]?.phase = prog.phase
+            loadStateByTabID[key.tabID]?.statusText = prog.statusText
+            changed = true
+        }
+
+        for completion in pending.completions {
+            guard loadStateByTabID[completion.tabID]?.loadID == completion.loadID else { continue }
+            if completion.cancelled {
+                loadTasksByTabID.removeValue(forKey: completion.tabID)
+                // The tab is gone (close) or quitting: drop the state only
+                // when the tab itself is gone; a live tab keeps waiting.
+                if tabs.firstIndex(where: { $0.id == completion.tabID }) == nil {
+                    loadStateByTabID.removeValue(forKey: completion.tabID)
+                }
+            } else if let box = completion.box {
+                finishLoad(
+                    tabID: completion.tabID,
+                    loadID: completion.loadID,
+                    box: box)
+            } else {
+                failLoad(
+                    tabID: completion.tabID,
+                    loadID: completion.loadID,
+                    message: completion.errorMessage ?? "unknown error")
+            }
+            changed = true
+        }
+
+        // Deferred auto-switch: a load committed while a drag, pan, or active
+        // command was running waits here until `isIdleForTabSwitch` allows.
+        if let pendingID = pendingLoadSwitchTabID {
+            if let idx = tabs.firstIndex(where: { $0.id == pendingID }) {
+                if isIdleForTabSwitch?() ?? true {
+                    pendingLoadSwitchTabID = nil
+                    switchToTab(at: idx)
+                    onDocumentLoadCommitted?(pendingID)
+                    changed = true
+                }
+            } else {
+                pendingLoadSwitchTabID = nil
+            }
+        }
+
+        return changed
+    }
+
+    nonisolated private func publishLoadProgress(
+        tabID: UUID,
+        loadID: UUID,
+        progress: Float,
+        phase: DocumentLoadPhase,
+        statusText: String
+    ) {
+        let key = PendingLoadKey(tabID: tabID, loadID: loadID)
+        pendingLoadLock.withLock {
+            pendingLoadProgress[key] = PendingLoadProgress(
+                progress: progress, phase: phase, statusText: statusText)
+        }
+    }
+
+    nonisolated private func publishLoadCompletion(_ completion: PendingLoadCompletion) {
+        pendingLoadLock.withLock {
+            pendingLoadProgress.removeValue(
+                forKey: PendingLoadKey(tabID: completion.tabID, loadID: completion.loadID)
+            )
+            pendingLoadCompletions.append(completion)
+        }
+    }
+
+    nonisolated private func performBackgroundLoad(tabID: UUID, loadID: UUID, url: URL) async {
+        do {
+            try Task.checkCancellation()
+            await DocumentLoadGate.shared.acquire()
+            let box: BuiltDocumentBox
+            do {
+                try Task.checkCancellation()
+                box = try await buildLoadedDocument(tabID: tabID, loadID: loadID, url: url)
+            } catch {
+                await DocumentLoadGate.shared.release()
+                throw error
+            }
+            await DocumentLoadGate.shared.release()
+            try Task.checkCancellation()
+            publishLoadCompletion(PendingLoadCompletion(
+                tabID: tabID, loadID: loadID, box: box,
+                errorMessage: nil, cancelled: false
+            ))
+        } catch is CancellationError {
+            publishLoadCompletion(PendingLoadCompletion(
+                tabID: tabID, loadID: loadID, box: nil,
+                errorMessage: nil, cancelled: true
+            ))
+        } catch {
+            publishLoadCompletion(PendingLoadCompletion(
+                tabID: tabID, loadID: loadID, box: nil,
+                errorMessage: error.localizedDescription, cancelled: false
+            ))
+        }
+    }
+
+    /// Heavy load work: runs on the detached task's executor between gate
+    /// acquire/release (concurrency 1). Assembles fully-wired drawing views —
+    /// including bounds/anchor caches, the spatial grid, and FIELD evaluation —
+    /// so the MainActor commit is a pointer swap.
+    nonisolated private func buildLoadedDocument(
+        tabID: UUID, loadID: UUID, url: URL
+    ) async throws -> BuiltDocumentBox {
+        let ext = url.pathExtension.lowercased()
+        if ext == "eab" {
+            publishLoadProgress(
+                tabID: tabID, loadID: loadID, progress: 0.1,
+                phase: .parsing, statusText: "Reading binary drawing…")
+            try Task.checkCancellation()
+            let data = try Data(contentsOf: url)
+            try Task.checkCancellation()
+            let views = try EABReader.readViews(from: data)
+            for view in views {
+                view.document.finalizeOpen(
+                    sourceFileName: url.lastPathComponent, layoutName: view.name)
+            }
+            let namedSetups = (try? EABReader.readNamedPageSetups(from: data)) ?? []
+            let scaleList = (try? EABReader.readScaleList(from: data)) ?? []
+            for view in views {
+                view.document.savedRevision = view.document.editRevision
+                view.document.needsRegeneration = true
+            }
+            publishLoadProgress(
+                tabID: tabID, loadID: loadID, progress: 0.9,
+                phase: .finishing, statusText: "Finishing…")
+            return BuiltDocumentBox(BuiltDocument(
+                drawingViews: views,
+                namedPageSetups: namedSetups,
+                customScaleFactors: scaleList,
+                initialModelView: nil))
+        }
+
+        var tempDXF: URL? = nil
+        let dxfPath: URL
+        if ext == "dwg" {
+            guard ODADWGConverter.isAvailable else {
+                throw ODADWGConvertError.converterNotFound
+            }
+            publishLoadProgress(
+                tabID: tabID, loadID: loadID, progress: 0.05,
+                phase: .converting, statusText: "Converting DWG via ODA…")
+            let tmp = FileManager.default.temporaryDirectory
+                .appendingPathComponent("dwg-import-\(UUID().uuidString).dxf")
+            tempDXF = tmp
+            try await ODADWGConverter.convert(input: url, output: tmp, toFormat: "DXF")
+            print("[TabManager] DWG converted to DXF, importing...")
+            dxfPath = tmp
+        } else {
+            dxfPath = url
+        }
+        defer {
+            if let tmp = tempDXF { try? FileManager.default.removeItem(at: tmp) }
+        }
+
+        try Task.checkCancellation()
+        publishLoadProgress(
+            tabID: tabID, loadID: loadID, progress: ext == "dwg" ? 0.25 : 0.1,
+            phase: .parsing, statusText: "Parsing drawing…")
+        let imported = try DXFImporter.importDXFViews(filePath: dxfPath.path)
+        print("[TabManager] Background import: \(imported.layers.count) layers, \(imported.blocks.count) blocks, \(imported.entities.count) entities, \(imported.views.count) views")
+
+        try Task.checkCancellation()
+        publishLoadProgress(
+            tabID: tabID, loadID: loadID, progress: 0.6,
+            phase: .building, statusText: "Building drawing…")
+        for font in Set(imported.textStyles.values.map(\.fontFile)) {
+            CADFontManager.debugFontLookup(font)
+        }
+        let drawingViews = DrawingViewFactory.makeDrawingViews(
+            from: imported, sourceFileName: url.lastPathComponent)
+        for view in drawingViews {
+            view.document.savedRevision = view.document.editRevision
+            view.document.needsRegeneration = true
+        }
+        publishLoadProgress(
+            tabID: tabID, loadID: loadID, progress: 0.9,
+            phase: .finishing, statusText: "Finishing…")
+        return BuiltDocumentBox(BuiltDocument(
+            drawingViews: drawingViews,
+            namedPageSetups: imported.namedPageSetups,
+            customScaleFactors: [],
+            initialModelView: imported.modelSavedView))
+    }
+
+    @MainActor
+    private func finishLoad(tabID: UUID, loadID: UUID, box: BuiltDocumentBox) {
+        guard loadStateByTabID[tabID]?.loadID == loadID,
+              let idx = tabs.firstIndex(where: { $0.id == tabID }) else { return }
+        loadTasksByTabID.removeValue(forKey: tabID)
+        let built = box.built
+        // Wire the tab-scoped runtime stores into the fresh documents
+        // (mirrors `DocumentTab.init`).
+        for view in built.drawingViews {
+            view.document.xrefRuntimeStore = tabs[idx].xrefStore
+            view.document.mediaRuntimeStore = tabs[idx].mediaStore
+        }
+        tabs[idx].drawingViews = built.drawingViews
+        tabs[idx].namedPageSetups = built.namedPageSetups
+        tabs[idx].customScaleFactors = built.customScaleFactors
+        tabs[idx].initialModelView = built.initialModelView
+        tabs[idx].isDocumentLoading = false
+        if let payload = built.drawingViews.compactMap({ $0.document.dxfRoundTripPayload }).first {
+            tabs[idx].dxfRoundTripPayload = payload
+            if let rawVersion = payload.sourceAcadVersion,
+               let sourceVersion = DXFVersion(rawValue: rawVersion),
+               sourceVersion != .unknown {
+                tabs[idx].dxfVersion = sourceVersion
+            }
+        }
+        loadStateByTabID.removeValue(forKey: tabID)
+        kickXrefLoads(for: tabs[idx])
+        if let fileURL = tabs[idx].fileURL {
+            notifyDrawingOpened(path: fileURL.path)
+        }
+        // Auto-switch when loaded; defer while the user is mid-gesture or a
+        // command is active so the switch cannot strand in-progress input.
+        if isIdleForTabSwitch?() ?? true {
+            switchToTab(at: idx)
+            onDocumentLoadCommitted?(tabID)
+        } else {
+            pendingLoadSwitchTabID = tabID
+        }
+    }
+
+    @MainActor
+    private func failLoad(tabID: UUID, loadID: UUID, message: String) {
+        guard loadStateByTabID[tabID]?.loadID == loadID,
+              tabs.firstIndex(where: { $0.id == tabID }) != nil else { return }
+        loadTasksByTabID.removeValue(forKey: tabID)
+        // The placeholder stays (still gated via `isDocumentLoading`) so the
+        // failure is visible in the tab bar instead of silently vanishing.
+        loadStateByTabID[tabID]?.status = .failed(message)
+        loadStateByTabID[tabID]?.statusText = "Load failed: \(message)"
+        print("[TabManager] Background load failed for \(tabID): \(message)")
     }
 
     // MARK: - Error Types

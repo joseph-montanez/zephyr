@@ -51,14 +51,20 @@ public struct DXFHatchPatternDefinition: Hashable, Sendable {
 
 public enum DXFHatchGenerator {
     public static let maxGeneratedLinesPerPatternDefinition: Double = 4096.0
-    public nonisolated(unsafe) static var importedPatternDefinitions: [String: DXFHatchPatternDefinition] = [:]
+    /// Written during DXF import (one entry per imported HATCH pattern) and read
+    /// during render/export. Background loads import off the main thread, so all
+    /// access is serialized here; loads themselves stay serialized (concurrency 1).
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static var importedPatternDefinitions: [String: DXFHatchPatternDefinition] = [:]
 
     public static func registerImportedPatternDefinition(name: String, lines: [DXFHatchPatternLine]) -> String {
         let key = importedPatternKey(name: name, lines: lines)
-        importedPatternDefinitions[key.uppercased()] = DXFHatchPatternDefinition(
-            name: name,
-            kind: .custom,
-            lines: lines)
+        registryLock.withLock {
+            importedPatternDefinitions[key.uppercased()] = DXFHatchPatternDefinition(
+                name: name,
+                kind: .custom,
+                lines: lines)
+        }
         return key
     }
 
@@ -69,7 +75,9 @@ public enum DXFHatchGenerator {
         let key = importedPatternKey(
             name: "\(namespace):\(definition.name)",
             lines: definition.lines)
-        importedPatternDefinitions[key.uppercased()] = definition
+        registryLock.withLock {
+            importedPatternDefinitions[key.uppercased()] = definition
+        }
         return key
     }
 
@@ -181,10 +189,10 @@ public enum DXFHatchGenerator {
         if key.isEmpty || key == "SOLID" {
             return DXFHatchPatternDefinition(name: "SOLID", kind: .solid, lines: [])
         }
-        if let imported = importedPatternDefinitions[key] { return imported }
+        if let imported = registryLock.withLock({ importedPatternDefinitions[key] }) { return imported }
         if let predefined = predefinedPatterns[key] { return predefined }
         HatchPatternLibrary.ensureLoaded()
-        return importedPatternDefinitions[key] ?? predefinedPatterns[key]
+        return registryLock.withLock({ importedPatternDefinitions[key] }) ?? predefinedPatterns[key]
     }
 
     public static func patternDisplayName(for patternName: String) -> String {

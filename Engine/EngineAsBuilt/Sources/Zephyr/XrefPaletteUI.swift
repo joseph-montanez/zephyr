@@ -304,9 +304,9 @@ struct XrefPaletteUI {
         ImGuiSameLine(0, 4)
         if row.canOpen, igSmallButton("Open") {
             if let found = row.foundAtPath {
-                if (try? engine.tabManager.openTab(url: URL(fileURLWithPath: found))) != nil {
-                    engine.frameInitialView()
-                }
+                // Background load: the tab appears immediately and frames
+                // itself on commit via `onDocumentLoadCommitted`.
+                _ = engine.tabManager.startLoad(url: URL(fileURLWithPath: found))
             }
         }
         ImGuiSameLine(0, 4)
