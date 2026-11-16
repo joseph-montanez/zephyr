@@ -26,6 +26,8 @@ public struct SDLWindowFlags: OptionSet, Sendable {
     public static let minimized         = SDLWindowFlags(rawValue: 0x0000_0000_0000_0040)
     public static let maximized         = SDLWindowFlags(rawValue: 0x0000_0000_0000_0080)
     public static let highPixelDensity  = SDLWindowFlags(rawValue: 0x0000_0000_0000_2000)
+    public static let inputFocus         = SDLWindowFlags(rawValue: 0x0000_0000_0000_0200)
+    public static let mouseFocus         = SDLWindowFlags(rawValue: 0x0000_0000_0000_0400)
     public static let alwaysOnTop       = SDLWindowFlags(rawValue: 0x0000_0000_0001_0000)
     public static let utility           = SDLWindowFlags(rawValue: 0x0000_0000_0002_0000)
     public static let tooltip           = SDLWindowFlags(rawValue: 0x0000_0000_0004_0000)

@@ -576,6 +576,14 @@ public final class EngineLoopController {
 
             let preActive = currentIsActionActive()
 
+            #if os(macOS)
+            // First-launch focus recovery: re-request activation while the
+            // main window never gained focus. Throttled and bounded by
+            // MacOSFocusPolicy — stops once focus arrives or the user is
+            // clearly working elsewhere.
+            engine.macOSRetryInitialActivationIfNeeded()
+            #endif
+
             if framesToRender <= 0 && !preActive {
 
                 SDL_WaitEventTimeout(nil, 16)

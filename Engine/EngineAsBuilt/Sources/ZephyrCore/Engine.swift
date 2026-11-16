@@ -257,6 +257,19 @@ public final class PhrostEngine {
 
     // MARK: State
     internal var running = true
+    #if os(macOS)
+    /// First-launch focus recovery state (see MacOSFocusPolicy).
+    /// Set when SDL_EVENT_WINDOW_FOCUS_GAINED arrives on the main window.
+    internal var macOSFocusGainedSeen = false
+    /// Set when focus was gained and then lost — the user switched away
+    /// on purpose and must not have focus stolen back.
+    internal var macOSUserSwitchedAway = false
+    /// SDL ticks at the first activation attempt; the policy's retry
+    /// window is measured from here.
+    internal var macOSLaunchTicks: UInt64 = 0
+    /// SDL ticks of the last activation retry (throttles re-asserts).
+    internal var macOSLastFocusRetryTicks: UInt64 = 0
+    #endif
     /// Called before an OS or custom-titlebar close request is accepted.
     /// Return false when the app needs to show an unsaved-changes confirmation first.
     public var windowCloseRequestHandler: (() -> Bool)?
@@ -419,6 +432,15 @@ public final class PhrostEngine {
         flags: SDLWindowFlags = [],
         rendererBackend: String? = nil
     ) {
+        #if os(macOS)
+        // Promote the process to a foreground app BEFORE SDL creates the
+        // window. A bare dev binary has no LaunchServices registration, so
+        // without this the WindowServer may never make the window key and
+        // SDL_RaiseWindow's activation request can be denied — the
+        // permanently input-dead first launch (see MacOSFocusPolicy).
+        _ = NSApplication.shared.setActivationPolicy(.regular)
+        #endif
+
         SDL_SetMainReady()
 
         // Windows: mark the process as DPI-aware so SDL_WINDOW_HIGH_PIXEL_DENSITY
@@ -869,30 +891,111 @@ public final class PhrostEngine {
 
     internal func activateInitialWindowForInput() {
         #if os(macOS)
+        macOSLaunchTicks = SDL_GetTicks()
+        if ProcessInfo.processInfo.environment["ZEPHYR_DEBUG_INPUT"] != nil {
+            print("[FocusDiag] startup pre-activate \(macOSFocusDescription())")
+        }
+        macOSReassertInputFocus(reason: "startup")
+        if ProcessInfo.processInfo.environment["ZEPHYR_DEBUG_INPUT"] != nil {
+            print("[FocusDiag] startup post-activate \(macOSFocusDescription())")
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    // MARK: - macOS input-focus recovery (see MacOSFocusPolicy)
+
+    /// Sample live OS state for the focus policy. Reads AppKit ground
+    /// truth (isKeyWindow) rather than trusting SDL/ImGui focus flags,
+    /// which are exactly what goes missing in the dead-launch state.
+    internal func macOSFocusSnapshot(
+        explicitClick: Bool = false
+    ) -> MacOSFocusPolicy.Snapshot {
+        let flags = SDL_GetWindowFlags(window)
+        let hasInputFocus = (flags & SDLWindowFlags.inputFocus.rawValue) != 0
+        var keyWindow = false
+        let properties = SDL_GetWindowProperties(window)
+        if let cocoaWindowPointer = SDL_GetPointerProperty(
+            properties, "SDL.window.cocoa.window", nil
+        ) {
+            let cocoaWindow = Unmanaged<NSWindow>
+                .fromOpaque(cocoaWindowPointer)
+                .takeUnretainedValue()
+            keyWindow = cocoaWindow.isKeyWindow
+        }
+        let seconds = Double(SDL_GetTicks() &- macOSLaunchTicks) / 1000.0
+        return MacOSFocusPolicy.Snapshot(
+            isKeyWindow: keyWindow,
+            hasSDLInputFocus: hasInputFocus,
+            focusGainedSeen: macOSFocusGainedSeen,
+            secondsSinceLaunch: seconds,
+            explicitUserClickWhileUnfocused: explicitClick,
+            userSwitchedAway: macOSUserSwitchedAway)
+    }
+
+    /// One-line OS focus state for ZEPHYR_DEBUG_INPUT logs.
+    internal func macOSFocusDescription() -> String {
+        let snap = macOSFocusSnapshot()
+        let flags = SDL_GetWindowFlags(window)
+        let app = NSApplication.shared
+        return "key=\(snap.isKeyWindow) sdlInputFocus=\(snap.hasSDLInputFocus) "
+            + "flags=0x\(String(flags, radix: 16)) gained=\(snap.focusGainedSeen) "
+            + "away=\(snap.userSwitchedAway) appActive=\(app.isActive) "
+            + "t=\(String(format: "%.1f", snap.secondsSinceLaunch))s"
+    }
+
+    /// Re-request activation and key-window status. This is only a
+    /// request — the window manager may deny it — so callers must go
+    /// through MacOSFocusPolicy and must NOT assume success: ImGui is
+    /// told about focus only by the real SDL_EVENT_WINDOW_FOCUS_GAINED
+    /// handler, never here.
+    internal func macOSReassertInputFocus(reason: String) {
+        if ProcessInfo.processInfo.environment["ZEPHYR_DEBUG_INPUT"] != nil {
+            print("[FocusDiag] reassert(\(reason)) \(macOSFocusDescription())")
+        }
         let application = NSApplication.shared
         _ = application.setActivationPolicy(.regular)
         application.activate(ignoringOtherApps: true)
-
         let properties = SDL_GetWindowProperties(window)
         if let cocoaWindowPointer = SDL_GetPointerProperty(
-            properties,
-            "SDL.window.cocoa.window",
-            nil
+            properties, "SDL.window.cocoa.window", nil
         ) {
             let cocoaWindow = Unmanaged<NSWindow>
                 .fromOpaque(cocoaWindowPointer)
                 .takeUnretainedValue()
             cocoaWindow.makeKeyAndOrderFront(nil)
-            _ = cocoaWindow.makeFirstResponder(cocoaWindow.contentView)
         }
-
         _ = SDL_RaiseWindow(window)
         SDL_StartTextInput(window)
-        if let io {
-            ImGuiIO_AddFocusEvent(io, true)
-        }
-        #endif
+        macOSLastFocusRetryTicks = SDL_GetTicks()
     }
+
+    /// Bounded first-launch retry. Called every loop iteration; throttled
+    /// to one attempt per 500 ms and confined to the policy's retry
+    /// window, so the app stops asking once the user is clearly working
+    /// elsewhere.
+    internal func macOSRetryInitialActivationIfNeeded() {
+        guard !macOSFocusGainedSeen else { return }
+        let now = SDL_GetTicks()
+        guard now &- macOSLastFocusRetryTicks >= 500 else { return }
+        let snap = macOSFocusSnapshot()
+        if case .reassert(let reason) = MacOSFocusPolicy.action(for: snap) {
+            macOSReassertInputFocus(reason: reason)
+        } else {
+            macOSLastFocusRetryTicks = now
+        }
+    }
+
+    /// Click/key arrived while the window may not be key. Re-assert only
+    /// when the policy confirms explicit intent directed at our window.
+    internal func macOSClickFocusCheck() {
+        let snap = macOSFocusSnapshot(explicitClick: true)
+        guard !snap.isKeyWindow else { return }
+        if case .reassert(let reason) = MacOSFocusPolicy.action(for: snap) {
+            macOSReassertInputFocus(reason: reason)
+        }
+    }
+    #endif
 
     // MARK: Deinitialization
     deinit {

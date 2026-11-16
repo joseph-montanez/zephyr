@@ -288,6 +288,19 @@ internal final class EngineInputHandler {
 
             case UInt32(SDL_EVENT_WINDOW_FOCUS_LOST.rawValue):
                 target.isFocused = false
+                #if os(macOS)
+                if target.isMain {
+                    // Gained-then-lost means the user switched away on
+                    // purpose; the recovery policy must not steal focus
+                    // back uninvited afterwards.
+                    if engine.macOSFocusGainedSeen {
+                        engine.macOSUserSwitchedAway = true
+                    }
+                    if Self.debugInputGates {
+                        print("[FocusDiag] FOCUS_LOST \(engine.macOSFocusDescription())")
+                    }
+                }
+                #endif
                 guard showsActive else { break }
                 // Reset ImGui held buttons/keys so they don't stay "pressed"
                 // when the window regains focus.
@@ -317,6 +330,15 @@ internal final class EngineInputHandler {
 
             case UInt32(SDL_EVENT_WINDOW_FOCUS_GAINED.rawValue):
                 target.isFocused = true
+                #if os(macOS)
+                if target.isMain {
+                    engine.macOSFocusGainedSeen = true
+                    engine.macOSUserSwitchedAway = false
+                    if Self.debugInputGates {
+                        print("[FocusDiag] FOCUS_GAINED \(engine.macOSFocusDescription())")
+                    }
+                }
+                #endif
                 SDL_StartTextInput(target.handle)
                 // Focusing a window activates its tab (camera save/restore and
                 // regen supersede ride along via the tab switch).
@@ -373,6 +395,15 @@ internal final class EngineInputHandler {
                 // deliberately doesn't raise already-focused windows). A
                 // click is explicit intent — bring that window forward.
                 SDL_RaiseWindow(target.handle)
+                #if os(macOS)
+                // A click in a non-key window is explicit intent to use
+                // the app: re-request activation so a denied first-launch
+                // activation recovers on first click instead of staying
+                // input-dead. Gated by MacOSFocusPolicy (no-op when key).
+                if target.isMain {
+                    engine.macOSClickFocusCheck()
+                }
+                #endif
                 guard showsActive else { break }
                 if Int(e.button.button) == SDL_BUTTON_LEFT && !handledByImGui {
                     if isMain && engine.mainPanes.isSplit
@@ -448,6 +479,11 @@ internal final class EngineInputHandler {
 
             case UInt32(SDL_EVENT_PEN_DOWN.rawValue):
                 SDL_RaiseWindow(target.handle) // click-to-raise, as above
+                #if os(macOS)
+                if target.isMain {
+                    engine.macOSClickFocusCheck()
+                }
+                #endif
                 guard showsActive else { break }
                 engine.interaction.beginWindowGesture(
                     windowID: target.id, tabID: engine.tabManager.activeTab?.id)

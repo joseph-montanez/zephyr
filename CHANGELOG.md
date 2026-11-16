@@ -109,9 +109,11 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Stale nested dimensions no longer explode extents** - rebuilt from the definition points so zoom lands on the drawing.
 - **Cross-tab paste left invisible geometry** - paste lands on the right layers.
 - **Regen needed a mouse wiggle to show** - regenerated and imported geometry now presents without cursor input; vertex-build completions wake the frame loop instead of waiting for an event.
+- **macOS input-dead first launch** - the app sometimes started visible but accepted no typing, selection, or clicks, with no recovery via clicking or Cmd-Tab; activation is now requested before window creation, retried briefly after launch, and re-requested on first click, with focus honoring an intentional switch-away.
 
 ### Maintenance
 - **Code cleanup** - internal cleanup, no behavior change.
+- **Local macOS app bundle** - `compile-macos.sh` now also assembles a launchable `Zephyr.app` (same bundle identifier as the release build) since a bare binary gets no LaunchServices registration; run with `open .build/debug/Zephyr.app`.
 
 ### Performance
 - **Zoom and pan stay smooth on large drawings** - zoom no longer stalls or forces full rebuilds; curves refine in place and text stays visible while panning, and tessellation rebuilds now wait for panning to settle with the next buffer prefetched, so there are no frame drops after zooming.
