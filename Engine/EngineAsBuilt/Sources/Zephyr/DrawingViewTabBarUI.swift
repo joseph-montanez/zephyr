@@ -70,6 +70,21 @@ struct DrawingViewTabBarUI {
                         ImGuiPushFont(boldFont, ImGuiGetFontSize())
                     }
 
+                    // ImGui sizes a tab from the label it registered on the
+                    // previous frame, and it measures it in whichever font is
+                    // current when the layout runs — the font of the bar's
+                    // first tab, not necessarily this one. A tab that just
+                    // appeared is still "N/A" during its first layout, and a
+                    // selected tab is measured regular but drawn bold. Either
+                    // way the label is then clipped and drawn as "MyLayo…"
+                    // even when the bar has room. Pushing the natural width of
+                    // the text we are about to draw (after the bold push
+                    // above) makes `RequestedWidth` authoritative, so the tab
+                    // fits its label from the first painted frame on.
+                    if let requestedWidth = Self.requestedTabWidth(for: view.name) {
+                        ImGuiSetNextItemWidth(requestedWidth)
+                    }
+
                     let visible = ImGuiBeginTabItem(
                         "\(view.name)###DrawingView_\(tab.id.uuidString)_\(index)",
                         nil,
@@ -165,5 +180,18 @@ struct DrawingViewTabBarUI {
 
         ImGuiPopStyleColor(1)
         ImGuiPopStyleVar(3)
+    }
+
+    /// Natural width of a layout tab in the *current* font and style, or nil
+    /// when font metrics are not available yet (then ImGui's own sizing runs
+    /// instead of an unusable width).
+    private static func requestedTabWidth(for name: String) -> Float? {
+        let labelWidth = ImGuiCalcTextSize(name, nil, true, -1).x
+        let framePaddingX = ImGuiGetStyle()?.pointee.FramePadding.x ?? 0
+        let width = DrawingViewTabWidthPolicy.requestedWidth(
+            labelWidth: labelWidth,
+            framePaddingX: framePaddingX,
+            fontSize: ImGuiGetFontSize())
+        return width > 0 ? width : nil
     }
 }

@@ -71,6 +71,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 
 ### Bug Fixes
 - **Viewport delete** - removing a viewport also drops its per-viewport layer overrides and restores projections through undo; unknown viewport ids fail without side effects.
+- **Layout tab labels** - a layout tab is now sized from the text it actually draws, so a freshly created (selected, bold) layout no longer renders as `MyLayo…` while the tab bar has room to spare.
 - **Viewport lock** - the locked state survives projection-xdata derivation and DXF/EAB reloads.
 - **MVIEW NEW** - a degenerate second corner re-prompts for the first corner and creates no viewport.
 - **Simplify frame thickness** - collapsed-block outlines render as thin 2px frames instead of giant solid-looking slabs.

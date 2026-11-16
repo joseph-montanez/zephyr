@@ -191,6 +191,40 @@ public enum DrawingViewTabBarPolicy {
     }
 }
 
+/// Width of a drawing-view (layout) tab.
+///
+/// ImGui sizes tabs in `TabBarLayout()` from the labels registered on the
+/// *previous* frame, measured in whichever font is current when that layout
+/// runs — the bar's first tab, not the tab being measured. Two things follow,
+/// both visible as an ellipsized label ("MyLayo…") on a bar with room to
+/// spare:
+///
+/// - a tab that appeared this frame is not registered yet, and
+///   `TabBarGetTabName()` answers "N/A", so it is laid out three characters
+///   wide until a later layout runs;
+/// - the selected tab is drawn bold but measured in the regular font, so its
+///   bold label never fits the width its regular metrics asked for.
+///
+/// Pushing the tab's natural width makes `TabItemEx()` store it as the tab's
+/// `RequestedWidth`, which `TabBarLayout()` prefers over the remembered name,
+/// so the first frame that draws the tab already fits its label.
+public enum DrawingViewTabWidthPolicy {
+    /// Mirrors ImGui's `TabItemCalcSize()` for a tab with no close button and
+    /// no unsaved marker, including `TabBarCalcMaxTabWidth()`'s cap.
+    public static func requestedWidth(
+        labelWidth: Float,
+        framePaddingX: Float,
+        fontSize: Float
+    ) -> Float {
+        // Without usable font metrics ImGui's own sizing is the better bet:
+        // returning 0 would leave the tab at its 1px minimum.
+        guard labelWidth > 0, fontSize > 0 else { return 0 }
+        let natural = labelWidth + framePaddingX * 2 + 1
+        let maxTabWidth = fontSize * 20
+        return max(1, min(natural, maxTabWidth))
+    }
+}
+
 /// Left-side status values for one OS window/pane: the drawing that
 /// window actually shows, not the one global active tab.
 public struct StatusBarShownInfo: Equatable {
