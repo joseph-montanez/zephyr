@@ -527,7 +527,6 @@ public final class PhrostEngine {
         self.window = window
         self.gpuDevice = gpuDevice
         self.spriteManager = SpriteManager()
-        self.spriteManager.textureReleaser = { [gpuDevice] tex in SDL_ReleaseGPUTexture(gpuDevice, tex) }
         self.ctx = nil
         self.io = nil
         self.geometryManager = GeometryManager()
@@ -539,7 +538,15 @@ public final class PhrostEngine {
         self.ui = EngineUIManager()
         self.textManager = EngineTextManager()
         
-        self.textureManager = EngineTextureManager(engine: self)
+        let textureManager = EngineTextureManager(engine: self)
+        self.textureManager = textureManager
+        // Sprite texture drops go through the shared ref counter so a
+        // data-cached texture survives until both the cache and every
+        // sprite using it have released it. Unregistered (per-sprite)
+        // textures still release immediately.
+        self.spriteManager.textureReleaser = { [refs = textureManager.dataTextureRefs] tex in
+            refs.release(tex)
+        }
         self.platform = EnginePlatformDelegate(engine: self)
         
         self.loopController = EngineLoopController(engine: self)

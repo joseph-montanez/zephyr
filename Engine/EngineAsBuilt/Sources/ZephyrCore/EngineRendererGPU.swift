@@ -662,7 +662,9 @@ extension EngineRenderer {
         var releasedDataTextures = Set<OpaquePointer>()
         for texture in engine.textureManager.dataTextureCache.values {
             if let texture = texture, releasedDataTextures.insert(texture).inserted {
-                SDL_ReleaseGPUTexture(engine.gpuDevice, texture)
+                // Drop the cache's reference through the ref counter so
+                // shutdown cannot double-release a sprite-shared texture.
+                engine.textureManager.releaseTextureRef(texture)
             }
         }
         if let buf = imguiVertexBuffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) }

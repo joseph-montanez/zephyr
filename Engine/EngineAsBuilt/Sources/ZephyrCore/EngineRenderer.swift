@@ -858,7 +858,9 @@ public final class EngineRenderer {
         // or another context already consumed its regeneration flag.
 
         if ctx.sprites.textureReleaser == nil {
-            ctx.sprites.textureReleaser = { [device = engine.gpuDevice] tex in SDL_ReleaseGPUTexture(device, tex) }
+            ctx.sprites.textureReleaser = { [refs = engine.textureManager.dataTextureRefs] tex in
+                refs.release(tex)
+            }
         }
         if ctx.supersedeIfDocumentChanged(to: doc) {
 

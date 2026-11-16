@@ -335,7 +335,11 @@ public final class EngineTextManager {
             font: font, text: newText, color: bakeColor, renderer: renderer, gpuDevice: gpuDevice)
 
         if let oldTexture = sprite.texture, oldTexture != newTexture, sprite.ownsTexture {
-            SDL_ReleaseGPUTexture(gpuDevice, oldTexture)
+            if let releaser = spriteManager.textureReleaser {
+                releaser(oldTexture)
+            } else {
+                SDL_ReleaseGPUTexture(gpuDevice, oldTexture)
+            }
         }
 
         sprite.texture = newTexture

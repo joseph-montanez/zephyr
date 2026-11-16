@@ -30,6 +30,12 @@ public final class Sprite: @unchecked Sendable {
     public var adjustedColorDark: (UInt8, UInt8, UInt8, UInt8)
     public var texture: OpaquePointer? = nil
     public var ownsTexture: Bool = false
+    /// True when `textureReleaser` drops one reference of a refcounted
+    /// texture (GPUTextureRefCounter) instead of freeing it outright.
+    /// Each refcounted owner must call the releaser on removal even
+    /// when other sprites share the texture; unregistered textures use
+    /// the single-owner transfer in `releaseOwnedTexture` instead.
+    public var textureIsRefCounted: Bool = false
     public var rotate: (Double, Double, Double)
     public var shearX: Double
     public var speed: (Double, Double)
@@ -96,9 +102,16 @@ public final class SpriteManager: @unchecked Sendable {
 
     private func releaseOwnedTexture(of sprite: Sprite) {
         guard sprite.ownsTexture, let tex = sprite.texture else { return }
-        let shared = sprites.values.contains { $0.id != sprite.id && $0.texture == tex }
         sprite.texture = nil
         sprite.ownsTexture = false
+        if sprite.textureIsRefCounted {
+            // Each refcounted owner holds its own reference; always
+            // drop it, even when other sprites share the texture.
+            sprite.textureIsRefCounted = false
+            textureReleaser?(tex)
+            return
+        }
+        let shared = sprites.values.contains { $0.id != sprite.id && $0.texture == tex }
         if shared {
             if let other = sprites.values.first(where: { $0.id != sprite.id && $0.texture == tex }) {
                 other.ownsTexture = true
@@ -110,11 +123,16 @@ public final class SpriteManager: @unchecked Sendable {
     public func removeAllSprites() {
         var seen = Set<OpaquePointer>()
         for sprite in sprites.values where sprite.ownsTexture {
-            if let tex = sprite.texture, seen.insert(tex).inserted {
-                textureReleaser?(tex)
+            if let tex = sprite.texture {
+                // Refcounted textures drop one reference per owner;
+                // unregistered textures are released once per pointer.
+                if sprite.textureIsRefCounted || seen.insert(tex).inserted {
+                    textureReleaser?(tex)
+                }
             }
             sprite.texture = nil
             sprite.ownsTexture = false
+            sprite.textureIsRefCounted = false
         }
         sprites.removeAll()
         renderList.removeAll()

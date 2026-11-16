@@ -3,6 +3,58 @@ import SwiftSDL
 import SwiftSDL_image
 
 // =========================================================================
+// MARK: - GPUTextureRefCounter
+//
+// Reference counts for GPU textures shared between the data-texture cache
+// and live sprites. The cache registers a texture with one reference;
+// each sprite assigned the texture retains it and drops its reference
+// through SpriteManager's textureReleaser when removed. The SDL texture
+// is released only when the last reference drops, so LRU eviction can
+// never free a texture a live sprite still draws (use-after-free in
+// SDL_BindGPUFragmentSamplers). Textures that were never registered
+// (e.g. per-sprite text textures) release immediately, preserving the
+// single-owner behavior. Like the SDL GPU API itself, callers must be
+// on the main thread.
+// =========================================================================
+final class GPUTextureRefCounter: @unchecked Sendable {
+    private var counts: [OpaquePointer: Int] = [:]
+    private let releaseTexture: (OpaquePointer) -> Void
+
+    init(releaseTexture: @escaping (OpaquePointer) -> Void) {
+        self.releaseTexture = releaseTexture
+    }
+
+    /// Register a newly created texture with its first (cache) reference.
+    func register(_ texture: OpaquePointer) {
+        counts[texture] = 1
+    }
+
+    /// Take an additional reference (e.g. a sprite using the texture).
+    func retain(_ texture: OpaquePointer) {
+        counts[texture, default: 0] += 1
+    }
+
+    /// Drop one reference, SDL-releasing the texture at zero.
+    /// Unregistered textures are released immediately.
+    func release(_ texture: OpaquePointer) {
+        guard let count = counts[texture] else {
+            releaseTexture(texture)
+            return
+        }
+        if count <= 1 {
+            counts[texture] = nil
+            releaseTexture(texture)
+        } else {
+            counts[texture] = count - 1
+        }
+    }
+
+    func refCount(for texture: OpaquePointer) -> Int? {
+        counts[texture]
+    }
+}
+
+// =========================================================================
 // MARK: - EngineTextureManager
 //
 // Manages loading and caching of textures from disk to GPU.
@@ -12,6 +64,11 @@ import SwiftSDL_image
 public final class EngineTextureManager {
     
     private unowned let engine: PhrostEngine
+
+    /// Shared reference counter for data-cached textures (see
+    /// GPUTextureRefCounter). Sprite texture releasers drop sprite
+    /// references through this counter instead of releasing directly.
+    let dataTextureRefs: GPUTextureRefCounter
     
     /// Map of loaded textures (path to GPU texture pointer)
     public var textureCache: [String: OpaquePointer?] = [:]
@@ -45,6 +102,22 @@ public final class EngineTextureManager {
 
     public init(engine: PhrostEngine) {
         self.engine = engine
+        let device = engine.gpuDevice
+        self.dataTextureRefs = GPUTextureRefCounter { tex in
+            SDL_ReleaseGPUTexture(device, tex)
+        }
+    }
+
+    /// Retain a data-cached texture for use outside the cache (e.g. a
+    /// sprite). Balanced by one textureReleaser call when the user is
+    /// removed; LRU eviction only drops the cache's own reference.
+    public func retainDataTexture(_ texture: OpaquePointer) {
+        dataTextureRefs.retain(texture)
+    }
+
+    /// Drop one reference to a texture (see GPUTextureRefCounter).
+    public func releaseTextureRef(_ texture: OpaquePointer) {
+        dataTextureRefs.release(texture)
     }
 
     // MARK: - Texture Loading
@@ -209,7 +282,8 @@ public final class EngineTextureManager {
             return (nil, 0, 0)
         }
 
-        // Store in data cache
+        // Store in data cache (the cache holds the first reference)
+        dataTextureRefs.register(loadedTexture)
         dataTextureCache[name] = loadedTexture
         dataTextureDimensions[name] = (surfW, surfH)
 
@@ -258,7 +332,9 @@ public final class EngineTextureManager {
         while lruKeys.count > maxCachedTextures {
             let oldest = lruKeys.removeFirst()
             if let tex = dataTextureCache[oldest], let t = tex {
-                SDL_ReleaseGPUTexture(engine.gpuDevice, t)
+                // Drop only the cache's reference; sprites still using
+                // this texture keep it alive until they are removed.
+                releaseTextureRef(t)
             }
             dataTextureCache[oldest] = nil
             dataTextureDimensions[oldest] = nil
@@ -268,7 +344,7 @@ public final class EngineTextureManager {
     /// Release a specific data-cached texture.
     public func releaseDataTexture(named name: String) {
         if let tex = dataTextureCache[name], let t = tex {
-            SDL_ReleaseGPUTexture(engine.gpuDevice, t)
+            releaseTextureRef(t)
         }
         dataTextureCache[name] = nil
         dataTextureDimensions[name] = nil

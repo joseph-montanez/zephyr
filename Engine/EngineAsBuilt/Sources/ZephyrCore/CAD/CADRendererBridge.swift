@@ -2425,6 +2425,15 @@ public final class CADRendererBridge {
                 let h = sqrt(pow(Double(imgSpec.c3.x - imgSpec.c0.x), 2) + pow(Double(imgSpec.c3.y - imgSpec.c0.y), 2))
                 let spriteColor = imgSpec.tint ?? (UInt8(255), UInt8(255), UInt8(255), UInt8(255))
                 let spriteID = SpriteID(id1: Int64(entityIdx) + 1000000, id2: 0)
+                // The sprite holds its own reference to the cached
+                // texture (released via textureReleaser on removal), so
+                // an LRU eviction during this same apply pass — or any
+                // later one — cannot free it while the sprite draws it.
+                let existingOwnsTexture = spriteManager.getSprite(for: spriteID)
+                    .map { $0.ownsTexture && $0.texture == texture } ?? false
+                if !existingOwnsTexture {
+                    engine.textureManager.retainDataTexture(texture)
+                }
                 // Use sprite system to render as textured quad
                 spriteManager.addSprite(
                     id1: spriteID.id1, id2: spriteID.id2,
@@ -2439,6 +2448,8 @@ public final class CADRendererBridge {
                 // Suppress textured quad during camera pan (like TTF fonts);
                 // bounding box is drawn by the CAD selection highlight.
                 if let sprite = spriteManager.getSprite(for: spriteID) {
+                    sprite.ownsTexture = true
+                    sprite.textureIsRefCounted = true
                     sprite.useBoundsWhilePanning = true
                     let q0 = Vector3(
                         x: geometryManager.renderOrigin.worldX(imgSpec.c0.x),
