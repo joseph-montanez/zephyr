@@ -420,6 +420,70 @@ public final class RenderPrimitive: @unchecked Sendable {
         self.gradientData = gradientData
         self.isTrueColor = isTrueColor || gradientData != nil
     }
+
+    /// Single-snapshot constructor for the tessellation gather.
+    ///
+    /// Reads every tessellation-relevant field in one straight-line call so
+    /// the gather loop pays one call-site per primitive instead of ~14
+    /// cross-object property accesses plus two capturing closures.
+    /// Color/gradient resolution inputs come precomputed from manager state
+    /// hoisted out of the loop by the caller.
+    @inline(__always)
+    public func makeTessInput(
+        displayColor: (UInt8, UInt8, UInt8, UInt8),
+        gradientData: GradientData?,
+        pointStyle: Int,
+        pointSize: Double
+    ) -> TessInput {
+        TessInput(
+            type: type,
+            points: points,
+            rects: rects,
+            corners: corners,
+            color: displayColor,
+            lineWeight: lineWeight,
+            geomWidth: geomWidth,
+            segmentLineWeights: segmentLineWeights,
+            entityIndex: entityIndex,
+            isHatchLine: isHatchLine,
+            hatchSpacing: hatchSpacing,
+            isPanProxy: isPanProxy,
+            gradientData: gradientData,
+            pointStyle: pointStyle,
+            pointSize: pointSize
+        )
+    }
+
+    /// Gradient adjustment shared by the gather. Pure function of hoisted
+    /// manager state: nil stays nil, and with auto-contrast off the gradient
+    /// passes through untouched (no per-primitive `ColorRGBA` work).
+    @inline(__always)
+    public static func adjustedGradient(
+        _ gradient: GradientData?,
+        autoContrastTrueColor: Bool,
+        useLightDisplayPalette: Bool
+    ) -> GradientData? {
+        guard let gradient else { return nil }
+        if !autoContrastTrueColor {
+            return gradient
+        }
+        let color1 = ColorRGBA(
+            r: gradient.color1.0, g: gradient.color1.1,
+            b: gradient.color1.2, a: gradient.color1.3
+        ).displayAdjusted(forLightBackground: useLightDisplayPalette)
+        let color2 = ColorRGBA(
+            r: gradient.color2.0, g: gradient.color2.1,
+            b: gradient.color2.2, a: gradient.color2.3
+        ).displayAdjusted(forLightBackground: useLightDisplayPalette)
+        return GradientData(
+            color1: (color1.r, color1.g, color1.b, color1.a),
+            color2: (color2.r, color2.g, color2.b, color2.a),
+            angleCos: gradient.angleCos,
+            angleSin: gradient.angleSin,
+            minX: gradient.minX,
+            minY: gradient.minY,
+            diag: gradient.diag)
+    }
 }
 
 /// Manages all non-sprite renderable geometry
@@ -658,6 +722,10 @@ public final class GeometryManager: @unchecked Sendable {
 
     public func setPrimitiveColor(id: SpriteID, color: (UInt8, UInt8, UInt8, UInt8)) {
         primitives[id]?.color = color
+        // Recoloring changes gather output (display color), so it must
+        // invalidate the render caches like every other mutation. Every other
+        // writer bumps; this one previously did not.
+        mutationGeneration &+= 1
     }
 
     // --- Convenience methods for direct Swift API ---
@@ -809,4 +877,161 @@ public final class GeometryManager: @unchecked Sendable {
     }
 
     public var primitiveCount: Int { primitives.count }
+
+    // MARK: - Tessellation gather (engine-free core)
+
+    /// Copies the grid-query result into value-type `TessInput` structs so the
+    /// tessellator can run off the main actor without touching live primitives.
+    ///
+    /// Engine-free core of `EngineRenderer.gatherTessInputs`: the renderer
+    /// wrapper only adds the per-context memo (`TessGatherCache`). Living here
+    /// keeps the hot loop testable and benchable without an engine or GPU.
+    ///
+    /// Manager-level inputs (`autoContrastTrueColor`, `pointDisplayMode`,
+    /// `pointDisplaySize`) are hoisted into locals once — the previous shape
+    /// re-read them per primitive through capturing closures. The grid path
+    /// iterates `renderList` through a single retained buffer instead of one
+    /// bounds-checked subscript plus optional unwrap per index.
+    public func gatherTessInputs(
+        region: (minX: Double, minY: Double, maxX: Double, maxY: Double),
+        useLightDisplayPalette: Bool,
+        viewportBackground: (UInt8, UInt8, UInt8, UInt8)
+    ) -> (inputs: [TessInput], usedGrid: Bool) {
+        let autoContrast = autoContrastTrueColor
+        let pointStyle = pointDisplayMode
+        let pointSize = pointDisplaySize
+        let light = useLightDisplayPalette
+        let background = viewportBackground
+
+        @inline(__always)
+        func snapshot(_ p: RenderPrimitive) -> TessInput {
+            let color: (UInt8, UInt8, UInt8, UInt8)
+            if p.usesViewportBackgroundColor {
+                color = background
+            } else if !autoContrast && p.isTrueColor {
+                color = p.color
+            } else {
+                color = light ? p.adjustedColorLight : p.adjustedColorDark
+            }
+            return p.makeTessInput(
+                displayColor: color,
+                gradientData: RenderPrimitive.adjustedGradient(
+                    p.gradientData,
+                    autoContrastTrueColor: autoContrast,
+                    useLightDisplayPalette: light),
+                pointStyle: pointStyle,
+                pointSize: pointSize)
+        }
+
+        if let indices = visiblePrimitiveIndices(
+            inWorldRect: region.minX, minY: region.minY,
+            maxX: region.maxX, maxY: region.maxY)
+        {
+            var inputs: [TessInput] = []
+            inputs.reserveCapacity(indices.count)
+            renderList.withUnsafeBufferPointer { buffer in
+                for idx in indices {
+                    guard idx >= 0 && idx < buffer.count,
+                          let base = buffer.baseAddress
+                    else { continue }
+                    inputs.append(snapshot((base + idx).pointee))
+                }
+            }
+            return (inputs, true)
+        } else {
+            let primitives = getPrimitivesForRendering()
+            var inputs: [TessInput] = []
+            inputs.reserveCapacity(primitives.count)
+            for p in primitives {
+                inputs.append(snapshot(p))
+            }
+            return (inputs, false)
+        }
+    }
+}
+
+/// Main-thread memo for the tessellation gather.
+///
+/// Pan/zoom relaunches vertex builds against new regions while the document
+/// is unchanged; inputs are zoom-independent, so a gather whose region covers
+/// the requested one can be reused verbatim. The key covers everything the
+/// gather consumes: mutation generation and primitive count (any geometry
+/// mutation must bump `mutationGeneration` — the established render-cache
+/// contract), the display scalars, and the covering region. `TessInput`
+/// arrays are copy-on-write and only read downstream, so sharing the cached
+/// buffer with an in-flight detached build is sound.
+public struct TessGatherCache: Sendable {
+    private var inputs: [TessInput] = []
+    private var hasEntry = false
+    private var regionMinX: Double = 0
+    private var regionMinY: Double = 0
+    private var regionMaxX: Double = 0
+    private var regionMaxY: Double = 0
+    private var mutationGen: Int = -1
+    private var primitiveCount: Int = -1
+    private var useLight: Bool = false
+    private var autoContrast: Bool = true
+    private var pointStyle: Int = 0
+    private var pointSize: Double = 0
+    private var background: (UInt8, UInt8, UInt8, UInt8) = (0, 0, 0, 255)
+    private var usedGrid: Bool = false
+
+    public init() {}
+
+    public func lookup(
+        region: (minX: Double, minY: Double, maxX: Double, maxY: Double),
+        mutationGen: Int,
+        primitiveCount: Int,
+        useLightDisplayPalette: Bool,
+        autoContrastTrueColor: Bool,
+        pointStyle: Int,
+        pointSize: Double,
+        viewportBackground: (UInt8, UInt8, UInt8, UInt8)
+    ) -> (inputs: [TessInput], usedGrid: Bool)? {
+        guard hasEntry,
+              mutationGen == self.mutationGen,
+              primitiveCount == self.primitiveCount,
+              useLightDisplayPalette == self.useLight,
+              autoContrastTrueColor == self.autoContrast,
+              pointStyle == self.pointStyle,
+              pointSize == self.pointSize,
+              viewportBackground == self.background,
+              region.minX >= regionMinX, region.minY >= regionMinY,
+              region.maxX <= regionMaxX, region.maxY <= regionMaxY
+        else { return nil }
+        return (inputs, usedGrid)
+    }
+
+    public mutating func store(
+        inputs: [TessInput],
+        region: (minX: Double, minY: Double, maxX: Double, maxY: Double),
+        mutationGen: Int,
+        primitiveCount: Int,
+        useLightDisplayPalette: Bool,
+        autoContrastTrueColor: Bool,
+        pointStyle: Int,
+        pointSize: Double,
+        viewportBackground: (UInt8, UInt8, UInt8, UInt8),
+        usedGrid: Bool
+    ) {
+        self.inputs = inputs
+        self.hasEntry = true
+        self.regionMinX = region.minX
+        self.regionMinY = region.minY
+        self.regionMaxX = region.maxX
+        self.regionMaxY = region.maxY
+        self.mutationGen = mutationGen
+        self.primitiveCount = primitiveCount
+        self.useLight = useLightDisplayPalette
+        self.autoContrast = autoContrastTrueColor
+        self.pointStyle = pointStyle
+        self.pointSize = pointSize
+        self.background = viewportBackground
+        self.usedGrid = usedGrid
+    }
+
+    public mutating func invalidate() {
+        hasEntry = false
+        inputs = []
+    }
 }

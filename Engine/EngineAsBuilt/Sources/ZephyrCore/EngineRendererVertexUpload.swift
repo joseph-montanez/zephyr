@@ -32,97 +32,40 @@ extension EngineRenderer {
         useLightDisplayPalette: Bool,
         viewportBackground: (UInt8, UInt8, UInt8, UInt8)
     ) -> [TessInput] {
-        var inputs: [TessInput] = []
-
-        func displayColor(for primitive: RenderPrimitive) -> (UInt8, UInt8, UInt8, UInt8) {
-            if primitive.usesViewportBackgroundColor {
-                return viewportBackground
-            }
-            if !geometryManager.autoContrastTrueColor && primitive.isTrueColor {
-                return primitive.color
-            }
-            return useLightDisplayPalette
-                ? primitive.adjustedColorLight
-                : primitive.adjustedColorDark
-        }
-
-        func adjustedGradient(_ gradient: RenderPrimitive.GradientData?) -> RenderPrimitive.GradientData? {
-            guard let gradient else { return nil }
-            if !geometryManager.autoContrastTrueColor {
-                return gradient
-            }
-            let color1 = ColorRGBA(
-                r: gradient.color1.0, g: gradient.color1.1,
-                b: gradient.color1.2, a: gradient.color1.3
-            ).displayAdjusted(forLightBackground: useLightDisplayPalette)
-            let color2 = ColorRGBA(
-                r: gradient.color2.0, g: gradient.color2.1,
-                b: gradient.color2.2, a: gradient.color2.3
-            ).displayAdjusted(forLightBackground: useLightDisplayPalette)
-            return RenderPrimitive.GradientData(
-                color1: (color1.r, color1.g, color1.b, color1.a),
-                color2: (color2.r, color2.g, color2.b, color2.a),
-                angleCos: gradient.angleCos,
-                angleSin: gradient.angleSin,
-                minX: gradient.minX,
-                minY: gradient.minY,
-                diag: gradient.diag)
-        }
-
-        if let indices = geometryManager.visiblePrimitiveIndices(
-            inWorldRect: region.minX, minY: region.minY,
-            maxX: region.maxX, maxY: region.maxY)
+        // Pan/zoom relaunches builds against new regions while the document is
+        // unchanged; inputs are zoom-independent, so a cached gather whose
+        // region covers the request is reused verbatim (no per-primitive work).
+        if let hit = ctx.gatherCache.lookup(
+            region: region,
+            mutationGen: geometryManager.mutationGeneration,
+            primitiveCount: geometryManager.primitiveCount,
+            useLightDisplayPalette: useLightDisplayPalette,
+            autoContrastTrueColor: geometryManager.autoContrastTrueColor,
+            pointStyle: geometryManager.pointDisplayMode,
+            pointSize: geometryManager.pointDisplaySize,
+            viewportBackground: viewportBackground)
         {
-            ctx.cachedUsingGrid = true
-            inputs.reserveCapacity(indices.count)
-
-            for idx in indices {
-                guard let p = geometryManager.getPrimitive(at: idx) else { continue }
-                inputs.append(TessInput(
-                    type: p.type,
-                    points: p.points,
-                    rects: p.rects,
-                    corners: p.corners,
-                    color: displayColor(for: p),
-                    lineWeight: p.lineWeight,
-                    geomWidth: p.geomWidth,
-                    segmentLineWeights: p.segmentLineWeights,
-                    entityIndex: p.entityIndex,
-                    isHatchLine: p.isHatchLine,
-                    hatchSpacing: p.hatchSpacing,
-                    isPanProxy: p.isPanProxy,
-                    gradientData: adjustedGradient(p.gradientData),
-                    pointStyle: geometryManager.pointDisplayMode,
-                    pointSize: geometryManager.pointDisplaySize
-                ))
-            }
-        } else {
-            ctx.cachedUsingGrid = false
-            let primitives = geometryManager.getPrimitivesForRendering()
-            inputs.reserveCapacity(primitives.count)
-
-            for p in primitives {
-                inputs.append(TessInput(
-                    type: p.type,
-                    points: p.points,
-                    rects: p.rects,
-                    corners: p.corners,
-                    color: displayColor(for: p),
-                    lineWeight: p.lineWeight,
-                    geomWidth: p.geomWidth,
-                    segmentLineWeights: p.segmentLineWeights,
-                    entityIndex: p.entityIndex,
-                    isHatchLine: p.isHatchLine,
-                    hatchSpacing: p.hatchSpacing,
-                    isPanProxy: p.isPanProxy,
-                    gradientData: adjustedGradient(p.gradientData),
-                    pointStyle: geometryManager.pointDisplayMode,
-                    pointSize: geometryManager.pointDisplaySize
-                ))
-            }
+            ctx.cachedUsingGrid = hit.usedGrid
+            return hit.inputs
         }
 
-        return inputs
+        let gathered = geometryManager.gatherTessInputs(
+            region: region,
+            useLightDisplayPalette: useLightDisplayPalette,
+            viewportBackground: viewportBackground)
+        ctx.cachedUsingGrid = gathered.usedGrid
+        ctx.gatherCache.store(
+            inputs: gathered.inputs,
+            region: region,
+            mutationGen: geometryManager.mutationGeneration,
+            primitiveCount: geometryManager.primitiveCount,
+            useLightDisplayPalette: useLightDisplayPalette,
+            autoContrastTrueColor: geometryManager.autoContrastTrueColor,
+            pointStyle: geometryManager.pointDisplayMode,
+            pointSize: geometryManager.pointDisplaySize,
+            viewportBackground: viewportBackground,
+            usedGrid: gathered.usedGrid)
+        return gathered.inputs
     }
 
 

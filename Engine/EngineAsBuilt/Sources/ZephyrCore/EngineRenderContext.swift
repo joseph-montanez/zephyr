@@ -96,6 +96,10 @@ public final class WindowRenderContext {
     public var pendingSwapChunks: [VertexGPUChunk] = []
     public var pendingSwapResult: VertexBuildResult? = nil
     public var pendingSwapPaletteGen: Int = -1
+    /// Memo for `gatherTessInputs`: last gathered inputs plus the key they
+    /// were gathered under. Reused while the region still covers the request
+    /// and nothing it consumes changed. Cleared whenever built state drops.
+    public var gatherCache = TessGatherCache()
     /// Hatch-pattern verts in the last applied build (diagnostic).
     public var lastHatchVerts: Int = 0
     /// Whether the last applied build hit the hard vertex cap.
@@ -147,6 +151,7 @@ public final class WindowRenderContext {
         appliedGeneration = -1
         builtRevision = nil
         pendingRevision = nil
+        gatherCache.invalidate()
         return true
     }
 
@@ -172,6 +177,7 @@ public final class WindowRenderContext {
         vbInFlightToken = nil
         vbInFlightRegion = nil
         vbBuilder.cancelPending()
+        gatherCache.invalidate()
         for chunk in vertexChunks {
             if let buf = chunk.buffer {
                 SDL_ReleaseGPUBuffer(device, buf)
@@ -205,5 +211,6 @@ public final class WindowRenderContext {
         lastCameraZoom = -1.0
         cachedMutationGen = -1
         cachedPaletteGen = -1
+        gatherCache.invalidate()
     }
 }

@@ -378,6 +378,53 @@ enum Cases {
             if hits == 0 { fatalError("no samples produced") }
         }
     }
+
+    /// Tessellation-gather benchmark for the `gatherTessInputs` hotspot.
+    ///
+    /// Builds `count` line primitives spread over a 6000-wide world, builds
+    /// the spatial grid exactly like regen does, then times the engine-free
+    /// gather core. Two shapes: a culled viewport (the pan/zoom relaunch case
+    /// that dominates Instruments) and the full extent (cold-start shape).
+    /// Run with `-c release`: `ZephyrBench gather [count]`.
+    static func gather(count: Int = 30_000) {
+        print("Gather: \(count) line primitives")
+        let geometry = GeometryManager()
+        let cols = 200
+        for i in 0..<count {
+            let gx = Double(i % cols) * 30.0
+            let gy = Double(i / cols) * 30.0
+            _ = geometry.addLine(
+                x1: Float(gx), y1: Float(gy),
+                x2: Float(gx + 20.0), y2: Float(gy + 12.0),
+                z: Double(i % 7),
+                color: (UInt8(i % 251), UInt8((i * 3) % 251), 200, 255))
+        }
+        _ = geometry.getPrimitivesForRendering()
+        geometry.buildSpatialGridIfNeeded()
+        let rows = Double(count / cols + 1) * 30.0
+        let full = (minX: -100.0, minY: -100.0,
+                    maxX: Double(cols) * 30.0 + 100.0, maxY: rows + 100.0)
+        // Viewport-sized slice (~10% of the drawing): the relaunch shape.
+        let view = (minX: 1500.0, minY: 300.0, maxX: 2100.0, maxY: 750.0)
+
+        var culled = 0
+        measure("gather culled viewport", repeats: 5) {
+            let result = geometry.gatherTessInputs(
+                region: view, useLightDisplayPalette: false,
+                viewportBackground: (0, 0, 0, 255))
+            culled = result.inputs.count
+            if culled == 0 { fatalError("nothing gathered") }
+        }
+        var all = 0
+        measure("gather full extent", repeats: 3) {
+            let result = geometry.gatherTessInputs(
+                region: full, useLightDisplayPalette: false,
+                viewportBackground: (0, 0, 0, 255))
+            all = result.inputs.count
+            if all == 0 { fatalError("nothing gathered") }
+        }
+        print("gathered: culled \(culled) / full \(all) of \(count)")
+    }
 }
 
 // MARK: - Entry point
@@ -395,7 +442,7 @@ struct ZephyrBench {
         print("")
 
         guard !arguments.isEmpty else {
-            print("usage: ZephyrBench [canary] [kernel] [dxf <file>] [shx <file>] [nurbs] [dxf-digest <file>] [dxf-compare <file>] [dxf-goldens <dir>] [dxf-goldens-write <dir>] [eab-scalars] [eab-roundtrip] [lisp [--eval EXPR]... [file.lsp]...] [all <dxf> <shx>]")
+            print("usage: ZephyrBench [canary] [kernel] [dxf <file>] [shx <file>] [nurbs] [gather [count]] [dxf-digest <file>] [dxf-compare <file>] [dxf-goldens <dir>] [dxf-goldens-write <dir>] [eab-scalars] [eab-roundtrip] [lisp [--eval EXPR]... [file.lsp]...] [all <dxf> <shx>]")
             return
         }
 
@@ -421,6 +468,13 @@ struct ZephyrBench {
                 run("shx") { try Cases.shx(path: path) }
             case "nurbs":
                 run("nurbs") { Cases.nurbs() }
+            case "gather":
+                var count = 30_000
+                if index + 1 < arguments.count, let parsed = Int(arguments[index + 1]) {
+                    count = parsed
+                    index += 1
+                }
+                run("gather") { Cases.gather(count: count) }
             case "kernel":
                 run("kernel") { Cases.kernel() }
             case "trim-debug":

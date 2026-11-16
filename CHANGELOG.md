@@ -128,6 +128,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Tessellate-time polyline decimation** - sub-pixel interior vertices are dropped at build time; dashed lines keep their dots and tiny closed parcels vanish instead of emitting degenerate segments.
 - **PerfStats breakdown in the header** - the FPS display now includes verts, batches, sprites, line/tri/hatch verts, and the content census.
 - **Hatch selection on huge boundaries** - the hatch ribbon payload is cached per document revision, solid fills highlight by boundary outline, and midpoint grips stop past 1,024 points, so selecting a large water hatch no longer pins the CPU.
+- **Pan/zoom without re-gathering tessellation inputs** - vertex-build input gathering is memoized per document revision and palette, so panning and zooming over unchanged geometry reuses the last gather instead of re-copying every primitive; the gather core also snapshots each primitive once through a single call with hoisted palette state, and `ZephyrBench gather` plus `GatherSnapshotTests` pin the behavior.
 
 ## October 2026
 
