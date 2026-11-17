@@ -116,6 +116,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Raster-image crash on open** - opening a DWG/DXF with more embedded raster images than the texture cache holds no longer segfaults (use-after-free of an evicted image texture while its sprite still drew it); image textures are now reference-counted so the cache and each sprite release independently.
 
 ### Maintenance
+- **Flatpak runtime 24.08 to 25.08** - the Flatpak bundle now targets the supported Freedesktop 25.08 runtime (24.08 is end-of-life); this also fixes the broken x86_64 Flatpak CI build, which failed updating the EOL runtimes.
 - **Code cleanup** - internal cleanup, no behavior change.
 - **Local macOS app bundle** - `compile-macos.sh` now also assembles a launchable `Zephyr.app` (same bundle identifier as the release build) since a bare binary gets no LaunchServices registration; run with `open .build/debug/Zephyr.app`.
 

@@ -240,7 +240,7 @@ chmod +x Zephyr-Linux-x64.AppImage
 
 ### 6. Flatpak packaging
 
-`packaging/flatpak/com.zephyr.cad.yml` defines the Flatpak package based on the Freedesktop 24.08 runtime (`org.freedesktop.Platform//24.08` and `org.freedesktop.Sdk//24.08`). CI produces standalone `.flatpak` bundles (`Zephyr-Linux-x64.flatpak` and `Zephyr-Linux-arm64.flatpak`) for x86_64 and aarch64.
+`packaging/flatpak/com.zephyr.cad.yml` defines the Flatpak package based on the Freedesktop 25.08 runtime (`org.freedesktop.Platform//25.08` and `org.freedesktop.Sdk//25.08`). CI produces standalone `.flatpak` bundles (`Zephyr-Linux-x64.flatpak` and `Zephyr-Linux-arm64.flatpak`) for x86_64 and aarch64.
 
 To install a `.flatpak` bundle produced by CI:
 
@@ -253,7 +253,7 @@ To build locally using `flatpak-builder` (requires a staged payload in `packagin
 
 ```bash
 flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak install flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
+flatpak install flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
 
 flatpak-builder --force-clean --repo=repo build-dir packaging/flatpak/com.zephyr.cad.yml
 flatpak build-bundle repo Zephyr.flatpak com.zephyr.cad
