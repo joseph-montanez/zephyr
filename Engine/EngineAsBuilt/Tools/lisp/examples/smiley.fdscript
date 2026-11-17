@@ -1,0 +1,18 @@
+;;; ==========================================================================
+;;; smiley.fdscript — FieldDraft DSL smiley face.
+;;; Center (0,0) radius 30, eyes at (-12,10)/(12,10) r=4,
+;;; mouth arc center (0,-2) r=15, 200°..340° (smile).
+;;; ==========================================================================
+
+command SMILEY {
+  setup
+  ; --- face ---
+  entmake([cons(0, "CIRCLE"), cons(10, [0, 0, 0]), cons(40, 30)])
+  ; --- eyes ---
+  entmake([cons(0, "CIRCLE"), cons(10, [-12, 10, 0]), cons(40, 4)])
+  entmake([cons(0, "CIRCLE"), cons(10, [12, 10, 0]), cons(40, 4)])
+  ; --- smile (lower arc) ---
+  entmake([cons(0, "ARC"), cons(10, [0, -2, 0]), cons(40, 15), cons(50, 200), cons(51, 340)])
+  princ("Smiley created: 1 face + 2 eyes + 1 smile")
+  restore
+}

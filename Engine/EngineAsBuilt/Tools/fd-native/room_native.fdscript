@@ -1,0 +1,79 @@
+;;; room_native.fdscript — native-first FDScript (structured entities, no DXF).
+;;;
+;;; Engine path: FieldDraftScriptParser -> FDProgram -> FDInterpreter + FDHost.
+;;; This file is intentionally NOT valid AutoLISP input: line/circle/arc/text,
+;;; point/px/py/polar, and rtos OVER a native selection are host calls that
+;;; only make sense with engine support. Nothing here needs entmake, cons,
+;;; group codes, (vl-load-com), *error*, or a /-locals list.
+;;;
+;;; Shape: parametric studio, origin picked by the user (0,0 fallback),
+;;; 4 walls, door leaf + swing arc (cond picks the swing side), window sill
+;;; with mullions (while), 2x2 column grid (nested while), room label,
+;;; then an audit loop over the live selection (foreach).
+
+command ROOM {
+  setup
+  setvar "GRIDMODE" 1
+  setq {
+    W = 120
+    D = 90
+    doorW = 36
+    winW = 48
+    colR = 2
+    swing = 1
+  }
+  ifLet origin = point "Pick room origin:" {
+    setq ox = px(origin)
+    setq oy = py(origin)
+  } else {
+    setq ox = 0
+    setq oy = 0
+  }
+  ; --- walls: closed rectangle, structured lines, no group codes ---
+  setq p1 = point(ox, oy, 0)
+  setq p2 = point(ox + W, oy, 0)
+  setq p3 = point(ox + W, oy + D, 0)
+  setq p4 = point(ox, oy + D, 0)
+  line(p1, p2)
+  line(p2, p3)
+  line(p3, p4)
+  line(p4, p1)
+  ; --- door: leaf + swing arc, side picked by cond ---
+  setq hinge = point(ox + 12, oy, 0)
+  cond {
+    swing == 1 {
+      arc(hinge, doorW, 0, 90)
+      line(hinge, polar(hinge, 45, doorW))
+    }
+    else {
+      arc(hinge, doorW, 90, 180)
+      line(hinge, polar(hinge, 135, doorW))
+    }
+  }
+  ; --- window: sill + two mullions on the top wall ---
+  setq wx = ox + (W - winW) / 2
+  line(point(wx, oy + D, 0), point(wx + winW, oy + D, 0))
+  setq m = 1
+  while m < 3 {
+    line(point(wx + winW * m / 3, oy + D - 1, 0), point(wx + winW * m / 3, oy + D + 1, 0))
+    setq m = m + 1
+  }
+  ; --- columns: 2x2 grid of circles, nested while ---
+  setq ix = 0
+  while ix < 2 {
+    setq iy = 0
+    while iy < 2 {
+      circle(point(ox + 20 + ix * (W - 40), oy + 20 + iy * (D - 40), 0), colR)
+      setq iy = iy + 1
+    }
+    setq ix = ix + 1
+  }
+  ; --- label + audit: native text, native selection, native loop ---
+  text(point(ox + W / 2, oy + D / 2, 0), 3, strcat("STUDIO ", rtos(W), "x", rtos(D)))
+  setq walls = selection prompt "Select entities to audit:"
+  foreach w in walls {
+    princ(getLocation(w))
+  }
+  princ(strcat("Room done: ", rtos(length(walls)), " entities audited"))
+  restore
+}
