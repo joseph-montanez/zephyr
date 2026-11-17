@@ -7,7 +7,7 @@
 
  **Largest gaps**
 
- PEDIT, OVERKILL, REGION booleans, WIPEOUT, TOLERANCE, QDIM, dynamic/Smart Blocks, xref compare, Trace/Count/DWG Compare,
+ OVERKILL, REGION booleans, WIPEOUT, TOLERANCE, QDIM, dynamic/Smart Blocks, xref compare, Trace/Count/DWG Compare,
  cloud/Forma services, DCL/reactors/VLA, and all 3D functionality.
 
 A parity audit of **Zephyr** against **AutoCAD LT 2027** (Windows), not full AutoCAD.
@@ -63,7 +63,7 @@ Add short notes after the em dash. Items marked **(LT: …)** describe a behavio
 | Appendix A — commands | 142 | 69 | 297 | 0 |
 | Appendix B — system variables | 103 | — | 541 | — |
 
-**Largest functional gaps:** polyline editing (`PEDIT`), `OVERKILL`, `REGION` booleans, `WIPEOUT`, `TOLERANCE`, `QDIM`, dynamic blocks/Smart Blocks, xref compare, Trace/Count/DWG Compare, cloud/Forma services, DCL/reactors/VLA, and all 3D features. The app is strongest in core 2D drawing/modify, layers, blocks/attributes, dimensions/leaders, xrefs, page setup/PDF output, sheet sets and AutoLISP.
+**Largest functional gaps:** `OVERKILL`, `REGION` booleans, `WIPEOUT`, `TOLERANCE`, `QDIM`, dynamic blocks/Smart Blocks, xref compare, Trace/Count/DWG Compare, cloud/Forma services, DCL/reactors/VLA, and all 3D features. The app is strongest in core 2D drawing/modify, layers, blocks/attributes, dimensions/leaders, xrefs, page setup/PDF output, sheet sets and AutoLISP.
 
 **Zephyr-only or Zephyr-stronger areas (not LT checklist items):** native EAB format with zstd/BVH partial loads, cross-platform macOS/Windows/Linux builds, MCP server for AI control, `PENSTROKE`, `MLINE`/`MLSTYLE`, `TORIENT`, split panes/floating OS windows, the AutoLISP-defined ribbon, and the three GPU backends (Metal/D3D12/Vulkan).
 
@@ -426,8 +426,8 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 
 ## 6. Creating 2D geometry
 
-> **Zephyr evaluation (39 items):** 15 present · 10 partial · 14 missing · 0 N/A.
-> LINE/PLINE/POLYGON/XLINE/RAY/POINT/DONUT, CIRCLE with all modes, ELLIPSE, SPLINE, BOUNDARY, REVCLOUD, HATCH/GRADIENT. ARC is 3-point; RECTANG is axis-aligned. No PEDIT, WIPEOUT, REGION booleans, BLEND or 2D solids.
+> **Zephyr evaluation (39 items):** 16 present · 10 partial · 13 missing · 0 N/A.
+> LINE/PLINE/POLYGON/XLINE/RAY/POINT/DONUT, CIRCLE with all modes, ELLIPSE, SPLINE, BOUNDARY, REVCLOUD, HATCH/GRADIENT. ARC is 3-point; RECTANG is axis-aligned. No WIPEOUT, REGION booleans, BLEND or 2D solids.
 
 ### 6.1 Linear and construction geometry
 
@@ -503,8 +503,8 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 
 ## 8. Selecting and modifying objects
 
-> **Zephyr evaluation (67 items):** 38 present · 14 partial · 15 missing · 0 N/A.
-> Most core modify commands, including full OFFSET and associative arrays. No PEDIT, OVERKILL, XPLODE, MOCORO, LENGTHEN, SELECTCOUNT or Geometry Cleanup; GROUP is basic.
+> **Zephyr evaluation (67 items):** 39 present · 14 partial · 14 missing · 0 N/A.
+> Most core modify commands, including full OFFSET and associative arrays. No OVERKILL, XPLODE, MOCORO, LENGTHEN, SELECTCOUNT or Geometry Cleanup; GROUP is basic.
 
 ### 8.1 Selection
 
