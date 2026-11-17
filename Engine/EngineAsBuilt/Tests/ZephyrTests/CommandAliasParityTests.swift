@@ -61,6 +61,8 @@ final class CommandAliasParityTests: XCTestCase {
         ("FILTER", "FILTER"), ("FI", "FILTER"),
         ("PURGE", "PURGE"), ("PU", "PURGE"),
         ("-PURGE", "-PURGE"),
+        ("OVERKILL", "OVERKILL"),
+        ("-OVERKILL", "-OVERKILL"),
         ("B", "BLOCK"), ("BMAKE", "BLOCK"),
         ("XR", "XREF"), ("ER", "XREF"),
         ("IAT", "IMAGEATTACH"),

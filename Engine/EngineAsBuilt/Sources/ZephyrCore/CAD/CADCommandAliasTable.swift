@@ -283,6 +283,12 @@ public enum CADCommandAliasTable {
             canonicalName: "-PURGE", category: .modify,
             description: "Remove unused definitions without confirming"),
         CADCommandAliasEntry(
+            canonicalName: "OVERKILL", category: .modify,
+            description: "Delete duplicate objects, merge collinear segments (confirms first)"),
+        CADCommandAliasEntry(
+            canonicalName: "-OVERKILL", category: .modify,
+            description: "Delete duplicate objects without confirming"),
+        CADCommandAliasEntry(
             canonicalName: "SPELL", aliases: ["SP"], category: .modify,
             description: "Spell-check drawing text (unavailable: no platform checker reachable)",
             isReservedStub: true),

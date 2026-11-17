@@ -771,6 +771,16 @@ struct AppCommandRegistration {
             factory: { PurgeCommand(mode: .scripted) }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "OVERKILL",
+            aliases: [],
+            factory: { OverkillCommand(mode: .confirm) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "-OVERKILL",
+            aliases: [],
+            factory: { OverkillCommand(mode: .scripted) }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "AUDIT",
             aliases: [],
             factory: { AuditCommand() }

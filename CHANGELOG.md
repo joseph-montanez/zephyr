@@ -37,6 +37,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **STARFIELD (`STARS`)** - toggle the starfield on or off.
 - **VIEWCTR / VIEWSIZE** - show the viewport center and height.
 - **PEDIT (`PE`)** - edit polylines: open/close, join, width, taper, reverse, vertex editing (move/insert/delete/break/straighten/tangent/widths), fit/spline smoothing with decurve, and linetype generation; works noun-verb on pickfirst selections and single/multiple targets, scriptable via `(command "PEDIT" ...)`, and honors `PEDITACCEPT`/`SPLINETYPE`.
+- **OVERKILL / -OVERKILL** - delete duplicate objects: removes exact duplicates, merges overlapping and end-to-end collinear lines and arcs, cleans zero-length and arc-over-circle geometry, and deletes standalone lines covered by polylines; tolerance plus ignore-property and polyline options, locked/frozen/hidden layers and associative objects protected, one undo entry; `-OVERKILL` applies without confirming for scripts.
 
 ### Improvements
 - **Fit/Aligned text** - spans its two points.

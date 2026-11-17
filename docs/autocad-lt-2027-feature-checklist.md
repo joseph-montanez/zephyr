@@ -7,7 +7,7 @@
 
  **Largest gaps**
 
- OVERKILL, REGION booleans, WIPEOUT, TOLERANCE, QDIM, dynamic/Smart Blocks, xref compare, Trace/Count/DWG Compare,
+ REGION booleans, WIPEOUT, TOLERANCE, QDIM, dynamic/Smart Blocks, xref compare, Trace/Count/DWG Compare,
  cloud/Forma services, DCL/reactors/VLA, and all 3D functionality.
 
 A parity audit of **Zephyr** against **AutoCAD LT 2027** (Windows), not full AutoCAD.
@@ -63,7 +63,7 @@ Add short notes after the em dash. Items marked **(LT: …)** describe a behavio
 | Appendix A — commands | 142 | 69 | 297 | 0 |
 | Appendix B — system variables | 103 | — | 541 | — |
 
-**Largest functional gaps:** `OVERKILL`, `REGION` booleans, `WIPEOUT`, `TOLERANCE`, `QDIM`, dynamic blocks/Smart Blocks, xref compare, Trace/Count/DWG Compare, cloud/Forma services, DCL/reactors/VLA, and all 3D features. The app is strongest in core 2D drawing/modify, layers, blocks/attributes, dimensions/leaders, xrefs, page setup/PDF output, sheet sets and AutoLISP.
+**Largest functional gaps:** `REGION` booleans, `WIPEOUT`, `TOLERANCE`, `QDIM`, dynamic blocks/Smart Blocks, xref compare, Trace/Count/DWG Compare, cloud/Forma services, DCL/reactors/VLA, and all 3D features. The app is strongest in core 2D drawing/modify, layers, blocks/attributes, dimensions/leaders, xrefs, page setup/PDF output, sheet sets and AutoLISP.
 
 **Zephyr-only or Zephyr-stronger areas (not LT checklist items):** native EAB format with zstd/BVH partial loads, cross-platform macOS/Windows/Linux builds, MCP server for AI control, `PENSTROKE`, `MLINE`/`MLSTYLE`, `TORIENT`, split panes/floating OS windows, the AutoLISP-defined ribbon, and the three GPU backends (Metal/D3D12/Vulkan).
 
@@ -504,7 +504,7 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 ## 8. Selecting and modifying objects
 
 > **Zephyr evaluation (67 items):** 39 present · 14 partial · 14 missing · 0 N/A.
-> Most core modify commands, including full OFFSET and associative arrays. No OVERKILL, XPLODE, MOCORO, LENGTHEN, SELECTCOUNT or Geometry Cleanup; GROUP is basic.
+> Most core modify commands, including full OFFSET, OVERKILL, and associative arrays. No XPLODE, MOCORO, LENGTHEN, SELECTCOUNT or Geometry Cleanup; GROUP is basic.
 
 ### 8.1 Selection
 
@@ -555,7 +555,7 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 - [x] **EXPLODE** — blocks, polylines, regions, dimensions, hatches, mtext etc.; **MINSERT not available**.
 - [ ] **XPLODE** — explode with per-object property control.
 - [x] **REVERSE** — reverse lines, polylines, splines (useful for linetype direction).
-- [ ] **OVERKILL** — delete duplicate/overlapping geometry, combine collinear/contiguous objects; ignore/compare properties.
+- [x] **OVERKILL** — delete duplicate/overlapping geometry, combine collinear/contiguous objects; ignore/compare properties.
 - [x] **PEDIT** — polyline edit: open/close, join, width, edit vertex, fit, spline, decurve, linetype generation, reverse, taper (interactive + `(command "PEDIT" ...)` scripted; Edit vertex is single-target only, Join of closed/curved polylines is rejected).
 - [x] **SPLINEDIT** — control points/fit data, refine, join, kink, tangency; `3DEDITBAR` is **not available**.
 - [ ] **Geometry Cleanup** `(2027)` — `GEOMETRYCLEANUPOPEN/CLOSE`, scan/fix gaps, overshoots, undershoots, angular errors; 2D linear/open curves on XY only; no blocks, hatches, nonzero Z, paper space, locked/frozen layers.
@@ -1534,7 +1534,7 @@ All commands documented in the AutoCAD LT 2027 Help command-category pages, plus
 - [ ] `OPTIONS` — Customizes the program settings.  *Areas: Customizing the Drawing Environment; Working With the Application Window.*
 - [x] `ORTHO` — Constrains cursor movement to the horizontal or vertical direction.  *Areas: 2D Isometric Drawing; Ortho Mode.*
 - [x] `OSNAP` — Sets running object snap modes.  *Areas: Object Snap.*
-- [ ] `OVERKILL` — Removes duplicate or overlapping lines, arcs, and polylines. Also, combines those that are partially overlapping or contiguous.  *Areas: Removing Objects and Correcting Mistakes.*
+- [x] `OVERKILL` — Removes duplicate or overlapping lines, arcs, and polylines. Also, combines those that are partially overlapping or contiguous.  *Areas: Removing Objects and Correcting Mistakes.*
 - [~] `PAGESETUP` — Controls the page layout, plotting device, paper size, and other settings for each new layout.  *Areas: Hiding Lines and Shading 3D Objects; Model Space and Paper Space; Print or Plot Settings; Publishing Settings; Working With Layouts.*
 - [x] `PAN` — Shifts the view without changing the viewing direction or magnification.  *Areas: Panning and Zooming the View; Working With the Application Window.*
 - [ ] `PARAMETERS` — Opens the Parameters Manager palette that includes all dimensional constraint parameters, reference parameters, and user variables in the current drawing.  *Areas: Dimensional Constraints; Dynamic Blocks; Editing Dimensional Constraints; Parametric Drawing; Working With Dynamic Block Constraints; the Parameters Manager.*

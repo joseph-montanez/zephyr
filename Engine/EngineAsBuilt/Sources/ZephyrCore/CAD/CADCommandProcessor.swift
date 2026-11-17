@@ -308,6 +308,8 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "FILTER", aliases: ["FI"], category: .modify, syntax: "", description: "Select objects by combined property criteria"),
         CommandDescriptor(canonicalName: "PURGE", aliases: ["PU"], category: .modify, syntax: "", description: "Remove unused definitions (confirms first)"),
         CommandDescriptor(canonicalName: "-PURGE", aliases: [], category: .modify, syntax: "", description: "Remove unused definitions without confirming"),
+        CommandDescriptor(canonicalName: "OVERKILL", aliases: [], category: .modify, syntax: "[Yes/No/Settings]", description: "Delete duplicate objects, merge collinear segments (confirms first)"),
+        CommandDescriptor(canonicalName: "-OVERKILL", aliases: [], category: .modify, syntax: "", description: "Delete duplicate objects without confirming"),
         CommandDescriptor(canonicalName: "SPELL", aliases: ["SP"], category: .modify, syntax: "", description: "Spell-check drawing text (unavailable: no platform checker reachable)"),
         // --- History ---
         CommandDescriptor(canonicalName: "UNDO",       aliases: ["U"],             category: .modify,  syntax: "[<count>]", description: "Undo the last drawing change (Cmd/Ctrl+Z)"),
