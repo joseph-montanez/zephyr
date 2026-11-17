@@ -117,6 +117,12 @@ public extension CADPolyline {
         var poly = template
         poly.vertices = verts
         poly.isClosed = isClosed
+        // Vertices are regenerated from kernel segments, so any PEDIT
+        // Fit/Spline frame/generated distinction is gone with the old
+        // vertices. Reset rather than keep a curveType that no longer
+        // describes the vertex array (trim of a fitted curve yields a
+        // plain polyline; refit via PEDIT).
+        poly.curveType = .none
         return poly
     }
 }

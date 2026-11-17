@@ -169,6 +169,11 @@ struct AppCommandRegistration {
             factory: { SplineEditCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "PEDIT",
+            aliases: ["PE"],
+            factory: { PeditCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "INSERT",
             aliases: ["I", "-I", "-INSERT"],
             descriptor: CommandDescriptor(

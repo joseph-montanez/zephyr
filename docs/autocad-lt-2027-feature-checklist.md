@@ -556,7 +556,7 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 - [ ] **XPLODE** — explode with per-object property control.
 - [x] **REVERSE** — reverse lines, polylines, splines (useful for linetype direction).
 - [ ] **OVERKILL** — delete duplicate/overlapping geometry, combine collinear/contiguous objects; ignore/compare properties.
-- [ ] **PEDIT** — polyline edit: open/close, join, width, edit vertex, fit, spline, decurve, linetype generation, reverse, taper.
+- [x] **PEDIT** — polyline edit: open/close, join, width, edit vertex, fit, spline, decurve, linetype generation, reverse, taper (interactive + `(command "PEDIT" ...)` scripted; Edit vertex is single-target only, Join of closed/curved polylines is rejected).
 - [x] **SPLINEDIT** — control points/fit data, refine, join, kink, tangency; `3DEDITBAR` is **not available**.
 - [ ] **Geometry Cleanup** `(2027)` — `GEOMETRYCLEANUPOPEN/CLOSE`, scan/fix gaps, overshoots, undershoots, angular errors; 2D linear/open curves on XY only; no blocks, hatches, nonzero Z, paper space, locked/frozen layers.
 
@@ -580,7 +580,7 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 - [x] **DIMEDIT/DIMTEDIT** — dimension text/extension lines and text position.
 - [x] **MLEADEREDIT** — add/remove leader lines.
 - [ ] **TABLEDIT** — table cell text editing.
-- [~] **PEDIT/SPLINEDIT** — see above.
+- [x] **PEDIT/SPLINEDIT** — see above.
 - [x] **Properties palette/Quick Properties/MATCHPROP/CHPROP/CHANGE** — property editing.
 - [~] **SETBYLAYER/COPYTOLAYER** — property/layer normalization.
 - [~] **Region booleans** — `UNION`, `SUBTRACT`, `INTERSECT` for 2D regions.
@@ -1550,7 +1550,7 @@ All commands documented in the AutoCAD LT 2027 Help command-category pages, plus
 - [~] `PDFIMPORT` — Imports the geometry, fills, raster images, and TrueType text objects from a specified PDF file.  *Areas: Importing PDF Files.*
 - [ ] `PDFLAYERS` — Controls the display of layers in a PDF underlay.  *Areas: Working with Underlays.*
 - [ ] `PDFSHXTEXT` — Converts the SHX geometry imported from PDF files into individual multiline text objects.  *Areas: Importing PDF Files.*
-- [ ] `PEDIT` — Edits polylines, objects to be joined to polylines, and related objects.  *Areas: Editing Specific Objects.*
+- [x] `PEDIT` — Edits polylines, objects to be joined to polylines, and related objects.  *Areas: Editing Specific Objects.*
 - [ ] `PKFSTGROUP` — Opens the legacy Group Manager.  *Areas: Working With Groups.*
 - [x] `PLAN` — Displays an orthographic view of the XY plane of a specified user coordinate system.  *Areas: 3D Views; Controlling 3D Projection.*
 - [~] `PLINE` — Creates a 2D polyline, a single object that is composed of line and arc segments.  *Areas: Curved Geometric Objects; Linear Geometric Objects.*
@@ -1882,7 +1882,7 @@ Every system variable documented in the LT 2027 command-category pages, deduplic
 
 ### Editing Specific Objects (8)
 
-- [ ] `PEDITACCEPT` · [ ] `PLINEGCENMAX` · [ ] `PLINEGEN` · [ ] `PLINEREVERSEWIDTHS` · [ ] `PLINETYPE` · [ ] `PLINEWID` · [x] `SPLINESEGS` · [ ] `SPLINETYPE`
+- [x] `PEDITACCEPT` · [ ] `PLINEGCENMAX` · [ ] `PLINEGEN` · [ ] `PLINEREVERSEWIDTHS` · [ ] `PLINETYPE` · [ ] `PLINEWID` · [x] `SPLINESEGS` · [x] `SPLINETYPE`
 
 ### Editing with Grips (3)
 

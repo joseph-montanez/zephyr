@@ -31,6 +31,7 @@ final class CommandAliasParityTests: XCTestCase {
         ("REC", "RECTANG"), ("RECT", "RECTANG"),
         ("SPLINEDIT", "SPLINEDIT"), ("SPLINEEDIT", "SPLINEDIT"),
         ("SPE", "SPLINEDIT"),
+        ("PEDIT", "PEDIT"), ("PE", "PEDIT"),
         ("MT", "MTEXT"), ("T", "MTEXT"), ("MTEXT", "MTEXT"),
         ("TEXT", "TEXT"), ("DTEXT", "TEXT"),
         ("TEXTEDIT", "TEXTEDIT"), ("TEDIT", "TEXTEDIT"),

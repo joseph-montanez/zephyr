@@ -273,22 +273,56 @@ public enum CADHatchEdge: Hashable, Sendable {
     }
 }
 
+/// Role of a vertex inside a PEDIT Fit/Spline curve definition.
+///
+/// Plain polylines use `.normal` everywhere. `PEDIT Fit` keeps the original
+/// (frame) vertices and appends `.curveFitGenerated` vertices; `PEDIT Spline`
+/// keeps `.splineFrame` control vertices and appends `.splineGenerated`
+/// vertices. `Decurve` drops every non-`.normal` vertex. DXF group-70 vertex
+/// flags map here: 1 = curve-fit generated, 2 = tangent defined (see
+/// `tangent`), 8 = spline-fit generated, 16 = spline control (frame).
+public enum CADPolylineVertexKind: UInt8, Hashable, Sendable, CaseIterable {
+    case normal = 0
+    case curveFitGenerated = 1
+    case splineGenerated = 2
+    case splineFrame = 3
+}
+
+/// Smoothing state of a polyline set by `PEDIT Fit` / `PEDIT Spline` and
+/// cleared by `PEDIT Decurve`. DXF legacy-POLYLINE flags map here: bit 2 =
+/// curve-fit (`.fit`), bit 4 = spline-fit with group-75 5/6 selecting
+/// `.splineQuadratic` / `.splineCubic`.
+public enum CADPolylineCurveType: UInt8, Hashable, Sendable, CaseIterable {
+    case none = 0
+    case fit = 1
+    case splineQuadratic = 2
+    case splineCubic = 3
+}
+
 public struct CADPolylineVertex: Hashable, Sendable {
     public var position: Vector3
     public var bulge: Double
     public var startWidth: Double
     public var endWidth: Double
+    public var kind: CADPolylineVertexKind
+    /// Tangent direction in radians, set by `PEDIT Tangent` (DXF group 50).
+    /// Nil means unset. Directions rotate with the vertex under transforms.
+    public var tangent: Double?
 
     public init(
         position: Vector3,
         bulge: Double = 0,
         startWidth: Double = 0,
-        endWidth: Double = 0
+        endWidth: Double = 0,
+        kind: CADPolylineVertexKind = .normal,
+        tangent: Double? = nil
     ) {
         self.position = position
         self.bulge = bulge
         self.startWidth = startWidth
         self.endWidth = endWidth
+        self.kind = kind
+        self.tangent = tangent
     }
 }
 
@@ -299,6 +333,8 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
     public var vertices: [CADPolylineVertex]
     public var isClosed: Bool
     public var lineTypeGenerationEnabled: Bool
+    /// Smoothing state set by PEDIT Fit/Spline, cleared by PEDIT Decurve.
+    public var curveType: CADPolylineCurveType
     public var hatchEdges: [CADHatchEdge]
     public var isHatchBoundaryCarrier: Bool
     public var hatchLoopType: Int?
@@ -308,6 +344,7 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         vertices: [CADPolylineVertex],
         isClosed: Bool = false,
         lineTypeGenerationEnabled: Bool = false,
+        curveType: CADPolylineCurveType = .none,
         hatchEdges: [CADHatchEdge] = [],
         isHatchBoundaryCarrier: Bool = false,
         hatchLoopType: Int? = nil,
@@ -316,6 +353,7 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         self.vertices = vertices
         self.isClosed = isClosed
         self.lineTypeGenerationEnabled = lineTypeGenerationEnabled
+        self.curveType = curveType
         self.hatchEdges = hatchEdges
         self.isHatchBoundaryCarrier = isHatchBoundaryCarrier
         self.hatchLoopType = hatchLoopType
@@ -326,6 +364,7 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         points: [Vector3],
         isClosed: Bool = false,
         lineTypeGenerationEnabled: Bool = false,
+        curveType: CADPolylineCurveType = .none,
         hatchEdges: [CADHatchEdge] = [],
         isHatchBoundaryCarrier: Bool = false,
         hatchLoopType: Int? = nil,
@@ -334,6 +373,7 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         self.vertices = points.map { CADPolylineVertex(position: $0) }
         self.isClosed = isClosed
         self.lineTypeGenerationEnabled = lineTypeGenerationEnabled
+        self.curveType = curveType
         self.hatchEdges = hatchEdges
         self.isHatchBoundaryCarrier = isHatchBoundaryCarrier
         self.hatchLoopType = hatchLoopType
@@ -410,7 +450,37 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         return (center, radius, startAngle, 4.0 * atan(bulge))
     }
 
+    /// Render-visible vertex list. Spline paths store off-curve control
+    /// frames (`.splineFrame`) ahead of the generated samples; display,
+    /// measurement, and baking must follow the samples only. Fit paths are
+    /// all on-curve and pass through unchanged.
+    public var curveDisplayVertices: [CADPolylineVertex] {
+        guard curveType == .splineQuadratic || curveType == .splineCubic else {
+            return vertices
+        }
+        return vertices.filter { $0.kind != .splineFrame }
+    }
+
+    /// Render-visible path: spline frames stripped (see
+    /// `curveDisplayVertices`), curve state reset so downstream tessellation
+    /// walks plain segments.
+    public var displayPath: CADPolyline {
+        guard curveType == .splineQuadratic || curveType == .splineCubic else {
+            return self
+        }
+        var copy = self
+        copy.vertices = curveDisplayVertices
+        copy.curveType = .none
+        return copy
+    }
+
     public func tessellatedPoints(segmentsPerRadian: Double = 12.0) -> [Vector3] {
+        // Spline frames are off-curve control points: tessellate the visible
+        // samples only, via a plain temporary (no recursion: its curveType
+        // is `.none`).
+        if curveType == .splineQuadratic || curveType == .splineCubic {
+            return displayPath.tessellatedPoints(segmentsPerRadian: segmentsPerRadian)
+        }
         if !hatchEdges.isEmpty {
             var result: [Vector3] = []
             for edge in hatchEdges {
@@ -452,6 +522,10 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
     }
 
     public func boundingPoints() -> [Vector3] {
+        // Curved paths bound the visible curve, not the off-curve frames.
+        if curveType != .none {
+            return tessellatedPoints()
+        }
         if !hatchEdges.isEmpty {
             return hatchEdges.flatMap { $0.tessellatedPoints(segmentsPerRadian: 8.0) }
         }
@@ -482,6 +556,16 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
     }
 
     public var length: Double {
+        // Curved paths measure the visible curve, not the frame polygon.
+        if curveType != .none {
+            let pts = tessellatedPoints()
+            guard pts.count >= 2 else { return 0 }
+            var total = 0.0
+            for i in 0..<(pts.count - 1) {
+                total += pts[i].distance(to: pts[i + 1])
+            }
+            return total
+        }
         var total = 0.0
         for segment in 0..<segmentCount {
             if let arc = arcParameters(forSegment: segment) {
@@ -502,11 +586,25 @@ public struct CADPolyline: Hashable, Sendable, RandomAccessCollection, MutableCo
         // Written element-wise rather than through `MutableRef`: that type is macOS 27+, and this is on
         // the transform path used by every block insert and export.
         for index in result.vertices.indices {
-            result.vertices[index].position = transform.transformPoint(result.vertices[index].position)
+            let oldPosition = result.vertices[index].position
+            result.vertices[index].position = transform.transformPoint(oldPosition)
             result.vertices[index].startWidth *= widthScale
             result.vertices[index].endWidth *= widthScale
             if reversesOrientation {
                 result.vertices[index].bulge = -result.vertices[index].bulge
+            }
+            // Rotate the PEDIT tangent with the vertex: transform a unit
+            // direction vector so mirrors, rotations, and (approximately)
+            // non-uniform scales all land on the true mapped direction.
+            if let tangent = result.vertices[index].tangent {
+                let tip = Vector3(
+                    x: oldPosition.x + cos(tangent),
+                    y: oldPosition.y + sin(tangent),
+                    z: oldPosition.z)
+                let mappedTip = transform.transformPoint(tip)
+                let mappedBase = result.vertices[index].position
+                result.vertices[index].tangent = atan2(
+                    mappedTip.y - mappedBase.y, mappedTip.x - mappedBase.x)
             }
         }
         result.hatchEdges = result.hatchEdges.map { $0.transformed(by: transform) }

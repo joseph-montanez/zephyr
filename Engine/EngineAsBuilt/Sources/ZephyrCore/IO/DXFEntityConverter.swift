@@ -386,14 +386,46 @@ public enum DXFEntityConverter {
                 vertices: pl.vertices.map { v in
                     var bulge = -v.bulge
                     if mirrored { bulge = -bulge }
+                    // Vertex flags: 1 = curve-fit generated, 2 = tangent
+                    // defined (group 50), 8 = spline-fit generated,
+                    // 16 = spline control point (frame).
+                    let kind: CADPolylineVertexKind
+                    if (v.flags & 16) != 0 {
+                        kind = .splineFrame
+                    } else if (v.flags & 8) != 0 {
+                        kind = .splineGenerated
+                    } else if (v.flags & 1) != 0 {
+                        kind = .curveFitGenerated
+                    } else {
+                        kind = .normal
+                    }
+                    // DXF group 50 stores degrees in file (y-up) orientation;
+                    // parseVertex already converted to radians, so only the
+                    // y-flip negation remains to reach internal convention
+                    // (matching arc start/end angles).
+                    let tangent: Double? = (v.flags & 2) != 0 ? -v.tangentDir : nil
                     return CADPolylineVertex(position: cadPolylinePoint(v, in: pl),
-                                             bulge: bulge, startWidth: v.startWidth, endWidth: v.endWidth)
+                                             bulge: bulge, startWidth: v.startWidth, endWidth: v.endWidth,
+                                             kind: kind, tangent: tangent)
                 },
                 isClosed: (pl.flags & 0x01) != 0,
-                lineTypeGenerationEnabled: false)
+                lineTypeGenerationEnabled: (pl.flags & 0x80) != 0,
+                curveType: Self.legacyCurveType(flags: pl.flags, group75: pl.curveType))
             return [.polyline(path: simplifyIfNeeded(path), color: color)]
         }
         return []
+    }
+
+    /// Maps legacy-POLYLINE smoothing state to the model. Group-70 value 2
+    /// (bit 1) = curve-fit vertices added, value 4 (bit 2) = spline-fit
+    /// vertices added; group 75 selects the spline degree (5 = quadratic,
+    /// 6 = cubic, defaulting to cubic).
+    internal static func legacyCurveType(flags: Int, group75: Int) -> CADPolylineCurveType {
+        if (flags & 2) != 0 { return .fit }
+        if (flags & 4) != 0 {
+            return group75 == 5 ? .splineQuadratic : .splineCubic
+        }
+        return .none
     }
 
     // MARK: - Ellipse
@@ -1548,6 +1580,7 @@ public enum DXFEntityConverter {
             vertices: reversed,
             isClosed: path.isClosed,
             lineTypeGenerationEnabled: path.lineTypeGenerationEnabled,
+            curveType: path.curveType,
             hatchEdges: path.hatchEdges.reversed().map { $0.reversed() },
             isHatchBoundaryCarrier: path.isHatchBoundaryCarrier,
             hatchLoopType: path.hatchLoopType,
@@ -2205,6 +2238,11 @@ public enum DXFEntityConverter {
 
     private static func simplifyIfNeeded(_ path: CADPolyline) -> CADPolyline {
         guard simplifyPolylines, !path.hasBulges, path.vertices.count > 200 else { return path }
+        // Never decimate PEDIT Fit/Spline output: generated vertices are the
+        // curve. RDP on raw points would also silently drop the curve state.
+        guard path.curveType == .none,
+              !path.vertices.contains(where: { $0.kind != .normal })
+        else { return path }
         let bb = BoundingBox3D(from: path.points)
         let diag = max(bb.size.x, bb.size.y); let tol = max(diag * 0.002, 0.01)
         var simplified = rdp(path.points, tolerance: tol)

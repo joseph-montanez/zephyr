@@ -2136,6 +2136,9 @@ public enum EABReader {
             case 18: // bulge-aware polyline
                 let isClosed = r.readUInt8() != 0
                 let lineTypeGenerationEnabled = r.readUInt8() != 0
+                // EAB v25: PEDIT curve state (see EABVersion).
+                let curveTypeRaw: UInt8 = version >= 25 ? r.readUInt8() : 0
+                let curveType = CADPolylineCurveType(rawValue: curveTypeRaw) ?? .none
                 let vertexCount = safeCount(r.readUInt32(), limit: maxSafeVertexCount, label: "bulgePolyVerts")
                 var vertices: [CADPolylineVertex] = []
                 vertices.reserveCapacity(vertexCount)
@@ -2144,11 +2147,22 @@ public enum EABReader {
                         x: r.readFloat64(),
                         y: r.readFloat64(),
                         z: r.readFloat64())
+                    let bulge = r.readFloat64()
+                    let startWidth = r.readFloat64()
+                    let endWidth = r.readFloat64()
+                    var kind = CADPolylineVertexKind.normal
+                    var tangent: Double? = nil
+                    if version >= 25 {
+                        kind = CADPolylineVertexKind(rawValue: r.readUInt8()) ?? .normal
+                        if r.readUInt8() != 0 { tangent = r.readFloat64() }
+                    }
                     vertices.append(CADPolylineVertex(
                         position: position,
-                        bulge: r.readFloat64(),
-                        startWidth: r.readFloat64(),
-                        endWidth: r.readFloat64()))
+                        bulge: bulge,
+                        startWidth: startWidth,
+                        endWidth: endWidth,
+                        kind: kind,
+                        tangent: tangent))
                 }
                 let metadata = readHatchPathMetadata()
                 let color = readColor()
@@ -2157,6 +2171,7 @@ public enum EABReader {
                         vertices: vertices,
                         isClosed: isClosed,
                         lineTypeGenerationEnabled: lineTypeGenerationEnabled,
+                        curveType: curveType,
                         hatchEdges: metadata.edges,
                         isHatchBoundaryCarrier: metadata.carrier,
                         hatchLoopType: metadata.loopType,

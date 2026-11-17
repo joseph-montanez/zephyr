@@ -114,7 +114,15 @@ public final class CADVertexEditor {
             case .polygon(_, let c):
                 prim = .polygon(points: localPts, color: c)
             case .polyline(let path, let c):
-                if path.hatchEdges.isEmpty, !path.hasBulges, localPts.count == path.vertices.count {
+                // Direct position write-back only handles plain polylines.
+                // Fitted/splined paths carry generated vertices and optional
+                // tangents that positional dragging alone cannot keep
+                // consistent; leave those to the full-regeneration path (PEDIT
+                // vertex editing) instead of silently flattening the curve.
+                if path.hatchEdges.isEmpty, !path.hasBulges,
+                   path.curveType == .none,
+                   !path.vertices.contains(where: { $0.kind != .normal || $0.tangent != nil }),
+                   localPts.count == path.vertices.count {
                     prim = .polyline(
                         path: CADPolyline(
                             points: localPts,

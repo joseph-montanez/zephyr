@@ -305,6 +305,10 @@ public enum CADCommandAliasTable {
             category: .modify,
             description: "Edit an existing spline (reverse, convert to polyline, etc.)"),
         CADCommandAliasEntry(
+            canonicalName: "PEDIT", aliases: ["PE"],
+            category: .modify,
+            description: "Edit polylines: open/close, join, width, vertex, fit/spline, reverse, taper"),
+        CADCommandAliasEntry(
             canonicalName: "PROPERTIES",
             aliases: ["PROPS", "PR", "CH", "MO"], category: .view,
             description: "Show/hide the properties panel"),

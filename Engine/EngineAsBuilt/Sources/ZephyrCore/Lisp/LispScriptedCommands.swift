@@ -35,7 +35,7 @@ enum LispScriptedCommands {
     /// This table is pinned by LispReentrancyTests' approved-list test:
     /// add a name here only with its implementation + test below.
     static let scripted: Set<String> = [
-        "LINE", "CIRCLE", "PLINE", "ARC",
+        "LINE", "CIRCLE", "PLINE", "ARC", "PEDIT", "PE",
         "COPY", "ROTATE", "MOVE", "ERASE", "MIRROR", "STRETCH", "BREAK", "BREAKATPOINT", "EXTEND", "SELECT",
         "DIMLINEAR", "DLI", "DIMLIN", "DIMALIGNED", "DAL", "DIMALI", "DIMANGULAR", "DAN", "DIMANG",
         "DIMDIAMETER", "DDI", "DIMDIA", "DIMRADIUS", "DRA", "DIMRAD", "DIMARC", "DAR",
@@ -182,6 +182,7 @@ enum LispScriptedCommands {
         case "STRETCH": try runStretch(&operands, host: host)
         case "BREAK": try runBreak(&operands, host: host)
         case "BREAKATPOINT": try runBreakAtPoint(&operands, host: host)
+        case "PEDIT", "PE": try await runPedit(&operands, host: host)
         case "EXTEND": try await runExtend(&operands, host: host)
         case "SELECT": try runSelect(&operands, host: host)
         case "DIMLINEAR", "DLI", "DIMLIN": try await runDimLinear(&operands, host: host)
@@ -2292,11 +2293,253 @@ enum LispScriptedCommands {
             got: first)
     }
 
+    /// `(command "PEDIT" ent option ...)` — scripted polyline editing, one
+    /// undo entry per call. Entity forms: ename, `(ename pick)`, a
+    /// single-object selection set, `LAST`. A line/arc target converts
+    /// in-line, but only when PEDITACCEPT is nonzero. Options:
+    /// `C` close, `O` open, `R` reverse, `F` fit, `S` spline (SPLINETYPE
+    /// degree: 5 = quadratic, else cubic), `D` decurve, `W width` global
+    /// width, `T w0 w1` taper, `LT [ON|OFF]` linetype generation (bare
+    /// `LT` toggles), `J ent...` join (terminated by `""` or end of input).
+    /// Edit vertex and Multiple are interactive-only and reject. Locked
+    /// layers are silent no-ops (BREAK convention); wrong kinds, bad
+    /// widths, and Join chains that miss the target throw.
+    private static func runPedit(
+        _ operands: inout [LispValue], host: LispCADHost
+    ) async throws {
+        skipSnaps(&operands)
+        let target = try takeBreakTarget(&operands, command: "PEDIT", host: host)
+        guard let keyword = takeKeyword(&operands) else {
+            throw LispError.hostError(
+                "command: PEDIT needs an option (Close/Open/Join/Width/Fit/Spline/Decurve/Ltype/Reverse/Taper)")
+        }
+        let option: String
+        switch keyword {
+        case .word(let raw): option = canonicalName(raw)
+        case .enter:
+            throw LispError.hostError(
+                "command: PEDIT needs an option (Close/Open/Join/Width/Fit/Spline/Decurve/Ltype/Reverse/Taper)")
+        }
+        switch option {
+        case "C", "CLOSE":
+            try consumeOptionalEnter(&operands, command: "PEDIT")
+            try await applyPedit(handle: target.handle, host: host, what: "Close",
+                           transform: { PeditGeometryEngine.closed($0) })
+        case "O", "OPEN":
+            try consumeOptionalEnter(&operands, command: "PEDIT")
+            try await applyPedit(handle: target.handle, host: host, what: "Open",
+                           transform: { PeditGeometryEngine.opened($0) })
+        case "R", "REVERSE":
+            try consumeOptionalEnter(&operands, command: "PEDIT")
+            try await applyPedit(handle: target.handle, host: host, what: "Reverse",
+                           transform: { PeditGeometryEngine.reversed($0) })
+        case "F", "FIT":
+            try consumeOptionalEnter(&operands, command: "PEDIT")
+            try await applyPedit(handle: target.handle, host: host, what: "Fit",
+                           transform: { PeditGeometryEngine.fitCurve($0) },
+                           rejectMessage: "Straighten arc segments or Decurve first")
+        case "S", "SPLINE":
+            try consumeOptionalEnter(&operands, command: "PEDIT")
+            var quadratic = false
+            if let value = await host.getSystemVar("SPLINETYPE"), case .int(let raw) = value {
+                quadratic = raw == 5
+            }
+            try await applyPedit(handle: target.handle, host: host, what: "Spline",
+                           transform: { PeditGeometryEngine.splineCurve($0, quadratic: quadratic) },
+                           rejectMessage: "Straighten arc segments or Decurve first")
+        case "D", "DECURVE":
+            try consumeOptionalEnter(&operands, command: "PEDIT")
+            try await applyPedit(handle: target.handle, host: host, what: "Decurve",
+                           transform: { PeditGeometryEngine.decurved($0) },
+                           rejectMessage: "Nothing to decurve")
+        case "W", "WIDTH":
+            let width = try takeNumber(&operands, command: "PEDIT", what: "a width")
+            guard width.isFinite, width >= 0 else {
+                throw LispError.hostError("command: PEDIT width must be zero or greater")
+            }
+            try consumeOptionalEnter(&operands, command: "PEDIT")
+            try await applyPedit(handle: target.handle, host: host, what: "Width",
+                           transform: { PeditGeometryEngine.withGlobalWidth($0, width: width) })
+        case "T", "TAPER":
+            let first = try takeNumber(&operands, command: "PEDIT", what: "a starting width")
+            let second = try takeNumber(&operands, command: "PEDIT", what: "an ending width")
+            for value in [first, second] {
+                guard value.isFinite, value >= 0 else {
+                    throw LispError.hostError("command: PEDIT widths must be zero or greater")
+                }
+            }
+            try consumeOptionalEnter(&operands, command: "PEDIT")
+            try await applyPedit(handle: target.handle, host: host, what: "Taper",
+                           transform: { PeditGeometryEngine.tapered($0, from: first, to: second) })
+        case "LT", "LTYPE", "LTGEN":
+            var enabled: Bool?
+            if let peek = operands.first, case .string(let raw) = peek {
+                let word = canonicalName(raw)
+                if word == "ON" || word == "1" { enabled = true; operands.removeFirst() }
+                else if word == "OFF" || word == "0" { enabled = false; operands.removeFirst() }
+            }
+            try consumeOptionalEnter(&operands, command: "PEDIT")
+            try await applyPedit(handle: target.handle, host: host, what: "Ltype",
+                           transform: { path in
+                               PeditGeometryEngine.withLineTypeGeneration(
+                                   path, enabled: enabled ?? !path.lineTypeGenerationEnabled)
+                           })
+        case "J", "JOIN":
+            try await runPeditJoin(target: target.handle, operands: &operands, host: host)
+        case "E", "EDIT", "VERTEX", "M", "MULTIPLE":
+            throw LispError.hostError(
+                "command: PEDIT \(option) is interactive-only (not supported from Lisp)")
+        default:
+            throw LispError.hostError(
+                "command: PEDIT does not support option \"\(option)\"")
+        }
+        host.previousSelection = [target.handle]
+    }
+
+    /// Resolves a scripted PEDIT target: the first polyline primitive, else
+    /// the first line/arc (converted when PEDITACCEPT allows). Returns nil
+    /// for locked layers (the caller treats it as a silent no-op, following
+    /// the BREAK convention); throws on wrong kinds and missing geometry.
+    private static func resolvePeditTarget(
+        handle: UUID, host: LispCADHost
+    ) async throws -> (entity: CADEntity, primIndex: Int, path: CADPolyline, color: ColorRGBA?)? {
+        guard let entity = host.document.entity(for: handle) else {
+            throw LispError.hostError("command: PEDIT selection no longer exists")
+        }
+        guard LayerAccess.isEditable(entity: entity, in: host.document) else {
+            return nil
+        }
+        guard let geometry = entity.localGeometry, !geometry.isEmpty else {
+            throw LispError.hostError("command: PEDIT object has no editable geometry")
+        }
+        if let index = geometry.firstIndex(where: {
+            if case .polyline(let path, _) = $0 { return !path.isHatchBoundaryCarrier }
+            return false
+        }), case .polyline(let path, let color) = geometry[index] {
+            return (entity, index, path, color)
+        }
+        let lineArcIndex = geometry.firstIndex(where: {
+            if case .line = $0 { return true }
+            if case .arc = $0 { return true }
+            return false
+        })
+        guard let index = lineArcIndex else {
+            throw LispError.hostError("command: PEDIT object is not a polyline")
+        }
+        var accept = false
+        if let value = await host.getSystemVar("PEDITACCEPT"), case .int(let raw) = value {
+            accept = raw != 0
+        }
+        guard accept else {
+            throw LispError.hostError(
+                "command: PEDIT object is not a polyline (set PEDITACCEPT to convert)")
+        }
+        let converted: CADPolyline?
+        switch geometry[index] {
+        case .line(let start, let end, _):
+            converted = PeditGeometryEngine.convertedFromLine(start: start, end: end)
+        case .arc(let center, let radius, let startAngle, let endAngle, _):
+            converted = PeditGeometryEngine.convertedFromArc(
+                center: center, radius: radius, startAngle: startAngle, endAngle: endAngle)
+        default:
+            converted = nil
+        }
+        guard let path = converted,
+              let clean = PeditGeometryEngine.sanitized(path) else {
+            throw LispError.hostError("command: PEDIT object cannot be converted to a polyline")
+        }
+        let color: ColorRGBA?
+        switch geometry[index] {
+        case .line(_, _, let c): color = c
+        case .arc(_, _, _, _, let c): color = c
+        default: color = nil
+        }
+        return (entity, index, clean, color)
+    }
+
+    /// Commits one scripted PEDIT option in a single undo batch: nil
+    /// transform results throw with `what`/`rejectMessage`, locked layers
+    /// are silent no-ops.
+    private static func applyPedit(
+        handle: UUID, host: LispCADHost, what: String,
+        transform: (CADPolyline) -> CADPolyline?,
+        rejectMessage: String? = nil
+    ) async throws {
+        guard let resolved = try await resolvePeditTarget(handle: handle, host: host) else {
+            return
+        }
+        guard var geometry = resolved.entity.localGeometry,
+              geometry.indices.contains(resolved.primIndex),
+              let updated = transform(resolved.path),
+              let clean = PeditGeometryEngine.sanitized(updated)
+        else {
+            throw LispError.hostError(
+                "command: PEDIT \(what) rejected (\(rejectMessage ?? "degenerate result"))")
+        }
+        var mutated = resolved.entity
+        geometry[resolved.primIndex] = .polyline(path: clean, color: resolved.color)
+        mutated.localGeometry = geometry
+        host.document.replaceEntities(remove: [handle], add: [mutated])
+    }
+
+    /// Scripted Join: `(command "PEDIT" ent "J" ent... [""])`. Sources are
+    /// polylines, lines, or arcs (the latter two convert when PEDITACCEPT
+    /// allows); the target must already be an open plain polyline. One undo
+    /// batch; a chain that misses the target throws.
+    private static func runPeditJoin(
+        target: UUID, operands: inout [LispValue], host: LispCADHost
+    ) async throws {
+        var sourceHandles: [UUID] = []
+        while let first = operands.first {
+            if case .string(let raw) = first,
+               raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                operands.removeFirst()
+                break
+            }
+            let source = try takeBreakTarget(&operands, command: "PEDIT", host: host)
+            sourceHandles.append(source.handle)
+        }
+        guard let targetRef = try await resolvePeditTarget(handle: target, host: host) else {
+            return
+        }
+        guard !targetRef.path.isClosed else {
+            throw LispError.hostError("command: PEDIT Join needs an open target polyline")
+        }
+        var sources: [PeditGeometryEngine.JoinSource] = []
+        var consumed: [CADEntity] = []
+        for handle in sourceHandles where handle != target {
+            guard let resolved = try await resolvePeditTarget(handle: handle, host: host),
+                  !resolved.path.isClosed,
+                  resolved.path.curveType == .none,
+                  !resolved.path.vertices.contains(where: { $0.kind != .normal })
+            else { continue }
+            sources.append(PeditGeometryEngine.JoinSource(
+                path: resolved.path, transform: resolved.entity.transform))
+            consumed.append(resolved.entity)
+        }
+        guard !sources.isEmpty,
+              let joined = PeditGeometryEngine.joinPolylines(
+                target: PeditGeometryEngine.JoinSource(
+                    path: targetRef.path, transform: targetRef.entity.transform),
+                sources: sources)
+        else {
+            throw LispError.hostError(
+                "command: PEDIT Join found no continuous chain through the target polyline")
+        }
+        guard var geometry = targetRef.entity.localGeometry,
+              geometry.indices.contains(targetRef.primIndex)
+        else {
+            throw LispError.hostError("command: PEDIT Join target vanished")
+        }
+        geometry[targetRef.primIndex] = .polyline(path: joined, color: targetRef.color)
+        var mutated = targetRef.entity
+        mutated.localGeometry = geometry
+        var removals = Set(consumed.map(\.handle))
+        removals.insert(target)
+        host.document.replaceEntities(remove: removals, add: [mutated])
+    }
+
     /// Point-pick for the scripted `(command "BREAK" p1 p2)` form: the
-    /// nearest breakable object to `point` within the headless pick
-    /// aperture (the `CADHitTesting.hitTest` default, which the scripted
-    /// runner cannot call: it is MainActor-bound and the eval task never
-    /// hops). Invisible layers and viewport copies are skipped.
     private static func pickBreakTarget(
         host: LispCADHost, at point: Vector3
     ) -> UUID? {

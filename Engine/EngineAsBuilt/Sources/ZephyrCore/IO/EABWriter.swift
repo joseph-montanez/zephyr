@@ -1836,6 +1836,8 @@ public enum EABWriter {
                 w.writeUInt8(18)
                 w.writeUInt8(path.isClosed ? 1 : 0)
                 w.writeUInt8(path.lineTypeGenerationEnabled ? 1 : 0)
+                // EAB v25: PEDIT curve state (see EABVersion).
+                w.writeUInt8(path.curveType.rawValue)
                 w.writeUInt32(UInt32(path.vertices.count))
                 for vertex in path.vertices {
                     let point = vertex.position
@@ -1843,6 +1845,13 @@ public enum EABWriter {
                     w.writeFloat64(vertex.bulge)
                     w.writeFloat64(vertex.startWidth)
                     w.writeFloat64(vertex.endWidth)
+                    w.writeUInt8(vertex.kind.rawValue)
+                    if let tangent = vertex.tangent {
+                        w.writeUInt8(1)
+                        w.writeFloat64(tangent)
+                    } else {
+                        w.writeUInt8(0)
+                    }
                 }
                 writeHatchPathMetadata(path)
                 writeColor(color)

@@ -159,62 +159,10 @@ public final class ReverseCommand: FeatureCommand {
         }
     }
 
+    /// Polyline reversal lives in `PeditGeometryEngine` (shared with PEDIT);
+    /// `REVERSE` behavior for plain paths is unchanged, and tangents rotate
+    /// by π with travel direction.
     static func reversed(_ path: CADPolyline) -> CADPolyline {
-        let vertices = path.vertices
-        guard vertices.count > 1 else { return path }
-        if path.isClosed {
-            // Keep the start vertex fixed, reverse the rest: new vertex 0
-            // is v0, new vertex j≥1 is old v(n+1−j). New segment j is the
-            // reverse of old segment (closing segment for j=0, segment
-            // n+1−j otherwise): bulges negate, widths swap.
-            let count = vertices.count
-            var flipped: [CADPolylineVertex] = []
-            flipped.reserveCapacity(count)
-            flipped.append(vertices[0])
-            for j in 1..<count {
-                // New segment j runs old v(oldIndex)→v(oldIndex−1): the
-                // reverse of old segment (oldIndex−1).
-                let oldIndex = count - j
-                let sourceSegment = vertices[oldIndex - 1]
-                var vertex = vertices[oldIndex]
-                vertex.bulge = -sourceSegment.bulge
-                vertex.startWidth = sourceSegment.endWidth
-                vertex.endWidth = sourceSegment.startWidth
-                flipped.append(vertex)
-            }
-            // New vertex 0 leaves along the reversed closing segment.
-            flipped[0].bulge = -vertices[count - 1].bulge
-            flipped[0].startWidth = vertices[count - 1].endWidth
-            flipped[0].endWidth = vertices[count - 1].startWidth
-            var result = path
-            result.vertices = flipped
-            return result
-        }
-        // Open: full reversal. New vertex j takes the reversed segment
-        // n−1−j (bulge negated, widths swapped); the new last vertex
-        // carries no outgoing segment.
-        let count = vertices.count
-        var flipped: [CADPolylineVertex] = []
-        flipped.reserveCapacity(count)
-        for j in 0..<count {
-            var vertex = vertices[count - 1 - j]
-            if j < count - 1 {
-                let source = vertices[count - 2 - j]
-                vertex.bulge = -source.bulge
-                vertex.startWidth = source.endWidth
-                vertex.endWidth = source.startWidth
-            } else {
-                // New last vertex has no outgoing segment: carry the old
-                // tail values verbatim so double-reverse is exact.
-                let tail = vertices[count - 1]
-                vertex.bulge = tail.bulge
-                vertex.startWidth = tail.startWidth
-                vertex.endWidth = tail.endWidth
-            }
-            flipped.append(vertex)
-        }
-        var result = path
-        result.vertices = flipped
-        return result
+        PeditGeometryEngine.reversed(path)
     }
 }

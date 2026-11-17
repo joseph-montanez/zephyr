@@ -292,7 +292,8 @@ extension DrawingFileInsert {
                 scaled.vertices = path.vertices.map {
                     CADPolylineVertex(
                         position: p($0.position), bulge: $0.bulge,
-                        startWidth: $0.startWidth * s, endWidth: $0.endWidth * s)
+                        startWidth: $0.startWidth * s, endWidth: $0.endWidth * s,
+                        kind: $0.kind, tangent: $0.tangent)
                 }
                 return .polyline(path: scaled, color: color)
             case .fillPolygon(let points, let color):
@@ -339,7 +340,8 @@ extension DrawingFileInsert {
                 var scaledBoundary = boundary
                 scaledBoundary.vertices = boundary.vertices.map {
                     CADPolylineVertex(position: p($0.position), bulge: $0.bulge,
-                                      startWidth: $0.startWidth * s, endWidth: $0.endWidth * s)
+                                      startWidth: $0.startWidth * s, endWidth: $0.endWidth * s,
+                                      kind: $0.kind, tangent: $0.tangent)
                 }
                 return .hatchPath(
                     boundary: scaledBoundary,
@@ -347,7 +349,8 @@ extension DrawingFileInsert {
                         var scaledHole = hole
                         scaledHole.vertices = hole.vertices.map {
                             CADPolylineVertex(position: p($0.position), bulge: $0.bulge,
-                                              startWidth: $0.startWidth * s, endWidth: $0.endWidth * s)
+                                              startWidth: $0.startWidth * s, endWidth: $0.endWidth * s,
+                                              kind: $0.kind, tangent: $0.tangent)
                         }
                         return scaledHole
                     },

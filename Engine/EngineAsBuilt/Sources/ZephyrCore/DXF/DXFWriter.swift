@@ -3049,7 +3049,10 @@ public class DXFWriter {
         writeDbl(41, v.endWidth, &out)
         writeDbl(42, v.bulge, &out)
         writeInt(70, v.flags, &out)
-        writeDbl(50, v.tangentDir, &out)
+        // tangentDir is stored file-convention radians (parseVertex converts
+        // group-50 degrees on read); group 50 needs degrees on write.
+        // Zero writes back as 0.0, identical to before.
+        writeDbl(50, v.tangentDir * 180.0 / .pi, &out)
         writeInt(71, v.vIndex1, &out)
         writeInt(72, v.vIndex2, &out)
         writeInt(73, v.vIndex3, &out)

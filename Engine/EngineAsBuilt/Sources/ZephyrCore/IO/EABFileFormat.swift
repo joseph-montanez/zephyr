@@ -89,7 +89,10 @@ public let EABArchiveMagic: UInt32 = 0x41424145  // "EABA" in little-endian
 /// Version 23 appends the layer parity tail (frozen/locked/freeze-in-new-VP
 /// flags, description, reconciled state, 0...90 transparency, color intent,
 /// plot-style name); v22-era readers stop before the tail, so they reject v23.
-public let EABVersion: UInt32 = 24
+/// Version 25 appends PEDIT curve state to bulge-aware polylines (case 18):
+/// a curve-type byte after the flags plus per-vertex kind/tangent fields;
+/// v24-era readers reject v25 files via the version guard.
+public let EABVersion: UInt32 = 25
 /// First version whose strings may use the 0xFFFF + UInt32 long-length form.
 public let EABVersionLongStrings: UInt32 = 18
 

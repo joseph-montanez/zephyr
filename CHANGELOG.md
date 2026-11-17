@@ -36,6 +36,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **SNAP / GRIDSPACING / GRIDMAJOR** - grid snap with separate X/Y spacing.
 - **STARFIELD (`STARS`)** - toggle the starfield on or off.
 - **VIEWCTR / VIEWSIZE** - show the viewport center and height.
+- **PEDIT (`PE`)** - edit polylines: open/close, join, width, taper, reverse, vertex editing (move/insert/delete/break/straighten/tangent/widths), fit/spline smoothing with decurve, and linetype generation; works noun-verb on pickfirst selections and single/multiple targets, scriptable via `(command "PEDIT" ...)`, and honors `PEDITACCEPT`/`SPLINETYPE`.
 
 ### Improvements
 - **Fit/Aligned text** - spans its two points.

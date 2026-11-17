@@ -356,6 +356,7 @@ public struct CommandDescriptor: Sendable {
         CommandDescriptor(canonicalName: "MATCHPROP",   aliases: ["MA", "MATCH"],  category: .modify,  syntax: "", description: "Copy properties from one entity to others"),
         CommandDescriptor(canonicalName: "TORIENT",    aliases: ["TOR", "TEXTO"], category: .modify, syntax: "", description: "Rotate text individually to an absolute or most-readable angle"),
         CommandDescriptor(canonicalName: "SPLINEDIT",  aliases: ["SPLINEEDIT", "SPE"], category: .modify, syntax: "", description: "Edit an existing spline (reverse, convert to polyline, etc.)"),
+        CommandDescriptor(canonicalName: "PEDIT",  aliases: ["PE"], category: .modify, syntax: "", description: "Edit polylines: open/close, join, width, vertex, fit/spline, reverse, taper"),
         CommandDescriptor(canonicalName: "MLEADEREDIT", aliases: ["MLE"], category: .modify, syntax: "", description: "Add or remove leader branches and edit multileader content"),
         CommandDescriptor(canonicalName: "MLEADERALIGN", aliases: ["MLA"], category: .modify, syntax: "", description: "Align and distribute selected multileader content"),
         CommandDescriptor(canonicalName: "MLEADERCOLLECT", aliases: ["MLC"], category: .modify, syntax: "", description: "Collect selected block multileaders into one multileader"),

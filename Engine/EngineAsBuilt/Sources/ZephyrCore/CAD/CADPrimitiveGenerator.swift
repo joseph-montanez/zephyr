@@ -765,14 +765,18 @@ public enum CADPrimitiveGenerator {
                 break
             }
 
-            let hasVariableWidths = path.vertices.contains {
+            // Spline frames are off-curve: walk the display path so the
+            // strip follows the visible samples. Plain/fit paths pass
+            // through `displayPath` unchanged (zero behavior change there).
+            let renderPath = path.displayPath
+            let hasVariableWidths = renderPath.vertices.contains {
                 $0.startWidth > 1e-12 || $0.endWidth > 1e-12
             }
             if hasVariableWidths {
-                for segment in 0..<path.segmentCount {
-                    let vertex = path.vertices[segment]
+                for segment in 0..<renderPath.segmentCount {
+                    let vertex = renderPath.vertices[segment]
                     let divisions: Int
-                    if let arc = path.arcParameters(forSegment: segment) {
+                    if let arc = renderPath.arcParameters(forSegment: segment) {
                         divisions = Swift.max(4, Int(ceil(abs(arc.sweep) * 12.0)))
                     } else {
                         divisions = 1
@@ -780,8 +784,8 @@ public enum CADPrimitiveGenerator {
                     for step in 0..<divisions {
                         let t0 = Double(step) / Double(divisions)
                         let t1 = Double(step + 1) / Double(divisions)
-                        let p0 = transform.transformPoint(path.point(onSegment: segment, t: t0))
-                        let p1 = transform.transformPoint(path.point(onSegment: segment, t: t1))
+                        let p0 = transform.transformPoint(renderPath.point(onSegment: segment, t: t0))
+                        let p1 = transform.transformPoint(renderPath.point(onSegment: segment, t: t1))
                         let width0 = vertex.startWidth + (vertex.endWidth - vertex.startWidth) * t0
                         let width1 = vertex.startWidth + (vertex.endWidth - vertex.startWidth) * t1
                         let width = Swift.max(0, (width0 + width1) * 0.5 * geometryScale)
@@ -794,12 +798,12 @@ public enum CADPrimitiveGenerator {
                             isTrueColor: effectiveIsTrueColor))
                     }
                 }
-            } else if dashPattern != nil && !path.lineTypeGenerationEnabled {
+            } else if dashPattern != nil && !renderPath.lineTypeGenerationEnabled {
                 var renderedStraightSegments = Set<PolylineSegmentKey>()
 
-                for segment in 0..<path.segmentCount {
-                    let startVertex = path.vertices[segment]
-                    let endVertex = path.vertices[path.endVertexIndex(forSegment: segment)]
+                for segment in 0..<renderPath.segmentCount {
+                    let startVertex = renderPath.vertices[segment]
+                    let endVertex = renderPath.vertices[renderPath.endVertexIndex(forSegment: segment)]
 
                     if abs(startVertex.bulge) <= 1e-12 {
                         let key = PolylineSegmentKey(startVertex.position, endVertex.position)
@@ -807,10 +811,10 @@ public enum CADPrimitiveGenerator {
                     }
 
                     let localPoints: [Vector3]
-                    if let arc = path.arcParameters(forSegment: segment) {
+                    if let arc = renderPath.arcParameters(forSegment: segment) {
                         let divisions = Swift.max(4, Int(ceil(abs(arc.sweep) * 12.0)))
                         localPoints = (0...divisions).map { step in
-                            path.point(onSegment: segment, t: Double(step) / Double(divisions))
+                            renderPath.point(onSegment: segment, t: Double(step) / Double(divisions))
                         }
                     } else {
                         localPoints = [startVertex.position, endVertex.position]

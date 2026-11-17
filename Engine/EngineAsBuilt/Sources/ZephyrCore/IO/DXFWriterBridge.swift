@@ -3146,7 +3146,12 @@ public enum DXFWriterBridge {
         _ path: CADPolyline,
         color: ColorRGBA?,
         transform: Transform3D
-    ) -> DXFLWPolylineEntity {
+    ) -> DXFEntity {
+        // PEDIT Fit/Spline state has no LWPOLYLINE encoding: emit a legacy
+        // POLYLINE so flags, vertex flags, tangents, and group 75 survive.
+        if path.curveType != .none {
+            return legacyPolylineEntity(path, color: color, transform: transform)
+        }
         let entity = DXFLWPolylineEntity()
         let xAxis = transformedVector(Vector3(x: 1, y: 0, z: 0), by: transform)
         let yAxis = transformedVector(Vector3(x: 0, y: 1, z: 0), by: transform)
@@ -3165,6 +3170,66 @@ public enum DXFWriterBridge {
         }
         entity.flags = path.isClosed ? 1 : 0
         if path.lineTypeGenerationEnabled { entity.flags |= 0x80 }
+        applyColor(color, to: entity)
+        return entity
+    }
+
+    /// Legacy POLYLINE carrying PEDIT Fit/Spline state. Vertex flag bits mirror
+    /// `DXFEntityConverter.convertPolyline`: 1 = curve-fit generated,
+    /// 2 = tangent defined, 8 = spline-fit generated, 16 = spline frame.
+    /// Tangents are stored file-convention (y-flipped) radians; `DXFWriter`
+    /// converts to group-50 degrees on write.
+    private static func legacyPolylineEntity(
+        _ path: CADPolyline,
+        color: ColorRGBA?,
+        transform: Transform3D
+    ) -> DXFPolylineEntity {
+        let entity = DXFPolylineEntity()
+        let xAxis = transformedVector(Vector3(x: 1, y: 0, z: 0), by: transform)
+        let yAxis = transformedVector(Vector3(x: 0, y: 1, z: 0), by: transform)
+        let reversesOrientation = xAxis.x * yAxis.y - xAxis.y * yAxis.x < 0
+        let widthScale = (xAxis.magnitude + yAxis.magnitude) * 0.5
+        var flags = path.isClosed ? 1 : 0
+        switch path.curveType {
+        case .none: entity.curveType = 0
+        case .fit: flags |= 2; entity.curveType = 0
+        case .splineQuadratic: flags |= 4; entity.curveType = 5
+        case .splineCubic: flags |= 4; entity.curveType = 6
+        }
+        if path.lineTypeGenerationEnabled { flags |= 0x80 }
+        entity.flags = flags
+        for vertex in path.vertices {
+            let v = DXFVertexEntity()
+            let point = toDXF(transform.transformPoint(vertex.position))
+            v.basePoint = point
+            let transformedBulge = reversesOrientation ? -vertex.bulge : vertex.bulge
+            v.bulge = -transformedBulge
+            v.startWidth = vertex.startWidth * widthScale
+            v.endWidth = vertex.endWidth * widthScale
+            var vertexFlags = 0
+            switch vertex.kind {
+            case .normal: break
+            case .curveFitGenerated: vertexFlags |= 1
+            case .splineGenerated: vertexFlags |= 8
+            case .splineFrame: vertexFlags |= 16
+            }
+            if let tangent = vertex.tangent {
+                vertexFlags |= 2
+                let tip = Vector3(
+                    x: vertex.position.x + cos(tangent),
+                    y: vertex.position.y + sin(tangent),
+                    z: vertex.position.z)
+                // Map the tangent direction through the block transform,
+                // then y-flip to file convention (same as toDXF on points).
+                let mappedTip = transform.transformPoint(tip)
+                let mappedBase = transform.transformPoint(vertex.position)
+                v.tangentDir = atan2(
+                    -(mappedTip.y - mappedBase.y), mappedTip.x - mappedBase.x)
+            }
+            v.flags = vertexFlags
+            entity.vertices.append(v)
+        }
+        entity.vertexCount = entity.vertices.count
         applyColor(color, to: entity)
         return entity
     }
