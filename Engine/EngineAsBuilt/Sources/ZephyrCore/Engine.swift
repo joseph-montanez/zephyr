@@ -412,6 +412,11 @@ public final class PhrostEngine {
     // spamming one error per frame until the process is killed.
     internal var gpuDeviceLost = false
     internal var _gpuAcquireFailStreak = 0
+    /// Consecutive failed vertex-buffer uploads. A dead device fails every
+    /// upload while command-buffer acquires can still succeed, so uploads
+    /// trip the same device-lost breaker on their own streak instead of
+    /// retrying (and spamming) forever. Reset by any successful apply.
+    internal var _gpuUploadFailStreak = 0
     internal var _statSyncRebuilds: Int = 0
     internal var _statAsyncLaunches: Int = 0
     internal var _statAsyncApplied: Int = 0

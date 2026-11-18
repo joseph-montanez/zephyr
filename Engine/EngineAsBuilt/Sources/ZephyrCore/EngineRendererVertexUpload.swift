@@ -282,6 +282,13 @@ extension EngineRenderer {
                         SDL_ReleaseGPUBuffer(engine.gpuDevice, buf)
                     }
                 }
+                engine._gpuUploadFailStreak += 1
+                if engine._gpuUploadFailStreak >= 5 {
+                    if !engine.gpuDeviceLost {
+                        engine.gpuDeviceLost = true
+                        print("[GPU] Device lost: vertex uploads keep failing (likely an oversized or invalid command). Rendering is paused; save your work and restart. (CAD upload)")
+                    }
+                }
                 return false
             }
             resolveChunkTextures(&newChunks, imageStore: ctx.bridge.imageAssetsForGPU)
@@ -297,6 +304,7 @@ extension EngineRenderer {
                 ctx.pendingSwapTransfers = pendingTransfers
                 ctx.pendingSwapResult = result
                 ctx.pendingSwapPaletteGen = paletteGen
+                engine._gpuUploadFailStreak = 0
                 return true
             }
             if ProcessInfo.processInfo.environment["ZEPHYR_VERIFY_UPLOAD"] == "1" {
@@ -325,6 +333,7 @@ extension EngineRenderer {
         ctx.cachedPaletteGen = paletteGen
         ctx.lastHatchVerts = result.hatchVerts
         ctx.lastVertexCapped = result.capped
+        engine._gpuUploadFailStreak = 0
         return true
     }
 
@@ -338,20 +347,29 @@ extension EngineRenderer {
         _ chunks: inout [WindowRenderContext.VertexGPUChunk],
         imageStore: [String: CADImageAsset]
     ) {
+        var texturedBatches = 0
+        var resolvedTextures = 0
         for ci in chunks.indices {
             let batches = chunks[ci].batches
             guard batches.contains(where: { $0.imageName != nil }) else { continue }
             var textures: [OpaquePointer?] = Array(repeating: nil, count: batches.count)
             for (bi, batch) in batches.enumerated() {
-                guard let name = batch.imageName, !name.isEmpty,
-                      let asset = imageStore[name] else { continue }
+                guard let name = batch.imageName, !name.isEmpty else { continue }
+                texturedBatches += 1
+                guard let asset = imageStore[name] else { continue }
                 let (tex, _, _) = engine.textureManager.loadTexture(
                     from: asset.data, name: name, mimeType: asset.mimeType)
                 guard let texture = tex else { continue }
                 engine.textureManager.retainDataTexture(texture)
                 textures[bi] = texture
+                resolvedTextures += 1
             }
             chunks[ci].batchTextures = textures
+        }
+        // One line per upload while images are live: proves which path the
+        // next frames composite (GPU quads vs. skipped batches).
+        if texturedBatches > 0 {
+            print("[CADVertex] textured batches: \(resolvedTextures)/\(texturedBatches) with GPU textures (\(texturedBatches - resolvedTextures) skipped at draw time)")
         }
     }
 

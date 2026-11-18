@@ -2521,6 +2521,9 @@ public final class CADRendererBridge {
         if imageTessInputs.count > 1 {
             imageTessInputs.sort { $0.sortZ < $1.sortZ }
         }
+        if !imageTessInputs.isEmpty {
+            print("[CADBridge] \(imageTessInputs.count) image(s) in GPU pass (draw-ordered textured quads)")
+        }
         imageAssetsForGPU = imageStore
 
         // Store entity index → handle mapping for GPU ID-buffer pass
