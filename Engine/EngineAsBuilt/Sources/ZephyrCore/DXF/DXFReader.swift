@@ -831,6 +831,19 @@ extension DXFReader {
     func parseRegion(_ pairs: [(Int, String)]) -> DXFRegionEntity {
         let e = DXFRegionEntity()
         applyCommon(pairs, to: e)
+        // AcDbModelerGeometry: group 70 is the modeler format version,
+        // groups 1 and 3 carry the opaque SAT text lines in file order.
+        // Kept verbatim for passthrough; never interpreted here.
+        for (code, value) in pairs {
+            switch code {
+            case 70:
+                e.acisVersion = i(value)
+            case 1, 3:
+                e.acisLines.append((code: code, text: value))
+            default:
+                break
+            }
+        }
         return e
     }
 

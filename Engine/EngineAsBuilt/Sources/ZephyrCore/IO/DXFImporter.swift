@@ -900,6 +900,31 @@ public enum DXFImporter {
         let totalBlockEntities = reader.blocks.reduce(0) { $0 + $1.entities.count }
         print("[DXFImporter] Converting: \(entityCount) entities, \(blockCount) blocks (\(totalBlockEntities) sub-entities), \(reader.layers.count) layers")
 
+        // REGION bodies are opaque ACIS payloads. Bodies WITH modeler data
+        // are retained verbatim for byte-faithful export (not editable);
+        // only bodies with neither ACIS data nor boundary loops are
+        // dropped. Count the dropped ones here so the loss is visible
+        // instead of silent (Step 5).
+        func isDroppedRegion(_ e: DXFEntity) -> Bool {
+            guard let region = e as? DXFRegionEntity else { return false }
+            return region.acisLines.isEmpty
+                && region.boundaryLoops.allSatisfy(\.isEmpty)
+        }
+        func isPreservedRegion(_ e: DXFEntity) -> Bool {
+            guard let region = e as? DXFRegionEntity else { return false }
+            return !region.acisLines.isEmpty
+        }
+        let regionCount = reader.entities.filter(isDroppedRegion).count
+            + reader.blocks.reduce(0) { $0 + $1.entities.filter(isDroppedRegion).count }
+        if regionCount > 0 {
+            print("[DXFImporter] WARNING: skipped \(regionCount) REGION entit\(regionCount == 1 ? "y" : "ies"): no ACIS data or boundary loops; redraw or BOUNDARY the outline to recover the loop.")
+        }
+        let preservedCount = reader.entities.filter(isPreservedRegion).count
+            + reader.blocks.reduce(0) { $0 + $1.entities.filter(isPreservedRegion).count }
+        if preservedCount > 0 {
+            print("[DXFImporter] Preserved \(preservedCount) REGION ACIS bod\(preservedCount == 1 ? "y" : "ies") (opaque, not editable).")
+        }
+
         // Referenced-media definitions (IMAGEDEF / PDFDEFINITION).
         // Built before entity conversion so image instances can be
         // retargeted from saved paths to definition names.
@@ -1937,17 +1962,37 @@ public enum DXFImporter {
                     bylayerColor: nil,
                     showAttributeDefinitionTagWhenEmpty: entity.eType == .aTTDEF)
                 DXFProfile.toc(__pt1257, "  -> convertEntityToPrimitives")
-                guard !primitives.isEmpty || entity.eType == .pOINT else { continue }
+                // ACIS passthrough: a REGION carrying modeler data becomes
+                // an (uneditable, render-empty) region entity retaining the
+                // opaque body for byte-faithful export. Truly empty
+                // REGIONs still fall through to the skip below.
+                var passthroughXData: [String: XDataValue] = [:]
+                if let region = entity as? DXFRegionEntity,
+                   !region.acisLines.isEmpty {
+                    var marker = CADEntity(
+                        layerID: UUID(),
+                        localGeometry: [],
+                        transform: .identity)
+                    CADRegion.markAcisBlob(
+                        &marker,
+                        version: region.acisVersion,
+                        lines: region.acisLines)
+                    passthroughXData = marker.xdata
+                }
+                guard !primitives.isEmpty || entity.eType == .pOINT
+                    || !passthroughXData.isEmpty else { continue }
                 let normalized = Self.normalizedStandaloneTextGeometry(primitives)
+                var styledXData = Self.entityStyleXData(
+                    from: entity,
+                    globalLineTypeScale: globalLineTypeScale)
+                styledXData.merge(passthroughXData) { current, _ in current }
                 var cadEnt = CADEntity(
                     handle: UUID(),
                     layerID: layerID(for: entity),
                     blockID: nil,
                     localGeometry: normalized.geometry,
                     transform: normalized.transform,
-                    xdata: Self.entityStyleXData(
-                        from: entity,
-                        globalLineTypeScale: globalLineTypeScale))
+                    xdata: styledXData)
                 if let underlay = entity as? DXFUnderlayEntity {
                     var params = CADPdfUnderlayParams()
                     params.scaleX = underlay.scaleX

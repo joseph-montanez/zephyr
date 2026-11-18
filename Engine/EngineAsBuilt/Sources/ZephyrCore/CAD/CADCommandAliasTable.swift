@@ -382,6 +382,21 @@ public enum CADCommandAliasTable {
             canonicalName: "BOUNDARY", aliases: ["BO"], category: .draw,
             description: "Create a closed region from an interior pick point"),
         CADCommandAliasEntry(
+            canonicalName: "REGION", aliases: ["REG"], category: .draw,
+            description: "Convert closed loops into region entities"),
+        CADCommandAliasEntry(
+            canonicalName: "UNION", aliases: ["UNI"], category: .modify,
+            description: "Merge selected regions into one region"),
+        CADCommandAliasEntry(
+            canonicalName: "SUBTRACT", aliases: ["SU"], category: .modify,
+            description: "Subtract cutting regions from target regions"),
+        CADCommandAliasEntry(
+            canonicalName: "INTERSECT", aliases: ["IN"], category: .modify,
+            description: "Keep only the overlap common to selected regions"),
+        CADCommandAliasEntry(
+            canonicalName: "MASSPROP", aliases: [], category: .draw,
+            description: "Report area, centroid, and moments of inertia of regions"),
+        CADCommandAliasEntry(
             canonicalName: "POINT", aliases: ["PO"], category: .draw,
             description: "Place point entities (display follows PDMODE/PDSIZE)"),
         CADCommandAliasEntry(

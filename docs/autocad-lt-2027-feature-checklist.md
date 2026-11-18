@@ -7,12 +7,12 @@
 
  **Largest gaps**
 
- REGION booleans, WIPEOUT, TOLERANCE, QDIM, dynamic/Smart Blocks, xref compare, Trace/Count/DWG Compare,
+ WIPEOUT, TOLERANCE, QDIM, dynamic/Smart Blocks, xref compare, Trace/Count/DWG Compare,
  cloud/Forma services, DCL/reactors/VLA, and all 3D functionality.
 
 A parity audit of **Zephyr** against **AutoCAD LT 2027** (Windows), not full AutoCAD.
 
-**Result at a glance (2026-11-15):** 233 of 766 workflow items present (30%), 191 partial, 308 missing, 34 N/A. Commands: 142 implemented, 69 partial, 297 missing. System variables: 103 supported of 644.
+**Result at a glance (2026-11-18):** 239 of 766 workflow items present (31%), 188 partial, 305 missing, 34 N/A. Commands: 147 implemented, 69 partial, 290 missing. System variables: 103 supported of 644.
 
 - **Baseline:** AutoCAD LT 2027 (R26.0) and its 2027.1.x updates, as documented in the AutoCAD LT 2027 Help. Recent additions are tagged `(2024+)`, `(2025+)`, `(2026+)`, `(2027)`, `(2027.1)`.
 - **Why this matters:** LT is deliberately a 2D product. It has no 3D modeler, no industry toolsets, no VBA/.NET/ObjectARX, no Action Recorder, no Data Extraction, no CAD Standards, and no Express Tools. Appendix C lists what LT does **not** have so you do not chase features that were never in scope.
@@ -29,7 +29,7 @@ Legend for the marks (already applied below):
 - `[ ]` not implemented in Zephyr (after source/README review)
 - `[-]` not applicable: Autodesk account/cloud service, LT-only limitation, or intentionally out of scope
 
-**Evaluation basis:** README, CHANGELOG, command registry/alias table, and source inspection on 2026-11-15. The checklist is a documentation audit, not a runtime conformance test; `[~]` marks a different or reduced workflow. Because items are fine-grained, a `[~]` often means the core command exists while several options/paths are missing. Section summaries count the checkboxes below each heading.
+**Evaluation basis:** README, CHANGELOG, command registry/alias table, and source inspection on 2026-11-18. The checklist is a documentation audit, not a runtime conformance test; `[~]` marks a different or reduced workflow. Because items are fine-grained, a `[~]` often means the core command exists while several options/paths are missing. Section summaries count the checkboxes below each heading.
 
 Add short notes after the em dash. Items marked **(LT: …)** describe a behavior or limitation specific to AutoCAD LT; do not assume full AutoCAD behavior.
 
@@ -44,10 +44,10 @@ Add short notes after the em dash. Items marked **(LT: …)** describe a behavio
 | 2. User interface | 16 | 19 | 24 | 1 |
 | 3. Drawing files/formats | 13 | 15 | 24 | 1 |
 | 4. Views/display | 14 | 12 | 10 | 0 |
-| 5. Drafting aids | 17 | 9 | 17 | 0 |
-| 6. 2D geometry | 15 | 10 | 14 | 0 |
+| 5. Drafting aids | 18 | 9 | 16 | 0 |
+| 6. 2D geometry | 16 | 9 | 14 | 0 |
 | 7. Parametrics | 4 | 5 | 3 | 0 |
-| 8. Select/modify | 38 | 14 | 15 | 0 |
+| 8. Select/modify | 42 | 12 | 13 | 0 |
 | 9. Layers/properties | 21 | 8 | 6 | 2 |
 | 10. Text/fields/tables | 5 | 12 | 16 | 0 |
 | 11. Dimensions/leaders | 25 | 11 | 10 | 0 |
@@ -59,11 +59,11 @@ Add short notes after the em dash. Items marked **(LT: …)** describe a behavio
 | 17. 3D | 0 | 0 | 19 | 0 |
 | 18. Customization/AutoLISP | 9 | 9 | 33 | 0 |
 | 19. Performance/security | 5 | 8 | 6 | 1 |
-| **Total (workflow)** | **233** | **191** | **308** | **34** |
-| Appendix A — commands | 142 | 69 | 297 | 0 |
+| **Total (workflow)** | **239** | **188** | **305** | **34** |
+| Appendix A — commands | 149 | 69 | 290 | 0 |
 | Appendix B — system variables | 103 | — | 541 | — |
 
-**Largest functional gaps:** `REGION` booleans, `WIPEOUT`, `TOLERANCE`, `QDIM`, dynamic blocks/Smart Blocks, xref compare, Trace/Count/DWG Compare, cloud/Forma services, DCL/reactors/VLA, and all 3D features. The app is strongest in core 2D drawing/modify, layers, blocks/attributes, dimensions/leaders, xrefs, page setup/PDF output, sheet sets and AutoLISP.
+**Largest functional gaps:** `WIPEOUT`, `TOLERANCE`, `QDIM`, dynamic blocks/Smart Blocks, xref compare, Trace/Count/DWG Compare, cloud/Forma services, DCL/reactors/VLA, and all 3D features. The app is strongest in core 2D drawing/modify, layers, blocks/attributes, dimensions/leaders, xrefs, page setup/PDF output, sheet sets and AutoLISP.
 
 **Zephyr-only or Zephyr-stronger areas (not LT checklist items):** native EAB format with zstd/BVH partial loads, cross-platform macOS/Windows/Linux builds, MCP server for AI control, `PENSTROKE`, `MLINE`/`MLSTYLE`, `TORIENT`, split panes/floating OS windows, the AutoLISP-defined ribbon, and the three GPU backends (Metal/D3D12/Vulkan).
 
@@ -364,7 +364,7 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 
 ## 5. Drafting aids and precision
 
-> **Zephyr evaluation (43 items):** 17 present · 9 partial · 17 missing · 0 N/A.
+> **Zephyr evaluation (43 items):** 18 present · 9 partial · 16 missing · 0 N/A.
 > Nine osnap types (center, vertex/endpoint, midpoint, insertion, quadrant, nearest, perpendicular, tangent, intersection), ortho/polar/OTRACK, UCS/PLAN. No isometric drafting, dynamic input, coordinate filters or annotation scale.
 
 ### 5.1 Coordinate systems and entry
@@ -410,7 +410,7 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 - [~] **AREA** — object area/perimeter, add/subtract, defined points.
 - [x] **ID** — UCS coordinates of a point.
 - [~] **LIST / DBLIST** — object/database information.
-- [ ] **MASSPROP** — mass properties of 2D regions; 3D solids are view-only in LT.
+- [x] **MASSPROP** — mass properties of 2D regions (area, perimeter, centroid, moments, .mpr file); 3D solids are view-only in LT.
 - [ ] **TIME** — drawing date/time statistics; `REVDATE` block.
 - [ ] **STATUS** — drawing statistics, memory/disk/swap report, dimension variable report.
 - [~] **SETVAR** — list/change system variables.
@@ -426,8 +426,8 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 
 ## 6. Creating 2D geometry
 
-> **Zephyr evaluation (39 items):** 16 present · 10 partial · 13 missing · 0 N/A.
-> LINE/PLINE/POLYGON/XLINE/RAY/POINT/DONUT, CIRCLE with all modes, ELLIPSE, SPLINE, BOUNDARY, REVCLOUD, HATCH/GRADIENT. ARC is 3-point; RECTANG is axis-aligned. No WIPEOUT, REGION booleans, BLEND or 2D solids.
+> **Zephyr evaluation (39 items):** 16 present · 9 partial · 14 missing · 0 N/A.
+> LINE/PLINE/POLYGON/XLINE/RAY/POINT/DONUT, CIRCLE with all modes, ELLIPSE, SPLINE, BOUNDARY, REVCLOUD, HATCH/GRADIENT. ARC is 3-point; RECTANG is axis-aligned. No WIPEOUT, BLEND or 2D solids.
 
 ### 6.1 Linear and construction geometry
 
@@ -453,8 +453,8 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 - [x] **ELLIPSE** — axis endpoints, center, elliptical arc, rotation.
 - [x] **SPLINE** — fit points, control vertices, close, tangency, degree; `SPLINEDIT`.
 - [ ] **HELIX** — **not available in LT**.
-- [~] **REGION** — convert closed objects to regions; boolean `UNION`/`SUBTRACT`/`INTERSECT`.
-- [~] **BOUNDARY** — pick point, island detection, region/polyline output, boundary set, gap tolerance.
+- [x] **REGION** — convert closed objects to regions; boolean `UNION`/`SUBTRACT`/`INTERSECT` with holes and disjoint support; ACIS bodies pass through opaquely; splines rejected, ellipses tessellated.
+- [~] **BOUNDARY** — pick point, island detection, region/polyline output via R/P toggle, boundary set, gap tolerance.
 - [ ] **BLEND** — tangent spline between two lines/curves.
 - [x] **REVCLOUD** — rectangular/polygonal/freehand, arc length, style, modify, `REVCLOUDPROPERTIES`.
 - [ ] **WIPEOUT** — mask areas, polyline boundary, frames, display/plot.
@@ -503,7 +503,7 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 
 ## 8. Selecting and modifying objects
 
-> **Zephyr evaluation (67 items):** 39 present · 14 partial · 14 missing · 0 N/A.
+> **Zephyr evaluation (67 items):** 42 present · 12 partial · 13 missing · 0 N/A.
 > Most core modify commands, including full OFFSET, OVERKILL, and associative arrays. No XPLODE, MOCORO, LENGTHEN, SELECTCOUNT or Geometry Cleanup; GROUP is basic.
 
 ### 8.1 Selection
@@ -583,7 +583,7 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 - [x] **PEDIT/SPLINEDIT** — see above.
 - [x] **Properties palette/Quick Properties/MATCHPROP/CHPROP/CHANGE** — property editing.
 - [~] **SETBYLAYER/COPYTOLAYER** — property/layer normalization.
-- [~] **Region booleans** — `UNION`, `SUBTRACT`, `INTERSECT` for 2D regions.
+- [x] **Region booleans** — `UNION`, `SUBTRACT`, `INTERSECT` for 2D regions, single-undo commits, coplanar and region-only enforcement.
 - [~] **Wipeout/revision-cloud editing** — grips, boundary, arc length.
 - [x] **REFEDIT** — in-place editing of xrefs and block definitions (also §14.1 / §13.1).
 - [ ] **3D-specific edits** — `ROTATE3D`, `MIRROR3D`, `3DALIGN`, `3DARRAY`, `3DMOVE` are **not available in LT**.
@@ -1454,7 +1454,7 @@ All commands documented in the AutoCAD LT 2027 Help command-category pages, plus
 - [ ] `INPUTSEARCHOPTIONS` — Opens a dialog box that controls settings for display of the command line suggestion list for commands, system variables, and named objects.  *Areas: Working With the Application Window.*
 - [x] `INSERT` — Displays the Blocks palette, which you can use to insert blocks and drawings into the current drawing.  *Areas: Basic Blocks; Dynamic Blocks; Starting Drawings.*
 - [ ] `INSERTOBJ` — Inserts a linked or embedded object.  *Areas: Object Linking and Embedding (OLE).*
-- [ ] `INTERSECT` — Creates a 2D region from selected overlapping regions.  *Areas: Regions and Areas.*
+- [x] `INTERSECT` — Creates a 2D region from selected overlapping regions.  *Areas: Regions and Areas.*
 - [ ] `ISODRAFT` — Turns isometric drafting settings on or off, and specifies the current 2D isometric drafting plane.  *Areas: 2D Isometric Drawing.*
 - [x] `ISOLATEOBJECTS` — Temporarily suppresses the display of all objects except those you select.  *Areas: Object Display Control.*
 - [ ] `ISOPLANE` — Specifies the current plane for 2D isometric drawing.  *Areas: 2D Isometric Drawing.*
@@ -1495,7 +1495,7 @@ All commands documented in the AutoCAD LT 2027 Help command-category pages, plus
 - [ ] `LWEIGHT` — Sets the current lineweight, lineweight display options, and lineweight units.  *Areas: Lineweights; Object Display Control.*
 - [ ] `MARKUP` — Opens the Markup Set Manager.  *Areas: Working With DWF Files and Markup.*
 - [ ] `MARKUPCLOSE` — Closes the Markup Set Manager.  *Areas: Working With DWF Files and Markup.*
-- [ ] `MASSPROP` — Calculates the mass properties of selected 2D regions or 3D solids.  *Areas: Areas and Mass Properties; Regions and Areas.*
+- [x] `MASSPROP` — Calculates the mass properties of selected 2D regions or 3D solids.  *Areas: Areas and Mass Properties; Regions and Areas.*
 - [x] `MATCHPROP` — Applies the properties of a selected object to other objects.  *Areas: Hatches and Gradients; Object Properties; Property Tools.*
 - [x] `MEASURE` — Creates point objects or blocks at measured intervals along the length or perimeter of an object.  *Areas: Measuring and Dividing.*
 - [x] `MEASUREGEOM` — Measures the distance, radius, angle, area, and volume of selected objects, a sequence of points, or dynamically.  *Areas: Areas and Mass Properties; Distances and Angles.*
@@ -1598,7 +1598,7 @@ All commands documented in the AutoCAD LT 2027 Help command-category pages, plus
 - [ ] `REFSET` — Adds or removes objects from a working set during in-place editing of a reference, either an xref or a block definition.  *Areas: Editing External References; Working With External References.*
 - [x] `REGEN` — Regenerates the drawing from within the current viewport.  *Areas: Hiding Lines and Shading 3D Objects; Object Display Control.*
 - [ ] `REGENALL` — Regenerates the entire drawing and refreshes all viewports.  *Areas: Object Display Control.*
-- [ ] `REGION` — Converts objects that enclose an area into a 2D region object.  *Areas: Regions and Areas.*
+- [x] `REGION` — Converts objects that enclose an area into a 2D region object.  *Areas: Regions and Areas.*
 - [x] `RENAME` — Changes the names assigned to items such as layers and dimension styles.  *Areas: Layers; Linetypes; Resolving Xref Errors; Working With External References.*
 - [ ] `RESETBLOCK` — Resets one or more dynamic block references to the default values of the block definition.  *Areas: Dynamic Blocks.*
 - [x] `REVCLOUD` — Creates or modifies a revision cloud.  *Areas: Revision Clouds.*
@@ -1633,7 +1633,7 @@ All commands documented in the AutoCAD LT 2027 Help command-category pages, plus
 - [x] `STRETCH` — Stretches objects crossed by a selection window or polygon.  *Areas: Modifying Dimension Geometry; Moving and Rotating Objects; Resizing Objects.*
 - [x] `STYLE` — Creates, modifies, or specifies text styles.  *Areas: Changing Text in Notes and Labels; Creating Text for Notes and Labels; Text Styles and Fields.*
 - [~] `STYLESMANAGER` — Displays the Plot Style Manager, where you can revise plot style tables.  *Areas: Print or Plot Settings.*
-- [ ] `SUBTRACT` — Creates a new region by subtracting one overlapping region from another.  *Areas: Regions and Areas.*
+- [x] `SUBTRACT` — Creates a new region by subtracting one overlapping region from another.  *Areas: Regions and Areas.*
 - [ ] `SYSVARMONITOR` — Monitors a list of system variables and sends notifications when there are changes to any one in the list.  *Areas: Working With the Application Window.*
 - [ ] `SYSWINDOWS` — Arranges windows and icons when the application window is shared with external applications.  *Areas: Opening Drawings; Working With the Application Window.*
 - [~] `TABLE` — Creates an empty table object.  *Areas: Tables.*
@@ -1665,7 +1665,7 @@ All commands documented in the AutoCAD LT 2027 Help command-category pages, plus
 - [ ] `ULAYERS` — Controls the display of layers in a DWF, DWFx, PDF, or DGN underlay.  *Areas: Layers; Working with Underlays.*
 - [x] `UNDO` — Reverses the effect of commands.  *Areas: Removing Objects and Correcting Mistakes.*
 - [x] `UNGROUP` — Disassociates the objects from a group.  *Areas: Working With Groups.*
-- [ ] `UNION` — Combines two or more 2D regions into a single, composite region.  *Areas: Regions and Areas.*
+- [x] `UNION` — Combines two or more 2D regions into a single, composite region.  *Areas: Regions and Areas.*
 - [x] `UNISOLATEOBJECTS` — Displays objects previously hidden with the ISOLATEOBJECTS or HIDEOBJECTS command.  *Areas: Object Display Control.*
 - [x] `UNITS` — Controls the precision and display formats for coordinates, distances, and angles.  *Areas: Displaying Coordinates; Distances and Angles; Polar Tracking and PolarSnap; Starting Drawings.*
 - [ ] `UPDATEFIELD` — Updates fields in selected objects.  *Areas: Tables; Text Styles and Fields.*

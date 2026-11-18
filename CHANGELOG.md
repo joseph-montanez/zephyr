@@ -38,6 +38,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **VIEWCTR / VIEWSIZE** - show the viewport center and height.
 - **PEDIT (`PE`)** - edit polylines: open/close, join, width, taper, reverse, vertex editing (move/insert/delete/break/straighten/tangent/widths), fit/spline smoothing with decurve, and linetype generation; works noun-verb on pickfirst selections and single/multiple targets, scriptable via `(command "PEDIT" ...)`, and honors `PEDITACCEPT`/`SPLINETYPE`.
 - **OVERKILL / -OVERKILL** - delete duplicate objects: removes exact duplicates, merges overlapping and end-to-end collinear lines and arcs, cleans zero-length and arc-over-circle geometry, and deletes standalone lines covered by polylines; tolerance plus ignore-property and polyline options, locked/frozen/hidden layers and associative objects protected, one undo entry; `-OVERKILL` applies without confirming for scripts.
+- **REGION (`REG`) / UNION (`UNI`) / SUBTRACT (`SU`) / INTERSECT (`IN`) / MASSPROP** - 2D region modeling: convert closed loops to regions, boolean union/subtract/intersect with holes, disjoint islands, and coplanar/region-only enforcement in one undo entry each; mass properties (area, perimeter, centroid, UCS-gated inertia suite) with optional `.mpr` file output.
 
 ### Improvements
 - **Fit/Aligned text** - spans its two points.
@@ -66,11 +67,13 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Cross-tab clipboard** - copy and paste across open drawings.
 - **Restore saved Model view on open** - open at the saved view when it overlaps the drawing, else zoom to extents.
 - **AutoCAD-style CIRCLE modes** - center with radius/diameter toggle (`D`/`R`), two/three-point circles, tan-tan-radius and tan-tan-tan, `CIRCLERAD` default reuse, inline `CAL` expressions, and matching ribbon and scripted command support; `OFFSET` for concentric rings is covered by existing behavior.
+- **BOUNDARY region output** - type `R`/`P` at the `BOUNDARY` prompt to create region entities instead of closed polylines; unconvertible loops fall back to polylines.
 
 ### DXF & File Formats
 - **Viewport persistence** - sheet viewport definitions, including OFF and locked viewports, now round-trip through DXF (native `VIEWPORT` entities plus XDATA) and EAB; definitions are stored on the sheet document so undo restores them with the viewport object.
 - **Mirrored geometry round-trips** - mirrored blocks and arcs survive save and reopen.
 - **Real spline export** - keep true spline definitions.
+- **ACIS region passthrough** - imported DWG/DXF `REGION` bodies keep their opaque ACIS payloads and write back as real `REGION` records; payload-less regions are skipped on import with a warning, and Zephyr-built regions still export as closed `LWPOLYLINE`s with a one-time downgrade warning.
 
 ### Bug Fixes
 - **Viewport delete** - removing a viewport also drops its per-viewport layer overrides and restores projections through undo; unknown viewport ids fail without side effects.

@@ -2941,6 +2941,17 @@ public class DXFWriter {
             writePoint3(11, table.horizontal, &out)
             out += "100\r\nAcDbTable\r\n"
 
+        case .rEGION:
+            // Opaque ACIS passthrough: version plus the retained SAT text
+            // lines with their original group codes. Never interpreted.
+            guard let region = e as? DXFRegionEntity else { return }
+            writeEntityHeader("REGION", entity: region, handle: h, ownerHandle: ownerHandle, &out)
+            out += "100\r\nAcDbModelerGeometry\r\n"
+            writeInt(70, region.acisVersion, &out)
+            for line in region.acisLines where line.code == 1 || line.code == 3 {
+                writeStrAllowEmpty(line.code, line.text, &out)
+            }
+
         default:
             break
         }

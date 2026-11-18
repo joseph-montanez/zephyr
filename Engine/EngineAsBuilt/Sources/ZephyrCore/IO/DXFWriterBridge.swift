@@ -225,6 +225,16 @@ public enum DXFWriterBridge {
                         psltscale: psltscale, namedSetups: namedSetups, sheetSetHint: sheetSetHint)
     }
 
+    /// Counts region entities that DXF degrades to plain LWPOLYLINEs.
+    /// Entities retaining an opaque ACIS body export as REGION records
+    /// and are not downgrades. Pure over the entity list so the Step 5
+    /// warning is unit-testable.
+    public static func regionDowngradeCount(entities: [CADEntity]) -> Int {
+        entities.filter {
+            CADRegion.isRegionEntity($0) && CADRegion.acisBlob(of: $0) == nil
+        }.count
+    }
+
     public static func exportToDXF(
         layers: [Layer],
         blocks: [CADBlock],
@@ -263,6 +273,18 @@ public enum DXFWriterBridge {
     ) throws {
         guard !sourceViews.isEmpty else {
             throw DXFWriter.WriterError.invalidEntity("Cannot export a DXF without a drawing view")
+        }
+
+        // Region entities degrade to plain LWPOLYLINEs (the zephyr.region
+        // marker is CAD-side metadata, not DXF data). Count them here so
+        // the loss is visible instead of silent (Step 5).
+        let regionViews = sourceViews.first(where: { $0.kind == .model })
+            .map { [$0] } ?? sourceViews
+        let downgraded = regionViews.reduce(0) {
+            $0 + Self.regionDowngradeCount(entities: $1.entities)
+        }
+        if downgraded > 0 {
+            print("[DXFExporter] WARNING: \(downgraded) REGION entit\(downgraded == 1 ? "y" : "ies") exported as plain LWPOLYLINEs; region identity is not preserved. Re-run REGION after import to restore it.")
         }
 
         let modelView = sourceViews.first(where: { $0.kind == .model }) ?? sourceViews[0]
@@ -688,6 +710,22 @@ public enum DXFWriterBridge {
                 let groupNames = view.groups.values
                     .filter { $0.members.contains(entity.handle) }
                     .map(\.name)
+
+                // ACIS passthrough: entities retaining an opaque modeler
+                // body export as REGION records verbatim instead of
+                // downgraded loops. Untouched imported regions keep their
+                // identity; edited regions (no blob) take the normal path.
+                if let blob = CADRegion.acisBlob(of: entity) {
+                    let region = DXFRegionEntity()
+                    region.acisVersion = blob.version
+                    region.acisLines = blob.lines
+                    region.layer = layerName
+                    region.space = isPaperSpace ? 1 : 0
+                    applyEntityStyle(entity.xdata, to: region)
+                    appendGroupXData(groupNames, to: region)
+                    writer.addEntity(region, ownerBlockName: ownerBlockName)
+                    continue
+                }
 
                 if let box = entity.leaderData, dxfVersion.rawValue >= "AC1021" {
                     let data = box.value

@@ -65,7 +65,14 @@ public enum InquiryMath {
 
     /// Area of one entity, or nil when the type has no area (lines, text,
     /// points, images, tables, splines, rays).
+    ///
+    /// Region entities (Step 2) store outer-plus-hole loops as consecutive
+    /// closed polylines: net area is the tessellated outer area minus the
+    /// tessellated hole areas, so SUBTRACT voids report correctly.
     public static func entityArea(_ entity: CADEntity) -> Double? {
+        if CADRegion.isRegionEntity(entity) {
+            return regionNetArea(entity)
+        }
         guard let prim = entity.localGeometry?.first else { return nil }
         let t = entity.transform
         let sx = t.scale.x, sy = t.scale.y
@@ -107,7 +114,13 @@ public enum InquiryMath {
     }
 
     /// Length of one entity, or nil when the type has no length.
+    ///
+    /// Region entities report the combined perimeter: outer loop plus all
+    /// inner hole loops, with arc spans measured exactly.
     public static func entityLength(_ entity: CADEntity) -> Double? {
+        if CADRegion.isRegionEntity(entity) {
+            return regionPerimeter(entity)
+        }
         guard let prim = entity.localGeometry?.first else { return nil }
         let t = entity.transform
         switch prim {
@@ -127,9 +140,42 @@ public enum InquiryMath {
         }
     }
 
+    /// Closed-polyline loops of a region entity in world space.
+    /// Convention: first loop is the outer boundary, the rest are holes.
+    public static func regionLoops(of entity: CADEntity) -> [CADPolyline] {
+        guard let prims = entity.localGeometry else { return [] }
+        let t = entity.transform
+        return prims.compactMap { prim in
+            guard case let .polyline(path, _) = prim, path.isClosed else {
+                return nil
+            }
+            return path.transformed(by: t)
+        }
+    }
+
+    /// Net area of a region entity: outer minus holes (tessellated).
+    public static func regionNetArea(_ entity: CADEntity) -> Double? {
+        let loops = regionLoops(of: entity)
+        guard let outer = loops.first else { return nil }
+        let cut = loops.dropFirst().reduce(0.0) { acc, hole in
+            acc + RegionBoolean.tessellatedArea(of: hole)
+        }
+        return max(0, RegionBoolean.tessellatedArea(of: outer) - cut)
+    }
+
+    /// Combined perimeter of a region entity: outer plus all holes.
+    public static func regionPerimeter(_ entity: CADEntity) -> Double? {
+        let loops = regionLoops(of: entity)
+        guard !loops.isEmpty else { return nil }
+        return loops.reduce(0.0) { acc, loop in
+            acc + RegionBoolean.exactPerimeter(of: loop)
+        }
+    }
+
     /// DXF-flavored type name for LIST output.
     public static func typeName(of entity: CADEntity) -> String {
         if entity.blockID != nil { return "INSERT" }
+        if CADRegion.isRegionEntity(entity) { return "REGION" }
         guard let prim = entity.localGeometry?.first else { return "ENTITY" }
         switch prim {
         case .point: return "POINT"
@@ -582,6 +628,11 @@ public final class ListCommand: FeatureCommand {
             appendOverrides(entity, to: &lines)
             return lines
         }
+        if CADRegion.isRegionEntity(entity),
+           InquiryMath.regionLoops(of: entity).isEmpty {
+            // Retained ACIS body: no editable loops, but not nothing.
+            lines.append("ACIS body: opaque, not editable")
+        }
         guard let prim = entity.localGeometry?.first else { return lines }
         let t = entity.transform
         switch prim {
@@ -613,8 +664,16 @@ public final class ListCommand: FeatureCommand {
             if let len = InquiryMath.entityLength(entity) { lines.append(lengthLine(len)) }
             if let area = InquiryMath.entityArea(entity) { lines.append(areaLine(area)) }
         case let .polyline(path, _):
-            lines.append(
-                "\(path.vertices.count) vertices  \(path.isClosed ? "closed" : "open")")
+            if CADRegion.isRegionEntity(entity) {
+                let loops = InquiryMath.regionLoops(of: entity)
+                let holes = max(0, loops.count - 1)
+                lines.append(
+                    "Region boundary: \(path.vertices.count) vertices  closed"
+                        + (holes > 0 ? "  \(holes) hole(s)" : ""))
+            } else {
+                lines.append(
+                    "\(path.vertices.count) vertices  \(path.isClosed ? "closed" : "open")")
+            }
             if let len = InquiryMath.entityLength(entity) { lines.append(lengthLine(len)) }
             if let area = InquiryMath.entityArea(entity) { lines.append(areaLine(area)) }
         case let .polygon(points, _):

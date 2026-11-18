@@ -4601,6 +4601,7 @@ public final class CADDocument {
                     var xd = entity.xdata
                     xd.removeValue(forKey: "dxf.handle")
                     xd.removeValue(forKey: "dxf.closed")
+                    xd.removeValue(forKey: CADRegion.markerKey)
 
                     for prim in decomposedPrimitives {
                         let newEntity = CADEntity(

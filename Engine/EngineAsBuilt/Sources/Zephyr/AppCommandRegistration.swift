@@ -384,6 +384,31 @@ struct AppCommandRegistration {
             factory: { BoundaryCommand() }
         )
         engine.commandProcessor.registerFeatureCommand(
+            name: "REGION",
+            aliases: ["REG"],
+            factory: { RegionCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "UNION",
+            aliases: ["UNI"],
+            factory: { UnionCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "SUBTRACT",
+            aliases: ["SU"],
+            factory: { SubtractCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "INTERSECT",
+            aliases: ["IN"],
+            factory: { IntersectCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
+            name: "MASSPROP",
+            aliases: [],
+            factory: { MassPropCommand() }
+        )
+        engine.commandProcessor.registerFeatureCommand(
             name: "POINT",
             aliases: ["PO"],
             factory: { PointCommand() }

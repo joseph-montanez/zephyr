@@ -129,8 +129,12 @@ public enum AuditEngine {
                     kind: .missingTextStyle, entityID: entity.handle,
                     detail: "Text style '\(style)' is not defined."))
             }
+            // Retained ACIS bodies carry data (the opaque modeler payload)
+            // but no editable geometry by design; they are not defects.
+            let hasRetainedAcis = CADRegion.acisBlob(of: entity) != nil
             if prims.isEmpty && entity.blockID == nil
-                && entity.dimensionMetadata == nil && entity.leaderData == nil {
+                && entity.dimensionMetadata == nil && entity.leaderData == nil
+                && !hasRetainedAcis {
                 issues.append(AuditIssue(
                     kind: .emptyGeometry, entityID: entity.handle,
                     detail: "Entity carries no geometry and no block reference."))

@@ -979,6 +979,13 @@ public class DXFSplineEntity: DXFEntity {
 public final class DXFRegionEntity: DXFEntity {
     public var boundaryLoops: [[DXFEntity]] = []
 
+    /// Opaque ACIS modeler payload (AcDbModelerGeometry): SAT text lines
+    /// in file order with their group codes (1 and/or 3). The reader never
+    /// interprets these; they exist solely for byte-faithful passthrough
+    /// on export. Empty when the source had no ACIS data.
+    public var acisVersion: Int = 1
+    public var acisLines: [(code: Int, text: String)] = []
+
     public init() {
         super.init(eType: .rEGION)
     }
