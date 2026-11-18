@@ -173,7 +173,7 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 - [ ] **Document previews** — preview display for open documents and layouts.
 - [~] **Application menu** — New, Open, Save, Save As, Export, Print, Publish, Drawing Utilities, Close, Options, Exit; recent/open document lists.
 - [ ] **File tab menu** `(2024+)` — new/open, save all, close all, switch drawings.
-- [~] **Layout tab menu** `(2024+)` — new layout, from template, publish, switch layouts.
+- [~] **Layout tab menu** `(2024+)` — New Layout, New Viewport, Duplicate, Rename, Delete, Page Setup, trailing `+` to create, switch layouts; no from-template, no publish.
 - [-] **My Insights** — **not available in LT**.
 
 ### 2.2 Ribbon, toolbars and menus
@@ -916,10 +916,10 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 ### 15.1 Model space, paper space and layouts
 
 - [x] **Model/paper space** — `MODEL`, `TILEMODE`, `PSPACE`, `MSPACE`.
-- [x] **Model and layout tabs** — show/hide (`LAYOUTTAB`), right-click tab menu, reorder/move layouts.
-- [~] **Layout creation** — `LAYOUT`, `LAYOUTWIZARD`, new/rename/copy/move/delete.
+- [x] **Model and layout tabs** — tabs with trailing `+` to create, right-click tab menu (New Layout, New Viewport, Duplicate, Rename, Delete, Page Setup); no `LAYOUTTAB` show/hide, no tab reorder.
+- [~] **Layout creation** — `LAYOUT` New/Copy/Delete/Rename/SAveas/Set; Template, `LAYOUTWIZARD` and Move not supported.
 - [~] **Layout templates** — import layout from template/DWT.
-- [~] **Layout tab menu** `(2024+)` — new/from template/publish.
+- [~] **Layout tab menu** `(2024+)` — new/duplicate/rename/delete/viewport/page-setup; no from-template, no publish.
 - [x] **Page setup** — `PAGESETUP`, `-PAGESETUP`, named page setups, `PSETUPIN`.
 - [~] **Page setup overrides** — for layouts/sheet sets/publishing.
 - [x] **Layout viewports** — `MVIEW`, `VPORTS`, viewport on/off, lock, scale, alignment; default viewport layer `VIEWPORTLAYER` `(2026+)`.
