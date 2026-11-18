@@ -59,7 +59,7 @@ private func isHatchEntity(_ entity: CADEntity, document: CADDocument) -> Bool {
 /// Shared bring-to-front reorder used by `BringToFrontCommand` and the
 /// `DRAWORDER` umbrella's Front option. Returns the placed count.
 @discardableResult
-fileprivate func applyBringToFront(handles: Set<UUID>, document: CADDocument) -> Int {
+func applyBringToFront(handles: Set<UUID>, document: CADDocument) -> Int {
     guard !handles.isEmpty else { return 0 }
     let doc = document
     let range = collectDrawOrderRange(from: doc)
@@ -74,7 +74,7 @@ fileprivate func applyBringToFront(handles: Set<UUID>, document: CADDocument) ->
 /// Shared send-to-back reorder used by `SendToBackCommand` and the
 /// `DRAWORDER` umbrella's Back option. Returns the placed count.
 @discardableResult
-fileprivate func applySendToBack(handles: Set<UUID>, document: CADDocument) -> Int {
+func applySendToBack(handles: Set<UUID>, document: CADDocument) -> Int {
     guard !handles.isEmpty else { return 0 }
     let doc = document
     let range = collectDrawOrderRange(from: doc)

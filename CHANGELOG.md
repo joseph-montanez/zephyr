@@ -117,6 +117,7 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Regen needed a mouse wiggle to show** - regenerated and imported geometry now presents without cursor input; vertex-build completions wake the frame loop instead of waiting for an event.
 - **macOS input-dead first launch** - the app sometimes started visible but accepted no typing, selection, or clicks, with no recovery via clicking or Cmd-Tab; activation is now requested before window creation, retried briefly after launch, and re-requested on first click, with focus honoring an intentional switch-away.
 - **Raster-image crash on open** - opening a DWG/DXF with more embedded raster images than the texture cache holds no longer segfaults (use-after-free of an evicted image texture while its sprite still drew it); image textures are now reference-counted so the cache and each sprite release independently.
+- **Draw-order regression coverage (fix in progress)** - new headless tests pin bring-to-front/send-to-back against unordered (`.max`) entities, single-undo coalescing, and selection order preservation; the ordering fix itself is still being implemented.
 
 ### Maintenance
 - **Flatpak runtime 24.08 to 25.08** - the Flatpak bundle now targets the supported Freedesktop 25.08 runtime (24.08 is end-of-life); this also fixes the broken x86_64 Flatpak CI build, which failed updating the EOL runtimes.
