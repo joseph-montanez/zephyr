@@ -173,6 +173,7 @@ enum MCPChecksum {
             case .point: pipelineName = "point"
             case .triangle: pipelineName = "triangle"
             case .aaLine: pipelineName = "aaLine"
+            case .textured: pipelineName = "textured"
             }
             out.append(MCPBatchChecksum(
                 pipeline: pipelineName, firstVertex: b.firstVertex,

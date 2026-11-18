@@ -118,6 +118,7 @@ extension EngineRenderer {
         cadVertShader = loadGPUShader(name: "cad.vert", stage: SDL_GPU_SHADERSTAGE_VERTEX, uniformBufferCount: 1, storageBufferCount: 0)
         cadFragShader = loadGPUShader(name: "cad.frag", stage: SDL_GPU_SHADERSTAGE_FRAGMENT)
         cadAAFragShader = loadGPUShader(name: "cad_aa.frag", stage: SDL_GPU_SHADERSTAGE_FRAGMENT)
+        cadTexturedFragShader = loadGPUShader(name: "cad_textured.frag", stage: SDL_GPU_SHADERSTAGE_FRAGMENT, samplerCount: 1)
         imguiVertShader = loadGPUShader(name: "imgui.vert", stage: SDL_GPU_SHADERSTAGE_VERTEX, uniformBufferCount: 1)
         imguiFragShader = loadGPUShader(name: "imgui.frag", stage: SDL_GPU_SHADERSTAGE_FRAGMENT, samplerCount: 1)
 
@@ -125,6 +126,11 @@ extension EngineRenderer {
               imguiVertShader != nil, imguiFragShader != nil else {
             print("Failed to load shaders.")
             return false
+        }
+        // Textured image quads are optional: without the shader, images
+        // keep the legacy sprite path (batches skip at draw time).
+        if cadTexturedFragShader == nil {
+            print("No cad_textured.frag shader; raster images fall back to sprites.")
         }
 
         let swapchainFormat = SDL_GetGPUSwapchainTextureFormat(engine.gpuDevice, engine.window)
@@ -271,6 +277,17 @@ extension EngineRenderer {
                     pipelineCreateInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST
                     cadLineAAPipeline = SDL_CreateGPUGraphicsPipeline(engine.gpuDevice, &pipelineCreateInfo)
                     cadTriangleAAPipeline = cadLineAAPipeline
+
+                    // Textured image quads — same triangle-list layout and
+                    // blend state; the fragment shader samples the bound
+                    // texture (one sampler) instead of emitting flat color.
+                    // Missing shader file (older packaging) disables images
+                    // in the GPU pass; batches then skip at draw time.
+                    if let texturedFrag = cadTexturedFragShader {
+                        pipelineCreateInfo.fragment_shader = texturedFrag
+                        pipelineCreateInfo.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST
+                        cadTexturedPipeline = SDL_CreateGPUGraphicsPipeline(engine.gpuDevice, &pipelineCreateInfo)
+                    }
 
                     return cadLinePipeline != nil && cadPointPipeline != nil
                         && cadTrianglePipeline != nil && cadLineAAPipeline != nil
@@ -636,10 +653,12 @@ extension EngineRenderer {
         if let p = cadPointPipeline { SDL_ReleaseGPUGraphicsPipeline(engine.gpuDevice, p) }
         if let p = cadTrianglePipeline { SDL_ReleaseGPUGraphicsPipeline(engine.gpuDevice, p) }
         if let p = cadLineAAPipeline { SDL_ReleaseGPUGraphicsPipeline(engine.gpuDevice, p) }
+        if let p = cadTexturedPipeline { SDL_ReleaseGPUGraphicsPipeline(engine.gpuDevice, p) }
         if let p = imguiPipeline { SDL_ReleaseGPUGraphicsPipeline(engine.gpuDevice, p) }
         if let s = cadVertShader { SDL_ReleaseGPUShader(engine.gpuDevice, s) }
         if let s = cadFragShader { SDL_ReleaseGPUShader(engine.gpuDevice, s) }
         if let s = cadAAFragShader { SDL_ReleaseGPUShader(engine.gpuDevice, s) }
+        if let s = cadTexturedFragShader { SDL_ReleaseGPUShader(engine.gpuDevice, s) }
         if let s = imguiVertShader { SDL_ReleaseGPUShader(engine.gpuDevice, s) }
         if let s = imguiFragShader { SDL_ReleaseGPUShader(engine.gpuDevice, s) }
         if let s = fontSampler { SDL_ReleaseGPUSampler(engine.gpuDevice, s) }

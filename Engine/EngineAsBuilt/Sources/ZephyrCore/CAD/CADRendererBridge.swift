@@ -46,6 +46,16 @@ public final class CADRendererBridge {
     /// Maps CAD entity handle → the text sprite IDs we created, so we can clean them up.
     internal var entitySpriteMap: [UUID: [SpriteID]] = [:]
 
+    /// Raster-image tessellation inputs for the CAD GPU pass, sorted by
+    /// draw-order key. Unclipped images render as textured quads interleaved
+    /// with vector batches (draw order honored); clipped images keep the
+    /// legacy sprite path. Rebuilt in `applySpecs`, cleared in `clear()`.
+    /// Main-thread only.
+    internal var imageTessInputs: [TessInput] = []
+    /// Image asset snapshot backing `imageTessInputs`, for main-thread GPU
+    /// texture resolution at vertex-buffer upload time. Main-thread only.
+    internal var imageAssetsForGPU: [String: CADImageAsset] = [:]
+
     /// The z-order base for CAD primitives. Incremented per entity to ensure
     /// correct draw order (back-to-front).
     private var nextZ: Double = 0
@@ -2327,6 +2337,8 @@ public final class CADRendererBridge {
         }
         entityPrimitiveMap.removeAll()
         entitySpriteMap.removeAll()
+        imageTessInputs.removeAll()
+        imageAssetsForGPU.removeAll()
         var newEntityIndexToHandle: [UInt32: UUID] = [:]
         var newHandleToEntityIndex: [UUID: UInt32] = [:]
         var nextEntityIndex: UInt32 = 1
@@ -2404,10 +2416,36 @@ public final class CADRendererBridge {
                 entitySpriteMap[res.handle, default: []].append(contentsOf: spriteIDs)
             }
 
-            // Handle image specs: load textures and create textured sprites
+            // Handle image specs: unclipped images become textured GPU quads
+            // in draw order (see imageTessInputs); clipped images keep the
+            // legacy sprite path because the GPU pass has no UV-aware clip.
+            // So does everything when the textured pipeline failed to
+            // create (older shader packaging) — GPU batches without a
+            // pipeline would draw nothing at all.
+            let gpuImagePath = engine.renderer.cadTexturedPipeline != nil
             for imgSpec in res.imageSpecs {
-                guard let asset = imageStore[imgSpec.imageName] else {
+                guard imageStore[imgSpec.imageName] != nil else {
                     print("[CADBridge] Image asset '\(imgSpec.imageName)' not found in document imageStore")
+                    continue
+                }
+                let clipped = imgSpec.clipPolygon != nil || imgSpec.clipInverted
+                    || res.clipPolygon != nil
+                if !clipped && gpuImagePath {
+                    let tint = imgSpec.tint ?? (UInt8(255), UInt8(255), UInt8(255), UInt8(255))
+                    imageTessInputs.append(TessInput(
+                        type: .fillRects,
+                        points: [],
+                        rects: [],
+                        corners: [imgSpec.c0, imgSpec.c1, imgSpec.c2, imgSpec.c3],
+                        color: tint,
+                        lineWeight: 0,
+                        geomWidth: 0,
+                        entityIndex: idx,
+                        sortZ: imgSpec.z,
+                        imageName: imgSpec.imageName))
+                    continue
+                }
+                guard let asset = imageStore[imgSpec.imageName] else {
                     continue
                 }
                 let (tex, _, _) = engine.textureManager.loadTexture(
@@ -2478,6 +2516,13 @@ public final class CADRendererBridge {
             }
         }
 
+        // Image draw order for the GPU pass: stable sort keeps same-entity
+        // multi-image order deterministic.
+        if imageTessInputs.count > 1 {
+            imageTessInputs.sort { $0.sortZ < $1.sortZ }
+        }
+        imageAssetsForGPU = imageStore
+
         // Store entity index → handle mapping for GPU ID-buffer pass
         geometryManager.entityIndexToHandle = newEntityIndexToHandle
         geometryManager.handleToEntityIndex = newHandleToEntityIndex
@@ -2498,6 +2543,8 @@ public final class CADRendererBridge {
         }
         entityPrimitiveMap.removeAll()
         entitySpriteMap.removeAll()
+        imageTessInputs.removeAll()
+        imageAssetsForGPU.removeAll()
     }
 
     /// Directly offset world-space primitives for the given entity handles.

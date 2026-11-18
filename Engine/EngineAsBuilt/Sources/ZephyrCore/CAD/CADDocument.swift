@@ -3757,6 +3757,21 @@ public final class CADDocument {
         markEdited(regenerate: true)
     }
 
+    /// Set distinct draw orders from a handle→order map in a single undo step.
+    /// Unknown handles are skipped. Used by draw-order commands, which must
+    /// materialize explicit orders (fresh entities default to `Int.max`) and
+    /// relocate a block while preserving visual order — all atomically.
+    public func setDrawOrders(_ orders: [UUID: Int]) {
+        guard !orders.isEmpty else { return }
+        pushUndo()
+        for (handle, order) in orders {
+            guard var entity = entityRegistry[handle] else { continue }
+            entity.drawOrder = order
+            entityRegistry[handle] = entity
+        }
+        markEdited(regenerate: true)
+    }
+
     /// Apply a full set of matchable properties to a single entity in one undo step.
     /// Used by MATCHPROP to copy all visual properties atomically.
     /// - Parameters:

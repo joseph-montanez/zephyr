@@ -91,6 +91,8 @@ compile_shaders_dxc() {
     # shellcheck disable=SC2086
     "$DXC" $SPV_FLAGS -T ps_6_0 -E main -Fo "$BIN_DIR/cad_aa.frag.spv" "$SWIFT_DIR/Shaders/cad_aa.frag.hlsl"
     # shellcheck disable=SC2086
+    "$DXC" $SPV_FLAGS -T ps_6_0 -E main -Fo "$BIN_DIR/cad_textured.frag.spv" "$SWIFT_DIR/Shaders/cad_textured.frag.hlsl"
+    # shellcheck disable=SC2086
     "$DXC" $SPV_FLAGS -T vs_6_0 -E main -Fo "$BIN_DIR/imgui.vert.spv" "$SWIFT_DIR/Shaders/imgui.vert.hlsl"
     # shellcheck disable=SC2086
     "$DXC" $SPV_FLAGS -T ps_6_0 -E main -Fo "$BIN_DIR/imgui.frag.spv" "$SWIFT_DIR/Shaders/imgui.frag.hlsl"
@@ -105,6 +107,7 @@ compile_shaders_glslang() {
     "$GLSLANG" -D -V -S vert -e main -o "$BIN_DIR/cad.vert.spv"   "$SWIFT_DIR/Shaders/cad.vert.hlsl"
     "$GLSLANG" -D -V -S frag -e main -o "$BIN_DIR/cad.frag.spv"   "$SWIFT_DIR/Shaders/cad.frag.hlsl"
     "$GLSLANG" -D -V -S frag -e main -o "$BIN_DIR/cad_aa.frag.spv" "$SWIFT_DIR/Shaders/cad_aa.frag.hlsl"
+    "$GLSLANG" -D -V -S frag -e main -o "$BIN_DIR/cad_textured.frag.spv" "$SWIFT_DIR/Shaders/cad_textured.frag.hlsl"
     "$GLSLANG" -D -V -S vert -e main -o "$BIN_DIR/imgui.vert.spv" "$SWIFT_DIR/Shaders/imgui.vert.hlsl"
     "$GLSLANG" -D -V -S frag -e main -o "$BIN_DIR/imgui.frag.spv" "$SWIFT_DIR/Shaders/imgui.frag.hlsl"
     "$GLSLANG" -D -V -S vert -e main -o "$BIN_DIR/cad_id.vert.spv" "$SWIFT_DIR/Shaders/cad_id.vert.hlsl"

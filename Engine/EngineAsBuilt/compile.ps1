@@ -195,6 +195,7 @@ if ($dxcCandidates) {
         "`"$dxcPath`" -T vs_6_0 -E main -Fo `"$dllDest\cad.vert.dxil`" `"$swiftBuildDir\Shaders\cad.vert.hlsl`"",
         "`"$dxcPath`" -T ps_6_0 -E main -Fo `"$dllDest\cad.frag.dxil`" `"$swiftBuildDir\Shaders\cad.frag.hlsl`"",
         "`"$dxcPath`" -T ps_6_0 -E main -Fo `"$dllDest\cad_aa.frag.dxil`" `"$swiftBuildDir\Shaders\cad_aa.frag.hlsl`"",
+        "`"$dxcPath`" -T ps_6_0 -E main -Fo `"$dllDest\cad_textured.frag.dxil`" `"$swiftBuildDir\Shaders\cad_textured.frag.hlsl`"",
         "`"$dxcPath`" -T vs_6_0 -E main -Fo `"$dllDest\imgui.vert.dxil`" `"$swiftBuildDir\Shaders\imgui.vert.hlsl`"",
         "`"$dxcPath`" -T ps_6_0 -E main -Fo `"$dllDest\imgui.frag.dxil`" `"$swiftBuildDir\Shaders\imgui.frag.hlsl`"",
         "`"$dxcPath`" -T vs_6_0 -E main -Fo `"$dllDest\cad_id.vert.dxil`" `"$swiftBuildDir\Shaders\cad_id.vert.hlsl`"",

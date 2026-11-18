@@ -166,6 +166,12 @@ public enum CADPipelineType: Sendable {
     /// Renders anti-aliased wide lines. This usually requires a specialized
     /// fragment shader that calculates signed distance to the line's center.
     case aaLine
+
+    /// Renders textured image quads (raster images, PDF underlays) in draw
+    /// order among the vector batches. Same triangle-list topology; the
+    /// fragment shader samples the batch texture (looked up by
+    /// `CADDrawBatch.imageName`) instead of emitting a flat color.
+    case textured
 }
 
 /// Defines a distinct, contiguous draw call within the GPU pipeline.
@@ -187,6 +193,16 @@ public struct CADDrawBatch: Sendable {
     /// Line weight in mm for this batch (informational only; widths are
     /// baked per-vertex, so runs merge across weight changes).
     public var lineWeight: Double
+    /// Image asset name (sha256 hex) for `.textured` batches. Textures are
+    /// resolved on the main thread at upload time (pointers are not Sendable,
+    /// so they cannot ride the detached tessellation task); nil for vectors.
+    /// Merge and chunk-split preserve this tag.
+    public var imageName: String?
+    /// Entity index for `.textured` batches (one image = one entity, so the
+    /// whole batch shares it). Used to hide the quad while its entity is
+    /// being dragged, mirroring the legacy sprite suppression. Zero for
+    /// vector batches, which may span entities.
+    public var entityIndex: UInt32
 
     /// Initializes a new drawing batch.
     ///
@@ -199,12 +215,16 @@ public struct CADDrawBatch: Sendable {
         firstVertex: UInt32,
         vertexCount: UInt32,
         isPanProxy: Bool = false,
-        lineWeight: Double = 0.0
+        lineWeight: Double = 0.0,
+        imageName: String? = nil,
+        entityIndex: UInt32 = 0
     ) {
         self.pipelineType = pipelineType
         self.firstVertex = firstVertex
         self.vertexCount = vertexCount
         self.isPanProxy = isPanProxy
         self.lineWeight = lineWeight
+        self.imageName = imageName
+        self.entityIndex = entityIndex
     }
 }

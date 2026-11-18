@@ -36,6 +36,15 @@ public struct TessInput: Sendable {
     /// < 0 → -PDSIZE percent of region height.
     public let pointStyle: Int
     public let pointSize: Double
+    /// Draw-order sort key (primitive z). The gather emits inputs in render
+    /// order, but merged streams (vectors + images) are stably re-sorted by
+    /// this key so textured quads interleave with vectors correctly.
+    public let sortZ: Double
+    /// Image asset name (sha256 hex) for raster-image inputs. When set,
+    /// `corners` holds the quad corners (c0..c3, mirroring the sprite
+    /// corner→UV mapping) and `tessellate` emits a `.textured` batch instead
+    /// of vector geometry. Nil for vectors.
+    public let imageName: String?
 
     public init(
         type: PrimitiveType,
@@ -52,7 +61,9 @@ public struct TessInput: Sendable {
         isPanProxy: Bool = false,
         gradientData: RenderPrimitive.GradientData? = nil,
         pointStyle: Int = 0,
-        pointSize: Double = 0
+        pointSize: Double = 0,
+        sortZ: Double = 0,
+        imageName: String? = nil
     ) {
         self.type = type
         self.points = points
@@ -69,6 +80,8 @@ public struct TessInput: Sendable {
         self.gradientData = gradientData
         self.pointStyle = pointStyle
         self.pointSize = pointSize
+        self.sortZ = sortZ
+        self.imageName = imageName
     }
 
     /// Resolve a raw PDSIZE to world units against the region height.
@@ -243,7 +256,7 @@ public final class CADVertexBufferBuilder {
             // triangles draw as long streaks across the map).
             let granularity: UInt32
             switch batch.pipelineType {
-            case .triangle, .aaLine: granularity = 3
+            case .triangle, .aaLine, .textured: granularity = 3
             case .line: granularity = 2
             case .point: granularity = 1
             }
@@ -273,7 +286,9 @@ public final class CADVertexBufferBuilder {
                     firstVertex: start - base,
                     vertexCount: take,
                     isPanProxy: batch.isPanProxy,
-                    lineWeight: batch.lineWeight))
+                    lineWeight: batch.lineWeight,
+                    imageName: batch.imageName,
+                    entityIndex: batch.entityIndex))
                 start += take
                 remaining -= take
                 currentVerts += take
@@ -745,8 +760,28 @@ public final class CADVertexBufferBuilder {
 
             let firstVtx = UInt32(vertices.count)
 
-            switch input.type {
-            case .point, .points:
+            // Raster images ride the vector stream as textured quads so they
+            // composite in draw order instead of always covering vectors.
+            // corner→UV mapping mirrors the former sprite path exactly:
+            // c0→(0,0), c1→(1,0), c2→(1,1), c3→(0,1).
+            if let imageName = input.imageName, !imageName.isEmpty {
+                if input.corners.count >= 4 {
+                    let c = input.corners
+                    let qs = [c[0], c[1], c[2], c[0], c[2], c[3]]
+                    let uvs: [(Float, Float)] = [(0, 0), (1, 0), (1, 1), (0, 0), (1, 1), (0, 1)]
+                    var valid = true
+                    for q in qs where !q.x.isFinite || !q.y.isFinite { valid = false }
+                    if valid {
+                        for (q, uv) in zip(qs, uvs) {
+                            vertices.append(CADVertex(
+                                x: q.x, y: q.y, r: r, g: g, b: b, a: a,
+                                u: uv.0, v: uv.1))
+                        }
+                    }
+                }
+            } else {
+                switch input.type {
+                case .point, .points:
                 let base = input.pointStyle % 32
                 if input.pointStyle == 1 {
                     break  // PDMODE 1 = none: emit nothing.
@@ -965,6 +1000,8 @@ public final class CADVertexBufferBuilder {
                 }
             }
 
+            }
+
             // (Removed uvData padding logic as u/v are now embedded in CADVertex)
 
             // Phase 2: Set entityIndex on all vertices for this primitive.
@@ -988,11 +1025,17 @@ public final class CADVertexBufferBuilder {
             if input.isHatchLine { hatchVerts += Int(vtxCount) }
 
             let pipeType: CADPipelineType
-            switch input.type {
-            case .point, .points:
-                pipeType = .triangle
-            case .fillRect, .fillRects:
-                pipeType = .triangle
+            let batchImageName: String?
+            if let imageName = input.imageName, !imageName.isEmpty {
+                pipeType = .textured
+                batchImageName = imageName
+            } else {
+                batchImageName = nil
+                switch input.type {
+                case .point, .points:
+                    pipeType = .triangle
+                case .fillRect, .fillRects:
+                    pipeType = .triangle
             case .line, .lines:
                 // NOTE: .rect/.rects deliberately NOT in this case - their
                 // emission appends raw corner vertices as line pairs (never
@@ -1006,16 +1049,20 @@ public final class CADVertexBufferBuilder {
                 }
             default:
                 pipeType = .line
+                }
             }
 
             // Line weight is baked per-vertex (world width + AA falloff in
             // the vertex UVs) and never read from the batch at draw time, so
             // it must not split batches: runs of the same pipeline merge
-            // across weight changes. Only pipeline and pan-proxy (a
-            // visibility gate evaluated per frame) may start a new batch.
+            // across weight changes. Only pipeline, pan-proxy (a
+            // visibility gate evaluated per frame), and — for textured image
+            // quads — the image asset may start a new batch. Consecutive
+            // quads of the same image merge into one draw.
             if !batches.isEmpty
                 && batches.last!.pipelineType == pipeType
                 && batches.last!.isPanProxy == input.isPanProxy
+                && batches.last!.imageName == batchImageName
             {
                 batches[batches.count - 1].vertexCount += vtxCount
             } else {
@@ -1024,7 +1071,9 @@ public final class CADVertexBufferBuilder {
                     firstVertex: firstVtx,
                     vertexCount: vtxCount,
                     isPanProxy: input.isPanProxy,
-                    lineWeight: input.lineWeight))
+                    lineWeight: input.lineWeight,
+                    imageName: batchImageName,
+                    entityIndex: batchImageName != nil ? input.entityIndex : 0))
             }
         }
 

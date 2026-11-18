@@ -468,7 +468,8 @@ public final class RenderPrimitive: @unchecked Sendable {
             isPanProxy: isPanProxy,
             gradientData: gradientData,
             pointStyle: pointStyle,
-            pointSize: pointSize
+            pointSize: pointSize,
+            sortZ: z
         )
     }
 

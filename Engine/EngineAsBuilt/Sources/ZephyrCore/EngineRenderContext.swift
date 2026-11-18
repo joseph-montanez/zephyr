@@ -56,6 +56,11 @@ public final class WindowRenderContext {
         public var buffer: OpaquePointer?
         public var vertexCount: Int
         public var batches: [CADDrawBatch]
+        /// Per-batch GPU textures for `.textured` batches, parallel to
+        /// `batches` (nil for vector batches and unresolved images). Each
+        /// non-nil entry holds one `retainDataTexture` reference, released
+        /// when the chunk is replaced or destroyed.
+        public var batchTextures: [OpaquePointer?] = []
     }
 
     public var vertexChunks: [VertexGPUChunk] = []
@@ -96,6 +101,10 @@ public final class WindowRenderContext {
     public var pendingSwapChunks: [VertexGPUChunk] = []
     public var pendingSwapResult: VertexBuildResult? = nil
     public var pendingSwapPaletteGen: Int = -1
+    /// Releases one `retainDataTexture` reference held by a chunk texture.
+    /// Wired at creation (weak capture; contexts die in renderer teardown).
+    /// Used by `destroy`/`invalidateBuiltState`, which have no engine.
+    public var textureReleaser: ((OpaquePointer) -> Void)?
     /// Memo for `gatherTessInputs`: last gathered inputs plus the key they
     /// were gathered under. Reused while the region still covers the request
     /// and nothing it consumes changed. Cleared whenever built state drops.
@@ -147,6 +156,8 @@ public final class WindowRenderContext {
         }
         bridge.entityPrimitiveMap.removeAll()
         bridge.entitySpriteMap.removeAll()
+        bridge.imageTessInputs.removeAll()
+        bridge.imageAssetsForGPU.removeAll()
         regenGeneration &+= 1
         appliedGeneration = -1
         builtRevision = nil
@@ -158,11 +169,22 @@ public final class WindowRenderContext {
     /// Cancel all background work and release the GPU vertex buffer.
     /// Secondary contexts call this when dropped; the primary calls it
     /// from the renderer's teardown path.
+    /// Release one retained chunk-texture reference per non-nil entry.
+    public func releaseChunkTextures(_ chunks: [VertexGPUChunk]) {
+        guard let releaser = textureReleaser else { return }
+        for chunk in chunks {
+            for tex in chunk.batchTextures {
+                if let tex = tex { releaser(tex) }
+            }
+        }
+    }
+
     public func destroy(device: OpaquePointer) {
         sprites.removeAllSprites()
         for f in pendingSwapFences { if let f = f { SDL_ReleaseGPUFence(device, f) } }
         for tb in pendingSwapTransfers { SDL_ReleaseGPUTransferBuffer(device, tb) }
         for chunk in pendingSwapChunks { if let buf = chunk.buffer { SDL_ReleaseGPUBuffer(device, buf) } }
+        releaseChunkTextures(pendingSwapChunks)
         pendingSwapFences.removeAll()
         pendingSwapTransfers.removeAll()
         pendingSwapChunks.removeAll()
@@ -183,6 +205,7 @@ public final class WindowRenderContext {
                 SDL_ReleaseGPUBuffer(device, buf)
             }
         }
+        releaseChunkTextures(vertexChunks)
         vertexChunks.removeAll()
     }
 
@@ -200,10 +223,12 @@ public final class WindowRenderContext {
                 SDL_ReleaseGPUBuffer(device, buf)
             }
         }
+        releaseChunkTextures(vertexChunks)
         vertexChunks.removeAll()
         for f in pendingSwapFences { if let f = f { SDL_ReleaseGPUFence(device, f) } }
         for tb in pendingSwapTransfers { SDL_ReleaseGPUTransferBuffer(device, tb) }
         for chunk in pendingSwapChunks { if let buf = chunk.buffer { SDL_ReleaseGPUBuffer(device, buf) } }
+        releaseChunkTextures(pendingSwapChunks)
         pendingSwapFences.removeAll()
         pendingSwapTransfers.removeAll()
         pendingSwapChunks.removeAll()

@@ -684,7 +684,9 @@ extension MCPServer {
                                          r: c.r, g: c.g, b: c.b, a: c.a)
                     }
                 }
-            case .triangle, .aaLine:
+            case .triangle, .aaLine, .textured:
+                // Textured quads rasterize with their tint color (the MCP
+                // thumbnail has no GPU texture sampling).
                 var i = start
                 while i + 2 < end {
                     let v0 = result.vertices[i]

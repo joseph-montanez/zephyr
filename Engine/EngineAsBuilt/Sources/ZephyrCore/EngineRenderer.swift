@@ -116,6 +116,10 @@ public final class EngineRenderer {
 
             bridge: CADRendererBridge())
 
+        ctx.textureReleaser = { [weak textureManager = engine.textureManager] tex in
+            textureManager?.releaseTextureRef(tex)
+        }
+
         ctx.builtTabID = tabID
 
         secondaryCtxs[tabID] = ctx
@@ -220,6 +224,8 @@ public final class EngineRenderer {
 
     internal var cadAAFragShader: OpaquePointer?
 
+    internal var cadTexturedFragShader: OpaquePointer?
+
     internal var imguiVertShader: OpaquePointer?
 
     internal var imguiFragShader: OpaquePointer?
@@ -235,6 +241,8 @@ public final class EngineRenderer {
     internal var cadLineAAPipeline: OpaquePointer?
 
     internal var cadTriangleAAPipeline: OpaquePointer?
+
+    internal var cadTexturedPipeline: OpaquePointer?
 
     internal var imguiPipeline: OpaquePointer?
 
@@ -528,6 +536,10 @@ public final class EngineRenderer {
             sprites: engine.spriteManager,
 
             bridge: engine.cadBridge)
+
+        self.primaryCtx.textureReleaser = { [weak textureManager = engine.textureManager] tex in
+            textureManager?.releaseTextureRef(tex)
+        }
 
     }
 
@@ -2107,6 +2119,10 @@ public final class EngineRenderer {
 
                     bridge: CADRendererBridge())
 
+                ctx.textureReleaser = { [weak textureManager = engine.textureManager] tex in
+                    textureManager?.releaseTextureRef(tex)
+                }
+
                 paneCtxs[leaf.id] = ctx
 
             }
@@ -2470,7 +2486,9 @@ public final class EngineRenderer {
 
                             case .triangle,
 
-                                 .aaLine:     pipe = cadIDPipeline
+                                 .aaLine,
+
+                                 .textured:   pipe = cadIDPipeline
 
                             }
 
@@ -3284,6 +3302,22 @@ public final class EngineRenderer {
 
 
 
+    /// Entity indices whose textured image quads stay hidden this frame. GPU
+    /// quad vertices are baked at upload time, so while a drag/grip is active
+    /// the quad would go stale — like the legacy sprite path, the selection
+    /// bounding box stands in instead.
+    private func hiddenTexturedEntityIndices(
+        in geometry: GeometryManager
+    ) -> Set<UInt32> {
+        guard engine.interaction.dragActive || engine.interaction.gripActive else { return [] }
+        var ids = Set<UInt32>()
+        ids.reserveCapacity(engine.cadSelection.selectedHandles.count)
+        for handle in engine.cadSelection.selectedHandles {
+            if let idx = geometry.handleToEntityIndex[handle] { ids.insert(idx) }
+        }
+        return ids
+    }
+
     private func renderLeafCADPass(
 
         cmd: OpaquePointer,
@@ -3398,6 +3432,8 @@ public final class EngineRenderer {
 
         if let ctx = plan.ctx, !ctx.vertexChunks.isEmpty {
 
+            let hiddenTextured = hiddenTexturedEntityIndices(in: ctx.geometry)
+
             for chunk in ctx.vertexChunks {
 
                 guard let vertexBuf = chunk.buffer else { continue }
@@ -3406,9 +3442,18 @@ public final class EngineRenderer {
 
                 SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
 
-                for batch in chunk.batches {
+                for (bi, batch) in chunk.batches.enumerated() {
 
                     if batch.isPanProxy { continue }
+
+                    var batchTexture: OpaquePointer? = nil
+                    if batch.pipelineType == .textured {
+                        guard batch.entityIndex != 0,
+                              !hiddenTextured.contains(batch.entityIndex),
+                              bi < chunk.batchTextures.count,
+                              let tex = chunk.batchTextures[bi] else { continue }
+                        batchTexture = tex
+                    }
 
                     let pipeline: OpaquePointer?
 
@@ -3430,6 +3475,10 @@ public final class EngineRenderer {
 
                         pipeline = cadLineAAPipeline
 
+                    case .textured:
+
+                        pipeline = cadTexturedPipeline
+
                     }
 
 
@@ -3440,6 +3489,11 @@ public final class EngineRenderer {
 
                         lastBoundPipeline = batch.pipelineType
 
+                    }
+
+                    if let tex = batchTexture, let sampler = fontSampler {
+                        var textureBinding = SDL_GPUTextureSamplerBinding(texture: tex, sampler: sampler)
+                        SDL_BindGPUFragmentSamplers(renderPass, 0, &textureBinding, 1)
                     }
 
 
@@ -4301,7 +4355,9 @@ public final class EngineRenderer {
 
                             case .triangle,
 
-                                 .aaLine:     pipe = cadIDPipeline
+                                 .aaLine,
+
+                                 .textured:   pipe = cadIDPipeline
 
                             }
 
@@ -4469,6 +4525,8 @@ public final class EngineRenderer {
 
 
 
+                    let hiddenTexturedActx = hiddenTexturedEntityIndices(in: actx.geometry)
+
                     for chunk in actx.vertexChunks {
 
                         guard let vertexBuf = chunk.buffer else { continue }
@@ -4477,9 +4535,18 @@ public final class EngineRenderer {
 
                         SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
 
-                        for batch in chunk.batches {
+                        for (bi, batch) in chunk.batches.enumerated() {
 
                             if batch.isPanProxy { continue }
+
+                            var batchTexture: OpaquePointer? = nil
+                            if batch.pipelineType == .textured {
+                                guard batch.entityIndex != 0,
+                                      !hiddenTexturedActx.contains(batch.entityIndex),
+                                      bi < chunk.batchTextures.count,
+                                      let tex = chunk.batchTextures[bi] else { continue }
+                                batchTexture = tex
+                            }
 
                             let pipeline: OpaquePointer?
 
@@ -4501,6 +4568,10 @@ public final class EngineRenderer {
 
                                 pipeline = cadLineAAPipeline
 
+                            case .textured:
+
+                                pipeline = cadTexturedPipeline
+
                             }
 
 
@@ -4511,6 +4582,11 @@ public final class EngineRenderer {
 
                                 lastBoundPipeline = batch.pipelineType
 
+                            }
+
+                            if let tex = batchTexture, let sampler = fontSampler {
+                                var textureBinding = SDL_GPUTextureSamplerBinding(texture: tex, sampler: sampler)
+                                SDL_BindGPUFragmentSamplers(renderPass, 0, &textureBinding, 1)
                             }
 
 
@@ -4898,6 +4974,8 @@ public final class EngineRenderer {
 
 
 
+                    let hiddenTexturedFloat = hiddenTexturedEntityIndices(in: ctx.geometry)
+
                     for chunk in ctx.vertexChunks {
 
                         guard let vertexBuf = chunk.buffer else { continue }
@@ -4906,9 +4984,18 @@ public final class EngineRenderer {
 
                         SDL_BindGPUVertexBuffers(renderPass, 0, &vertexBinding, 1)
 
-                        for batch in chunk.batches {
+                        for (bi, batch) in chunk.batches.enumerated() {
 
                             if batch.isPanProxy { continue }
+
+                            var batchTexture: OpaquePointer? = nil
+                            if batch.pipelineType == .textured {
+                                guard batch.entityIndex != 0,
+                                      !hiddenTexturedFloat.contains(batch.entityIndex),
+                                      bi < chunk.batchTextures.count,
+                                      let tex = chunk.batchTextures[bi] else { continue }
+                                batchTexture = tex
+                            }
 
                             let pipeline: OpaquePointer?
 
@@ -4930,6 +5017,10 @@ public final class EngineRenderer {
 
                                 pipeline = cadLineAAPipeline
 
+                            case .textured:
+
+                                pipeline = cadTexturedPipeline
+
                             }
 
 
@@ -4940,6 +5031,11 @@ public final class EngineRenderer {
 
                                 lastBoundPipeline = batch.pipelineType
 
+                            }
+
+                            if let tex = batchTexture, let sampler = fontSampler {
+                                var textureBinding = SDL_GPUTextureSamplerBinding(texture: tex, sampler: sampler)
+                                SDL_BindGPUFragmentSamplers(renderPass, 0, &textureBinding, 1)
                             }
 
 

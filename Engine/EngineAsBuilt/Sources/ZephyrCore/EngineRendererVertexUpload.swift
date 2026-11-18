@@ -35,6 +35,10 @@ extension EngineRenderer {
         // Pan/zoom relaunches builds against new regions while the document is
         // unchanged; inputs are zoom-independent, so a cached gather whose
         // region covers the request is reused verbatim (no per-primitive work).
+        // The cache holds vectors only; raster images merge in below (their
+        // changes always bump mutationGeneration via regen, so the vector
+        // cache can never outlive them).
+        let vectors: [TessInput]
         if let hit = ctx.gatherCache.lookup(
             region: region,
             mutationGen: geometryManager.mutationGeneration,
@@ -46,26 +50,75 @@ extension EngineRenderer {
             viewportBackground: viewportBackground)
         {
             ctx.cachedUsingGrid = hit.usedGrid
-            return hit.inputs
+            vectors = hit.inputs
+        } else {
+            let gathered = geometryManager.gatherTessInputs(
+                region: region,
+                useLightDisplayPalette: useLightDisplayPalette,
+                viewportBackground: viewportBackground)
+            ctx.cachedUsingGrid = gathered.usedGrid
+            ctx.gatherCache.store(
+                inputs: gathered.inputs,
+                region: region,
+                mutationGen: geometryManager.mutationGeneration,
+                primitiveCount: geometryManager.primitiveCount,
+                useLightDisplayPalette: useLightDisplayPalette,
+                autoContrastTrueColor: geometryManager.autoContrastTrueColor,
+                pointStyle: geometryManager.pointDisplayMode,
+                pointSize: geometryManager.pointDisplaySize,
+                viewportBackground: viewportBackground,
+                usedGrid: gathered.usedGrid)
+            vectors = gathered.inputs
         }
+        return Self.mergeImageInputs(
+            vectors,
+            region: region,
+            bridge: ctx.bridge,
+            origin: geometryManager.renderOrigin)
+    }
 
-        let gathered = geometryManager.gatherTessInputs(
-            region: region,
-            useLightDisplayPalette: useLightDisplayPalette,
-            viewportBackground: viewportBackground)
-        ctx.cachedUsingGrid = gathered.usedGrid
-        ctx.gatherCache.store(
-            inputs: gathered.inputs,
-            region: region,
-            mutationGen: geometryManager.mutationGeneration,
-            primitiveCount: geometryManager.primitiveCount,
-            useLightDisplayPalette: useLightDisplayPalette,
-            autoContrastTrueColor: geometryManager.autoContrastTrueColor,
-            pointStyle: geometryManager.pointDisplayMode,
-            pointSize: geometryManager.pointDisplaySize,
-            viewportBackground: viewportBackground,
-            usedGrid: gathered.usedGrid)
-        return gathered.inputs
+    /// Merge raster-image tessellation inputs into the vector stream in draw
+    /// order. Images are region-culled by quad bounds (input corners are
+    /// renderOrigin-local, so the world region converts once); the combined
+    /// stable sort by `sortZ` interleaves textured quads with vector batches
+    /// exactly as the renderers sort entities.
+    /// Static and engine-free for headless merge-order tests.
+    static func mergeImageInputs(
+        _ vectors: [TessInput],
+        region: (minX: Double, minY: Double, maxX: Double, maxY: Double),
+        bridge: CADRendererBridge,
+        origin: CADRenderOrigin
+    ) -> [TessInput] {
+        let images = bridge.imageTessInputs
+        guard !images.isEmpty else { return vectors }
+        let lMinX = origin.localX(region.minX)
+        let lMinY = origin.localY(region.minY)
+        let lMaxX = origin.localX(region.maxX)
+        let lMaxY = origin.localY(region.maxY)
+        var culled: [TessInput] = []
+        culled.reserveCapacity(images.count)
+        for img in images {
+            guard img.corners.count >= 4 else { continue }
+            var iMinX = Float.greatestFiniteMagnitude
+            var iMinY = Float.greatestFiniteMagnitude
+            var iMaxX = -Float.greatestFiniteMagnitude
+            var iMaxY = -Float.greatestFiniteMagnitude
+            for c in img.corners {
+                if c.x < iMinX { iMinX = c.x }
+                if c.y < iMinY { iMinY = c.y }
+                if c.x > iMaxX { iMaxX = c.x }
+                if c.y > iMaxY { iMaxY = c.y }
+            }
+            guard iMaxX >= lMinX, iMinX <= lMaxX,
+                  iMaxY >= lMinY, iMinY <= lMaxY
+            else { continue }
+            culled.append(img)
+        }
+        guard !culled.isEmpty else { return vectors }
+        var combined = vectors
+        combined.append(contentsOf: culled)
+        combined.sort { $0.sortZ < $1.sortZ }
+        return combined
     }
 
 
@@ -231,10 +284,12 @@ extension EngineRenderer {
                 }
                 return false
             }
+            resolveChunkTextures(&newChunks, imageStore: ctx.bridge.imageAssetsForGPU)
             drainPendingCopies()
             if deferSwap && !vertices.isEmpty {
                 if !ctx.pendingSwapFences.isEmpty { var of = ctx.pendingSwapFences; _ = SDL_WaitForGPUFences(engine.gpuDevice, true, &of, UInt32(of.count)) }
                 for chunk in ctx.pendingSwapChunks { if let buf = chunk.buffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) } }
+                ctx.releaseChunkTextures(ctx.pendingSwapChunks)
                 for f in ctx.pendingSwapFences { if let f = f { SDL_ReleaseGPUFence(engine.gpuDevice, f) } }
                 for tb in ctx.pendingSwapTransfers { SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, tb) }
                 ctx.pendingSwapChunks = newChunks
@@ -255,6 +310,7 @@ extension EngineRenderer {
                 SDL_ReleaseGPUBuffer(engine.gpuDevice, buf)
             }
         }
+        ctx.releaseChunkTextures(ctx.vertexChunks)
 
         ctx.vertexChunks = newChunks
 
@@ -270,6 +326,33 @@ extension EngineRenderer {
         ctx.lastHatchVerts = result.hatchVerts
         ctx.lastVertexCapped = result.capped
         return true
+    }
+
+    /// Resolve `.textured` batch textures from the bridge asset snapshot and
+    /// retain one reference per resolved texture. Runs on the main actor at
+    /// upload time (pointers cannot cross the detached tessellation task, so
+    /// batches carry the asset name and attach here). Batches whose asset is
+    /// missing or fails to load keep a nil entry and are skipped at draw
+    /// time — the same nothing-drawn outcome as the legacy path.
+    private func resolveChunkTextures(
+        _ chunks: inout [WindowRenderContext.VertexGPUChunk],
+        imageStore: [String: CADImageAsset]
+    ) {
+        for ci in chunks.indices {
+            let batches = chunks[ci].batches
+            guard batches.contains(where: { $0.imageName != nil }) else { continue }
+            var textures: [OpaquePointer?] = Array(repeating: nil, count: batches.count)
+            for (bi, batch) in batches.enumerated() {
+                guard let name = batch.imageName, !name.isEmpty,
+                      let asset = imageStore[name] else { continue }
+                let (tex, _, _) = engine.textureManager.loadTexture(
+                    from: asset.data, name: name, mimeType: asset.mimeType)
+                guard let texture = tex else { continue }
+                engine.textureManager.retainDataTexture(texture)
+                textures[bi] = texture
+            }
+            chunks[ci].batchTextures = textures
+        }
     }
 
     /// Diagnostic (ZEPHYR_VERIFY_UPLOAD=1): downloads each just-uploaded
@@ -447,6 +530,7 @@ extension EngineRenderer {
         for f in ctx.pendingSwapFences { if let f = f { SDL_ReleaseGPUFence(engine.gpuDevice, f) } }
         for tb in ctx.pendingSwapTransfers { SDL_ReleaseGPUTransferBuffer(engine.gpuDevice, tb) }
         for chunk in ctx.vertexChunks { if let buf = chunk.buffer { SDL_ReleaseGPUBuffer(engine.gpuDevice, buf) } }
+        ctx.releaseChunkTextures(ctx.vertexChunks)
         ctx.vertexChunks = ctx.pendingSwapChunks
         ctx.cachedViewportMinX = result.regionMinX
         ctx.cachedViewportMaxX = result.regionMaxX
