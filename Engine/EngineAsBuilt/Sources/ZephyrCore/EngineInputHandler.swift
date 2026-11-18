@@ -1098,6 +1098,7 @@ internal final class EngineInputHandler {
             interaction.gripActive = false
             interaction.gripHandle = nil
             interaction.gripUndoSnapshot = nil
+            interaction.gripStartWorldPosition = nil
             interaction.resetGripVertexEditMode()
             clearTransientSnapState()
             interaction.clearWindowGestureIfIdle()

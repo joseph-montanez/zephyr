@@ -38,6 +38,47 @@ public struct SnapResult: Hashable, Sendable {
     }
 }
 
+/// Surgical self-snap exclusion for grip vertex/midpoint drags.
+///
+/// While a polyline vertex grip is dragged, the edited entity stays a snap
+/// candidate (so sibling vertices, non-incident segments, and self-crossings
+/// snap), but the geometry that moves with the cursor must never be a target:
+/// the dragged vertex itself, the midpoints of its incident segments, and any
+/// nearest/extension/intersection solve on those incident segments.
+///
+/// v1 scope is a single-primitive plain `.polyline`, so local indices equal
+/// global anchor indices; both are carried so multi-primitive support can
+/// reuse this type without changing call sites.
+public struct SnapSelfExclusion: Hashable, Sendable {
+    public let entityHandle: UUID
+    public let primitiveIndex: Int
+    /// Local vertex indices within the target polyline (the dragged points).
+    public let excludedLocalVertices: Set<Int>
+    /// Local segment indices within the target polyline (incident segments).
+    public let excludedLocalSegments: Set<Int>
+    /// Entity-global `.vertex` anchor indices to skip (Tier 2).
+    public let excludedGlobalVertices: Set<Int>
+    /// Entity-global `.midpoint` segment indices to skip (Tier 2).
+    public let excludedGlobalMidpoints: Set<Int>
+
+    public init(
+        entityHandle: UUID,
+        primitiveIndex: Int,
+        excludedLocalVertices: Set<Int>,
+        excludedLocalSegments: Set<Int>,
+        excludedGlobalVertices: Set<Int>? = nil,
+        excludedGlobalMidpoints: Set<Int>? = nil
+    ) {
+        self.entityHandle = entityHandle
+        self.primitiveIndex = primitiveIndex
+        self.excludedLocalVertices = excludedLocalVertices
+        self.excludedLocalSegments = excludedLocalSegments
+        // Single-primitive entities: global anchor indices equal local ones.
+        self.excludedGlobalVertices = excludedGlobalVertices ?? excludedLocalVertices
+        self.excludedGlobalMidpoints = excludedGlobalMidpoints ?? excludedLocalSegments
+    }
+}
+
 // =========================================================================
 // MARK: - SnapEngine
 // =========================================================================
@@ -90,6 +131,30 @@ public final class SnapEngine {
         self.threshold = threshold
     }
 
+    /// Whether a previously locked snap must be dropped because the grip drag
+    /// exclusion covers it. Discrete vertex/midpoint locks on excluded indices
+    /// are stale (that geometry moves with the cursor). Intersection locks are
+    /// dropped conservatively during grip drags: the discrete pass re-finds any
+    /// still-valid crossing immediately, so the only cost is one frame without
+    /// hysteresis. All other anchors (sibling vertices, centers, quadrants) persist.
+    public static func isExcludedSnap(_ snap: SnapResult, by exclusion: SnapSelfExclusion) -> Bool {
+        switch snap.anchor {
+        case .vertex(_, let index):
+            return snap.entityHandle == exclusion.entityHandle
+                && exclusion.excludedGlobalVertices.contains(index)
+        case .midpoint(_, let segmentIndex):
+            return snap.entityHandle == exclusion.entityHandle
+                && exclusion.excludedGlobalMidpoints.contains(segmentIndex)
+        case .intersection:
+            // The result only records one owner entity, but the crossing may
+            // involve an excluded incident segment of the dragged polyline.
+            // The discrete pass re-seeds valid crossings every frame.
+            return true
+        default:
+            return false
+        }
+    }
+
     /// Compute the nearest grid intersection to a world-space cursor position.
     /// Returns a `SnapResult` using `gridSnapSentinel` as the entity handle
     /// and `.nearest` as the anchor type.
@@ -133,7 +198,8 @@ public final class SnapEngine {
         candidates: [CADEntity],
         resolveGeometry: ((CADEntity) -> [CADPrimitive]?)?,
         primitiveVisibility: ((CADEntity) -> [Bool]?)? = nil,
-        threshold: Double
+        threshold: Double,
+        selfExclusion: SnapSelfExclusion? = nil
     ) -> SnapResult? {
         var best: SnapResult? = nil
         var bestDist = threshold
@@ -150,13 +216,12 @@ public final class SnapEngine {
                 if let visibility, primIndex < visibility.count, !visibility[primIndex] { continue }
                 switch prim {
                 case .polyline(let path, _):
-                    let points = path.tessellatedPoints()
-                    for i in 0..<(points.count - 1) {
-                        let start = points[i]
-                        let end = points[i + 1]
+                    // One sub-edge check, shared by the whole-polyline loop and
+                    // the exclusion-aware per-segment loop below.
+                    func testExtensionEdge(start: Vector3, end: Vector3) {
                         let dir = Vector3(x: end.x - start.x, y: end.y - start.y, z: 0)
                         let lenSq = dir.magnitudeSquared
-                        guard lenSq > 1e-12 else { continue }
+                        guard lenSq > 1e-12 else { return }
                         let dirNorm = Vector3(x: dir.x / sqrt(lenSq), y: dir.y / sqrt(lenSq), z: 0)
                         // Extension past end
                         let rxEnd = localCursor.x - end.x
@@ -189,6 +254,36 @@ public final class SnapEngine {
                                     anchor: .nearest(localPosition: proj),
                                     worldPos: entity.transform.transformPoint(proj))
                             }
+                        }
+                    }
+                    if let ex = selfExclusion,
+                       ex.entityHandle == entity.handle,
+                       primIndex == ex.primitiveIndex {
+                        // Exclusion-aware loop: walk original segments (same
+                        // subdivision as tessellatedPoints with the default
+                        // 12.0 segments-per-radian) and skip incident ones.
+                        // Incident-segment extensions are moving targets that
+                        // would ratchet; non-incident ones stay stable.
+                        for seg in 0..<path.segmentCount {
+                            guard !ex.excludedLocalSegments.contains(seg) else { continue }
+                            if let arc = path.arcParameters(forSegment: seg) {
+                                let divisions = max(4, Int(ceil(abs(arc.sweep) * 12.0)))
+                                var prev = path.point(onSegment: seg, t: 0)
+                                for step in 1...divisions {
+                                    let curr = path.point(onSegment: seg, t: Double(step) / Double(divisions))
+                                    testExtensionEdge(start: prev, end: curr)
+                                    prev = curr
+                                }
+                            } else {
+                                testExtensionEdge(
+                                    start: path.vertices[seg].position,
+                                    end: path.vertices[path.endVertexIndex(forSegment: seg)].position)
+                            }
+                        }
+                    } else {
+                        let points = path.tessellatedPoints()
+                        for i in 0..<(points.count - 1) {
+                            testExtensionEdge(start: points[i], end: points[i + 1])
                         }
                     }
 
@@ -351,8 +446,14 @@ public final class SnapEngine {
                 let v0 = path.vertices[i]
                 guard abs(v0.bulge) <= KernelTolerance.bulgeZero else { continue }
                 let v1 = path.vertices[(i + 1) % path.vertices.count]
-                curves.append(.line(LineSeg2d(
-                    start: worldPt(v0.position), end: worldPt(v1.position))))
+                // Indexed polySegment (zero bulge) rather than a bare line so
+                // grip-drag self-exclusion can map the curve back to its edge.
+                // The kernel treats bulge-0 segments exactly like lines.
+                curves.append(.polySegment(PolySegment2d(
+                    index: i,
+                    start: worldPt(v0.position),
+                    end: worldPt(v1.position),
+                    bulge: 0)))
             }
             return curves
         default:
@@ -376,7 +477,8 @@ public final class SnapEngine {
         spatialGrid: ((CADEntity) -> CADBlockSpatialGrid?)?,
         threshold: Double,
         best: inout SnapResult?,
-        bestDist: inout Double
+        bestDist: inout Double,
+        selfExclusion: SnapSelfExclusion? = nil
     ) {
         var near: [NearWorldCurve] = []
         for entity in candidates {
@@ -394,6 +496,18 @@ public final class SnapEngine {
                     if let visibility, primIndex < visibility.count, !visibility[primIndex] { continue }
                     for curve in Self.intersectionWorldCurves(
                         for: geometry[primIndex], transform: instanceTransform) {
+                        // Grip-drag self-exclusion: incident segments move with
+                        // the cursor, so crossings on them are stale. Both the
+                        // exact path (.polySegment carries its edge index) and
+                        // the straight-edge fallback are indexed, so one check
+                        // covers both.
+                        if let ex = selfExclusion,
+                           ex.entityHandle == entity.handle,
+                           primIndex == ex.primitiveIndex,
+                           case .polySegment(let seg) = curve,
+                           ex.excludedLocalSegments.contains(seg.index) {
+                            continue
+                        }
                         // Cheap reject before projection: spline projection
                         // samples + Newton-polishes per curve, so skip curves
                         // whose bounds are already beyond the threshold.
@@ -507,7 +621,12 @@ public final class SnapEngine {
         /// fallback stages (extension/grid/nearest-on-curve). Lets per-frame
         /// callers run the discrete pass once and reuse it instead of paying
         /// for anchor + intersection solving on every fallback pass.
-        skipDiscreteTargets: Bool = false
+        skipDiscreteTargets: Bool = false,
+        /// Surgical self-snap exclusion for grip vertex/midpoint drags. The
+        /// excluded entity stays a candidate, but its dragged vertex, incident
+        /// segment midpoints, and any nearest/extension/intersection solve on
+        /// incident segments are skipped. Nil preserves legacy behavior.
+        selfExclusion: SnapSelfExclusion? = nil
     ) -> SnapResult? {
         let thresh = threshold ?? self.threshold
         let cursor = Vector3(x: worldX, y: worldY, z: 0)
@@ -542,6 +661,13 @@ public final class SnapEngine {
             // point on an item. Rebuild geometry anchors (block space)
             // and test them under every instance transform instead, or
             // picks meant for the object land on the path curve.
+            if let ex = selfExclusion, ex.entityHandle == entity.handle,
+               entity.arrayData != nil {
+                // Defensive: surgical exclusions never target array entities
+                // (the resolver falls back to whole-entity exclusion there),
+                // so skip the entity rather than guess at per-item indices.
+                continue
+            }
             if entity.arrayData != nil,
                let arrayGeometry = resolveGeometry?(entity) ?? entity.localGeometry,
                !arrayGeometry.isEmpty,
@@ -582,6 +708,15 @@ public final class SnapEngine {
                 }
                 continue
             }
+            // Gridded blocks rebuild anchors from a primitive subset whose
+            // indices restart at zero, so global exclusion indices cannot map
+            // onto them. Surgical exclusions never target block instances
+            // (the resolver falls back to whole-entity exclusion), so skipping
+            // the entity here only triggers for defensive misuse.
+            if let ex = selfExclusion, ex.entityHandle == entity.handle,
+               spatialGrid?(entity) != nil {
+                continue
+            }
             let anchors: [AnchorPoint]
             if let grid = spatialGrid?(entity),
                let geometry = resolveGeometry?(entity) ?? entity.localGeometry, !geometry.isEmpty {
@@ -598,7 +733,24 @@ public final class SnapEngine {
             } else {
                 anchors = entity.anchorPoints
             }
+            let excludedVertices: Set<Int>?
+            let excludedMidpoints: Set<Int>?
+            if let ex = selfExclusion, ex.entityHandle == entity.handle {
+                excludedVertices = ex.excludedGlobalVertices
+                excludedMidpoints = ex.excludedGlobalMidpoints
+            } else {
+                excludedVertices = nil
+                excludedMidpoints = nil
+            }
             for ap in anchors {
+                switch ap {
+                case .vertex(_, let index):
+                    if let excluded = excludedVertices, excluded.contains(index) { continue }
+                case .midpoint(_, let segmentIndex):
+                    if let excluded = excludedMidpoints, excluded.contains(segmentIndex) { continue }
+                default:
+                    break
+                }
                 let worldPos = ap.worldPosition(transform: entity.transform)
                 let dx = worldPos.x - cursor.x
                 let dy = worldPos.y - cursor.y
@@ -627,7 +779,8 @@ public final class SnapEngine {
                 resolveGeometry: resolveGeometry,
                 primitiveVisibility: primitiveVisibility,
                 spatialGrid: spatialGrid,
-                threshold: thresh, best: &best, bestDist: &bestDist)
+                threshold: thresh, best: &best, bestDist: &bestDist,
+                selfExclusion: selfExclusion)
         }
 
         } // end if !skipDiscreteTargets
@@ -643,7 +796,8 @@ public final class SnapEngine {
                 cursor: cursor, candidates: candidates,
                 resolveGeometry: resolveGeometry,
                 primitiveVisibility: primitiveVisibility,
-                threshold: min(thresh, extThreshWorld))
+                threshold: min(thresh, extThreshWorld),
+                selfExclusion: selfExclusion)
             {
                 return extSnap
             }
@@ -728,7 +882,16 @@ public final class SnapEngine {
                     // bulged edges solve analytically. z = edge start, as before.
                     var bestD = Double.greatestFiniteMagnitude
                     var bestP: Vector3? = nil
+                    let excludedSegments: Set<Int>? = {
+                        guard let ex = selfExclusion,
+                              ex.entityHandle == entity.handle,
+                              primIndex == ex.primitiveIndex else { return nil }
+                        return ex.excludedLocalSegments
+                    }()
                     for seg in path.toKernelSegments() {
+                        // Grip-drag self-exclusion: incident segments move with
+                        // the cursor, so their on-curve points are stale.
+                        if let excluded = excludedSegments, excluded.contains(seg.index) { continue }
                         let proj = Projector2D.closestPointOnCurve(
                             .polySegment(seg), to: localCursor.point2d)
                         if proj.distance < bestD {

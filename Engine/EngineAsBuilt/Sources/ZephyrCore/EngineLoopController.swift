@@ -58,6 +58,27 @@ internal enum SnapArbitration {
 
     /// that entity snaps beat coincident drawing points.
 
+    /// Polar/ortho reference for an in-progress grip drag. Vertex and
+    /// midpoint grips stretch geometry away from the grip's original
+    /// position, so that origin is the displacement reference (AutoCAD
+    /// measures grip-stretch polar angles from the base point). Every other
+    /// grip kind keeps legacy behavior (nil): rotation and corner grips do
+    /// their own center-based math, and whole-entity moves must not acquire
+    /// a polar reference mid-drag.
+    static func gripStretchReferencePoint(
+        gripActive: Bool,
+        gripType: CADSelectionManager.GripType,
+        gripStart: Vector3?
+    ) -> Vector3? {
+        guard gripActive, let start = gripStart else { return nil }
+        switch gripType {
+        case .vertex, .midpoint:
+            return start
+        default:
+            return nil
+        }
+    }
+
     static func competeDrawingPoints(
 
         _ drawingPts: [Vector3],
@@ -1744,6 +1765,8 @@ public final class EngineLoopController {
 
             interaction.gripAppliedWorldPosition = gripHit.worldPos
 
+            interaction.gripStartWorldPosition = gripHit.worldPos
+
 
 
             if case .vertex(let entityHandle, let index) = gripHit.grip,
@@ -2271,6 +2294,8 @@ public final class EngineLoopController {
             interaction.gripHandle = nil
 
             interaction.gripUndoSnapshot = nil
+
+            interaction.gripStartWorldPosition = nil
 
             interaction.resetGripVertexEditMode()
 
@@ -3470,11 +3495,30 @@ public final class EngineLoopController {
 
         snapMgr.lastPolarResult = nil
 
+        // Grip-drag self-snap exclusion: a vertex/midpoint grip on a plain
+        // polyline keeps its entity snappable (sibling vertices, non-incident
+        // segments, self-crossings) while the dragged point and its incident
+        // segments — which move with the cursor — are skipped inside
+        // SnapEngine. Any other grip drag keeps the legacy whole-entity
+        // exclusion via `surgicalExclusion == nil`.
+        let surgicalExclusion: SnapSelfExclusion? = {
+            guard interaction.gripActive, let gripHandle = interaction.gripHandle else { return nil }
+            if case .surgical(let ex) = CADGripSystem.snapExclusion(
+                for: interaction.gripType, gripHandle: gripHandle, document: engine.document) {
+                return ex
+            }
+            return nil
+        }()
+
 
 
         if let locked = snapMgr.lockedSnap {
 
-            if !snapMgr.shouldStickyLock(locked) {
+            if let surgical = surgicalExclusion, SnapEngine.isExcludedSnap(locked, by: surgical) {
+
+                snapMgr.lockedSnap = nil
+
+            } else if !snapMgr.shouldStickyLock(locked) {
 
                 snapMgr.lockedSnap = nil
 
@@ -3526,7 +3570,7 @@ public final class EngineLoopController {
 
 
 
-        let visibleEntities: [CADEntity]
+        var visibleEntities: [CADEntity]
 
         if let gridHandles = engine.document.entityHandlesInWorldRect(
 
@@ -3542,7 +3586,11 @@ public final class EngineLoopController {
 
             visibleEntities = gridHandles.compactMap { handle in
 
-                if interaction.gripActive, let gripHandle = interaction.gripHandle, handle == gripHandle { return nil }
+                if interaction.gripActive, let gripHandle = interaction.gripHandle, handle == gripHandle {
+                    // Surgical self-snap keeps the edited polyline as a
+                    // candidate; whole-entity exclusions still drop it here.
+                    guard surgicalExclusion != nil else { return nil }
+                }
 
                 if interaction.dragActive, engine.cadSelection.selectedHandles.contains(handle) { return nil }
 
@@ -3556,11 +3604,26 @@ public final class EngineLoopController {
 
             }
 
+            // The entity spatial index is frozen during live grip drags, so a
+            // vertex pulled outside its drag-start cell is invisible to the
+            // rect query above. Union the edited entity explicitly — its live
+            // bounding box (updated per mousemove) already contains the cursor.
+            if let surgical = surgicalExclusion,
+               !visibleEntities.contains(where: { $0.handle == surgical.entityHandle }),
+               let gripEntity = engine.document.entity(for: surgical.entityHandle),
+               let layer = engine.document.layer(for: gripEntity.layerID),
+               LayerAccess.isSnappable(layer),
+               !engine.document.isIsolatedHidden(gripEntity.handle) {
+                visibleEntities.append(gripEntity)
+            }
+
         } else {
 
             visibleEntities = engine.document.withEntities { $0.filter { entity in
 
-                if interaction.gripActive, let gripHandle = interaction.gripHandle, entity.handle == gripHandle { return false }
+                if interaction.gripActive, let gripHandle = interaction.gripHandle, entity.handle == gripHandle {
+                    return surgicalExclusion != nil
+                }
 
                 if interaction.dragActive, engine.cadSelection.selectedHandles.contains(entity.handle) { return false }
 
@@ -3630,7 +3693,9 @@ public final class EngineLoopController {
 
             gridSnapEnabled: false,
 
-            nearestOnCurveOverride: false)
+            nearestOnCurveOverride: false,
+
+            selfExclusion: surgicalExclusion)
 
 
 
@@ -3738,7 +3803,9 @@ public final class EngineLoopController {
 
                 // wide-extension fallback must not pay for them again.
 
-                skipDiscreteTargets: true)
+                skipDiscreteTargets: true,
+
+                selfExclusion: surgicalExclusion)
 
 
 
@@ -4020,7 +4087,9 @@ public final class EngineLoopController {
 
                     // Discrete pass already ran; on-curve fallback skips it.
 
-                    skipDiscreteTargets: true)
+                    skipDiscreteTargets: true,
+
+                    selfExclusion: surgicalExclusion)
 
 
 
@@ -4100,7 +4169,9 @@ public final class EngineLoopController {
 
                 gridSnapEnabled: false,
 
-                nearestOnCurveOverride: false)
+                nearestOnCurveOverride: false,
+
+                selfExclusion: surgicalExclusion)
 
 
 
@@ -4340,7 +4411,9 @@ public final class EngineLoopController {
 
                     // Discrete pass already ran; on-curve fallback skips it.
 
-                    skipDiscreteTargets: true)
+                    skipDiscreteTargets: true,
+
+                    selfExclusion: surgicalExclusion)
 
 
 
@@ -4582,7 +4655,13 @@ public final class EngineLoopController {
 
         }
 
-        return nil
+        // Grip stretch has no command reference point: polar and ortho fall
+        // back to the grip's original position (set on mouse-down). Without
+        // this, polar tracking silently never fires during vertex drags.
+        return SnapArbitration.gripStretchReferencePoint(
+            gripActive: engine.interaction.gripActive,
+            gripType: engine.interaction.gripType,
+            gripStart: engine.interaction.gripStartWorldPosition)
 
     }
 

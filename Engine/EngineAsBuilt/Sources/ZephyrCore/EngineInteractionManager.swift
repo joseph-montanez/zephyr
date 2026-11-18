@@ -315,6 +315,13 @@ public final class EngineInteractionManager {
     public internal(set) var gripLengthenAxis: Vector3? = nil
     public internal(set) var gripAppliedWorldPosition: Vector3? = nil
 
+    /// World position of the grip when the drag began. Unlike
+    /// `gripAppliedWorldPosition` (which tracks the live snapped target),
+    /// this never moves during the drag, so polar and ortho tracking can
+    /// measure the drag displacement from the origin. Set on mouse-down,
+    /// cleared on mouse-up/cancel.
+    public internal(set) var gripStartWorldPosition: Vector3? = nil
+
     @discardableResult
     public func cycleGripVertexEditMode() -> Bool {
         guard gripActive,

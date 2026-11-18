@@ -766,6 +766,138 @@ public enum CADGripSystem {
         return false
     }
 
+    // MARK: - Grip Self-Snap Exclusion
+
+    /// How a grip drag restricts snapping onto its own entity.
+    public enum GripSnapExclusion: Sendable {
+        /// Exclude the whole entity (legacy behavior): block/array/dimension/
+        /// leader/revcloud grips, whole-entity grips, and anything outside the
+        /// v1 single-primitive plain-polyline scope.
+        case wholeEntity(UUID)
+        /// Keep the entity snappable but skip its dragged vertex, incident
+        /// segment midpoints, and incident-segment solves.
+        case surgical(SnapSelfExclusion)
+    }
+
+    /// Computes the snap exclusion for an in-progress grip drag.
+    ///
+    /// v1 scope is deliberately narrow: a vertex/midpoint grip on a loose
+    /// (non-block, non-array), non-dimension, non-leader, non-revcloud entity
+    /// whose resolved geometry is exactly one plain `.polyline` (no hatch
+    /// edges, no Fit/Spline curve state, all vertices normal with no PEDIT
+    /// tangents). Everything else returns `.wholeEntity`, preserving today's
+    /// behavior. The dragged vertex and its incident segments move with the
+    /// cursor, so snapping onto them would stick or ratchet; sibling vertices
+    /// and non-incident segments are static and stay snappable.
+    public static func snapExclusion(
+        for gripType: CADSelectionManager.GripType,
+        gripHandle: UUID,
+        document: CADDocument
+    ) -> GripSnapExclusion {
+        switch gripType {
+        case .vertex(let gripEntity, let index):
+            guard gripEntity == gripHandle else { return .wholeEntity(gripHandle) }
+            return vertexSnapExclusion(
+                gripHandle: gripHandle, vertexIndex: index, document: document)
+        case .midpoint(let gripEntity, let aIndex, let bIndex):
+            guard gripEntity == gripHandle else { return .wholeEntity(gripHandle) }
+            return midpointSnapExclusion(
+                gripHandle: gripHandle, aIndex: aIndex, bIndex: bIndex, document: document)
+        default:
+            return .wholeEntity(gripHandle)
+        }
+    }
+
+    private static func plainPolylineTarget(
+        gripHandle: UUID, document: CADDocument
+    ) -> (path: CADPolyline, primitiveIndex: Int)? {
+        guard let entity = document.entity(for: gripHandle) else { return nil }
+        // Encoded/specialized grips keep legacy whole-entity exclusion.
+        if entity.dimensionMetadata != nil { return nil }
+        if entity.leaderData != nil { return nil }
+        if entity.arrayData != nil { return nil }
+        if entity.blockID != nil { return nil }
+        guard let geometry = document.resolvedGeometry(for: entity),
+              geometry.count == 1,
+              case .polyline(let path, _) = geometry[0]
+        else { return nil }
+        if RevCloudGeometry.isRevisionCloud(entity: entity, geometry: geometry) { return nil }
+        guard path.hatchEdges.isEmpty,
+              path.curveType == .none,
+              path.vertices.count >= 2,
+              !path.vertices.contains(where: { $0.kind != .normal || $0.tangent != nil })
+        else { return nil }
+        return (path, 0)
+    }
+
+    private static func vertexSnapExclusion(
+        gripHandle: UUID, vertexIndex: Int, document: CADDocument
+    ) -> GripSnapExclusion {
+        // Encoded grip namespaces (dimension 1000+, leader 2000+, revcloud
+        // negative) never reach here as plain vertices: the entity-kind
+        // guards in plainPolylineTarget reject those entities first, and the
+        // range check below rejects anything outside the vertex array.
+        guard let target = plainPolylineTarget(gripHandle: gripHandle, document: document) else {
+            return .wholeEntity(gripHandle)
+        }
+        let path = target.path
+        guard vertexIndex >= 0, vertexIndex < path.vertices.count else {
+            return .wholeEntity(gripHandle)
+        }
+        let count = path.vertices.count
+        let segCount = path.segmentCount
+        var segments = Set<Int>()
+        if path.isClosed {
+            segments.insert((vertexIndex - 1 + count) % count)
+            segments.insert(vertexIndex % segCount)
+        } else {
+            if vertexIndex > 0 { segments.insert(vertexIndex - 1) }
+            if vertexIndex < count - 1 { segments.insert(vertexIndex) }
+        }
+        segments = segments.filter { $0 >= 0 && $0 < segCount }
+        return .surgical(SnapSelfExclusion(
+            entityHandle: gripHandle,
+            primitiveIndex: target.primitiveIndex,
+            excludedLocalVertices: [vertexIndex],
+            excludedLocalSegments: segments))
+    }
+
+    private static func midpointSnapExclusion(
+        gripHandle: UUID, aIndex: Int, bIndex: Int, document: CADDocument
+    ) -> GripSnapExclusion {
+        guard let target = plainPolylineTarget(gripHandle: gripHandle, document: document) else {
+            return .wholeEntity(gripHandle)
+        }
+        let path = target.path
+        // Find the dragged segment: a and b must be its two endpoints
+        // (closed polylines wrap the last segment onto vertex 0).
+        var segIndex: Int? = nil
+        for seg in 0..<path.segmentCount {
+            if seg == aIndex && path.endVertexIndex(forSegment: seg) == bIndex {
+                segIndex = seg
+                break
+            }
+        }
+        guard let seg = segIndex else { return .wholeEntity(gripHandle) }
+        let segCount = path.segmentCount
+        var segments = Set<Int>()
+        if path.isClosed {
+            segments.insert((seg - 1 + segCount) % segCount)
+            segments.insert(seg)
+            segments.insert((seg + 1) % segCount)
+        } else {
+            segments.insert(seg - 1)
+            segments.insert(seg)
+            segments.insert(seg + 1)
+        }
+        segments = segments.filter { $0 >= 0 && $0 < segCount }
+        return .surgical(SnapSelfExclusion(
+            entityHandle: gripHandle,
+            primitiveIndex: target.primitiveIndex,
+            excludedLocalVertices: [aIndex, bIndex],
+            excludedLocalSegments: segments))
+    }
+
     /// Returns true if the given primitive type supports midpoint grips.
     /// Midpoint grips are created for line-based primitives but not for
     /// points, circles, arcs, splines, text, or ellipses.

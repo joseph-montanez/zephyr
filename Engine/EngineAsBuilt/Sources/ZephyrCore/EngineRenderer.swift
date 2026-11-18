@@ -7979,6 +7979,12 @@ public final class EngineRenderer {
 
             if case .arc = prim { hasExtensionSource = true; break }
 
+            // Polylines emit extension snaps along every straight edge (and
+            // the tangent of every bulged edge), so they need the same dashed
+            // guide as lines and arcs — including self-snaps while dragging
+            // a vertex grip along a non-incident edge's extension.
+            if case .polyline = prim { hasExtensionSource = true; break }
+
         }
 
         guard hasExtensionSource else { return }
