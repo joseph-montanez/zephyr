@@ -395,9 +395,9 @@ Appendices: A. Commands · B. System variables · C. Explicitly not in LT · D. 
 
 ### 5.3 Object snaps
 
-- [~] **Endpoint, midpoint, center, geometric center, node, quadrant**.
-- [~] **Intersection, apparent intersection, extension**.
-- [~] **Insertion, perpendicular, tangent, nearest, parallel**.
+- [~] **Endpoint, midpoint, center, quadrant** — geometric center and node snaps not implemented.
+- [~] **Intersection, extension** — apparent intersection not implemented.
+- [~] **Insertion, nearest** — perpendicular, tangent, and parallel snaps not implemented.
 - [x] **None / override** — per-pick override, running osnap settings.
 - [x] **Object snap settings** — `OSNAP`, `DSETTINGS`, aperture, marker size/color, magnet.
 - [ ] **3D object snap** — **not available in LT**.
