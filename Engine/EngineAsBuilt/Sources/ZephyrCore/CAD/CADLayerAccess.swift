@@ -208,6 +208,39 @@ public enum LayerAccess {
         }
     }
 
+    /// Explicit per-entity plot style resolved at import into
+    /// `dxf.plotStyleName` xdata (which EAB persists). Nil means ByLayer —
+    /// the entity inherits the layer pen.
+    public static func explicitPlotStyleName(of entity: CADEntity) -> String? {
+        guard case .string(let handle)? = entity.xdata["dxf.plotStyleHandle"],
+              !handle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              case .string(let name)? = entity.xdata["dxf.plotStyleName"],
+              !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return name
+    }
+
+    /// Entity-aware variant: an explicit entity plot style (DXF group 390,
+    /// named-STB mode) wins over the layer style — including an explicit
+    /// "Normal", which keeps object color on a remapped layer. Entities
+    /// without an explicit style inherit the layer pen; CTB mode keys by
+    /// ACI either way. Unknown style names fall back to the layer pen.
+    public static func plotPen(
+        entityStyleName: String?,
+        entityHasExplicitStyle: Bool,
+        layer: Layer?,
+        objectACI: Int,
+        pstyleMode: Int,
+        table: PlotStyleTable?
+    ) -> PlotStylePen? {
+        guard let table else { return nil }
+        if pstyleMode == 0, entityHasExplicitStyle,
+           let raw = entityStyleName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty, let pen = table.pen(named: raw) {
+            return pen
+        }
+        return plotPen(layer: layer, objectACI: objectACI, pstyleMode: pstyleMode, table: table)
+    }
+
     // MARK: Regeneration plan
 
     /// Which entities regeneration processes vs actually draws. `regenerated`

@@ -1036,7 +1036,10 @@ public enum DXFImporter {
                               plotStyleHandle: table.plotStyleHandle == 0
                                   ? nil
                                   : String(table.plotStyleHandle, radix: 16).uppercased(),
-                              plotStyleName: table.plotStyleName.isEmpty ? "Normal" : table.plotStyleName)
+                              plotStyleName: Self.plotStyleName(
+                                  xdataName: table.plotStyleName,
+                                  handle: table.plotStyleHandle,
+                                  dictionaryNameByHandle: reader.objectDictionaryNameByHandle))
             layers.append(layer)
         }
         if layerNameToID["0"] == nil {
@@ -2010,6 +2013,9 @@ public enum DXFImporter {
             }
 
             DXFProfile.mark("  convertEntities: draw-order + entity loop")
+            Self.applyPlotStyleNames(
+                to: &converted,
+                dictionaryNameByHandle: reader.objectDictionaryNameByHandle)
             return converted
         }
 
@@ -2330,6 +2336,9 @@ public enum DXFImporter {
                     }
                 }
 
+                Self.applyPlotStyleNames(
+                    to: &projectedEntities,
+                    dictionaryNameByHandle: reader.objectDictionaryNameByHandle)
                 importedViews.append(DXFDrawingView(
                     name: layout.name,
                     kind: .sheet,
@@ -3036,6 +3045,45 @@ public enum DXFImporter {
             textBackgroundScale: textBackgroundScale,
             textBackgroundColor: textBackgroundColor,
             textBackgroundUsesViewportColor: textBackgroundUsesViewportColor)
+    }
+
+    /// Resolve a DXF group-390 plot-style handle through the drawing's
+    /// `ACAD_PLOTSTYLENAME` dictionary (`"Style 1"` etc.). Explicit XDATA
+    /// `PLOTSTYLE:` names win; zero or unknown handles fall back to "Normal".
+    /// Layers and entities without a style resolve to "Normal" (ByLayer for
+    /// entities, object color for the monochrome-style "Normal" pen).
+    static func plotStyleName(
+        xdataName: String,
+        handle: UInt32,
+        dictionaryNameByHandle: [UInt32: String]
+    ) -> String {
+        let trimmed = xdataName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        if handle != 0,
+           let name = dictionaryNameByHandle[handle],
+           !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return name
+        }
+        return "Normal"
+    }
+
+    /// Stamp resolved plot-style names onto converted entities carrying an
+    /// explicit `dxf.plotStyleHandle`. The name rides both the property and
+    /// `dxf.plotStyleName` xdata so EAB round-trips (xdata persists) keep
+    /// working after the drawing's dictionary is gone.
+    static func applyPlotStyleNames(
+        to entities: inout [CADEntity],
+        dictionaryNameByHandle: [UInt32: String]
+    ) {
+        for index in entities.indices {
+            guard case .string(let hex)? = entities[index].xdata["dxf.plotStyleHandle"],
+                  let handle = UInt32(hex, radix: 16), handle != 0,
+                  let name = dictionaryNameByHandle[handle],
+                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            // The name rides xdata (which EAB persists), so render/plot
+            // paths keep working after the drawing's dictionary is gone.
+            entities[index].xdata["dxf.plotStyleName"] = .string(name)
+        }
     }
 
     private static func polylineDisplayWidth(from entity: DXFEntity) -> Double? {

@@ -706,4 +706,30 @@ final class PDFExportTextTests: XCTestCase {
             texts.contains(where: { $0 == "Shaft" }),
             "no wrapped fragment may extract on its own: \(texts)")
     }
+
+    func testMissingFontExplodesToGeometryNotBrokenReference() throws {
+        // A style whose file is absent (e.g. sasb____.pfb) resolves to a
+        // substituted face that can never embed: live Identity-H text
+        // against it is invalid ("non-embedded font using identity
+        // encoding") and renders as dots. Such text must explode to
+        // geometry (with hidden searchable text) instead.
+        let (doc, layerID) = makeDoc()
+        doc.textStyles = ["Missing": CADTextStyle(name: "Missing", fontFile: "NoSuchFontXYZ")]
+        var ent = CADEntity(
+            layerID: layerID,
+            localGeometry: [],
+            transform: .identity)
+        ent.xdata["dxf.text"] = .string("HELLO")
+        ent.xdata["dxf.textHeight"] = .double(2.5)
+        ent.xdata["dxf.textStyle"] = .string("Missing")
+        doc.addEntity(ent)
+        let items = PDFExporter.collectItems(document: doc)
+        XCTAssertFalse(items.isEmpty)
+        XCTAssertTrue(items.allSatisfy {
+            if case .embeddedText = $0 { return false } else { return true }
+        }, "missing-font text must never emit live embedded text")
+        XCTAssertTrue(items.contains {
+            if case .textStrokes = $0 { return true } else { return false }
+        }, "missing-font text must render as geometry")
+    }
 }

@@ -1008,6 +1008,33 @@ public final class CADRendererBridge {
         return faded
     }
 
+    /// ShowPlotStyles preview gate: when the snapshot's layout shows plot
+    /// styles (DXF 70 bit 2) and names a loadable CTB/STB table, map one
+    /// resolved object color through it; otherwise return the input
+    /// unchanged. Pure computation over value types — safe for any thread.
+    nonisolated static func previewPlotStyle(
+        entity: CADEntity,
+        layer: Layer,
+        objectColor: ColorRGBA,
+        objectIsTrueColor: Bool,
+        snapshot: CADDocumentSnapshot
+    ) -> (ColorRGBA, Bool) {
+        guard let settings = snapshot.plotSettings,
+              settings.plotFlags & 2 != 0,
+              !settings.styleSheet.isEmpty,
+              let table = PlotPenApplication.PlotStyleTableCache.table(named: settings.styleSheet) else {
+            return (objectColor, objectIsTrueColor)
+        }
+        let aci = Int(DXFColorTable.rgbaToACI(objectColor))
+        let entityStyle = LayerAccess.explicitPlotStyleName(of: entity)
+        return PlotPenApplication.previewColor(
+            objectColor: objectColor, objectIsTrueColor: objectIsTrueColor,
+            entityStyleName: entityStyle,
+            entityHasExplicitStyle: entityStyle != nil,
+            layer: layer, objectACI: aci,
+            pstyleMode: snapshot.pstyleMode, table: table)
+    }
+
     /// Pure computation from a value-typed snapshot. Safe for any thread —
     /// the snapshot is an independent copy of all document state.
     nonisolated static func computeSpecs(
@@ -1109,8 +1136,8 @@ public final class CADRendererBridge {
                 continue
             }
             
-            let entityIsTrueColor: Bool
-            let entityColor: ColorRGBA
+            var entityIsTrueColor: Bool
+            var entityColor: ColorRGBA
             if let cv = entity.xdata["dxf.color"], case .string(let hex) = cv, let c = ColorRGBA(hex: hex) {
                 entityColor = c
                 if entity.xdata["dxf.color24"] != nil || entity.xdata["dxf.isTrueColor"]?.intValue == 1 {
@@ -1127,6 +1154,15 @@ public final class CADRendererBridge {
                 // e.g. explicit white layers render raw on light backgrounds.
                 entityIsTrueColor = layer.colorSource.isExplicitRGB
             }
+            // ShowPlotStyles preview (DXF 70 bit 2): map the resolved object
+            // color through the layout's CTB/STB table like the plotter, so
+            // the Page Setup toggle is live on canvas. Applies to top-level
+            // content (nested ByLayer content follows via the mapped color);
+            // nested explicit colors keep object colors on canvas.
+            (entityColor, entityIsTrueColor) = Self.previewPlotStyle(
+                entity: entity, layer: layer,
+                objectColor: entityColor, objectIsTrueColor: entityIsTrueColor,
+                snapshot: snapshot)
             let entityOpacity: Double
             if let value = entity.xdata["dxf.opacity"], case .double(let opacity) = value {
                 entityOpacity = max(0.0, min(1.0, opacity))

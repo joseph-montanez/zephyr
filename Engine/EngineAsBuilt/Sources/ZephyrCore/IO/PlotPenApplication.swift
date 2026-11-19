@@ -43,6 +43,84 @@ public enum PlotPenApplication {
         return (y, y, y)
     }
 
+    /// Process-wide parsed-table cache for canvas plot-style preview (and
+    /// any future CWD-relative table lookup). Keyed by style-sheet filename;
+    /// negative results are cached too so a missing table costs one probe.
+    /// Tables are immutable value types; the lock only guards the dictionaries.
+    public enum PlotStyleTableCache {
+        private static let lock = NSLock()
+        private static nonisolated(unsafe) var tables: [String: PlotStyleTable] = [:]
+        private static nonisolated(unsafe) var missing: Set<String> = []
+
+        public static func table(
+            named styleSheet: String,
+            loader: ((String) -> PlotStyleTable?)? = nil
+        ) -> PlotStyleTable? {
+            let key = styleSheet.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty else { return nil }
+            if let hit = lock.withLock({ tables[key] }) { return hit }
+            if lock.withLock({ missing.contains(key) }) { return nil }
+            let table = (loader ?? PDFExporter.defaultPlotTableLoader)(key)
+            lock.withLock {
+                if let table { tables[key] = table } else { missing.insert(key) }
+            }
+            return table
+        }
+
+        public static func resetForTests() {
+            lock.withLock {
+                tables.removeAll()
+                missing.removeAll()
+            }
+        }
+    }
+
+    /// Canvas ShowPlotStyles preview for one resolved object color.
+    /// Returns the pen-mapped color when the table explicitly recolors the
+    /// object (ARGB override or grayscale); object-color pens keep the
+    /// input color and true-color flag, mirroring the plotter. Screening
+    /// and pen lineweights are intentionally not previewed on canvas.
+    public static func previewColor(
+        objectColor: ColorRGBA,
+        objectIsTrueColor: Bool,
+        entityStyleName: String?,
+        entityHasExplicitStyle: Bool,
+        layer: Layer,
+        objectACI: Int,
+        pstyleMode: Int,
+        table: PlotStyleTable?
+    ) -> (ColorRGBA, Bool) {
+        guard let table else { return (objectColor, objectIsTrueColor) }
+        let pen = LayerAccess.plotPen(
+            entityStyleName: entityHasExplicitStyle ? entityStyleName : nil,
+            entityHasExplicitStyle: entityHasExplicitStyle,
+            layer: layer,
+            objectACI: objectACI,
+            pstyleMode: pstyleMode,
+            table: table)
+        guard let pen else { return (objectColor, objectIsTrueColor) }
+        let recolors: Bool
+        switch pen.colorPolicy {
+        case 5:
+            recolors = true
+        case 0:
+            recolors = pen.colorARGB != nil
+        case 3:
+            recolors = true
+        default:
+            recolors = false
+        }
+        guard recolors else { return (objectColor, objectIsTrueColor) }
+        let resolved = PlotPenApplication.resolve(
+            objectACI: nil,
+            objectRGB: (objectColor.r, objectColor.g, objectColor.b),
+            pen: pen,
+            objectLineweightMM: 0)
+        // Explicit ink renders as authored (true color), so later
+        // auto-contrast passes cannot flip preview black to white.
+        return (ColorRGBA(r: resolved.r, g: resolved.g, b: resolved.b, a: objectColor.a), true)
+    }
+
     /// Resolve one object's plotted pen.
     /// - objectACI: ACI 1–255 when known (preferred CTB key).
     /// - objectRGB: fallback RGB (nearest ACI via caller's palette when needed).

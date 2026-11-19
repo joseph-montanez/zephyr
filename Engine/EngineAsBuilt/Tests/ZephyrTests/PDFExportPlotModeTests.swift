@@ -103,6 +103,77 @@ final class PDFExportPlotModeTests: XCTestCase {
             settings: CADPlotSettings(), worldBounds: (0, 0, 10, 10)))
     }
 
+    func testPlotFrameWindowPlacesEngineDownContentOnPage() throws {
+        // SHEET 4 (2 ZONE CONTROL) plots Window + centered over engine-down
+        // content: the Window area is stored DXF Y-up, so it must convert to
+        // the engine frame or ty overshoots by the window height and every
+        // sheet PDF comes out blank (content a full page above the MediaBox).
+        var ps = CADPlotSettings(
+            paperWidthMM: 279.4, paperHeightMM: 431.8,
+            marginLM: 5.02709, marginBM: 5.02709,
+            marginRM: 5.02709, marginTM: 5.02709,
+            plotPaperUnits: 0, plotRotation: 1,
+            plotOriginXMM: 3.048, plotOriginYMM: 0.0,
+            customScaleNumerator: 1.0, customScaleDenominator: 0.5558841531197223,
+            plotFlags: 692, plotType: 4, standardScaleType: 0)
+        ps.useStandardScale = false
+        ps.plotWindowMinX = -0.8734113571685966
+        ps.plotWindowMinY = 0.9485592150455882
+        ps.plotWindowMaxX = 8.356581769981549
+        ps.plotWindowMaxY = 6.70544316917722
+        let frame = try XCTUnwrap(PDFExporter.plotFrame(settings: ps, worldBounds: nil))
+        XCTAssertEqual(frame.pageW, 1224, accuracy: 1.0)
+        XCTAssertEqual(frame.pageH, 792, accuracy: 1.0)
+        // Engine-frame content corners (viewport-projected bbox, Y negated).
+        // Slightly outside the window on the left/bottom is correct (that
+        // content clips); a full page above is the bug.
+        let s = frame.scale
+        for (wx, wy) in [(-1.0054751260084878, -6.785057571373692),
+                         (8.488645538821437, -0.8689448128491186)] as [(Double, Double)] {
+            let dx = s * wx + frame.tx
+            let dy = -s * wy + frame.ty
+            XCTAssertGreaterThanOrEqual(dx, -20, "content x must sit near the page")
+            XCTAssertLessThanOrEqual(dx, frame.pageW + 1, "content x must sit near the page")
+            XCTAssertGreaterThanOrEqual(dy, -15, "content bottom may clip sub-window edges only")
+            XCTAssertLessThanOrEqual(dy, frame.pageH, "content must not float above the page")
+        }
+        // The window area itself maps inside the page.
+        let x0 = s * -0.8734113571685966 + frame.tx
+        let x1 = s * 8.356581769981549 + frame.tx
+        let yBot = -s * -0.9485592150455882 + frame.ty
+        let yTop = -s * -6.70544316917722 + frame.ty
+        XCTAssertGreaterThanOrEqual(x0, -20)
+        XCTAssertLessThanOrEqual(x1, frame.pageW + 1)
+        XCTAssertGreaterThan(yBot, 0)
+        XCTAssertLessThan(yTop, frame.pageH)
+    }
+
+    func testPlotFrameLimitsPlacesEngineDownContentOnPage() throws {
+        // Limits areas are paper corners (DXF Y-up) and need the same
+        // engine-frame conversion as Window areas.
+        var ps = a3Settings(plotType: 2)
+        ps.useStandardScale = true // 1:1
+        ps.plotFlags |= 4 // Center the plot
+        let frame = try XCTUnwrap(PDFExporter.plotFrame(settings: ps, worldBounds: nil))
+        let s = frame.scale
+        // Limits plots the whole paper, so the corners land in the margins:
+        // engine-frame top-left (0, -297) near the page top, bottom-right
+        // (420, 0) near the page bottom. The old composition pushed both a
+        // full sheet height above the page.
+        let dxTL = s * 0.0 + frame.tx
+        let dyTL = -s * -297.0 + frame.ty
+        XCTAssertGreaterThanOrEqual(dxTL, -30, "limits corner must sit near the page")
+        XCTAssertLessThanOrEqual(dxTL, 0)
+        XCTAssertGreaterThan(dyTL, 700)
+        XCTAssertLessThanOrEqual(dyTL, frame.pageH)
+        let dxBR = s * 420.0 + frame.tx
+        let dyBR = -s * 0.0 + frame.ty
+        XCTAssertGreaterThan(dxBR, 1100)
+        XCTAssertLessThanOrEqual(dxBR, frame.pageW)
+        XCTAssertGreaterThanOrEqual(dyBR, -30, "limits corner must sit near the page")
+        XCTAssertLessThan(dyBR, 50)
+    }
+
     // MARK: - End to end: exact MediaBox + clip operator
 
     func testGeneratePDFUsesExactPaperSize() throws {

@@ -102,9 +102,17 @@ public struct PlotStyleTable: Sendable, Equatable {
         return pens[index]
     }
 
-    /// STB lookup by style name (case-insensitive).
+    /// STB lookup by style name (case-insensitive). Display names use
+    /// spaces where the file format stores underscores (`"Style 1"` vs
+    /// `"Style_1"`), so a second pass tries that swap before giving up.
     public func pen(named name: String) -> PlotStylePen? {
-        pens.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        if let exact = pens.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            return exact
+        }
+        let swapped = name.map { $0 == " " ? "_" : ($0 == "_" ? " " : $0) }
+        guard swapped != Array(name) else { return nil }
+        let alt = String(swapped)
+        return pens.first { $0.name.caseInsensitiveCompare(alt) == .orderedSame }
     }
 
     // MARK: - Loading
