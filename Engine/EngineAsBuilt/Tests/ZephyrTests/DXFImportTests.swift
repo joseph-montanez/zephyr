@@ -4233,6 +4233,453 @@ final class DXFImportTests: XCTestCase {
         )
     }
 
+    // MARK: - Legacy panned-viewport recentering (SHEET 5 UPHILL)
+
+    /// Minimal UPHILL-like sheet: one centred Window/Fit viewport whose
+    /// stored view centre misses the model title frame by ~8.5% of the model
+    /// window (real ASD151 numbers, rounded). `model` selects the model
+    /// content: `.frame` draws the 223.34 x 134.34 title border the viewport
+    /// should centre on, `.scrap` a lone line that forms no frame.
+    private enum LegacyPanModel { case frame, scrap }
+    private func uphillDXFLines(_ out: inout [String], model: LegacyPanModel) {
+        // Valid hex handles (B0-B3): non-hex handles all parse to 0 and
+        // collapse downstream, starving frame detection. Lines are appended
+        // as explicit code/value rows (joined with "\n" by the caller) so no
+        // triple-quoted block seam can glue an entity boundary shut.
+        func line(_ handle: String, _ layer: String,
+                  _ ax: Double, _ ay: Double, _ bx: Double, _ by: Double) {
+            out += ["0", "LINE", "5", handle, "330", "1",
+                    "100", "AcDbEntity", "8", layer,
+                    "100", "AcDbLine",
+                    "10", "\(ax)", "20", "\(ay)", "30", "0.0",
+                    "11", "\(bx)", "21", "\(by)", "31", "0.0"]
+        }
+        switch model {
+        case .frame:
+            line("B0", "Border", -49.676, 31.594, 173.663, 31.594)
+            line("B1", "Border", 173.663, 31.594, 173.663, 165.937)
+            line("B2", "Border", 173.663, 165.937, -49.676, 165.937)
+            line("B3", "Border", -49.676, 165.937, -49.676, 31.594)
+        case .scrap:
+            line("B0", "0", 0.0, 100.0, 10.0, 90.0)
+        }
+    }
+    private func uphillLikeDXF(plotFlags: Int, model: LegacyPanModel) -> String {
+        var modelRows: [String] = []
+        uphillDXFLines(&modelRows, model: model)
+        let modelEntities = modelRows.joined(separator: "\n")
+        return """
+          0
+        SECTION
+          2
+        TABLES
+          0
+        TABLE
+          2
+        BLOCK_RECORD
+         70
+            2
+          0
+        BLOCK_RECORD
+          5
+        1
+          2
+        *MODEL_SPACE
+          0
+        BLOCK_RECORD
+          5
+        2
+          2
+        *Paper_Space
+          0
+        ENDTAB
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        BLOCKS
+          0
+        BLOCK
+          5
+        10
+          2
+        *MODEL_SPACE
+         70
+            0
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+          0
+        ENDBLK
+          0
+        BLOCK
+          5
+        20
+          2
+        *Paper_Space
+         70
+            0
+         10
+        0.0
+         20
+        0.0
+         30
+        0.0
+          0
+        ENDBLK
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        ENTITIES
+        \(modelEntities)
+          0
+        VIEWPORT
+          5
+        A5
+        330
+        2
+        100
+        AcDbEntity
+         67
+            1
+          8
+        0
+        100
+        AcDbViewport
+         10
+        845.657
+         20
+        288.702
+         30
+        0.0
+         40
+        499.827
+         41
+        300.678
+         12
+        42.372
+         22
+        98.771
+         17
+        0.0
+         27
+        0.0
+         37
+        0.0
+         45
+        138.353
+         50
+        0.0
+         51
+        0.0
+         68
+            2
+         69
+            2
+          0
+        ENDSEC
+          0
+        SECTION
+          2
+        OBJECTS
+          0
+        LAYOUT
+          5
+        50
+        330
+        0
+        100
+        AcDbLayout
+          1
+        Model
+         70
+            1
+         71
+            0
+         10
+        0.0
+         20
+        0.0
+         11
+        12.0
+         21
+        9.0
+        330
+        1
+          0
+        LAYOUT
+          5
+        51
+        330
+        0
+        100
+        AcDbPlotSettings
+         44
+        279.4
+         45
+        431.8
+         40
+        5.027
+         41
+        5.027
+         42
+        5.027
+         43
+        5.027
+         46
+        7.874
+         47
+        0.0
+         48
+        602.98
+         49
+        142.71
+         140
+        1088.32
+         141
+        434.67
+         142
+        1.0
+         143
+        29.23048850197423
+         70
+        \(plotFlags)
+         72
+            0
+         73
+            1
+         74
+            4
+         75
+            0
+        100
+        AcDbLayout
+          1
+        UPHILL
+         70
+            1
+         71
+            1
+         10
+        0.0
+         20
+        0.0
+         11
+        12.0
+         21
+        9.0
+        330
+        2
+          0
+        ENDSEC
+          0
+        EOF
+        """
+    }
+
+    private func importUphillLike(plotFlags: Int, model: LegacyPanModel) throws
+        -> (view: DXFDrawingView, viewport: DXFImporter.SheetViewport)
+    {
+        let tmpFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("uphill_\(UUID().uuidString).dxf")
+        defer { try? FileManager.default.removeItem(at: tmpFile) }
+        try uphillLikeDXF(plotFlags: plotFlags, model: model)
+            .write(to: tmpFile, atomically: true, encoding: .utf8)
+        let imported = try DXFImporter.importDXFViews(filePath: tmpFile.path)
+        let view = try XCTUnwrap(imported.views.first(where: { $0.name == "UPHILL" }))
+        let viewport = try XCTUnwrap(view.storedViewportDefinitions.first(where: { $0.id == 2 }))
+        return (view, viewport)
+    }
+
+    /// A centred Window/Fit sheet whose floating viewport is panned off the
+    /// model title frame must recenter the view on the frame (SHEET 5 UPHILL:
+    /// stored centre (42.372, 98.771) vs frame centre (61.9935, 98.7655), a
+    /// 19.62-unit X-only miss that printed as a 105pt right-edge spill).
+    func testLegacyPannedViewportRecentersOnModelFrame() throws {
+        let (view, viewport) = try importUphillLike(plotFlags: 692, model: .frame)
+        // The definition itself is repaired: view centre lands on the frame.
+        XCTAssertEqual(viewport.viewCenterX, 61.9935, accuracy: 1e-6)
+        XCTAssertEqual(viewport.viewCenterY, 98.7655, accuracy: 1e-6)
+        // The paper frame does not move: only the view recenters.
+        XCTAssertEqual(viewport.paperRect.minX, 845.657 - 499.827 / 2.0, accuracy: 1e-9)
+        XCTAssertEqual(viewport.paperRect.maxX, 845.657 + 499.827 / 2.0, accuracy: 1e-9)
+        // The projected frame lands exactly on the paper frame.
+        let projected = view.entities.filter {
+            $0.xdata["dxf.viewport.projected"] == .bool(true)
+        }
+        XCTAssertFalse(projected.isEmpty, "expected projected frame geometry")
+        var union: BoundingBox3D? = nil
+        for entity in projected {
+            guard let box = entity.worldBoundingBox else { continue }
+            if let u = union {
+                union = u.union(with: box)
+            } else {
+                union = box
+            }
+        }
+        let bounds = try XCTUnwrap(union)
+        let rect = viewport.paperRect
+        XCTAssertEqual((bounds.min.x + bounds.max.x) * 0.5,
+                       (rect.minX + rect.maxX) * 0.5, accuracy: 1e-6)
+        XCTAssertEqual((bounds.min.y + bounds.max.y) * 0.5,
+                       (rect.minY + rect.maxY) * 0.5, accuracy: 1e-6)
+        XCTAssertGreaterThanOrEqual(bounds.min.x, rect.minX - 1e-6)
+        XCTAssertGreaterThanOrEqual(bounds.min.y, rect.minY - 1e-6)
+        XCTAssertLessThanOrEqual(bounds.max.x, rect.maxX + 1e-6)
+        XCTAssertLessThanOrEqual(bounds.max.y, rect.maxY + 1e-6)
+    }
+
+    /// Same sheet without the Center flag: the stored view must pass through
+    /// untouched (faithful import wins when the sheet is not centred).
+    func testLegacyPannedViewportSkippedWhenNotCentered() throws {
+        let (_, viewport) = try importUphillLike(plotFlags: 688, model: .frame)
+        XCTAssertEqual(viewport.viewCenterX, 42.372, accuracy: 1e-9)
+        XCTAssertEqual(viewport.viewCenterY, 98.771, accuracy: 1e-9)
+    }
+
+    /// Same centred sheet but no closed model frame: nothing to recenter on,
+    /// so the stored view must pass through untouched.
+    func testLegacyPannedViewportSkippedWithoutModelFrame() throws {
+        let (_, viewport) = try importUphillLike(plotFlags: 692, model: .scrap)
+        XCTAssertEqual(viewport.viewCenterX, 42.372, accuracy: 1e-9)
+        XCTAssertEqual(viewport.viewCenterY, 98.771, accuracy: 1e-9)
+    }
+
+    /// A centre miss far below visibility (decimal dust, as on centred
+    /// sheets) must not rewrite the stored definition.
+    func testLegacyPannedViewportIgnoresSubvisibleOffset() {
+        let layerID = UUID()
+        func line(_ ax: Double, _ ay: Double, _ bx: Double, _ by: Double) -> CADEntity {
+            CADEntity(layerID: layerID, localGeometry: [.line(
+                start: Vector3(x: ax, y: ay, z: 0),
+                end: Vector3(x: bx, y: by, z: 0))])
+        }
+        let entities = [
+            line(-49.676, -31.594, 173.663, -31.594),
+            line(173.663, -31.594, 173.663, -165.937),
+            line(173.663, -165.937, -49.676, -165.937),
+            line(-49.676, -165.937, -49.676, -31.594),
+        ]
+        XCTAssertEqual(DXFImporter.legacyModelFrames(in: entities).count, 1)
+        let settings = CADPlotSettings(plotFlags: 692, plotType: 4)
+        // 0.002 model units off the frame centre: ratio ~1e-5, no repair.
+        let almost = DXFImporter.SheetViewport(
+            paperCenterX: 845.657, paperCenterY: 288.702,
+            paperWidth: 499.827, paperHeight: 300.678,
+            status: 2, id: 2,
+            viewCenterX: 61.9915, viewCenterY: 98.7655,
+            viewTargetX: 0, viewTargetY: 0,
+            viewHeight: 138.353, twistAngle: 0,
+            layerName: "0")
+        let kept = DXFImporter.recenteredLegacyFloatingViewports(
+            [almost], settings: settings,
+            modelEntities: entities, sheetName: "UPHILL")
+        XCTAssertEqual(kept.count, 1)
+        XCTAssertEqual(kept.first?.viewCenterX ?? 0, 61.9915, accuracy: 1e-12)
+        XCTAssertEqual(kept.first?.viewCenterY ?? 0, 98.7655, accuracy: 1e-12)
+    }
+
+    /// Two same-size frames fighting over one viewport (runner-up inside
+    /// 25%) stays faithful instead of guessing which detail the author meant.
+    func testLegacyPannedViewportSkippedWhenFramesAmbiguous() {
+        let layerID = UUID()
+        func line(_ ax: Double, _ ay: Double, _ bx: Double, _ by: Double) -> CADEntity {
+            CADEntity(layerID: layerID, localGeometry: [.line(
+                start: Vector3(x: ax, y: ay, z: 0),
+                end: Vector3(x: bx, y: by, z: 0))])
+        }
+        var segments: [(Double, Double, Double, Double)] = [
+            (-49.676, -31.594, 173.663, -31.594),
+            (173.663, -31.594, 173.663, -165.937),
+            (173.663, -165.937, -49.676, -165.937),
+            (-49.676, -165.937, -49.676, -31.594),
+        ]
+        // Decoy frame, same size, centred 15% of a window width away.
+        segments += [
+            (-34.797, -31.595, 188.543, -31.595),
+            (188.543, -31.595, 188.543, -165.947),
+            (188.543, -165.947, -34.797, -165.947),
+            (-34.797, -165.947, -34.797, -31.595),
+        ]
+        let entities = segments.map { line($0.0, $0.1, $0.2, $0.3) }
+        XCTAssertEqual(DXFImporter.legacyModelFrames(in: entities).count, 2)
+        let settings = CADPlotSettings(plotFlags: 692, plotType: 4)
+        let panned = DXFImporter.SheetViewport(
+            paperCenterX: 845.657, paperCenterY: 288.702,
+            paperWidth: 499.827, paperHeight: 300.678,
+            status: 2, id: 2,
+            viewCenterX: 42.372, viewCenterY: 98.771,
+            viewTargetX: 0, viewTargetY: 0,
+            viewHeight: 138.353, twistAngle: 0,
+            layerName: "0")
+        let kept = DXFImporter.recenteredLegacyFloatingViewports(
+            [panned], settings: settings,
+            modelEntities: entities, sheetName: "UPHILL")
+        XCTAssertEqual(kept.count, 1)
+        XCTAssertEqual(kept.first?.viewCenterX ?? 0, 42.372, accuracy: 1e-9)
+        XCTAssertEqual(kept.first?.viewCenterY ?? 0, 98.771, accuracy: 1e-9)
+    }
+
+    /// Repairing an already-repaired definition is a no-op, so DXF/EAB
+    /// round-trips of the corrected centre cannot drift or oscillate.
+    func testLegacyPannedViewportRepairIsIdempotent() {
+        let layerID = UUID()
+        func line(_ ax: Double, _ ay: Double, _ bx: Double, _ by: Double) -> CADEntity {
+            CADEntity(layerID: layerID, localGeometry: [.line(
+                start: Vector3(x: ax, y: ay, z: 0),
+                end: Vector3(x: bx, y: by, z: 0))])
+        }
+        // World coords (Y-negated) of the UPHILL title frame.
+        let frame: [(Double, Double, Double, Double)] = [
+            (-49.676, -31.594, 173.663, -31.594),
+            (173.663, -31.594, 173.663, -165.937),
+            (173.663, -165.937, -49.676, -165.937),
+            (-49.676, -165.937, -49.676, -31.594),
+        ]
+        let entities = frame.map { line($0.0, $0.1, $0.2, $0.3) }
+        let frames = DXFImporter.legacyModelFrames(in: entities)
+        XCTAssertEqual(frames.count, 1)
+        XCTAssertEqual(frames.first?.minX ?? 0, -49.676, accuracy: 1e-9)
+        XCTAssertEqual(frames.first?.maxY ?? 0, -31.594, accuracy: 1e-9)
+        let settings = CADPlotSettings(plotFlags: 692, plotType: 4)
+        // Already centred on the frame: the repair must leave it alone.
+        let centred = DXFImporter.SheetViewport(
+            paperCenterX: 845.657, paperCenterY: 288.702,
+            paperWidth: 499.827, paperHeight: 300.678,
+            status: 2, id: 2,
+            viewCenterX: 61.9935, viewCenterY: 98.7655,
+            viewTargetX: 0, viewTargetY: 0,
+            viewHeight: 138.353, twistAngle: 0,
+            layerName: "0")
+        let kept = DXFImporter.recenteredLegacyFloatingViewports(
+            [centred], settings: settings,
+            modelEntities: entities, sheetName: "UPHILL")
+        XCTAssertEqual(kept.count, 1)
+        XCTAssertEqual(kept.first?.viewCenterX ?? 0, 61.9935, accuracy: 1e-9)
+        XCTAssertEqual(kept.first?.viewCenterY ?? 0, 98.7655, accuracy: 1e-9)
+        // Panned off the frame: the repair recenters it.
+        let panned = DXFImporter.SheetViewport(
+            paperCenterX: 845.657, paperCenterY: 288.702,
+            paperWidth: 499.827, paperHeight: 300.678,
+            status: 2, id: 2,
+            viewCenterX: 42.372, viewCenterY: 98.771,
+            viewTargetX: 0, viewTargetY: 0,
+            viewHeight: 138.353, twistAngle: 0,
+            layerName: "0")
+        let fixed = DXFImporter.recenteredLegacyFloatingViewports(
+            [panned], settings: settings,
+            modelEntities: entities, sheetName: "UPHILL")
+        XCTAssertEqual(fixed.count, 1)
+        XCTAssertEqual(fixed.first?.viewCenterX ?? 0, 61.9935, accuracy: 1e-6)
+        XCTAssertEqual(fixed.first?.viewCenterY ?? 0, 98.7655, accuracy: 1e-6)
+    }
+
     /// An edge-defined SOLID hatch whose boundary loop is open (last edge
     /// end far from first edge start, like river hatch 39ED in
     /// historical-center-of-krasnoyarsk.dwg) must not be chord-filled.

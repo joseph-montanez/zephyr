@@ -546,6 +546,142 @@ public enum DXFImporter {
         }
     }
 
+    // MARK: - Legacy panned-viewport recentering (SHEET 5 UPHILL)
+
+    /// Axis-aligned closed rectangle candidates (world coords) from loose
+    /// model geometry: single `.line` quads, `.rect` primitives, and closed
+    /// 4-corner `.polyline`/`.polygon` loops. ODA emits axis-aligned edges
+    /// bit-exact, so grouping uses a tight absolute tolerance.
+    static func legacyModelFrames(in entities: [CADEntity])
+        -> [(minX: Double, minY: Double, maxX: Double, maxY: Double)] {
+        let tol = 1e-6
+        func quantize(_ v: Double) -> Double { (v / tol).rounded() * tol }
+        var segments: [(Vector3, Vector3)] = []
+        for entity in entities {
+            guard let geom = entity.localGeometry else { continue }
+            let t = entity.transform
+            for prim in geom {
+                switch prim {
+                case .line(let a, let b, _):
+                    segments.append((t.transformPoint(a), t.transformPoint(b)))
+                case .rect(let origin, let size, _):
+                    let o = t.transformPoint(origin)
+                    let ex = t.transformPoint(Vector3(x: origin.x + size.x, y: origin.y, z: origin.z))
+                    let ey = t.transformPoint(Vector3(x: origin.x, y: origin.y + size.y, z: origin.z))
+                    let ee = t.transformPoint(Vector3(x: origin.x + size.x, y: origin.y + size.y, z: origin.z))
+                    segments.append((o, ex)); segments.append((ex, ee))
+                    segments.append((ee, ey)); segments.append((ey, o))
+                case .polyline(let path, _):
+                    let pts = path.vertices.map { t.transformPoint($0.position) }
+                    guard pts.count >= 2 else { continue }
+                    for i in 0..<(pts.count - 1) { segments.append((pts[i], pts[i + 1])) }
+                    if path.isClosed, pts.count > 2 { segments.append((pts.last!, pts.first!)) }
+                case .polygon(let points, _):
+                    guard points.count >= 2 else { continue }
+                    let pts = points.map { t.transformPoint($0) }
+                    for i in 0..<pts.count { segments.append((pts[i], pts[(i + 1) % pts.count])) }
+                default:
+                    continue
+                }
+            }
+        }
+        // Axis-aligned segments, grouped into horizontals / verticals.
+        var horiz: [(y: Double, x1: Double, x2: Double)] = []
+        var vert: [(x: Double, y1: Double, y2: Double)] = []
+        for (a, b) in segments {
+            if abs(a.y - b.y) <= tol, abs(a.x - b.x) > tol {
+                horiz.append((y: (a.y + b.y) * 0.5, x1: min(a.x, b.x), x2: max(a.x, b.x)))
+            } else if abs(a.x - b.x) <= tol, abs(a.y - b.y) > tol {
+                vert.append((x: (a.x + b.x) * 0.5, y1: min(a.y, b.y), y2: max(a.y, b.y)))
+            }
+        }
+        // Index verticals by quantized x for O(1) side lookup.
+        var vertByX: [Double: [(y1: Double, y2: Double)]] = [:]
+        for v in vert {
+            vertByX[quantize(v.x), default: []].append((y1: v.y1, y2: v.y2))
+        }
+        func same(_ a: Double, _ b: Double) -> Bool { abs(a - b) <= tol }
+        var rects: [(minX: Double, minY: Double, maxX: Double, maxY: Double)] = []
+        var seen = Set<[Double]>()
+        for i in horiz.indices {
+            for j in (i + 1)..<horiz.count {
+                let a = horiz[i], b = horiz[j]
+                guard same(a.x1, b.x1), same(a.x2, b.x2) else { continue }
+                let bot = min(a.y, b.y), top = max(a.y, b.y)
+                guard top - bot > tol else { continue }
+                for side in [a.x1, a.x2] {
+                    guard let spans = vertByX[quantize(side)] else { continue }
+                    for s in spans {
+                        let lo = min(s.y1, s.y2), hi = max(s.y1, s.y2)
+                        guard same(lo, bot), same(hi, top) else { continue }
+                        let key = [quantize(a.x1), quantize(bot), quantize(a.x2), quantize(top)]
+                        if seen.insert(key).inserted {
+                            rects.append((minX: a.x1, minY: bot, maxX: a.x2, maxY: top))
+                        }
+                    }
+                }
+            }
+        }
+        return rects
+    }
+
+    /// Recenters panned legacy floating viewports on the model title frame.
+    /// Fires only when every gate holds (centred Window/Fit sheet, one
+    /// usable floating top-view viewport with zero target/twist, a model
+    /// frame matching the model window within 5% whose centre offset is in
+    /// (0.1%, 10%], with any runner-up frame at >= 25%); otherwise returns
+    /// the input untouched. The 0.1% floor keeps centred sheets byte-stable
+    /// (their view centres routinely sit ~1e-5 off from decimal dust, far
+    /// below anything visible); only a real pan clears it. The paper frame
+    /// never moves, so picking, frames, and writers stay put — only the
+    /// projected view recenters.
+    static func recenteredLegacyFloatingViewports(
+        _ viewports: [SheetViewport],
+        settings: CADPlotSettings?,
+        modelEntities: [CADEntity],
+        sheetName: String
+    ) -> [SheetViewport] {
+        guard viewports.count == 1, let vp = viewports.first else { return viewports }
+        guard let ps = settings, ps.plotType == 4, ps.plotFlags & 4 != 0 else { return viewports }
+        guard vp.twistAngle == 0, vp.viewTargetX == 0, vp.viewTargetY == 0 else { return viewports }
+        let scale = vp.scale
+        guard scale > 1e-9 else { return viewports }
+        let modelWidth = vp.paperWidth / scale
+        let modelHeight = vp.viewHeight
+        guard modelWidth > 1e-9, modelHeight > 1e-9 else { return viewports }
+        let centerX = vp.viewTargetX + vp.viewCenterX
+        let centerY = -(vp.viewTargetY + vp.viewCenterY)
+        // Candidate title frames: closed axis-aligned quads whose size
+        // matches the model window within 5%. Model space routinely holds
+        // several same-size frames (one detail per sheet), so uniqueness is
+        // judged by centre offset, not by count: the nearest frame must be
+        // panned (offset in (0, 10%]) while any runner-up stays well clear
+        // (>= 25%). Two frames fighting over one viewport stays faithful
+        // instead of guessing.
+        let ranked = legacyModelFrames(in: modelEntities).compactMap { fr -> (rect: (minX: Double, minY: Double, maxX: Double, maxY: Double), ratio: Double)? in
+            let w = fr.maxX - fr.minX, h = fr.maxY - fr.minY
+            guard abs(w - modelWidth) / modelWidth <= 0.05,
+                  abs(h - modelHeight) / modelHeight <= 0.05 else { return nil }
+            let dx = (fr.minX + fr.maxX) * 0.5 - centerX
+            let dy = (fr.minY + fr.maxY) * 0.5 - centerY
+            return (fr, max(abs(dx) / modelWidth, abs(dy) / modelHeight))
+        }.sorted { $0.ratio < $1.ratio }
+        guard let best = ranked.first, best.ratio > 1e-3, best.ratio <= 0.10 else { return viewports }
+        if ranked.count > 1, ranked[1].ratio < 0.25 { return viewports }
+        let fr = best.rect
+        let dx = (fr.minX + fr.maxX) * 0.5 - centerX
+        let dy = (fr.minY + fr.maxY) * 0.5 - centerY
+        print("[CADImporter] recentered legacy viewport id \(vp.id) on '\(sheetName)' by (\(dx), \(dy)) model units")
+        return [SheetViewport(
+            paperCenterX: vp.paperCenterX, paperCenterY: vp.paperCenterY,
+            paperWidth: vp.paperWidth, paperHeight: vp.paperHeight,
+            status: vp.status, id: vp.id,
+            viewCenterX: vp.viewCenterX + dx, viewCenterY: vp.viewCenterY - dy,
+            viewTargetX: vp.viewTargetX, viewTargetY: vp.viewTargetY,
+            viewHeight: vp.viewHeight, twistAngle: vp.twistAngle,
+            layerName: vp.layerName, stableID: vp.stableID, isLocked: vp.isLocked)]
+    }
+
     private static func defaultLayoutProjection(
         layout: DXFLayoutEntry,
         effectivePlotSettings: CADPlotSettings? = nil,
@@ -2188,13 +2324,24 @@ public enum DXFImporter {
                 // space through it overlays a duplicate copy of any sheet
                 // geometry that also exists in model space, so it must never
                 // drive projection, even when it is the only viewport present.
-                let viewports = usableViewports.filter { !$0.isSystemViewport }
+                // Panned legacy viewports are recentered on the model title
+                // frame first, so projection, picking, and stored definitions
+                // all share the corrected view. The layout's own plot fields
+                // gate the repair; effective settings agree on configured
+                // sheets and normalize unconfigured ones to Layout (no fire).
+                let viewports = Self.recenteredLegacyFloatingViewports(
+                    usableViewports.filter { !$0.isSystemViewport },
+                    settings: CADPlotSettings(layout: layout),
+                    modelEntities: modelEntities,
+                    sheetName: layout.name)
                 // Full definitions (including OFF viewports) persist even
-                // though OFF viewports project no geometry.
+                // though OFF viewports project no geometry; usable ones keep
+                // the recentered view above.
                 let storedSheetViewports = paperSource
                     .compactMap { $0 as? DXFViewportEntity }
                     .map(SheetViewport.init)
                     .filter { !$0.isSystemViewport }
+                    .map { def in viewports.first(where: { $0.id == def.id }) ?? def }
                 // Phase 3: per-viewport layer deltas from VIEWPORT 331
                 // (frozen layers) and ZEPHYR_VP records (style overrides).
                 // Only projecting (usable, non-system) viewports contribute.
