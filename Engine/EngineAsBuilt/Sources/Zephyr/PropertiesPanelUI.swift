@@ -123,24 +123,26 @@ struct PropertiesPanelUI {
             return
         }
 
+        // Default size/position apply only on first use: dock placement and
+        // floating geometry are restored from imgui.ini on later shows, so
+        // re-applying them here would pop a docked panel out on restart.
         ImGuiSetNextWindowSize(
             ImVec2(x: ImGuiGetFontSize() * 24, y: ImGuiGetFontSize() * 36),
-            Int32(ImGuiCond_Appearing.rawValue))
-        // Also position the panel at a visible default location when it first appears,
+            Int32(ImGuiCond_FirstUseEver.rawValue))
+        // Also position the panel at a visible default location on first use,
         // so it isn't placed at (0,0) or behind the dockspace.
         ImGuiSetNextWindowPos(
             ImVec2(x: ImGuiGetFontSize() * 4, y: AppLayout.topChromeHeight + AppLayout.tabBarHeight + ImGuiGetFontSize() * 2),
-            Int32(ImGuiCond_Appearing.rawValue),
+            Int32(ImGuiCond_FirstUseEver.rawValue),
             ImVec2(x: 0, y: 0))
 
-        // When the panel is re-opened after being closed, reset docking state
-        // so it doesn't get stuck in an invisible docked tab.
-        if !(_wasVisibleBySlot[engine.ui.frameSlot] ?? false) {
-            _isDockedBySlot[engine.ui.frameSlot] = false
-        }
+        // Re-showing keeps the last mirrored dock state (see
+        // PropertiesPanelUIPolicy.dockedStyleForFrame): resetting to
+        // floating here pops a docked panel out on every restart.
+        let isDocked = PropertiesPanelUIPolicy.dockedStyleForFrame(
+            previouslyDocked: _isDockedBySlot[engine.ui.frameSlot] ?? false,
+            wasVisible: _wasVisibleBySlot[engine.ui.frameSlot] ?? false)
         _wasVisibleBySlot[engine.ui.frameSlot] = true
-
-        let isDocked = _isDockedBySlot[engine.ui.frameSlot] ?? false
         var flags = Int32(0)
         if isDocked {
             flags |= Int32(ImGuiWindowFlags_NoTitleBar.rawValue)

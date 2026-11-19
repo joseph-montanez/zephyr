@@ -93,6 +93,26 @@ final class PropertiesPanelUIPolicyTests: XCTestCase {
             cachedCount: 4, selectionCount: 4))
     }
 
+    // MARK: - Dock restoration across hide/show and restarts
+
+    /// Regression: the panel popped out floating on every restart /
+    /// re-show. Dock placement is owned by ImGui (imgui.ini); re-showing
+    /// must keep the last known dock state, never force floating.
+    func testDockedStyleKeepsLastKnownStateOnReshow() {
+        // Docked, then hidden (toggled off / restarted), then shown
+        // again: must come back docked, not pop out floating.
+        XCTAssertTrue(PropertiesPanelUIPolicy.dockedStyleForFrame(
+            previouslyDocked: true, wasVisible: false))
+        // Still-visible docked panel stays docked.
+        XCTAssertTrue(PropertiesPanelUIPolicy.dockedStyleForFrame(
+            previouslyDocked: true, wasVisible: true))
+        // Floating panel comes back floating either way.
+        XCTAssertFalse(PropertiesPanelUIPolicy.dockedStyleForFrame(
+            previouslyDocked: false, wasVisible: false))
+        XCTAssertFalse(PropertiesPanelUIPolicy.dockedStyleForFrame(
+            previouslyDocked: false, wasVisible: true))
+    }
+
     func testPickerCacheStaleOnAnyKeyChange() {
         // Hold strong references (see above): bare-pointer identity is
         // only meaningful while the objects are alive.

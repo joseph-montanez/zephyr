@@ -163,6 +163,25 @@ public enum PropertiesPanelUIPolicy {
             || cachedRevision != revision
             || cachedCount != selectionCount
     }
+
+    // MARK: - Dock restoration across hide/show and restarts
+
+    /// Which presentation the panel takes this frame: docked (no title
+    /// bar, no close button — ImGui owns the placement from imgui.ini)
+    /// or floating (title bar + close button at the default position).
+    ///
+    /// Dock state is owned by ImGui and persisted in imgui.ini; the app
+    /// only mirrors the last frame's `ImGuiIsWindowDocked()`. Re-showing
+    /// the panel (toggled back on, or restarted with it visible) must
+    /// keep that last known state — forcing floating pops a docked
+    /// panel out of its dock node on every restart. Only a panel with
+    /// no last known state starts floating.
+    public static func dockedStyleForFrame(
+        previouslyDocked: Bool,
+        wasVisible: Bool
+    ) -> Bool {
+        previouslyDocked
+    }
 }
 
 /// Drawing-view tabs belong to the tab shown in each OS window/pane, not
