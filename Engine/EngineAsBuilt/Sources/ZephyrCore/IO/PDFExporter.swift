@@ -287,14 +287,9 @@ public enum PDFExporter {
         let printW = max(physSheet.width - physM.left - physM.right, 1e-9)
         let printH = max(physSheet.height - physM.bottom - physM.top, 1e-9)
 
-        // Also compute scaled printable rect for backward-compatible clipMin/Max test assertions
+        // Scaled printable rect (×k), the paper-space frame the area origin
+        // composes against below.
         let printable = PaperSheetGeometry.printableRect(for: settings)
-        let origin = PaperSheetGeometry.paperSpaceOrigin(for: settings, plotOffset: plotOffset)
-        func shift(_ r: (minX: Double, minY: Double, maxX: Double, maxY: Double))
-            -> (minX: Double, minY: Double, maxX: Double, maxY: Double) {
-            (r.minX - origin.x, r.minY - origin.y, r.maxX - origin.x, r.maxY - origin.y)
-        }
-        let printPS = shift((printable.minX, printable.minY, printable.maxX, printable.maxY))
 
         // For plotType == 5 (Layout), map the paper frame directly to the PDF page:
         // DXF paper-space coordinates [minX, maxX] x [minY, maxY] map to [0, pageW] x [0, pageH].
@@ -320,15 +315,16 @@ public enum PDFExporter {
                              clipPageW: clipPageW, clipPageH: clipPageH)
         }
 
-        // All areas are engine-frame (Y-down): worldBounds already is, while
-        // Limits/Window/printable rects are DXF-frame (Y-up) and convert here.
-        // The CTM composition below maps the area bottom (maxY, placed by ty)
-        // to the printable bottom, which is only correct when area and entity
-        // content share the engine frame.
+        // Areas are engine-frame (Y-down): worldBounds already is, while
+        // Limits/Window rects are DXF-frame (Y-up) and convert here. The
+        // scaled printable rect also converts for the fallback area and
+        // world clip; the device target below is composed separately in
+        // physical points.
         func engineArea(_ r: (minX: Double, minY: Double, maxX: Double, maxY: Double))
             -> (minX: Double, minY: Double, maxX: Double, maxY: Double) {
             (r.minX, -r.maxY, r.maxX, -r.minY)
         }
+        let printableEngine = engineArea(printable)
         let areaPS: (minX: Double, minY: Double, maxX: Double, maxY: Double)?
         switch settings.plotType {
         case 2: // Limits (paper corners, DXF Y-up → engine Y-down)
@@ -341,12 +337,12 @@ public enum PDFExporter {
             if let wb = worldBounds {
                 areaPS = wb
             } else {
-                areaPS = engineArea(printPS)
+                areaPS = printableEngine
             }
         default:
-            areaPS = engineArea(printPS)
+            areaPS = printableEngine
         }
-        let area = areaPS ?? printPS
+        let area = areaPS ?? printableEngine
         let areaW = max(area.maxX - area.minX, 1e-9)
         let areaH = max(area.maxY - area.minY, 1e-9)
 
@@ -358,16 +354,18 @@ public enum PDFExporter {
         }
         let scale = ppu * plotScale
 
-        // Offset: stored origin, or centered math when PlotCentered (bit 4).
+        // Offset: stored origin, or centered math when PlotCentered (bit 4),
+        // both in physical paper units. Margins passed to the centering
+        // helper must be physical too: scaled margins would reintroduce the
+        // unit mixing this composition removes.
         let ox: Double
         let oy: Double
         if settings.plotFlags & 4 != 0, settings.plotType != 5 {
-            let m = PaperSheetGeometry.permutedMargins(for: settings)
             let c = PlotSettingsValidator.centeredOffset(
                 printableWidth: printW, printableHeight: printH,
                 plotAreaWidth: areaW, plotAreaHeight: areaH,
                 scale: plotScale, plotOffset: plotOffset,
-                marginLeft: m.left, marginBottom: m.bottom)
+                marginLeft: physM.left, marginBottom: physM.bottom)
             ox = c.x
             oy = c.y
         } else {
@@ -375,14 +373,21 @@ public enum PDFExporter {
             ox = settings.plotOriginXMM / div
             oy = settings.plotOriginYMM / div
         }
-        // Map area origin to printable origin + offset (paper-space units).
-        // Both area and entity content are engine-frame (Y-down), so the Y
-        // offset composes against the area bottom (maxY, placed by ty below):
-        // subtracting minY would inflate ty by a full area height and push
-        // the sheet off-page (all plot types share this composition now that
-        // Window/Limits areas convert to the engine frame above).
-        let devOX = (printPS.minX + ox - area.minX) * scale
-        let devOY = (printPS.minY + oy) * scale
+        // Map the area origin to its physical target on the page, in points.
+        // PLOTOFFSET selects the offset reference: the printable corner (0)
+        // or the paper edge (1). Centered offsets already include the
+        // margin in edge mode, so adding it there too would count it twice
+        // and make a centered plot move when only the reference label
+        // changes. Composing in physical points (not the scaled overlay
+        // frame) keeps this correct even when 142/143 ratio is stale for a
+        // Fit/standard scale. The area is engine-frame (Y-down), so X
+        // composes against area.minX and Y against area.maxY (the DXF
+        // minimum, placed by ty below): mixing minY in would inflate ty by
+        // a full area height and push the sheet off-page.
+        let targetX = ((plotOffset == 1 ? 0 : physM.left) + ox) * ppu
+        let targetY = ((plotOffset == 1 ? 0 : physM.bottom) + oy) * ppu
+        let devOX = targetX - area.minX * scale
+        let devOY = targetY
         // Y-flip CTM: device.y = -scale * world.y + ty with area bottom
         // at page bottom offset. In PDF points, printable box sits at
         // devOY from the bottom.
@@ -397,8 +402,8 @@ public enum PDFExporter {
 
         return PlotFrame(pageW: pageW, pageH: pageH, scale: scale,
                          tx: tx, ty: ty,
-                         clipMinX: printPS.minX, clipMinY: printPS.minY,
-                         clipMaxX: printPS.maxX, clipMaxY: printPS.maxY,
+                         clipMinX: printableEngine.minX, clipMinY: printableEngine.minY,
+                         clipMaxX: printableEngine.maxX, clipMaxY: printableEngine.maxY,
                          clipPageX: clipPageX, clipPageY: clipPageY,
                          clipPageW: clipPageW, clipPageH: clipPageH)
     }

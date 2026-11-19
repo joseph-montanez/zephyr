@@ -1243,10 +1243,22 @@ public final class TabManager {
         let newIndex = tabs[activeIndex].drawingViews.count - 1
         guard switchToView(at: newIndex) else { return false }
         if autoOpenPageSetupForNewLayouts { onRequestPageSetup?() }
-        // Full-sheet frame in paper units (mm); fits model extents.
+        // Full-sheet frame from the sheet's own overlay paper rect (world
+        // coords), so a new layout's viewport, projections, and paper outline
+        // coincide even when the sheet carries plot origin/scale settings.
+        // Falls back to the origin-anchored media rect when the sheet has no
+        // usable paper size yet.
+        let frame: (x1: Double, y1: Double, x2: Double, y2: Double)
+        if let ps = doc.plotSettings,
+           let rects = PaperSheetGeometry.overlayRects(for: ps) {
+            frame = (rects.paper.minX, -rects.paper.maxY,
+                     rects.paper.maxX, -rects.paper.minY)
+        } else {
+            frame = (0, 0, settings.paperWidthMM, settings.paperHeightMM)
+        }
         _ = createSheetViewport(
-            paperX1: 0, paperY1: 0,
-            paperX2: settings.paperWidthMM, paperY2: settings.paperHeightMM)
+            paperX1: frame.x1, paperY1: frame.y1,
+            paperX2: frame.x2, paperY2: frame.y2)
         return true
     }
 
@@ -1648,6 +1660,11 @@ public final class TabManager {
         return true
     }
 
+    /// Create a rectangular floating viewport from two sheet corners.
+    /// Corners are Zephyr world/display coordinates (Y-negated): the same
+    /// frame mouse picks, `selectViewport(atPaperPoint:)`, and `MVIEW ?`
+    /// report in. Storage converts to DXF-frame once (see
+    /// `insertSheetViewport`); callers must not pre-negate.
     public func createSheetViewport(
         paperX1: Double, paperY1: Double, paperX2: Double, paperY2: Double
     ) -> Int? {
@@ -1683,7 +1700,8 @@ public final class TabManager {
             modelCenterY = 0
             viewHeight = paperHeight
         }
-        // Y-up paper center; storage negates Y (see modelToPaperTransform).
+        // World-frame center in, DXF-frame storage out (negated once inside
+        // insertSheetViewport, matching imported VIEWPORT entities).
         return insertSheetViewport(
             paperCenterXUp: (paperX1 + paperX2) / 2.0,
             paperCenterYUp: (paperY1 + paperY2) / 2.0,
@@ -1816,7 +1834,9 @@ public final class TabManager {
     }
 
     /// Shared SheetViewport insertion tail (create + place paths).
-    /// Paper center is Y-up; storage is positive-down.
+    /// Inputs are world/display coordinates; storage keeps the DXF-frame
+    /// (Y-up) value, exactly like imported VIEWPORT entities, so `paperRect`
+    /// (world) and the DXF/EAB writers all agree.
     private func insertSheetViewport(
         paperCenterXUp: Double, paperCenterYUp: Double,
         paperWidth: Double, paperHeight: Double,

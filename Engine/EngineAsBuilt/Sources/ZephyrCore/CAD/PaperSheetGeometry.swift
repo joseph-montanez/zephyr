@@ -127,7 +127,10 @@ public enum PaperSheetGeometry {
 
     /// Sheet + printable rects in paper-space (entity) coordinates, for the
     /// canvas overlay. The paper frame is shifted by −origin so paper-space
-    /// (0,0) lands on `paperSpaceOrigin`.
+    /// (0,0) lands on `paperSpaceOrigin`. Legacy Window/Fit sheets whose
+    /// content lives far from the origin additionally get the window
+    /// anchoring from `windowAnchorDelta`, so the paper sits under the
+    /// plotted content instead of at the empty origin.
     public static func overlayRects(
         for settings: CADPlotSettings,
         plotOffset: Int = 0
@@ -137,10 +140,75 @@ public enum PaperSheetGeometry {
         guard sheet.width > 0, sheet.height > 0, sheet.width.isFinite, sheet.height.isFinite else { return nil }
         let printable = printableRect(for: settings)
         let origin = paperSpaceOrigin(for: settings, plotOffset: plotOffset)
-        let paper = (-origin.x, -origin.y, sheet.width - origin.x, sheet.height - origin.y)
-        let printShifted = (printable.minX - origin.x, printable.minY - origin.y,
+        var paper = (-origin.x, -origin.y, sheet.width - origin.x, sheet.height - origin.y)
+        var printShifted = (printable.minX - origin.x, printable.minY - origin.y,
                             printable.maxX - origin.x, printable.maxY - origin.y)
+        if let delta = windowAnchorDelta(for: settings, paper: paper, printable: printShifted, plotOffset: plotOffset) {
+            paper = (paper.0 + delta.dx, paper.1 + delta.dy,
+                     paper.2 + delta.dx, paper.3 + delta.dy)
+            printShifted = (printShifted.0 + delta.dx, printShifted.1 + delta.dy,
+                            printShifted.2 + delta.dx, printShifted.3 + delta.dy)
+        }
         return (paper: paper, printable: printShifted)
+    }
+
+    /// Translation anchoring the sheet to its stored plot window, for legacy
+    /// Window/Fit sheets whose content lives far from the paper-space origin
+    /// (e.g. ASD151 SHEET 3: origin-anchored paper centre (231.39, 151.12) vs
+    /// plot-window centre (929.96, 297.00)). Returns nil when no anchoring is
+    /// needed: non-Window plot types, invalid or partial windows, and windows
+    /// already overlapping the paper keep today's origin-anchored rects, so
+    /// 1:1 layouts and the writers (which never call this) are untouched.
+    ///
+    /// The stored window numbers share paper-space coordinates with the
+    /// overlay frame on these sheets (the fit scale sizes the sheet to the
+    /// windowed content), so the window is compared directly, with no extra
+    /// unit conversion. When centred (plot-flags bit 4), the paper centre
+    /// lands on the window centre: the floating viewport frame systematically
+    /// exceeds the plot window by its frame border (~3%), so centring the
+    /// paper (rather than the printable area) contains the frame symmetrically.
+    /// Otherwise the window maps to the PLOTOFFSET reference (printable
+    /// corner, or paper edge in mode 1) plus the plot origin, mirroring
+    /// `PDFExporter.plotFrame`'s composition.
+    static func windowAnchorDelta(
+        for settings: CADPlotSettings,
+        paper: (minX: Double, minY: Double, maxX: Double, maxY: Double),
+        printable: (minX: Double, minY: Double, maxX: Double, maxY: Double),
+        plotOffset: Int = 0
+    ) -> (dx: Double, dy: Double)? {
+        guard settings.plotType == 4 else { return nil }
+        let wMinX = settings.plotWindowMinX, wMinY = settings.plotWindowMinY
+        let wMaxX = settings.plotWindowMaxX, wMaxY = settings.plotWindowMaxY
+        guard wMinX.isFinite, wMinY.isFinite, wMaxX.isFinite, wMaxY.isFinite,
+              wMaxX - wMinX > 1e-9, wMaxY - wMinY > 1e-9 else { return nil }
+        let pW = printable.maxX - printable.minX, pH = printable.maxY - printable.minY
+        guard pW > 1e-9, pH > 1e-9 else { return nil }
+        // Partial windows (details, callouts) stay where the origin puts
+        // them; only full-sheet windows re-anchor the paper.
+        let wW = wMaxX - wMinX, wH = wMaxY - wMinY
+        guard wW >= 0.5 * pW, wH >= 0.5 * pH else { return nil }
+        // Windows already on the paper need no anchoring.
+        let oMinX = max(wMinX, paper.minX), oMinY = max(wMinY, paper.minY)
+        let oMaxX = min(wMaxX, paper.maxX), oMaxY = min(wMaxY, paper.maxY)
+        let overlap = max(0, oMaxX - oMinX) * max(0, oMaxY - oMinY)
+        guard overlap < 0.5 * wW * wH else { return nil }
+        if settings.plotFlags & 4 != 0 {
+            let wCX = (wMinX + wMaxX) * 0.5, wCY = (wMinY + wMaxY) * 0.5
+            let sCX = (paper.minX + paper.maxX) * 0.5
+            let sCY = (paper.minY + paper.maxY) * 0.5
+            return (wCX - sCX, wCY - sCY)
+        }
+        // Otherwise the window maps to the PLOTOFFSET reference plus the
+        // plot origin, mirroring `PDFExporter.plotFrame`. In edge mode the
+        // reference is the paper corner, one margin below printable-min.
+        let s = unitDivisor(for: settings)
+        let k = plotScaleMultiplier(for: settings)
+        let ox = settings.plotOriginXMM / s * k
+        let oy = settings.plotOriginYMM / s * k
+        let refDX = plotOffset == 1 ? printable.minX - paper.minX : 0
+        let refDY = plotOffset == 1 ? printable.minY - paper.minY : 0
+        return (wMinX - ox - printable.minX + refDX,
+                wMinY - oy - printable.minY + refDY)
     }
 
     /// Effective plot-area rect in the paper frame, when statically known.

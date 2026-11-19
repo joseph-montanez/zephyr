@@ -7577,11 +7577,15 @@ public final class EngineRenderer {
         _foregroundVertexEstimate += 8 + segs * 2
 
         // Floating viewport frames (selected one drawn bold, like AutoCAD).
+        // `paperRect` is already Zephyr world (Y-negated) coordinates, like
+        // the projected entities it frames: pass it straight through, the
+        // way selection highlights pass world bounds. (Negating here again
+        // mirrors the frame away from its content.)
         let selectedID = engine.tabManager.selectedViewportID()
         for viewport in engine.tabManager.activeSheetViewports() where !viewport.isSystemViewport {
             let rect = viewport.paperRect
-            let tl = toScreen(rect.minX, -rect.maxY)
-            let br = toScreen(rect.maxX, -rect.minY)
+            let tl = toScreen(rect.minX, rect.maxY)
+            let br = toScreen(rect.maxX, rect.minY)
             let vMin = ImVec2(x: min(tl.x, br.x), y: min(tl.y, br.y))
             let vMax = ImVec2(x: max(tl.x, br.x), y: max(tl.y, br.y))
             let isSelected = viewport.id == selectedID

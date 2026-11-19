@@ -76,6 +76,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **ACIS region passthrough** - imported DWG/DXF `REGION` bodies keep their opaque ACIS payloads and write back as real `REGION` records; payload-less regions are skipped on import with a warning, and Zephyr-built regions still export as closed `LWPOLYLINE`s with a one-time downgrade warning.
 
 ### Bug Fixes
+- **Legacy Window/Fit sheet framing** - sheets whose plot window sits far from the paper-space origin (e.g. a centred Window/Fit Tabloid sheet) now draw the paper under the plotted content instead of at the empty origin, and floating viewport frames draw on the same coordinates picking uses; new layouts frame the overlay paper exactly.
+- **Window/Fit PDF offset** - non-Layout plots mixed origin-shifted scaled paper units with physical offsets and raw window coords, clipping content off the page (far more on fit-scaled sheets); the plot area now maps to the printable/paper-edge reference plus offset in physical points, with the printable clip on the same frame, which also corrects centered plots by the margin and keeps `PLOTOFFSET` from moving a centred plot.
 - **Viewport delete** - removing a viewport also drops its per-viewport layer overrides and restores projections through undo; unknown viewport ids fail without side effects.
 - **Layout tab labels** - a layout tab is now sized from the text it actually draws, so a freshly created (selected, bold) layout no longer renders as `MyLayo…` while the tab bar has room to spare.
 - **Viewport lock** - the locked state survives projection-xdata derivation and DXF/EAB reloads.

@@ -64,13 +64,16 @@ final class PDFExportPlotModeTests: XCTestCase {
         var ps = a3Settings(plotType: 1) // Extents
         ps.plotFlags |= 4 // Center the plot
         ps.useStandardScale = true
-        // 100x100 area into 400x277 printable at 1:1 → (150, 88.5) offset.
+        // 100x100 area into 400x277 printable at 1:1 → (150, 88.5) offset,
+        // measured from the printable corner: tx = (10 + 150) * s. (The old
+        // composition dropped the printable corner and pinned tx at 150 * s,
+        // shifting every centered non-Layout plot left by the margin.)
         let frame = try XCTUnwrap(PDFExporter.plotFrame(
             settings: ps, worldBounds: (0, 0, 100, 100)))
         XCTAssertEqual(frame.scale, 72.0 / 25.4, accuracy: 1e-9)
         let s = 72.0 / 25.4
-        XCTAssertEqual(frame.tx, 150 * s, accuracy: 1e-6)
-        XCTAssertEqual(frame.ty, 88.5 * s + 100 * s, accuracy: 1e-4)
+        XCTAssertEqual(frame.tx, 160 * s, accuracy: 1e-6)
+        XCTAssertEqual(frame.ty, 98.5 * s + 100 * s, accuracy: 1e-4)
     }
 
     func testPlotFrameCenteredExtentsPlacesEngineDownContentOnPage() throws {
@@ -86,9 +89,9 @@ final class PDFExportPlotModeTests: XCTestCase {
         let frame = try XCTUnwrap(PDFExporter.plotFrame(
             settings: ps, worldBounds: (0, -100, 100, 0)))
         let s = 72.0 / 25.4
-        XCTAssertEqual(frame.tx, 150 * s, accuracy: 1e-6)
-        // Old composition gave 188.5 * s here (full area height too high).
-        XCTAssertEqual(frame.ty, 88.5 * s, accuracy: 1e-4)
+        // Centering measures from the printable corner: tx = (10 + 150) * s.
+        XCTAssertEqual(frame.tx, 160 * s, accuracy: 1e-6)
+        XCTAssertEqual(frame.ty, 98.5 * s, accuracy: 1e-4)
         // Sheet corners must land inside the A3 page (1191 x 842 pt).
         let topDevY = -s * -100 + frame.ty
         let bottomDevY = -s * 0 + frame.ty
@@ -133,7 +136,9 @@ final class PDFExportPlotModeTests: XCTestCase {
             let dx = s * wx + frame.tx
             let dy = -s * wy + frame.ty
             XCTAssertGreaterThanOrEqual(dx, -20, "content x must sit near the page")
-            XCTAssertLessThanOrEqual(dx, frame.pageW + 1, "content x must sit near the page")
+            // +5: the second point sits just outside the plot window, so it
+            // correctly clips at the page edge instead of landing on-page.
+            XCTAssertLessThanOrEqual(dx, frame.pageW + 5, "content x must sit near the page")
             XCTAssertGreaterThanOrEqual(dy, -15, "content bottom may clip sub-window edges only")
             XCTAssertLessThanOrEqual(dy, frame.pageH, "content must not float above the page")
         }
@@ -146,6 +151,64 @@ final class PDFExportPlotModeTests: XCTestCase {
         XCTAssertLessThanOrEqual(x1, frame.pageW + 1)
         XCTAssertGreaterThan(yBot, 0)
         XCTAssertLessThan(yTop, frame.pageH)
+    }
+
+    func testPlotFrameWindowFitSheetLandsOnPrintable() throws {
+        // SHEET 3 (HYD. PRO.) regression: Tabloid, inches, landscape,
+        // Window plot type with Scaled-to-Fit 1:27.8711, centred. The
+        // emitted PDF (MediaBox 1224x792) clipped ~23pt off the left edge
+        // ("OTE:", "ASEMENT") because the composition mixed three unit
+        // frames: origin-shifted scaled printPS, physical ox/oy, and the
+        // raw window. The window corner must map to printable-min plus the
+        // scaled centering offset.
+        var ps = CADPlotSettings(
+            paperWidthMM: 279.4, paperHeightMM: 431.8,
+            marginLM: 5.027, marginBM: 5.027, marginRM: 5.027, marginTM: 5.027,
+            plotPaperUnits: 0, plotRotation: 1,
+            plotOriginXMM: 0.0, plotOriginYMM: 3.048,
+            plotWindowMinX: 702.0429721660568, plotWindowMinY: 149.2231489467952,
+            plotWindowMaxX: 1157.875219820294, plotWindowMaxY: 444.7729192754576,
+            customScaleNumerator: 1.0, customScaleDenominator: 27.87110050658384,
+            plotFlags: 692, plotType: 4, standardScaleType: 0)
+        ps.useStandardScale = false
+        for plotOffset in [0, 1] {
+            let frame = try XCTUnwrap(PDFExporter.plotFrame(
+                settings: ps, worldBounds: nil, plotOffset: plotOffset))
+            XCTAssertEqual(frame.pageW, 1224, accuracy: 0.5)
+            XCTAssertEqual(frame.pageH, 792, accuracy: 0.5)
+            let s = frame.scale
+            // First-principles expectation in physical units: the window
+            // corner lands on the printable corner plus the centering offset.
+            let physM = PaperSheetGeometry.physicalPermutedMargins(for: ps)
+            let printW = 431.8 / 25.4 - physM.left - physM.right
+            let printH = 279.4 / 25.4 - physM.bottom - physM.top
+            let areaW = ps.plotWindowMaxX - ps.plotWindowMinX
+            let areaH = ps.plotWindowMaxY - ps.plotWindowMinY
+            let fit = min(printW / areaW, printH / areaH)
+            let off = PlotSettingsValidator.centeredOffset(
+                printableWidth: printW, printableHeight: printH,
+                plotAreaWidth: areaW, plotAreaHeight: areaH, scale: fit,
+                plotOffset: plotOffset,
+                marginLeft: physM.left, marginBottom: physM.bottom)
+            // Device position of the window min corner (engine Y-down: the
+            // window bottom is area.maxY = -windowMinY).
+            let devX = s * ps.plotWindowMinX + frame.tx
+            let devY = -s * -ps.plotWindowMinY + frame.ty
+            // PLOTOFFSET only relabels the offset reference (printable
+            // corner vs paper edge); a centred plot must not move.
+            let baseX = plotOffset == 1 ? 0 : physM.left
+            let baseY = plotOffset == 1 ? 0 : physM.bottom
+            XCTAssertEqual(devX, (baseX + off.x) * 72.0, accuracy: 1.0,
+                           "window left must sit on the printable area (plotOffset=\(plotOffset))")
+            XCTAssertEqual(devY, (baseY + off.y) * 72.0, accuracy: 1.0,
+                           "window bottom must sit on the printable area (plotOffset=\(plotOffset))")
+            // And strictly inside the page: the old composition pinned the
+            // corner near (0.3, 8.6)pt, clipping the left edge ("OTE:").
+            XCTAssertGreaterThan(devX, 10.0)
+            XCTAssertLessThan(devX, frame.pageW - areaW * s)
+            XCTAssertGreaterThan(devY, 10.0)
+            XCTAssertLessThan(devY, frame.pageH - areaH * s + 1e-6)
+        }
     }
 
     func testPlotFrameLimitsPlacesEngineDownContentOnPage() throws {

@@ -388,8 +388,11 @@ public enum DXFImporter {
             return paperHeight / viewHeight
         }
 
-        /// Paper-space frame in sheet coordinates (note the Y flip used by
-        /// `modelToPaperTransform`: paperCenterY is stored positive-down).
+        /// Paper-space frame in Zephyr world coordinates (Y-negated, like all
+        /// imported geometry): `paperCenterY` stores the DXF Y-up value, and
+        /// the negation here converts to world, matching
+        /// `modelToPaperTransform` output and `containsPaperPoint` input.
+        /// Do NOT negate again when drawing or picking: pass straight through.
         var paperRect: (minX: Double, minY: Double, maxX: Double, maxY: Double) {
             let minX = paperCenterX - paperWidth / 2.0
             let maxX = paperCenterX + paperWidth / 2.0
@@ -479,7 +482,8 @@ public enum DXFImporter {
             copy(isLocked: locked)
         }
 
-        /// Move the paper frame (center in sheet coords, Y-up sheet convention).
+        /// Move the paper frame (center in world/display coords, like mouse
+        /// picks and `containsPaperPoint`; stored negated, as imported).
         func withPaperCenter(x: Double, y: Double) -> SheetViewport {
             copy(paperCenterX: x, paperCenterY: -y)
         }

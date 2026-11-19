@@ -108,6 +108,123 @@ final class PaperSpacePhase4Tests: XCTestCase {
         XCTAssertFalse(manager.availableViews.map(\.name).contains("A2"))
     }
 
+    // MARK: - Legacy Window/Fit sheet coincidence (SHEET 3 regression)
+
+    /// SHEET 3 (HYD. PRO.) page setup: Tabloid, inches, landscape, Window
+    /// plot type with Scaled-to-Fit 1:27.8711, centred (flags 692).
+    private func sheet3LikeSettings() -> CADPlotSettings {
+        CADPlotSettings(
+            paperWidthMM: 279.4, paperHeightMM: 431.8,
+            marginLM: 5.027, marginBM: 5.027, marginRM: 5.027, marginTM: 5.027,
+            plotPaperUnits: 0, plotRotation: 1,
+            plotOriginXMM: 0.0, plotOriginYMM: 3.048,
+            plotWindowMinX: 702.0429721660568, plotWindowMinY: 149.2231489467952,
+            plotWindowMaxX: 1157.875219820294, plotWindowMaxY: 444.7729192754576,
+            customScaleNumerator: 1.0, customScaleDenominator: 27.87110050658384,
+            plotFlags: 692, plotType: 4, standardScaleType: 0)
+    }
+
+    /// SHEET 3's floating viewport (id 2) with real converted-DXF numbers.
+    private func sheet3Viewport() -> DXFImporter.SheetViewport {
+        DXFImporter.SheetViewport(
+            paperCenterX: 929.9590959931754, paperCenterY: 296.9980341111269,
+            paperWidth: 469.3921584880686, paperHeight: 303.7243378452208,
+            status: 2, id: 2,
+            viewCenterX: 560.3756489519383, viewCenterY: 365.0950717644659,
+            viewTargetX: 0, viewTargetY: 0,
+            viewHeight: 148.8124, twistAngle: 0,
+            layerName: "Text - General")
+    }
+
+    @MainActor
+    func testLegacyWindowSheetPaperViewportAndPickCoincide() throws {
+        // A model line inside SHEET 3's model window (world coords).
+        let (modelDoc, modelLayerID) = makeLayeredDoc(layerName: "ModelLayer")
+        let modelLayer = modelDoc.allLayers.first!
+        modelDoc.addEntity(makeLine(
+            layerID: modelLayerID,
+            from: Vector3(x: 500, y: -350, z: 0), to: Vector3(x: 620, y: -380, z: 0)))
+        let modelLine = try XCTUnwrap(modelDoc.entitiesView.first)
+
+        var cache = DXFImporter.SheetProjectionCache()
+        cache.exactViewports = [sheet3Viewport()]
+        let projected = DXFImporter.projectedEntities(
+            modelEntities: [modelLine], cache: cache, xrefBlockIDs: [])
+        XCTAssertEqual(projected.count, 1)
+        let (sheetDoc, _) = makeLayeredDoc(layerName: "SheetLayer")
+        sheetDoc.importLayersBlocksEntities(
+            layers: [modelLayer], blocks: [], entities: projected)
+        let ps = sheet3LikeSettings()
+        sheetDoc.plotSettings = ps
+        sheetDoc.layoutSettings = ps.layoutSettings
+
+        // Projected content lands inside the viewport frame.
+        let viewport = sheet3Viewport()
+        let rect = viewport.paperRect
+        let box = try XCTUnwrap(projected.first?.worldBoundingBox)
+        XCTAssertGreaterThanOrEqual(box.min.x, rect.minX - 1e-6)
+        XCTAssertGreaterThanOrEqual(box.min.y, rect.minY - 1e-6)
+        XCTAssertLessThanOrEqual(box.max.x, rect.maxX + 1e-6)
+        XCTAssertLessThanOrEqual(box.max.y, rect.maxY + 1e-6)
+
+        let manager = makeManager(modelDoc: modelDoc, sheetDoc: sheetDoc)
+        XCTAssertTrue(manager.switchToView(at: 1))
+
+        // The overlay paper sits on the viewport frame: same centre (overlay
+        // is DXF-frame, world negates Y), edges within the frame-border
+        // slack (the viewport systematically exceeds the plot window ~3%).
+        let rects = try XCTUnwrap(PaperSheetGeometry.overlayRects(for: ps))
+        let oCX = (rects.paper.minX + rects.paper.maxX) * 0.5
+        let oCY = (rects.paper.minY + rects.paper.maxY) * 0.5
+        let vCX = (rect.minX + rect.maxX) * 0.5
+        let vCY = (rect.minY + rect.maxY) * 0.5
+        XCTAssertEqual(oCX, vCX, accuracy: 1e-6)
+        XCTAssertEqual(oCY, -vCY, accuracy: 1e-6)
+        let oWorldMinX = rects.paper.minX, oWorldMinY = -rects.paper.maxY
+        let oWorldMaxX = rects.paper.maxX, oWorldMaxY = -rects.paper.minY
+        XCTAssertEqual(oWorldMinX, rect.minX, accuracy: 10.0)
+        XCTAssertEqual(oWorldMinY, rect.minY, accuracy: 10.0)
+        XCTAssertEqual(oWorldMaxX, rect.maxX, accuracy: 10.0)
+        XCTAssertEqual(oWorldMaxY, rect.maxY, accuracy: 10.0)
+
+        // Clicking the shared centre picks the viewport; the old mirrored
+        // frame location (pre-fix draw position) picks nothing.
+        let picked = manager.selectViewport(atPaperPoint: vCX, vCY)
+        XCTAssertEqual(picked?.id, 2)
+        XCTAssertNil(manager.selectViewport(atPaperPoint: vCX, -vCY))
+    }
+
+    @MainActor
+    func testCreateLayoutFrameMatchesOverlayPaper() throws {
+        let (modelDoc, modelLayerID) = makeLayeredDoc(layerName: "ModelLayer")
+        modelDoc.addEntity(makeLine(
+            layerID: modelLayerID,
+            from: Vector3(x: 0, y: 0, z: 0), to: Vector3(x: 100, y: 50, z: 0)))
+        let manager = makeManager(
+            modelDoc: modelDoc,
+            sheetDoc: makeLayeredDoc(layerName: "SheetLayer").0)
+        XCTAssertTrue(manager.createLayout(named: "Fresh"))
+        let freshDoc = manager.activeTab!.drawingViews[manager.activeTab!.activeViewIndex].document
+        let viewport = try XCTUnwrap(manager.activeSheetViewports().first)
+        let rects = try XCTUnwrap(PaperSheetGeometry.overlayRects(
+            for: freshDoc.plotSettings ?? CADPlotSettings()))
+        // The new viewport frame is the overlay paper in world coords.
+        XCTAssertEqual(viewport.paperRect.minX, rects.paper.minX, accuracy: 1e-9)
+        XCTAssertEqual(viewport.paperRect.minY, -rects.paper.maxY, accuracy: 1e-9)
+        XCTAssertEqual(viewport.paperRect.maxX, rects.paper.maxX, accuracy: 1e-9)
+        XCTAssertEqual(viewport.paperRect.maxY, -rects.paper.minY, accuracy: 1e-9)
+        // And the fitted model projection lands inside it.
+        let projected = freshDoc.entitiesView.filter(\.isViewportProjected)
+        XCTAssertFalse(projected.isEmpty)
+        for entity in projected {
+            let box = try XCTUnwrap(entity.worldBoundingBox)
+            XCTAssertGreaterThanOrEqual(box.min.x, viewport.paperRect.minX - 1e-6)
+            XCTAssertGreaterThanOrEqual(box.min.y, viewport.paperRect.minY - 1e-6)
+            XCTAssertLessThanOrEqual(box.max.x, viewport.paperRect.maxX + 1e-6)
+            XCTAssertLessThanOrEqual(box.max.y, viewport.paperRect.maxY + 1e-6)
+        }
+    }
+
     @MainActor
     func testLayoutCopyCarriesPaperAndViewports() throws {
         let (modelDoc, modelLayerID) = makeLayeredDoc(layerName: "ModelLayer")

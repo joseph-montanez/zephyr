@@ -170,6 +170,98 @@ final class PaperSheetGeometryTests: XCTestCase {
         _ = a3
     }
 
+    // MARK: - Window/Fit legacy-sheet anchoring (SHEET 3 regression)
+
+    /// SHEET 3 (HYD. PRO.) page setup: Tabloid, inches, landscape, Window
+    /// plot type with Scaled-to-Fit 1:27.8711, centred. The stored plot
+    /// window sits far from the paper-space origin, like the viewport frame
+    /// and the projected content do.
+    private func sheet3LikeSettings() -> CADPlotSettings {
+        CADPlotSettings(
+            paperWidthMM: 279.4, paperHeightMM: 431.8,
+            marginLM: 5.027, marginBM: 5.027, marginRM: 5.027, marginTM: 5.027,
+            plotPaperUnits: 0, plotRotation: 1,
+            plotOriginXMM: 0.0, plotOriginYMM: 3.048,
+            plotWindowMinX: 702.0429721660568, plotWindowMinY: 149.2231489467952,
+            plotWindowMaxX: 1157.875219820294, plotWindowMaxY: 444.7729192754576,
+            customScaleNumerator: 1.0, customScaleDenominator: 27.87110050658384,
+            plotFlags: 692, plotType: 4, standardScaleType: 0)
+    }
+
+    func testWindowAnchoringCentersSheetOnPlotWindow() throws {
+        let ps = sheet3LikeSettings()
+        let rects = try XCTUnwrap(PaperSheetGeometry.overlayRects(for: ps))
+        // The scaled size is intentional (sheet frames fit-scaled content):
+        // 17 x 11 in x 27.8711.
+        XCTAssertEqual(rects.paper.maxX - rects.paper.minX, 473.8087, accuracy: 1e-3)
+        XCTAssertEqual(rects.paper.maxY - rects.paper.minY, 306.5821, accuracy: 1e-3)
+        // The paper centre lands exactly on the stored window centre, so the
+        // outline, the viewport frame, and the projected content coincide.
+        let wCX = (ps.plotWindowMinX + ps.plotWindowMaxX) * 0.5
+        let wCY = (ps.plotWindowMinY + ps.plotWindowMaxY) * 0.5
+        XCTAssertEqual((rects.paper.minX + rects.paper.maxX) * 0.5, wCX, accuracy: 1e-6)
+        XCTAssertEqual((rects.paper.minY + rects.paper.maxY) * 0.5, wCY, accuracy: 1e-6)
+        // The whole window sits on the shifted printable area.
+        XCTAssertLessThanOrEqual(rects.printable.minX, ps.plotWindowMinX)
+        XCTAssertLessThanOrEqual(rects.printable.minY, ps.plotWindowMinY)
+        XCTAssertGreaterThanOrEqual(rects.printable.maxX, ps.plotWindowMaxX)
+        XCTAssertGreaterThanOrEqual(rects.printable.maxY, ps.plotWindowMaxY)
+    }
+
+    func testWindowAnchoringSkipsPlacedAndPartialWindows() throws {
+        // Window already on the origin-anchored paper: no shift.
+        var ps = sheet3LikeSettings()
+        ps.plotWindowMinX = 1; ps.plotWindowMinY = 1
+        ps.plotWindowMaxX = 10; ps.plotWindowMaxY = 8
+        var rects = try XCTUnwrap(PaperSheetGeometry.overlayRects(for: ps))
+        var origin = PaperSheetGeometry.paperSpaceOrigin(for: ps)
+        XCTAssertEqual(rects.paper.minX, -origin.x, accuracy: 1e-9)
+        XCTAssertEqual(rects.paper.minY, -origin.y, accuracy: 1e-9)
+        // Partial detail window far off paper: still no shift.
+        ps.plotWindowMinX = 700; ps.plotWindowMinY = 150
+        ps.plotWindowMaxX = 930; ps.plotWindowMaxY = 300
+        rects = try XCTUnwrap(PaperSheetGeometry.overlayRects(for: ps))
+        origin = PaperSheetGeometry.paperSpaceOrigin(for: ps)
+        XCTAssertEqual(rects.paper.minX, -origin.x, accuracy: 1e-9)
+        XCTAssertEqual(rects.paper.minY, -origin.y, accuracy: 1e-9)
+        // Degenerate window: no shift.
+        ps.plotWindowMaxX = ps.plotWindowMinX
+        rects = try XCTUnwrap(PaperSheetGeometry.overlayRects(for: ps))
+        origin = PaperSheetGeometry.paperSpaceOrigin(for: ps)
+        XCTAssertEqual(rects.paper.minX, -origin.x, accuracy: 1e-9)
+        XCTAssertEqual(rects.paper.minY, -origin.y, accuracy: 1e-9)
+    }
+
+    func testWindowAnchoringSkipsLayoutPlotType() throws {
+        // Same disjoint full-size window, but a Layout plot type: the paper
+        // stays origin-anchored.
+        var ps = sheet3LikeSettings()
+        ps.plotType = 5
+        let rects = try XCTUnwrap(PaperSheetGeometry.overlayRects(for: ps))
+        let origin = PaperSheetGeometry.paperSpaceOrigin(for: ps)
+        XCTAssertEqual(rects.paper.minX, -origin.x, accuracy: 1e-9)
+        XCTAssertEqual(rects.paper.minY, -origin.y, accuracy: 1e-9)
+    }
+
+    func testWindowAnchoringWithoutCenterUsesPlotOrigin() throws {
+        // Uncentred: the window maps to printable-min plus the plot origin,
+        // mirroring PDFExporter.plotFrame's composition.
+        var ps = sheet3LikeSettings()
+        ps.plotFlags = 688 // SHEET 3 flags (692) without bit 4 (Center).
+        let rects = try XCTUnwrap(PaperSheetGeometry.overlayRects(for: ps))
+        let s = PaperSheetGeometry.unitDivisor(for: ps)
+        let k = PaperSheetGeometry.plotScaleMultiplier(for: ps)
+        let ox = ps.plotOriginXMM / s * k, oy = ps.plotOriginYMM / s * k
+        XCTAssertEqual(ps.plotWindowMinX, rects.printable.minX + ox, accuracy: 1e-6)
+        XCTAssertEqual(ps.plotWindowMinY, rects.printable.minY + oy, accuracy: 1e-6)
+        // PLOTOFFSET=1 changes only the reference corner (paper edge, not
+        // printable corner); the same window must land relative to paper-min.
+        let edgeRects = try XCTUnwrap(PaperSheetGeometry.overlayRects(
+            for: ps, plotOffset: 1))
+        XCTAssertEqual(ps.plotWindowMinX, edgeRects.paper.minX + ox, accuracy: 1e-6)
+        XCTAssertEqual(ps.plotWindowMinY, edgeRects.paper.minY + oy, accuracy: 1e-6)
+    }
+
     func testSyncedLimitsMatchWriter() {
         var ps = letterLandscape()
         ps.paperWidthMM = 420; ps.paperHeightMM = 297
