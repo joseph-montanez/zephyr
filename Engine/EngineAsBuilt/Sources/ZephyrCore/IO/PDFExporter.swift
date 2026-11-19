@@ -57,6 +57,8 @@ public enum PDFExporter {
     struct TextPlotSource: Sendable, Equatable {
         var rawColor: ColorRGBA
         var layerID: UUID
+        /// Explicit entity plot style (DXF 390); nil means ByLayer.
+        var plotStyleName: String? = nil
     }
 
     /// Plot ink for nested content (dimensions, tables, block text).
@@ -318,22 +320,31 @@ public enum PDFExporter {
                              clipPageW: clipPageW, clipPageH: clipPageH)
         }
 
+        // All areas are engine-frame (Y-down): worldBounds already is, while
+        // Limits/Window/printable rects are DXF-frame (Y-up) and convert here.
+        // The CTM composition below maps the area bottom (maxY, placed by ty)
+        // to the printable bottom, which is only correct when area and entity
+        // content share the engine frame.
+        func engineArea(_ r: (minX: Double, minY: Double, maxX: Double, maxY: Double))
+            -> (minX: Double, minY: Double, maxX: Double, maxY: Double) {
+            (r.minX, -r.maxY, r.maxX, -r.minY)
+        }
         let areaPS: (minX: Double, minY: Double, maxX: Double, maxY: Double)?
         switch settings.plotType {
-        case 2: // Limits
+        case 2: // Limits (paper corners, DXF Y-up → engine Y-down)
             let l = PaperSheetGeometry.syncedLimits(for: settings)
-            areaPS = (l.min.x, l.min.y, l.max.x, l.max.y)
-        case 4: // Window
-            areaPS = (settings.plotWindowMinX, settings.plotWindowMinY,
-                        settings.plotWindowMaxX, settings.plotWindowMaxY)
+            areaPS = engineArea((l.min.x, l.min.y, l.max.x, l.max.y))
+        case 4: // Window (stored paper-space coords, DXF Y-up → engine Y-down)
+            areaPS = engineArea((settings.plotWindowMinX, settings.plotWindowMinY,
+                                 settings.plotWindowMaxX, settings.plotWindowMaxY))
         case 0, 1, 3: // Display / Extents / View (no named views in v1)
             if let wb = worldBounds {
                 areaPS = wb
             } else {
-                areaPS = printPS
+                areaPS = engineArea(printPS)
             }
         default:
-            areaPS = printPS
+            areaPS = engineArea(printPS)
         }
         let area = areaPS ?? printPS
         let areaW = max(area.maxX - area.minX, 1e-9)
@@ -365,16 +376,13 @@ public enum PDFExporter {
             oy = settings.plotOriginYMM / div
         }
         // Map area origin to printable origin + offset (paper-space units).
-        // Engine content is Y-down (import negates DXF Y) while the
-        // printable rect is Y-up, so for Extents areas sourced from engine
-        // worldBounds the Y offset must compose against the area bottom
-        // (maxY, placed by ty below), not the area top: subtracting minY
-        // inflates ty by a full area height and pushes the sheet off-page.
-        // Window/Limits areas keep the legacy composition.
+        // Both area and entity content are engine-frame (Y-down), so the Y
+        // offset composes against the area bottom (maxY, placed by ty below):
+        // subtracting minY would inflate ty by a full area height and push
+        // the sheet off-page (all plot types share this composition now that
+        // Window/Limits areas convert to the engine frame above).
         let devOX = (printPS.minX + ox - area.minX) * scale
-        let devOY = settings.plotType == 1
-            ? (printPS.minY + oy) * scale
-            : (printPS.minY + oy - area.minY) * scale
+        let devOY = (printPS.minY + oy) * scale
         // Y-flip CTM: device.y = -scale * world.y + ty with area bottom
         // at page bottom offset. In PDF points, printable box sits at
         // devOY from the bottom.
@@ -442,7 +450,10 @@ public enum PDFExporter {
                 let pen: PlotStylePen?
                 if doStyles, let table = plotTable {
                     let aci = Int(DXFColorTable.rgbaToACI(raw))
+                    let entityStyle = LayerAccess.explicitPlotStyleName(of: entity)
                     pen = LayerAccess.plotPen(
+                        entityStyleName: entityStyle,
+                        entityHasExplicitStyle: entityStyle != nil,
                         layer: document.layer(for: entity.layerID),
                         objectACI: aci,
                         pstyleMode: document.pstyleMode,
@@ -535,6 +546,8 @@ public enum PDFExporter {
         let layer = document.layer(for: source.layerID)
         let aci = Int(DXFColorTable.rgbaToACI(raw))
         guard let pen = LayerAccess.plotPen(
+            entityStyleName: source.plotStyleName,
+            entityHasExplicitStyle: source.plotStyleName != nil,
             layer: layer, objectACI: aci,
             pstyleMode: document.pstyleMode, table: table) else {
             return display
@@ -1254,14 +1267,41 @@ public enum PDFExporter {
                         lineSpacingFactor: lineSpacingFactor,
                         lineSpacingStyle: lineSpacingStyle,
                         baseFace: baseFace)
-                    if options.convertAllTextToGeometry, baseFace.font.hasGlyphOutlines {
+                    // A substituted face (missing font file) or a no-embed face
+                    // can never produce valid Identity-H live text (viewers
+                    // flag "non-embedded font using identity encoding" and
+                    // render dots): explode to geometry like the SHX route,
+                    // keeping the searchable hidden-text overlay unless the
+                    // caller explicitly asked for non-searchable output.
+                    let forceGeometry = baseFace.substituted || !baseFace.font.embeddingAllowed
+                    if (options.convertAllTextToGeometry || forceGeometry), baseFace.font.hasGlyphOutlines {
                         items.append(.textStrokes(
                             prims: PDFTextEmitter.geometryOutlines(
                                 laid, rotation: worldRotation,
                                 widthFactor: effectiveWidthFactor,
                                 obliqueDegrees: effectiveOblique),
                             color: entityColor,
-                            plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID)))
+                            plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID,
+                                                       plotStyleName: LayerAccess.explicitPlotStyleName(of: entity))))
+                        if forceGeometry, !options.convertAllTextToGeometry,
+                           options.includeHiddenTextForSHX {
+                            items.append(.hiddenText(
+                                text: displayText,
+                                position: origin,
+                                rotation: worldRotation,
+                                height: worldHeight))
+                        }
+                    } else if forceGeometry {
+                        // No outlines at all (bitmap-only face): Helvetica
+                        // fallback instead of a broken font reference.
+                        items.append(.textFallback(
+                            text: displayText,
+                            position: origin,
+                            rotation: worldRotation,
+                            height: worldHeight,
+                            color: entityColor,
+                            plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID,
+                                                      plotStyleName: LayerAccess.explicitPlotStyleName(of: entity))))
                     } else {
                         let displayName: String
                         if let runFont = formatted?.paragraphs.first?.runs.first?.fontName,
@@ -1277,7 +1317,8 @@ public enum PDFExporter {
                                 widthFactor: effectiveWidthFactor,
                                 obliqueDegrees: effectiveOblique,
                                 color: entityColor),
-                            plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID)))
+                            plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID,
+                                                       plotStyleName: LayerAccess.explicitPlotStyleName(of: entity))))
                     }
                     continue
                 }
@@ -1342,7 +1383,8 @@ public enum PDFExporter {
                     }
                     items.append(.textStrokes(
                         prims: prims, color: entityColor,
-                        plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID)))
+                        plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID,
+                                                  plotStyleName: LayerAccess.explicitPlotStyleName(of: entity))))
                     if options.includeHiddenTextForSHX {
                         items.append(.hiddenText(
                             text: displayText,
@@ -1357,7 +1399,8 @@ public enum PDFExporter {
                         rotation: worldRotation,
                         height: worldHeight,
                         color: entityColor,
-                        plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID)))
+                        plotSource: TextPlotSource(rawColor: rawColor, layerID: entity.layerID,
+                                                  plotStyleName: LayerAccess.explicitPlotStyleName(of: entity))))
                 }
                 continue   // NEVER fall through to geometry — the .text primitive
                            // in localGeometry duplicates position/rotation.

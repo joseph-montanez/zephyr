@@ -1608,8 +1608,9 @@ public class DXFLayerEntry: DXFTableEntry {
     /// absent means reconciled (DXF has no standard group code).
     public var isReconciled: Bool = true
     /// Named plot style from ZEPHYR_LAYER XDATA (1000 "PLOTSTYLE:<name>");
-    /// absent means "Normal" (DXF group 390 carries only the handle).
-    public var plotStyleName: String = "Normal"
+    /// empty when absent (DXF group 390 carries only the handle — the
+    /// importer resolves it through ACAD_PLOTSTYLENAME, else "Normal").
+    public var plotStyleName: String = ""
 
     public override init() {
         self.lineType = "CONTINUOUS"
