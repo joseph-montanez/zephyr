@@ -179,8 +179,13 @@ public final class TextCommand: FeatureCommand {
             insertPos: insertPos,
             layerID: layerID)
 
-        engine.document.addEntity(entity)
-        engine.tabManager.markActiveDirty()
+        if engine.tabManager.isFloatingModelSpace,
+           engine.tabManager.commitPaperEntitiesAsModel([entity]) {
+            engine.tabManager.markActiveDirty()
+        } else {
+            engine.document.addEntity(entity)
+            engine.tabManager.markActiveDirty()
+        }
         processor.commandPrompt = "Text created."
     }
 

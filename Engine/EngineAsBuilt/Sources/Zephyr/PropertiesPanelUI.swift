@@ -53,7 +53,26 @@ struct PropertiesPanelUI {
     /// With no selection the panel stays open and shows an empty state.
     /// - Parameter engine: The engine instance.
     static func render(engine: PhrostEngine) {
-        let doc = engine.document
+        // Floated MSPACE inspects the model document's floating selection.
+        // Display reads (`doc`, `inspHandles`) and the common edits below
+        // all route through these, so one switch covers the whole panel.
+        // Block-editor and text-editor entry stay sheet-only (see below).
+        let isFloatingInspector = engine.tabManager.isFloatingModelSpace
+        let floatingInspectorDoc = isFloatingInspector
+            ? engine.tabManager.modelDocumentForFloatingEdit() : nil
+        let doc = floatingInspectorDoc ?? engine.document
+        let inspHandles: Set<UUID> = isFloatingInspector
+            ? engine.tabManager.floatingSelection : engine.cadSelection.selectedHandles
+        let inspLastSelected: UUID? = isFloatingInspector
+            ? engine.tabManager.floatingSelection.first
+            : engine.cadSelection.lastSelectedHandle
+        // No live generation counter exists for the floating set; its
+        // content hash busts the picker/edit caches instead.
+        let inspSelectionGeneration: Int = isFloatingInspector
+            ? engine.tabManager.floatingSelection.count
+                ^ engine.tabManager.floatingSelection.reduce(0) { $0 ^ $1.hashValue }
+            : engine.cadSelection._selectionGeneration
+        let inspRevBefore = doc.editRevision
         // Panel toggled off: nothing renders (same early return as the
         // content == .hidden guard below, without touching the picker).
         guard engine.ui.showPropertiesPanel else {
@@ -71,13 +90,13 @@ struct PropertiesPanelUI {
             cachedDocument: _cachedPickerDocument,
             document: ObjectIdentifier(doc),
             cachedSelectionGeneration: _cachedPickerSelectionGeneration,
-            selectionGeneration: selection._selectionGeneration,
+            selectionGeneration: inspSelectionGeneration,
             cachedRevision: _cachedPickerRevision,
             revision: doc.renderRevision,
             cachedCount: _cachedPickerItems.count,
-            selectionCount: selection.selectedHandles.count)
+            selectionCount: inspHandles.count)
         {
-            _cachedPickerItems = selection.selectedHandles
+            _cachedPickerItems = inspHandles
                 .compactMap { h in
                     doc.entity(for: h).map {
                         (handle: h, label: Self.pickerLabel(for: $0, document: doc), uuid: h.uuidString)
@@ -86,7 +105,7 @@ struct PropertiesPanelUI {
                 .sorted { ($0.label, $0.uuid) < ($1.label, $1.uuid) }
                 .map { (handle: $0.handle, label: $0.label) }
             _cachedPickerDocument = ObjectIdentifier(doc)
-            _cachedPickerSelectionGeneration = selection._selectionGeneration
+            _cachedPickerSelectionGeneration = inspSelectionGeneration
             _cachedPickerRevision = doc.renderRevision
             _cachedOrderedHandles = _cachedPickerItems.map(\.handle)
         }
@@ -98,12 +117,12 @@ struct PropertiesPanelUI {
         let inspectedHandle = PropertiesPanelUIPolicy.resolvedInspectedHandle(
             _inspectedHandle, orderedSelectedHandles: orderedHandles)
         _inspectedHandle = inspectedHandle
-        if _cachedEditSelectionGeneration != selection._selectionGeneration
+        if _cachedEditSelectionGeneration != inspSelectionGeneration
             || _cachedEditInspected != inspectedHandle {
             _cachedEditHandles = PropertiesPanelUIPolicy.editHandles(
                 orderedSelectedHandles: orderedHandles, inspectedHandle: inspectedHandle)
             _cachedEditInspected = inspectedHandle
-            _cachedEditSelectionGeneration = selection._selectionGeneration
+            _cachedEditSelectionGeneration = inspSelectionGeneration
         }
         let editHandles = _cachedEditHandles
 
@@ -112,7 +131,7 @@ struct PropertiesPanelUI {
         let handle = PropertiesPanelUIPolicy.displayedHandle(
             orderedSelectedHandles: orderedHandles,
             inspectedHandle: inspectedHandle,
-            lastSelectedHandle: engine.cadSelection.lastSelectedHandle)
+            lastSelectedHandle: inspLastSelected)
         let entity = handle.flatMap { doc.entity(for: $0) }
 
         let content = PropertiesPanelUIPolicy.content(
@@ -269,14 +288,20 @@ struct PropertiesPanelUI {
 
             let blockName = block?.name ?? "\u{2014}"
             ImGuiTextV("Block: \(blockName)")
-            if let blockID = block?.handle {
+            // Block-editor and text-editor entry resolve against the active
+            // view document, so they stay sheet-only: from a floating
+            // viewport use the Model tab (or an explicit command) instead.
+            // Otherwise a model block/text handle would open an editor
+            // rooted at the wrong document.
+            if !isFloatingInspector, let blockID = block?.handle {
                 ImGuiSameLine(0, 8)
                 if igSmallButton("Edit Block") {
                     engine.tabManager.enterBlockEditor(blockID: blockID)
                     engine.cadSelection.clearSelection()
                 }
             }
-            if entity.xdata["dxf.text"] != nil
+            if !isFloatingInspector,
+               entity.xdata["dxf.text"] != nil
                 || entity.leaderData?.value.contentType == .mtext {
                 ImGuiSameLine(0, 8)
                 if igSmallButton("Edit Text") {
@@ -315,11 +340,11 @@ struct PropertiesPanelUI {
                 ImGuiTextV("Layer: \(currentLayerName) (\(editHandles.count) entities)")
             }
             if ImGuiBeginCombo("##EntityLayer", currentLayerName, 0) {
-                let allLayers = engine.document.allLayers.sorted { $0.name < $1.name }
+                let allLayers = doc.allLayers.sorted { $0.name < $1.name }
                 for ly in allLayers {
                     let selected = ly.handle == entity.layerID
                     if ImGuiSelectable(ly.name, selected, 0, ImVec2(x: 0, y: 0)) {
-                        engine.document.reassignEntities(handles: editHandles, to: ly.handle)
+                        doc.reassignEntities(handles: editHandles, to: ly.handle)
                     }
                     if selected {
                         ImGuiSetItemDefaultFocus()
@@ -336,9 +361,9 @@ struct PropertiesPanelUI {
                 if useColorOverride {
                     // Enable: write current layer color as default to the edit targets
                     let hex = String(format: "#%02X%02X%02X", layerColor.r, layerColor.g, layerColor.b)
-                    engine.document.setXDataForAll(handles: editHandles, key: "dxf.color", value: .string(hex))
+                    doc.setXDataForAll(handles: editHandles, key: "dxf.color", value: .string(hex))
                 } else {
-                    engine.document.removeXDataForAll(handles: editHandles, key: "dxf.color")
+                    doc.removeXDataForAll(handles: editHandles, key: "dxf.color")
                 }
             }
             if useColorOverride {
@@ -351,7 +376,7 @@ struct PropertiesPanelUI {
                         Int(max(0, min(255, col[0] * 255))),
                         Int(max(0, min(255, col[1] * 255))),
                         Int(max(0, min(255, col[2] * 255))))
-                    engine.document.setXDataForAll(handles: editHandles, key: "dxf.color", value: .string(hex))
+                    doc.setXDataForAll(handles: editHandles, key: "dxf.color", value: .string(hex))
                 }
             }
 
@@ -360,9 +385,9 @@ struct PropertiesPanelUI {
             var useLWOverride = hasLWOverride
             if ImGuiCheckbox("Use line weight override", &useLWOverride) {
                 if useLWOverride {
-                    engine.document.setXDataForAll(handles: editHandles, key: "dxf.lineWeight", value: .double(layerLW))
+                    doc.setXDataForAll(handles: editHandles, key: "dxf.lineWeight", value: .double(layerLW))
                 } else {
-                    engine.document.removeXDataForAll(handles: editHandles, key: "dxf.lineWeight")
+                    doc.removeXDataForAll(handles: editHandles, key: "dxf.lineWeight")
                 }
             }
             if useLWOverride {
@@ -373,7 +398,7 @@ struct PropertiesPanelUI {
                 var lw = Float(currentLW)
                 ImGuiPushItemWidth(ImGuiGetFontSize() * 6)
                 if ImGuiInputFloat("##EntityLW", &lw, 0.05, 0.25, "%.3f mm", 0) {
-                    engine.document.setXDataForAll(handles: editHandles, key: "dxf.lineWeight", value: .double(Double(max(0, lw))))
+                    doc.setXDataForAll(handles: editHandles, key: "dxf.lineWeight", value: .double(Double(max(0, lw))))
                 }
                 ImGuiPopItemWidth()
             }
@@ -383,9 +408,9 @@ struct PropertiesPanelUI {
             var useLTOverride = hasLTOverride
             if ImGuiCheckbox("Use line type override", &useLTOverride) {
                 if useLTOverride {
-                    engine.document.setXDataForAll(handles: editHandles, key: "dxf.lineType", value: .string(layerLT))
+                    doc.setXDataForAll(handles: editHandles, key: "dxf.lineType", value: .string(layerLT))
                 } else {
-                    engine.document.removeXDataForAll(handles: editHandles, key: "dxf.lineType")
+                    doc.removeXDataForAll(handles: editHandles, key: "dxf.lineType")
                 }
             }
             if useLTOverride {
@@ -398,7 +423,7 @@ struct PropertiesPanelUI {
                     for lt in lineTypes {
                         let selected = (lt == currentLT)
                         if ImGuiSelectable(lt, selected, 0, ImVec2(x: 0, y: 0)) {
-                            engine.document.setXDataForAll(handles: editHandles, key: "dxf.lineType", value: .string(lt))
+                            doc.setXDataForAll(handles: editHandles, key: "dxf.lineType", value: .string(lt))
                         }
                         if selected {
                             ImGuiSetItemDefaultFocus()
@@ -412,16 +437,16 @@ struct PropertiesPanelUI {
             var isDefaultOrder = entity.drawOrder == Int.max
             if ImGuiCheckbox("Default draw order", &isDefaultOrder) {
                 if isDefaultOrder {
-                    engine.document.setDrawOrderForAll(handles: editHandles, to: Int.max)
+                    doc.setDrawOrderForAll(handles: editHandles, to: Int.max)
                 } else {
-                    engine.document.setDrawOrderForAll(handles: editHandles, to: 0)
+                    doc.setDrawOrderForAll(handles: editHandles, to: 0)
                 }
             }
             if !isDefaultOrder {
                 var drawOrder = Int32(clamping: entity.drawOrder)
                 ImGuiPushItemWidth(ImGuiGetFontSize() * 4)
                 if ImGuiInputInt("Draw order", &drawOrder, 1, 10, 0) {
-                    engine.document.setDrawOrderForAll(handles: editHandles, to: Int(drawOrder))
+                    doc.setDrawOrderForAll(handles: editHandles, to: Int(drawOrder))
                 }
                 ImGuiPopItemWidth()
             }
@@ -449,7 +474,7 @@ struct PropertiesPanelUI {
         if let dimBox = entity.dimensionMetadata {
             if ImGuiCollapsingHeader("Dimension Properties", Int32(ImGuiTreeNodeFlags_DefaultOpen.rawValue)) {
                 let metadata = dimBox.value
-                var style = engine.document.resolvedDimensionStyle(for: metadata)
+                var style = doc.resolvedDimensionStyle(for: metadata)
                 var changed = false
                 
                 // Text Override
@@ -495,15 +520,15 @@ struct PropertiesPanelUI {
                     )
                     var newEntity = entity
                     newEntity.dimensionMetadata = CADDimensionMetadataBox(newMeta)
-                    DimensionPrimitives.updateDimensionBlock(for: &newEntity, in: engine.document)
-                    engine.document.updateEntity(newEntity)
+                    DimensionPrimitives.updateDimensionBlock(for: &newEntity, in: doc)
+                    doc.updateEntity(newEntity)
                 }
                 
                 // Text Style
                 ImGuiTextV("Text Style:")
                 ImGuiPushItemWidth(-1)
                 if ImGuiBeginCombo("##DimTextStyle", style.textStyle, 0) {
-                    for ts in engine.document.textStyleFonts.keys.sorted() {
+                    for ts in doc.textStyleFonts.keys.sorted() {
                         let selected = (ts == style.textStyle)
                         if ImGuiSelectable(ts, selected, 0, ImVec2(x: 0, y: 0)) {
                             style.textStyle = ts
@@ -580,8 +605,8 @@ struct PropertiesPanelUI {
                     newMeta.styleOverrides = style
                     var newEntity = entity
                     newEntity.dimensionMetadata = CADDimensionMetadataBox(newMeta)
-                    DimensionPrimitives.updateDimensionBlock(for: &newEntity, in: engine.document)
-                    engine.document.updateEntity(newEntity)
+                    DimensionPrimitives.updateDimensionBlock(for: &newEntity, in: doc)
+                    doc.updateEntity(newEntity)
                 }
                 igSeparator()
             }
@@ -634,7 +659,7 @@ struct PropertiesPanelUI {
                     z: 0
                 )
                 let newLine = CADPrimitive.line(start: lineStart, end: newEnd, color: lineColor)
-                engine.document.updateEntityGeometry(for: handle, geometry: [newLine])
+                doc.updateEntityGeometry(for: handle, geometry: [newLine])
                 engine.tabManager.markActiveDirty()
             }
             igSeparator()
@@ -669,6 +694,15 @@ struct PropertiesPanelUI {
                 }
                 igSeparator()
             }
+        }
+
+        // Panel edits above mutate `doc` directly. While floating that is
+        // the model document, so reproject the sheet (and prune handles
+        // that an edit removed) exactly once per frame that changed it.
+        if isFloatingInspector, doc.editRevision != inspRevBefore {
+            engine.tabManager.refreshActiveSheetProjections()
+            engine.tabManager.markActiveSheetProjected()
+            engine.tabManager.pruneFloatingSelection()
         }
     }
 

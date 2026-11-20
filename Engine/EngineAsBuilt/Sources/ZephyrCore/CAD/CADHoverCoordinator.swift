@@ -102,6 +102,12 @@ final class CADHoverCoordinator {
 
     private func updateGrip(screenX: Float, screenY: Float) {
         let interaction = engine.interaction
+        // Floated MSPACE: hover the mapped model grips for the floating
+        // selection; sheet selection stays out of it.
+        if engine.tabManager.isFloatingModelSpace {
+            updateFloatingGrip(screenX: screenX, screenY: screenY)
+            return
+        }
         // No grips can exist without a selection or above GRIPOBJLIMIT
         // (`getAllGrips` returns [] in both cases) -- skip the O(selected)
         // regeneration entirely instead of proving it empty per event.
@@ -129,9 +135,75 @@ final class CADHoverCoordinator {
         interaction.hoveredGripHandle = hit?.handle
     }
 
+    private func updateFloatingGrip(screenX: Float, screenY: Float) {
+        let interaction = engine.interaction
+        guard !engine.tabManager.floatingSelection.isEmpty,
+              !CADSelectionDisplayPolicy.gripsSuppressed(
+                  selectedCount: engine.tabManager.floatingSelection.count,
+                  gripObjectLimit: engine.gripObjectMax),
+              let ctx = engine.tabManager.editSpaceContext(),
+              let modelDoc = engine.tabManager.modelDocumentForFloatingEdit()
+        else {
+            interaction.hoveredGrip = nil
+            interaction.hoveredGripHandle = nil
+            return
+        }
+        let camera = engine.camera.currentTransform(
+            windowWidth: engine.windowWidth,
+            windowHeight: engine.windowHeight)
+        let grips = CADGripSystem.getAllGrips(
+            document: modelDoc, cam: camera,
+            simplifyComplexBlocks: engine.simplifyComplexBlocks,
+            selectedHandles: engine.tabManager.floatingSelection,
+            gripObjectLimit: engine.gripObjectMax)
+        var best: CADSelectionManager.CadGripInfo? = nil
+        var bestDist = Float.infinity
+        for g in grips {
+            let paper = ctx.modelToPaper.transformPoint(g.worldPos)
+            let s = EngineCameraManager.worldToScreen(
+                worldX: paper.x, worldY: paper.y, cam: camera)
+            let dx = Double(s.x - screenX)
+            let dy = Double(s.y - screenY)
+            let dist = Float(sqrt(dx * dx + dy * dy))
+            if dist <= 10.0 && dist < bestDist {
+                bestDist = dist
+                best = g
+            }
+        }
+        interaction.hoveredGrip = best?.grip
+        interaction.hoveredGripHandle = best?.handle
+    }
+
     private func updateEntity(worldX: Double, worldY: Double) {
         let interaction = engine.interaction
         let threshold = 6.0 / engine.camera.zoom
+        // Floated MSPACE: hover the model document through the viewport.
+        // Sheet hover stays nil so the paper highlight skips; the MSPACE
+        // overlay draws `floatingHoverHandle` mapped to paper.
+        if engine.tabManager.isFloatingModelSpace,
+           let ctx = engine.tabManager.editSpaceContext(),
+           let modelDoc = engine.tabManager.modelDocumentForFloatingEdit(),
+           let model = engine.tabManager.paperToModelPoint(paperX: worldX, paperY: worldY) {
+            let modelThreshold = threshold / max(ctx.viewportScale, 1e-9)
+            let scan = engine.cadSelection.hoverScan(
+                worldX: model.x,
+                worldY: model.y,
+                document: modelDoc,
+                threshold: modelThreshold,
+                simplifyComplexBlocks: engine.simplifyComplexBlocks,
+                blockLOD: BlockLOD.liveContext(
+                    zoom: engine.camera.zoom * ctx.viewportScale,
+                    scaleX: Double(engine.scaleX),
+                    scaleY: Double(engine.scaleY),
+                    autoEnabled: engine.autoCollapseSmallBlocks))
+            engine.tabManager.floatingHoverHandle = scan.best
+            interaction.hoveredEntityHandle = nil
+            interaction.lastHoverTestWorldX = worldX
+            interaction.lastHoverTestWorldY = worldY
+            interaction.lastHoverTestTicks = SDL_GetTicks()
+            interaction.clearHoverCycle()
+            return
+        }
         // An armed Shift+Space cycle owns the hover highlight while the
         // cursor stays inside the pile's pickbox; mousemove must not
         // overwrite the user's explicit choice.

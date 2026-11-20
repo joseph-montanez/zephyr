@@ -140,6 +140,10 @@ public final class DimAlignedCommand: FeatureCommand {
     }
     
     private func commitDimension(p1: Vector3, p2: Vector3, dimLinePos: Vector3, engine: PhrostEngine, processor: CADCommandProcessor) {
+        let target = engine.tabManager.dimensionTarget(activeDoc: engine.document)
+        let p1 = target.map(p1)
+        let p2 = target.map(p2)
+        let dimLinePos = target.map(dimLinePos)
         let dir = Vector3(x: p2.x - p1.x, y: p2.y - p1.y, z: 0)
         guard hypot(dir.x, dir.y) > 0 else {
             processor.commandPrompt = "Points must be distinct."
@@ -157,12 +161,12 @@ public final class DimAlignedCommand: FeatureCommand {
         let dimEnd = Vector3(x: p2.x + perp.x * offset, y: p2.y + perp.y * offset, z: 0)
         
         let textMidpoint = Vector3(x: (dimStart.x + dimEnd.x) / 2.0, y: (dimStart.y + dimEnd.y) / 2.0, z: 0)
-        let style = engine.document.currentDimensionStyle()
+        let style = target.doc.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatMeasurement(dist)
         
         let metadata = CADDimensionMetadata(
-            styleName: engine.document.currentDimensionStyleName,
+            styleName: target.doc.currentDimensionStyleName,
             type: .aligned,
             measurement: dist,
             defPoint: dimLinePos,
@@ -177,6 +181,7 @@ public final class DimAlignedCommand: FeatureCommand {
         primitives.append(contentsOf: DimensionPrimitives.dimensionLine(from: dimStart, to: dimEnd, arrowAtStart: true, arrowAtEnd: true, style: style, color: color))
         primitives.append(DimensionPrimitives.dimensionText(position: textMidpoint, value: valueStr, rotation: angle, style: style, color: color))
         
-        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: engine.document.activeLayerID ?? UUID(), document: engine.document)
+        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: target.doc.activeLayerID ?? UUID(), document: target.doc)
+        engine.tabManager.finishFloatingDimensionCommit(wasFloating: target.isFloating)
     }
 }

@@ -132,6 +132,10 @@ public final class DimDiameterCommand: FeatureCommand {
     }
     
     private func commitDimension(center: Vector3, radius: Double, textLoc: Vector3, engine: PhrostEngine, processor: CADCommandProcessor) {
+        let target = engine.tabManager.dimensionTarget(activeDoc: engine.document)
+        let center = target.map(center)
+        let textLoc = target.map(textLoc)
+        let radius = target.isFloating ? engine.tabManager.mapPaperDistanceToModel(radius) : radius
         let dir = Vector3(x: textLoc.x - center.x, y: textLoc.y - center.y, z: 0)
         guard hypot(dir.x, dir.y) > 0 else { return }
         
@@ -139,14 +143,14 @@ public final class DimDiameterCommand: FeatureCommand {
         let p1World = Vector3(x: center.x - n.x * radius, y: center.y - n.y * radius, z: 0)
         let p2World = Vector3(x: center.x + n.x * radius, y: center.y + n.y * radius, z: 0)
         
-        let style = engine.document.currentDimensionStyle()
+        let style = target.doc.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatMeasurement(radius * 2, prefix: "Ø")
         
         let angle = atan2(n.y, n.x)
         
         let metadata = CADDimensionMetadata(
-            styleName: engine.document.currentDimensionStyleName,
+            styleName: target.doc.currentDimensionStyleName,
             type: .diameter,
             measurement: radius * 2,
             defPoint: p1World,
@@ -175,6 +179,7 @@ public final class DimDiameterCommand: FeatureCommand {
         let textPos = Vector3(x: textLoc.x + (n.x >= 0 ? textTailLength/2 : -textTailLength/2), y: textLoc.y + style.textOffset, z: 0)
         primitives.append(DimensionPrimitives.dimensionText(position: textPos, value: valueStr, rotation: 0, style: style, color: color))
         
-        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: engine.document.activeLayerID ?? UUID(), document: engine.document)
+        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: target.doc.activeLayerID ?? UUID(), document: target.doc)
+        engine.tabManager.finishFloatingDimensionCommit(wasFloating: target.isFloating)
     }
 }

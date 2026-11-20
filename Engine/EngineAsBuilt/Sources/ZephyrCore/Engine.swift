@@ -758,6 +758,17 @@ public final class PhrostEngine {
             // views — including focus moving to another OS window — must
             // not let the next click land as its second corner elsewhere.
             self.interaction.cancelRectSelect()
+            // Viewport frame drags mutate the departing sheet live: roll
+            // back to the pre-drag snapshot so no half-drag survives.
+            if let frameDrag = self.interaction.viewportFrameDrag {
+                frameDrag.sheetDoc.restore(from: frameDrag.undoSnapshot)
+            }
+            self.interaction.viewportFrameDrag = nil
+            self.interaction.pendingViewportFrameDrag = nil
+            // Space-transition teardown: in-flight points belong to the old
+            // space (paper vs model through a viewport). Never carry a
+            // half-built Polyline/Move across a view/tab/layout switch.
+            self.commandProcessor.finishFeatureCommand(engine: self)
             if let color = self.tabManager.activeViewBackgroundColor {
                 self.ui.viewBackgroundOverride = SDL_FColor(
                     r: Float(color.r) / 255.0,

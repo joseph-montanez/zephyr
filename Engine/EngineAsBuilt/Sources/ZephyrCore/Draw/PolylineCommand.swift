@@ -165,8 +165,13 @@ public final class PolylineCommand: FeatureCommand {
             processor.commandPrompt = "Polyline created with \(points.count) points."
         }
 
-        engine.document.addEntity(entity)
-        engine.tabManager.markActiveDirty()
+        if engine.tabManager.isFloatingModelSpace,
+           engine.tabManager.commitPaperEntitiesAsModel([entity]) {
+            engine.tabManager.markActiveDirty()
+        } else {
+            engine.document.addEntity(entity)
+            engine.tabManager.markActiveDirty()
+        }
         return .finished
     }
 

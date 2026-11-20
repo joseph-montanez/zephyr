@@ -123,6 +123,9 @@ public final class DimOrdinateCommand: FeatureCommand {
     }
     
     private func commitDimension(feature: Vector3, leader: Vector3, engine: PhrostEngine, processor: CADCommandProcessor) {
+        let target = engine.tabManager.dimensionTarget(activeDoc: engine.document)
+        let feature = target.map(feature)
+        let leader = target.map(leader)
         let isXType = isOrdinateXType(feature: feature, leader: leader, engine: engine)
         
         let jogPos: Vector3
@@ -136,7 +139,7 @@ public final class DimOrdinateCommand: FeatureCommand {
             textValue = feature.y
         }
         
-        let style = engine.document.currentDimensionStyle()
+        let style = target.doc.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatMeasurement(textValue)
         
@@ -144,7 +147,7 @@ public final class DimOrdinateCommand: FeatureCommand {
         if isXType { flags |= (1 << 6) } // Bit 6 for X-type ordinate
         
         let metadata = CADDimensionMetadata(
-            styleName: engine.document.currentDimensionStyleName,
+            styleName: target.doc.currentDimensionStyleName,
             type: .ordinate,
             measurement: textValue,
             defPoint: feature,
@@ -163,6 +166,7 @@ public final class DimOrdinateCommand: FeatureCommand {
         // Text
         primitives.append(DimensionPrimitives.dimensionText(position: leader, value: valueStr, rotation: 0, style: style, color: color))
         
-        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: engine.document.activeLayerID ?? UUID(), document: engine.document)
+        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: target.doc.activeLayerID ?? UUID(), document: target.doc)
+        engine.tabManager.finishFloatingDimensionCommit(wasFloating: target.isFloating)
     }
 }

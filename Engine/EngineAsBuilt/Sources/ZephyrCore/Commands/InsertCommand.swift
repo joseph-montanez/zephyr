@@ -471,19 +471,33 @@ public final class InsertCommand: FeatureCommand {
     // MARK: - Commit (single undo group)
 
     private func place(engine: PhrostEngine, processor: CADCommandProcessor) {
-        let doc = engine.document
+        // Floated MSPACE inserts into the model document: the paper insertion
+        // transform is pre-multiplied by the viewport inverse so the block
+        // lands at the correct model location.
+        let doc: CADDocument
+        let paperToModel: Transform3D?
+        if engine.tabManager.isFloatingModelSpace,
+           let modelDoc = engine.tabManager.modelDocumentForFloatingEdit(),
+           let ctx = engine.tabManager.editSpaceContext() {
+            doc = modelDoc
+            paperToModel = ctx.paperToModel
+        } else {
+            doc = engine.document
+            paperToModel = nil
+        }
         doc.undoManager.beginUndoGroup()
         do {
             let bid = try commitBlockID(doc: doc)
             let layerID = doc.activeLayerID
                 ?? doc.allLayers.first?.handle ?? UUID()
+            let paperTransform = DrawingFileInsert.insertionTransform(
+                point: insertionPoint,
+                scaleX: scaleX, scaleY: scaleY, scaleZ: scaleZ,
+                rotationDegrees: stagedRotation)
             var entity = CADEntity(
                 layerID: layerID,
                 blockID: bid,
-                transform: DrawingFileInsert.insertionTransform(
-                    point: insertionPoint,
-                    scaleX: scaleX, scaleY: scaleY, scaleZ: scaleZ,
-                    rotationDegrees: stagedRotation))
+                transform: paperToModel?.multiplying(by: paperTransform) ?? paperTransform)
             entity.attributeValues = CADAttributeSync.apply(
                 definitions: pendingDefs, to: stagedValues)
             doc.addEntity(entity)
@@ -492,6 +506,10 @@ public final class InsertCommand: FeatureCommand {
             }
             print("[CAD] Inserted block '\(blockName)' at (\(insertionPoint.x), \(insertionPoint.y))")
             doc.undoManager.endUndoGroup()
+            if paperToModel != nil {
+                engine.tabManager.refreshActiveSheetProjections()
+                engine.tabManager.markActiveSheetProjected()
+            }
         } catch {
             doc.undoManager.discardOpenUndoGroups()
             stagedBundle = nil

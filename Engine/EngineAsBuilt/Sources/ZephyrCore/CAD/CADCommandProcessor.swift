@@ -3826,6 +3826,21 @@ public final class CADCommandProcessor {
     /// goes straight to `document.undo()`; kept here so the behaviour (and the
     /// user feedback) can never drift between the two entry points.
     private func performUndo(engine: PhrostEngine, steps: Int) {
+        // Floated MSPACE edits the model document: undo there, then
+        // reproject the sheet and prune stale floating handles.
+        if engine.tabManager.isFloatingModelSpace,
+           let modelDoc = engine.tabManager.modelDocumentForFloatingEdit() {
+            let available = modelDoc.undoManager.undoDepth
+            guard available > 0 else {
+                print("[CAD] Nothing to undo.")
+                return
+            }
+            let count = min(steps, available)
+            for _ in 0..<count { engine.tabManager.undoFloatingEdit() }
+            print("[CAD] Undo \(count == 1 ? "1 step" : "\(count) steps")"
+                + (available > count ? " (\(available - count) more available)" : ""))
+            return
+        }
         let available = engine.document.undoManager.undoDepth
         guard available > 0 else {
             print("[CAD] Nothing to undo.")
@@ -3839,6 +3854,19 @@ public final class CADCommandProcessor {
 
     /// `REDO` command path. Mirror of `performUndo(engine:steps:)`.
     private func performRedo(engine: PhrostEngine, steps: Int) {
+        if engine.tabManager.isFloatingModelSpace,
+           let modelDoc = engine.tabManager.modelDocumentForFloatingEdit() {
+            let available = modelDoc.undoManager.redoDepth
+            guard available > 0 else {
+                print("[CAD] Nothing to redo.")
+                return
+            }
+            let count = min(steps, available)
+            for _ in 0..<count { engine.tabManager.redoFloatingEdit() }
+            print("[CAD] Redo \(count == 1 ? "1 step" : "\(count) steps")"
+                + (available > count ? " (\(available - count) more available)" : ""))
+            return
+        }
         let available = engine.document.undoManager.redoDepth
         guard available > 0 else {
             print("[CAD] Nothing to redo.")

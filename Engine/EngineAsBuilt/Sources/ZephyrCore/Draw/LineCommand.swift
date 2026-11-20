@@ -193,8 +193,15 @@ public final class LineCommand: FeatureCommand {
                 localGeometry: [.line(start: points[i], end: points[i + 1])])
             entities.append(entity)
         }
-        engine.document.addEntities(entities)
-        engine.tabManager.markActiveDirty()
+        // Floated MSPACE keeps paper-space preview points; commit maps them
+        // into the model document through the viewport inverse transform.
+        if engine.tabManager.isFloatingModelSpace,
+           engine.tabManager.commitPaperEntitiesAsModel(entities) {
+            engine.tabManager.markActiveDirty()
+        } else {
+            engine.document.addEntities(entities)
+            engine.tabManager.markActiveDirty()
+        }
         let segmentCount = points.count - 1
         processor.commandPrompt = "Line created with \(segmentCount) segment\(segmentCount == 1 ? "" : "s")."
         return .finished

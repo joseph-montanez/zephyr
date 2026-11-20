@@ -1434,6 +1434,43 @@ public final class EngineLoopController {
 
 
         if interaction.rectSelectActive {
+            // A rect-armed second click can still be a double-click aimed
+            // at a viewport: MSPACE entry/exit wins over committing a
+            // zero-size box. Entity double-clicks never reach here (they
+            // return through the hit path), so this only fires on empty
+            // paper.
+            let rectVpDoubleClick = interaction.lastClickTime != 0
+                && (SDL_GetTicks() - interaction.lastClickTime) < 400
+                && abs(x - interaction.lastClickScreenX) < 8
+                && abs(y - interaction.lastClickScreenY) < 8
+            if rectVpDoubleClick,
+               engine.tabManager.isPaperSpace,
+               engine.commandProcessor.activeFeatureCommand == nil,
+               engine.commandProcessor.activeCommand == nil {
+                let interiorPicked = engine.tabManager.selectViewport(atPaperPoint: wx, wy)
+                if let interiorPicked, engine.tabManager.floatingViewportID != interiorPicked.id,
+                   let id = engine.tabManager.enterFloatingModelSpace(id: interiorPicked.id) {
+                    interaction.rectSelectActive = false
+                    interaction.rectSelectPreviewHandles.removeAll()
+                    interaction.lassoActive = false
+                    interaction.lassoPointsWorld.removeAll()
+                    interaction.pendingViewportFrameDrag = nil
+                    interaction.viewportFrameDrag = nil
+                    print("[CAD] MSPACE: floating model space in viewport \(id).")
+                    return
+                } else if interiorPicked == nil, engine.tabManager.isFloatingModelSpace {
+                    engine.tabManager.exitFloatingModelSpace()
+                    engine.commandProcessor.finishFeatureCommand(engine: engine)
+                    interaction.rectSelectActive = false
+                    interaction.rectSelectPreviewHandles.removeAll()
+                    interaction.lassoActive = false
+                    interaction.lassoPointsWorld.removeAll()
+                    interaction.pendingViewportFrameDrag = nil
+                    interaction.viewportFrameDrag = nil
+                    print("[CAD] PSPACE: paper space.")
+                    return
+                }
+            }
 
             selectionDebug("DOWN x=\(x) y=\(y) branch=commit-armed-box")
 
@@ -1454,6 +1491,24 @@ public final class EngineLoopController {
             let h = maxY - minY
 
             if w > 0 || h > 0 {
+                // Floated MSPACE: clamp to the viewport clip and test the
+                // inverse-mapped quad with lasso semantics (twist-safe).
+                if engine.tabManager.isFloatingModelSpace {
+                    let isWindow = x >= interaction.rectSelectScreenStartX
+                    let picked = engine.tabManager.floatingBoxSelect(
+                        paperMinX: minX, paperMinY: minY,
+                        paperMaxX: maxX, paperMaxY: maxY,
+                        isWindow: isWindow)
+                    switch interaction.cadRectSelectMode {
+                    case .replace:
+                        engine.tabManager.floatingSelection = picked
+                    case .add:
+                        engine.tabManager.floatingSelection.formUnion(picked)
+                    case .subtract:
+                        engine.tabManager.floatingSelection.subtract(picked)
+                    }
+                    return
+                }
 
                 let style: CADSelectionManager.RectSelectStyle =
 
@@ -1677,6 +1732,54 @@ public final class EngineLoopController {
 
 
 
+        // Floated MSPACE grip hit: enumerate model grips for the floating
+        // selection, map model world -> paper -> screen, pick nearest.
+        let floatingGripHit: CADSelectionManager.CadGripInfo? = {
+            guard engine.tabManager.isFloatingModelSpace,
+                  let ctx = engine.tabManager.editSpaceContext(),
+                  let modelDoc = engine.tabManager.modelDocumentForFloatingEdit(),
+                  !engine.tabManager.floatingSelection.isEmpty else { return nil }
+            let grips = CADGripSystem.getAllGrips(
+                document: modelDoc, cam: cam,
+                simplifyComplexBlocks: engine.simplifyComplexBlocks,
+                selectedHandles: engine.tabManager.floatingSelection,
+                gripObjectLimit: engine.gripObjectMax)
+            var best: CADSelectionManager.CadGripInfo? = nil
+            var bestDist = Float.infinity
+            for g in grips {
+                let paper = ctx.modelToPaper.transformPoint(g.worldPos)
+                let s = EngineCameraManager.worldToScreen(worldX: paper.x, worldY: paper.y, cam: cam)
+                let dx = Double(s.x - testX)
+                let dy = Double(s.y - testY)
+                let dist = Float(sqrt(dx * dx + dy * dy))
+                if dist <= 10.0 && dist < bestDist {
+                    bestDist = dist
+                    best = CADSelectionManager.CadGripInfo(
+                        handle: g.handle, grip: g.grip,
+                        screenPos: s,
+                        worldPos: paper,
+                        screenDirection: g.screenDirection)
+                }
+            }
+            return best
+        }()
+        if let floatingHit = floatingGripHit {
+            interaction.gripActive = true
+            interaction.gripHandle = floatingHit.handle
+            interaction.gripType = floatingHit.grip
+            interaction.gripUndoSnapshot = engine.tabManager.modelDocumentForFloatingEdit()?.snapshot()
+            interaction.dragLastWorldX = floatingHit.worldPos.x
+            interaction.dragLastWorldY = floatingHit.worldPos.y
+            interaction.dragTotalWorldX = 0
+            interaction.dragTotalWorldY = 0
+            interaction.gripDragAccumRotation = 0
+            interaction.gripDragAccumScale = 1.0
+            interaction.resetGripVertexEditMode()
+            interaction.gripAppliedWorldPosition = floatingHit.worldPos
+            interaction.gripStartWorldPosition = floatingHit.worldPos
+            return
+        }
+
         if let gripHit = engine.cadSelection.gripHitTest(
 
             screenX: testX, screenY: testY, document: engine.document, cam: cam,
@@ -1871,6 +1974,64 @@ public final class EngineLoopController {
 
 
 
+        // Floated MSPACE: point-pick the model document through the viewport.
+        // Paper point outside the clip falls through to sheet handling so a
+        // single click outside never strands the user; double-click outside
+        // exits via the paper-space arm below.
+        if engine.tabManager.isFloatingModelSpace,
+           let ctx = engine.tabManager.editSpaceContext() {
+            let insideClip = wx >= ctx.clipMinX && wx <= ctx.clipMaxX
+                && wy >= ctx.clipMinY && wy <= ctx.clipMaxY
+            if insideClip,
+               let floatingHandle = engine.tabManager.floatingHitTest(
+                paperX: wx, paperY: wy, paperThreshold: idleThreshold) {
+                let now = SDL_GetTicks()
+                let dx = abs(x - interaction.lastClickScreenX)
+                let dy = abs(y - interaction.lastClickScreenY)
+                let isDoubleClick = interaction.lastClickedHandle == floatingHandle
+                    && (now - interaction.lastClickTime) < 400
+                    && dx < 8 && dy < 8
+                // Model-handle selection lives outside the sheet
+                // SelectionState; shift toggles, plain click replaces.
+                if shiftHeld {
+                    if engine.tabManager.floatingSelection.contains(floatingHandle) {
+                        engine.tabManager.floatingSelection.remove(floatingHandle)
+                    } else {
+                        engine.tabManager.floatingSelection.insert(floatingHandle)
+                    }
+                } else {
+                    engine.tabManager.floatingSelection = [floatingHandle]
+                }
+                engine.tabManager.floatingHoverHandle = nil
+                interaction.lastClickTime = now
+                interaction.lastClickedHandle = floatingHandle
+                interaction.lastClickScreenX = x
+                interaction.lastClickScreenY = y
+                _ = isDoubleClick
+                return
+            } else if insideClip {
+                // Empty model click inside the clip arms box select so
+                // press-drag and click-click window selection keep working
+                // in MSPACE. The commit paths route to floatingBoxSelect;
+                // replace mode clears on commit, so don't clear here.
+                interaction.lastClickTime = SDL_GetTicks()
+                interaction.lastClickedHandle = nil
+                interaction.lastClickScreenX = x
+                interaction.lastClickScreenY = y
+                interaction.rectSelectActive = true
+                interaction.rectSelectScreenStartX = x
+                interaction.rectSelectStartX = wx
+                interaction.rectSelectStartY = wy
+                interaction.rectSelectCurrentX = wx
+                interaction.rectSelectCurrentY = wy
+                interaction.cadRectSelectMode = shiftHeld ? .subtract : .add
+                interaction.mouseDownScreenX = x
+                interaction.mouseDownScreenY = y
+                return
+            }
+            // Outside the clip: fall through to sheet PSPACE handling.
+        }
+
         let hitHandle = engine.cadSelection.hitTest(
 
             worldX: wx, worldY: wy, document: engine.document,
@@ -1929,6 +2090,10 @@ public final class EngineLoopController {
 
         interaction.lastClickedHandle = nil
 
+        interaction.lastClickScreenX = x
+
+        interaction.lastClickScreenY = y
+
 
 
         // Paper space: a click that hits no entity may still land inside a
@@ -1940,39 +2105,78 @@ public final class EngineLoopController {
         // still arms below exactly as before.
 
         if engine.tabManager.isPaperSpace {
-
+            // Single-click viewport selection is border/corner-only so
+            // interior clicks stay free for sheet geometry (callouts,
+            // leaders, notes). Double-click entry still uses the interior
+            // test below.
+            let borderTolerance = 8.0 / max(engine.camera.zoom, 0.001)
             let previous = engine.tabManager.activeViewport()?.id
-
-            let picked = engine.tabManager.selectViewport(atPaperPoint: wx, wy)
-
-            if let picked, picked.id != previous {
-
-                print("[CAD] Selected viewport \(picked.detailDescription)")
-
+            let borderPicked = engine.tabManager.selectViewportBorder(
+                atPaperPoint: wx, wy, tolerance: borderTolerance)
+            if let borderPicked, borderPicked.id != previous {
+                print("[CAD] Selected viewport \(borderPicked.detailDescription)")
             }
-
-            if vpDoubleClick {
-
-                if let picked, engine.tabManager.floatingViewportID != picked.id,
-
-                   let id = engine.tabManager.enterFloatingModelSpace(id: picked.id) {
-
-                    print("[CAD] MSPACE: floating model space in viewport \(id).")
-
-                    return
-
-                } else if picked == nil, engine.tabManager.isFloatingModelSpace {
-
-                    engine.tabManager.exitFloatingModelSpace()
-
-                    print("[CAD] PSPACE: paper space.")
-
-                    return
-
+            // Border/corner press arms a viewport frame drag (PSPACE only,
+            // no feature command running). Corners resize, edges move.
+            // The drag activates past the press threshold; a plain click
+            // keeps the border selection recorded above.
+            if let frame = borderPicked,
+               !vpDoubleClick,
+               !engine.tabManager.isFloatingModelSpace,
+               engine.commandProcessor.activeFeatureCommand == nil,
+               engine.commandProcessor.activeCommand == nil {
+                let rect = frame.paperRect
+                let isCorner = engine.tabManager.isNearViewportCorner(
+                    frame, x: wx, y: wy, tolerance: borderTolerance)
+                let mode: EngineInteractionManager.ViewportFrameDragMode =
+                    isCorner ? .resize : .move
+                // Resize anchors at the opposite corner so the grabbed
+                // corner tracks the cursor; move drags the whole frame.
+                let anchorX: Double
+                let anchorY: Double
+                if isCorner {
+                    let midX = (rect.minX + rect.maxX) * 0.5
+                    let midY = (rect.minY + rect.maxY) * 0.5
+                    anchorX = wx < midX ? rect.maxX : rect.minX
+                    anchorY = wy < midY ? rect.maxY : rect.minY
+                } else {
+                    anchorX = (rect.minX + rect.maxX) * 0.5
+                    anchorY = (rect.minY + rect.maxY) * 0.5
                 }
-
+                interaction.pendingViewportFrameDrag = EngineInteractionManager.ViewportFrameDragState(
+                    viewportID: frame.id,
+                    mode: mode,
+                    startPaperX: wx,
+                    startPaperY: wy,
+                    origCenterX: (rect.minX + rect.maxX) * 0.5,
+                    origCenterY: (rect.minY + rect.maxY) * 0.5,
+                    origWidth: rect.maxX - rect.minX,
+                    origHeight: rect.maxY - rect.minY,
+                    anchorPaperX: anchorX,
+                    anchorPaperY: anchorY,
+                    undoSnapshot: engine.document.snapshot(),
+                    sheetDoc: engine.document)
+                interaction.mouseDownScreenX = x
+                interaction.mouseDownScreenY = y
+                interaction.dragLastScreenX = x
+                interaction.dragLastScreenY = y
+                return
             }
-
+            if vpDoubleClick {
+                let interiorPicked = engine.tabManager.selectViewport(atPaperPoint: wx, wy)
+                if let interiorPicked, engine.tabManager.floatingViewportID != interiorPicked.id,
+                   let id = engine.tabManager.enterFloatingModelSpace(id: interiorPicked.id) {
+                    print("[CAD] MSPACE: floating model space in viewport \(id).")
+                    return
+                } else if interiorPicked == nil, engine.tabManager.isFloatingModelSpace {
+                    engine.tabManager.exitFloatingModelSpace()
+                    // Space-transition teardown: in-flight feature commands
+                    // and floating handles must not survive PSPACE return.
+                    engine.commandProcessor.finishFeatureCommand(engine: engine)
+                    print("[CAD] PSPACE: paper space.")
+                    return
+                }
+            }
         }
 
 
@@ -2034,6 +2238,19 @@ public final class EngineLoopController {
         }
 
         let interaction = engine.interaction
+
+        // Viewport frame drag commit: exactly one undo step when the frame
+        // moved; a plain border click keeps the selection and clears state.
+        if interaction.viewportFrameDrag != nil || interaction.pendingViewportFrameDrag != nil {
+            if let frameDrag = interaction.viewportFrameDrag, frameDrag.moved {
+                frameDrag.sheetDoc.pushUndo(frameDrag.undoSnapshot)
+                frameDrag.sheetDoc.markEdited(regenerate: true)
+            }
+            interaction.viewportFrameDrag = nil
+            interaction.pendingViewportFrameDrag = nil
+            engine.snap.currentSnapResult = nil
+            return
+        }
 
         // The release of the press that opened the Selection list is
 
@@ -2153,26 +2370,45 @@ public final class EngineLoopController {
 
                     screenStartX: interaction.rectSelectScreenStartX, screenX: x) {
 
-                    engine.cadSelection.selectInRect(
+                    // Floated MSPACE: clamp to the viewport clip and test
+                    // the inverse-mapped quad (twist-safe).
+                    if engine.tabManager.isFloatingModelSpace {
+                        let isWindow = commit.style == .window
+                        let picked = engine.tabManager.floatingBoxSelect(
+                            paperMinX: commit.minX, paperMinY: commit.minY,
+                            paperMaxX: commit.minX + commit.worldW,
+                            paperMaxY: commit.minY + commit.worldH,
+                            isWindow: isWindow)
+                        switch interaction.cadRectSelectMode {
+                        case .replace:
+                            engine.tabManager.floatingSelection = picked
+                        case .add:
+                            engine.tabManager.floatingSelection.formUnion(picked)
+                        case .subtract:
+                            engine.tabManager.floatingSelection.subtract(picked)
+                        }
+                    } else {
+                        engine.cadSelection.selectInRect(
 
-                        worldX: commit.minX,
+                            worldX: commit.minX,
 
-                        worldY: commit.minY,
+                            worldY: commit.minY,
 
-                        worldW: commit.worldW,
+                            worldW: commit.worldW,
 
-                        worldH: commit.worldH,
+                            worldH: commit.worldH,
 
-                        document: engine.document,
+                            document: engine.document,
 
-                        mode: interaction.cadRectSelectMode,
+                            mode: interaction.cadRectSelectMode,
 
-                        style: commit.style)
+                            style: commit.style)
 
-                    if engine.commandProcessor.isSelectingObjects {
+                        if engine.commandProcessor.isSelectingObjects {
 
-                        engine.commandProcessor.updateObjectSelectionPrompt()
+                            engine.commandProcessor.updateObjectSelectionPrompt()
 
+                        }
                     }
 
                 }
@@ -2272,19 +2508,23 @@ public final class EngineLoopController {
             }
 
             if moved, let snapshot = interaction.gripUndoSnapshot {
-
-                engine.document.pushUndo(snapshot)
-
-                if let handle = interaction.gripHandle {
-
-                    interaction.pendingPreviewHandles = [handle]
-
-                    interaction.pendingPreviewIsBulkDrag = false
-
+                // Floated grip commit: single undo on the model document,
+                // then reproject and prune the floating pile.
+                if engine.tabManager.isFloatingModelSpace,
+                   let modelDoc = engine.tabManager.modelDocumentForFloatingEdit() {
+                    modelDoc.pushUndo(snapshot)
+                    modelDoc.markEdited(regenerate: true)
+                    engine.tabManager.refreshActiveSheetProjections()
+                    engine.tabManager.markActiveSheetProjected()
+                    engine.tabManager.pruneFloatingSelection()
+                } else {
+                    engine.document.pushUndo(snapshot)
+                    if let handle = interaction.gripHandle {
+                        interaction.pendingPreviewHandles = [handle]
+                        interaction.pendingPreviewIsBulkDrag = false
+                    }
+                    engine.document.markEdited(regenerate: true)
                 }
-
-                engine.document.markEdited(regenerate: true)
-
             }
 
             interaction.cachedGripGeneration = -1
@@ -2310,37 +2550,35 @@ public final class EngineLoopController {
         }
 
         if interaction.dragActive {
-
             let moved = interaction.dragTotalWorldX != 0 || interaction.dragTotalWorldY != 0
-
             interaction.dragActive = false
-
-            if engine.cadSelection.hasSelection && moved {
-
-                // Push the pre-drag snapshot captured when dragActive first became true.
-
-                // The live transform mutations are already applied; this records the
-
-                // original state so a single undo restores the entities to where they
-
-                // were before the drag started.
-
+            // Floated MSPACE: commit the live model move, reproject, and keep
+            // the floating handles for continued editing.
+            if engine.tabManager.isFloatingModelSpace,
+               let modelDoc = engine.tabManager.modelDocumentForFloatingEdit(),
+               !engine.tabManager.floatingSelection.isEmpty, moved {
                 if let snapshot = interaction.dragUndoSnapshot {
-
-                    engine.document.pushUndo(snapshot)
-
+                    modelDoc.pushUndo(snapshot)
                 } else {
-
-                    engine.document.pushUndo()
-
+                    modelDoc.pushUndo()
                 }
-
+                modelDoc.markEdited(regenerate: true)
+                engine.tabManager.refreshActiveSheetProjections()
+                engine.tabManager.markActiveSheetProjected()
+                engine.tabManager.pruneFloatingSelection()
+            } else if engine.cadSelection.hasSelection && moved {
+                // Push the pre-drag snapshot captured when dragActive first became true.
+                // The live transform mutations are already applied; this records the
+                // original state so a single undo restores the entities to where they
+                // were before the drag started.
+                if let snapshot = interaction.dragUndoSnapshot {
+                    engine.document.pushUndo(snapshot)
+                } else {
+                    engine.document.pushUndo()
+                }
                 interaction.pendingPreviewHandles = engine.cadSelection.selectedHandles
-
                 interaction.pendingPreviewIsBulkDrag = true
-
                 engine.document.markEdited(regenerate: true)
-
             }
 
             interaction.dragUndoSnapshot = nil
@@ -2421,10 +2659,54 @@ public final class EngineLoopController {
 
         // Heal state if SDL missed a mouse up event (e.g., releasing outside window)
 
-        if (interaction.dragActive || interaction.gripActive || interaction.lassoActive || interaction.tableBoundaryDrag != nil) && !isLeftDown {
+        if (interaction.dragActive || interaction.gripActive || interaction.lassoActive || interaction.tableBoundaryDrag != nil || interaction.viewportFrameDrag != nil || interaction.pendingViewportFrameDrag != nil) && !isLeftDown {
 
             handleToolMouseUp(x: x, y: y)
 
+        }
+
+        // Viewport frame drag: activate past threshold, live-update the
+        // stored definition without pushing undo per move.
+        if engine.tabManager.isPaperSpace,
+           !engine.tabManager.isFloatingModelSpace {
+            if interaction.viewportFrameDrag == nil,
+               var pending = interaction.pendingViewportFrameDrag, isLeftDown {
+                let threshPx = interaction.pressDragThresholdPixels * max(engine.currentDpiScale, 1.0)
+                if hypot(x - interaction.mouseDownScreenX, y - interaction.mouseDownScreenY) > threshPx {
+                    pending.moved = true
+                    interaction.viewportFrameDrag = pending
+                    interaction.pendingViewportFrameDrag = nil
+                }
+            }
+            if var frameDrag = interaction.viewportFrameDrag, isLeftDown {
+                let dx = wx - frameDrag.startPaperX
+                let dy = wy - frameDrag.startPaperY
+                if abs(dx) > 1e-9 || abs(dy) > 1e-9 { frameDrag.moved = true }
+                switch frameDrag.mode {
+                case .move:
+                    engine.tabManager.updateViewportFrameLive(
+                        id: frameDrag.viewportID,
+                        paperCenter: (x: frameDrag.origCenterX + dx,
+                                      y: frameDrag.origCenterY + dy))
+                case .resize:
+                    // Corner drag anchored at the opposite corner: the
+                    // grabbed corner tracks the cursor exactly.
+                    let newMinX = min(frameDrag.anchorPaperX, wx)
+                    let newMaxX = max(frameDrag.anchorPaperX, wx)
+                    let newMinY = min(frameDrag.anchorPaperY, wy)
+                    let newMaxY = max(frameDrag.anchorPaperY, wy)
+                    let newW = max(newMaxX - newMinX, 1e-6)
+                    let newH = max(newMaxY - newMinY, 1e-6)
+                    let newCX = (newMinX + newMaxX) * 0.5
+                    let newCY = (newMinY + newMaxY) * 0.5
+                    engine.tabManager.updateViewportFrameLive(
+                        id: frameDrag.viewportID,
+                        paperCenter: (x: newCX, y: newCY),
+                        paperSize: (width: newW, height: newH))
+                }
+                interaction.viewportFrameDrag = frameDrag
+                return
+            }
         }
 
 
@@ -2490,42 +2772,62 @@ public final class EngineLoopController {
 
 
         if interaction.dragActive {
-
             let dx = snapWX - interaction.dragLastWorldX
-
             let dy = snapWY - interaction.dragLastWorldY
-
             interaction.dragLastWorldX = snapWX
-
             interaction.dragLastWorldY = snapWY
-
             interaction.dragTotalWorldX += dx
-
             interaction.dragTotalWorldY += dy
-
-
-
-            if engine.cadSelection.hasSelection {
-
-                engine.cadSelection.moveAllSelectedLive(by: Vector3(x: dx, y: dy, z: 0), document: engine.document)
-
+            // Floated MSPACE: drag moves model entities by the inverse-mapped
+            // delta so a paper drag tracks the viewport scale/twist.
+            if engine.tabManager.isFloatingModelSpace,
+               let modelDoc = engine.tabManager.modelDocumentForFloatingEdit(),
+               let modelDelta = engine.tabManager.paperDeltaToModelDelta(dx: dx, dy: dy),
+               !engine.tabManager.floatingSelection.isEmpty {
+                modelDoc.moveEntitiesLive(
+                    handles: modelDoc.centerLinkedHandles(following: engine.tabManager.floatingSelection),
+                    by: Vector3(x: modelDelta.dx, y: modelDelta.dy, z: 0))
+                return
             }
-
+            if engine.cadSelection.hasSelection {
+                engine.cadSelection.moveAllSelectedLive(by: Vector3(x: dx, y: dy, z: 0), document: engine.document)
+            }
             return
-
         }
 
 
 
         if interaction.gripActive {
-
             var dx = snapWX - interaction.dragLastWorldX
-
             var dy = snapWY - interaction.dragLastWorldY
-
             interaction.dragLastWorldX = snapWX
-
             interaction.dragLastWorldY = snapWY
+            // Floated MSPACE grip mapping: paper cursor/delta -> model.
+            // Document operations below must use `gripDoc`/`gSnap`/`gDelta`
+            // so vertex, dimension, leader, array, rotate, scale, and move
+            // drags all edit the model document.
+            let floatingGrip = engine.tabManager.isFloatingModelSpace
+            let gripDoc: CADDocument = {
+                if floatingGrip,
+                   let modelDoc = engine.tabManager.modelDocumentForFloatingEdit() {
+                    return modelDoc
+                }
+                return engine.document
+            }()
+            let gSnap: (x: Double, y: Double) = {
+                if floatingGrip,
+                   let m = engine.tabManager.paperToModelPoint(paperX: snapWX, paperY: snapWY) {
+                    return m
+                }
+                return (snapWX, snapWY)
+            }()
+            let gDelta: (dx: Double, dy: Double) = {
+                if floatingGrip,
+                   let m = engine.tabManager.paperDeltaToModelDelta(dx: dx, dy: dy) {
+                    return m
+                }
+                return (dx, dy)
+            }()
 
 
 
@@ -2591,7 +2893,7 @@ public final class EngineLoopController {
 
                index >= 1000, index <= 1002,
 
-               let entity = engine.document.entity(for: entityHandle),
+               let entity = gripDoc.entity(for: entityHandle),
 
                let box = entity.dimensionMetadata,
 
@@ -2603,7 +2905,13 @@ public final class EngineLoopController {
 
                 if engine.snap.currentSnapResult != nil {
 
-                    worldPos = Vector3(x: snapWX, y: snapWY, z: 0)
+                    worldPos = Vector3(x: gSnap.x, y: gSnap.y, z: 0)
+
+                } else if floatingGrip,
+                          let m = engine.tabManager.paperToModelPoint(
+                            paperX: interaction.dragLastWorldX,
+                            paperY: interaction.dragLastWorldY) {
+                    worldPos = Vector3(x: m.x, y: m.y, z: 0)
 
                 } else {
 
@@ -2737,13 +3045,13 @@ public final class EngineLoopController {
 
                 // Regenerate dimension primitives
 
-                let style = engine.document.resolvedDimensionStyle(for: metadata)
+                let style = gripDoc.resolvedDimensionStyle(for: metadata)
 
-                let color = DimensionPrimitives.resolvedColor(for: entity, in: engine.document)
+                let color = DimensionPrimitives.resolvedColor(for: entity, in: gripDoc)
 
                 let newPrimitives = DimensionPrimitives.generatePrimitives(for: metadata, style: style, color: color)
 
-                engine.document.updateBlockGeometryLive(handle: bid, geometry: newPrimitives)
+                gripDoc.updateBlockGeometryLive(handle: bid, geometry: newPrimitives)
 
                 // Update entity metadata (live, no undo yet)
 
@@ -2751,9 +3059,9 @@ public final class EngineLoopController {
 
                 updatedEntity.dimensionMetadata = CADDimensionMetadataBox(metadata)
 
-                updatedEntity.localBoundingBox = engine.document.block(for: bid)?.localBoundingBox ?? updatedEntity.localBoundingBox
+                updatedEntity.localBoundingBox = gripDoc.block(for: bid)?.localBoundingBox ?? updatedEntity.localBoundingBox
 
-                engine.document.updateEntityLive(updatedEntity)
+                gripDoc.updateEntityLive(updatedEntity)
 
                 return
 
@@ -2767,7 +3075,7 @@ public final class EngineLoopController {
 
                let gripHandle = interaction.gripHandle,
 
-               let entity = engine.document.entity(for: gripHandle),
+               let entity = gripDoc.entity(for: gripHandle),
 
                let box = entity.dimensionMetadata,
 
@@ -2775,7 +3083,7 @@ public final class EngineLoopController {
 
                 var metadata = box.value
 
-                let worldCursor = Vector3(x: snapWX, y: snapWY, z: 0)
+                let worldCursor = Vector3(x: gSnap.x, y: gSnap.y, z: 0)
 
                 let cursor = entity.transform.inverse().transformPoint(worldCursor)
 
@@ -2873,19 +3181,19 @@ public final class EngineLoopController {
 
                 metadata.textMidpoint = constrainedTextMid
 
-                let style = engine.document.resolvedDimensionStyle(for: metadata)
+                let style = gripDoc.resolvedDimensionStyle(for: metadata)
 
-                let color = DimensionPrimitives.resolvedColor(for: entity, in: engine.document)
+                let color = DimensionPrimitives.resolvedColor(for: entity, in: gripDoc)
 
                 let newPrimitives = DimensionPrimitives.generatePrimitives(for: metadata, style: style, color: color)
 
-                engine.document.updateBlockGeometryLive(handle: bid, geometry: newPrimitives)
+                gripDoc.updateBlockGeometryLive(handle: bid, geometry: newPrimitives)
 
                 var updatedEntity = entity
 
                 updatedEntity.dimensionMetadata = CADDimensionMetadataBox(metadata)
 
-                engine.document.updateEntityLive(updatedEntity)
+                gripDoc.updateEntityLive(updatedEntity)
 
                 return
 
@@ -2895,13 +3203,13 @@ public final class EngineLoopController {
 
             if applyRevisionCloudGripDrag(
 
-                worldX: snapWX,
+                worldX: gSnap.x,
 
-                worldY: snapWY,
+                worldY: gSnap.y,
 
-                deltaX: dx,
+                deltaX: gDelta.dx,
 
-                deltaY: dy) {
+                deltaY: gDelta.dy) {
 
                 return
 
@@ -2913,11 +3221,11 @@ public final class EngineLoopController {
 
                let leaderTarget = CADLeaderGripIndex.target(for: index),
 
-               let entity = engine.document.entity(for: entityHandle),
+               let entity = gripDoc.entity(for: entityHandle),
 
                var leaderData = entity.leaderData?.value {
 
-                let worldPoint = Vector3(x: snapWX, y: snapWY, z: 0)
+                let worldPoint = Vector3(x: gSnap.x, y: gSnap.y, z: 0)
 
                 let localPoint = entity.transform.inverse().transformPoint(worldPoint)
 
@@ -2973,9 +3281,9 @@ public final class EngineLoopController {
 
                 updatedEntity.leaderData = CADLeaderDataBox(leaderData)
 
-                updatedEntity = engine.document.regeneratedLeaderEntity(updatedEntity)
+                updatedEntity = gripDoc.regeneratedLeaderEntity(updatedEntity)
 
-                engine.document.updateEntityLive(updatedEntity)
+                gripDoc.updateEntityLive(updatedEntity)
 
                 interaction.gripAppliedWorldPosition = worldPoint
 
@@ -2985,7 +3293,7 @@ public final class EngineLoopController {
 
 
 
-            if applyRectangularArrayGripDrag(worldX: snapWX, worldY: snapWY) {
+            if applyRectangularArrayGripDrag(worldX: gSnap.x, worldY: gSnap.y) {
 
                 return
 
@@ -3001,11 +3309,11 @@ public final class EngineLoopController {
 
                     vertexIndex: index,
 
-                    by: (dx, dy),
+                    by: (gDelta.dx, gDelta.dy),
 
                     in: engine.geometryManager,
 
-                    document: engine.document,
+                    document: gripDoc,
 
                     spriteManager: engine.spriteManager)
 
@@ -3023,11 +3331,11 @@ public final class EngineLoopController {
 
                     vertexIndex: aIndex,
 
-                    by: (dx, dy),
+                    by: (gDelta.dx, gDelta.dy),
 
                     in: engine.geometryManager,
 
-                    document: engine.document,
+                    document: gripDoc,
 
                     spriteManager: engine.spriteManager)
 
@@ -3037,11 +3345,11 @@ public final class EngineLoopController {
 
                     vertexIndex: bIndex,
 
-                    by: (dx, dy),
+                    by: (gDelta.dx, gDelta.dy),
 
                     in: engine.geometryManager,
 
-                    document: engine.document,
+                    document: gripDoc,
 
                     spriteManager: engine.spriteManager)
 
@@ -3049,13 +3357,21 @@ public final class EngineLoopController {
 
             }
 
+            // Floated center comes from the floating model pile; sheet
+            // selection center would be empty/wrong while floated.
+            let gripCenter: Vector3? = {
+                if floatingGrip,
+                   let modelDoc = engine.tabManager.modelDocumentForFloatingEdit() {
+                    return modelDoc.collectiveCenter(for: engine.tabManager.floatingSelection)
+                }
+                return engine.cadSelection.collectiveCenter(document: engine.document)
+            }()
 
-
-            if let center = engine.cadSelection.collectiveCenter(document: engine.document) {
+            if let center = gripCenter {
 
                 if interaction.gripType == .rotation {
 
-                    let newAngle = atan2(snapWY - center.y, snapWX - center.x)
+                    let newAngle = atan2(gSnap.y - center.y, gSnap.x - center.x)
 
                     let da = newAngle - interaction.dragStartAngle
 
@@ -3063,11 +3379,19 @@ public final class EngineLoopController {
 
                     interaction.gripDragAccumRotation += da
 
-                    engine.cadSelection.rotateAllSelectedLive(around: center, angleDeltaRadians: da, document: engine.document)
+                    if floatingGrip,
+                       let modelDoc = engine.tabManager.modelDocumentForFloatingEdit() {
+                        modelDoc.rotateEntitiesLive(
+                            handles: modelDoc.centerLinkedHandles(
+                                following: engine.tabManager.floatingSelection),
+                            around: center, angleDeltaRadians: da)
+                    } else {
+                        engine.cadSelection.rotateAllSelectedLive(around: center, angleDeltaRadians: da, document: engine.document)
+                    }
 
                 } else if case .corner = interaction.gripType {
 
-                    let newDist = sqrt((snapWX - center.x)*(snapWX - center.x) + (snapWY - center.y)*(snapWY - center.y))
+                    let newDist = sqrt((gSnap.x - center.x)*(gSnap.x - center.x) + (gSnap.y - center.y)*(gSnap.y - center.y))
 
                     if interaction.dragStartDistance > 1e-9 {
 
@@ -3077,13 +3401,27 @@ public final class EngineLoopController {
 
                         interaction.gripDragAccumScale *= scaleFactor
 
-                        engine.cadSelection.scaleAllSelectedLive(around: center, factor: scaleFactor, document: engine.document)
+                        if floatingGrip,
+                           let modelDoc = engine.tabManager.modelDocumentForFloatingEdit() {
+                            modelDoc.scaleEntitiesLive(
+                                handles: engine.tabManager.floatingSelection,
+                                around: center, factor: scaleFactor)
+                        } else {
+                            engine.cadSelection.scaleAllSelectedLive(around: center, factor: scaleFactor, document: engine.document)
+                        }
 
                     }
 
                 } else {
 
-                    engine.document.moveEntitiesLive(handles: [interaction.gripHandle!], by: Vector3(x: dx, y: dy, z: 0))
+                    if floatingGrip,
+                       let modelDoc = engine.tabManager.modelDocumentForFloatingEdit(),
+                       let h = interaction.gripHandle {
+                        modelDoc.moveEntitiesLive(
+                            handles: [h], by: Vector3(x: gDelta.dx, y: gDelta.dy, z: 0))
+                    } else {
+                        engine.document.moveEntitiesLive(handles: [interaction.gripHandle!], by: Vector3(x: dx, y: dy, z: 0))
+                    }
 
                 }
 
@@ -3170,35 +3508,35 @@ public final class EngineLoopController {
             let dy = abs(y - interaction.dragLastScreenY)
 
             if !interaction.dragActive && (dx > 3 || dy > 3) {
-
-                if engine.cadSelection.hasSelection {
-
-                    let hoverHandle = engine.cadSelection.hitTest(
-
-                        worldX: wx, worldY: wy, document: engine.document,
-
-                        threshold: 6.0 / engine.camera.zoom,
-
-                        simplifyComplexBlocks: engine.simplifyComplexBlocks)
-
-                    if let h = hoverHandle, engine.cadSelection.selectedHandles.contains(h) {
-
+                // Floated MSPACE drag starts from the floating model pile.
+                if engine.tabManager.isFloatingModelSpace,
+                   let modelDoc = engine.tabManager.modelDocumentForFloatingEdit(),
+                   !engine.tabManager.floatingSelection.isEmpty {
+                    let paperThreshold = 6.0 / engine.camera.zoom
+                    if let h = engine.tabManager.floatingHitTest(
+                        paperX: wx, paperY: wy, paperThreshold: paperThreshold),
+                       engine.tabManager.floatingSelection.contains(h) {
                         interaction.dragActive = true
-
-                        interaction.dragUndoSnapshot = engine.document.snapshot()
-
+                        interaction.dragUndoSnapshot = modelDoc.snapshot()
                         interaction.dragLastWorldX = wx
-
                         interaction.dragLastWorldY = wy
-
                         interaction.dragTotalWorldX = 0
-
                         interaction.dragTotalWorldY = 0
-
                     }
-
+                } else if engine.cadSelection.hasSelection {
+                    let hoverHandle = engine.cadSelection.hitTest(
+                        worldX: wx, worldY: wy, document: engine.document,
+                        threshold: 6.0 / engine.camera.zoom,
+                        simplifyComplexBlocks: engine.simplifyComplexBlocks)
+                    if let h = hoverHandle, engine.cadSelection.selectedHandles.contains(h) {
+                        interaction.dragActive = true
+                        interaction.dragUndoSnapshot = engine.document.snapshot()
+                        interaction.dragLastWorldX = wx
+                        interaction.dragLastWorldY = wy
+                        interaction.dragTotalWorldX = 0
+                        interaction.dragTotalWorldY = 0
+                    }
                 }
-
             }
 
         }
@@ -3437,6 +3775,58 @@ public final class EngineLoopController {
 
         }
 
+        // Floated MSPACE: discrete object snap against the model document.
+        // Paper cursor maps to model, the model threshold divides out the
+        // viewport scale, and the hit maps back to paper so command previews
+        // and the snap indicator stay in sheet space. Tracking/extension
+        // passes stay paper-space for now (follow-up).
+        if engine.tabManager.isFloatingModelSpace,
+           let ctx = engine.tabManager.editSpaceContext(),
+           let modelDoc = engine.tabManager.modelDocumentForFloatingEdit(),
+           let model = engine.tabManager.paperToModelPoint(paperX: worldX, paperY: worldY) {
+            let modelThreshold = snapMgr.snapAcquisitionThreshold(cameraZoom: engine.camera.zoom) / max(ctx.viewportScale, 1e-9)
+            var candidates: [CADEntity] = []
+            if let handles = modelDoc.entityHandlesInWorldRect(
+                minX: model.x - modelThreshold, minY: model.y - modelThreshold,
+                maxX: model.x + modelThreshold, maxY: model.y + modelThreshold) {
+                for h in handles {
+                    guard let e = modelDoc.entity(for: h),
+                          !e.isViewportProjected,
+                          let layer = modelDoc.layer(for: e.layerID),
+                          LayerAccess.isSnappable(layer),
+                          !modelDoc.isIsolatedHidden(e.handle) else { continue }
+                    candidates.append(e)
+                }
+            } else {
+                candidates = modelDoc.withEntities { $0.filter {
+                    guard !$0.isViewportProjected,
+                          let layer = modelDoc.layer(for: $0.layerID),
+                          LayerAccess.isSnappable(layer),
+                          !modelDoc.isIsolatedHidden($0.handle) else { return false }
+                    guard let wbb = $0.worldBoundingBox else { return false }
+                    return wbb.expanded(by: modelThreshold).contains(Vector3(x: model.x, y: model.y, z: 0))
+                } }
+            }
+            if let hit = engine.snap.snapEngine.nearestSnap(
+                worldX: model.x, worldY: model.y,
+                entities: candidates,
+                threshold: modelThreshold,
+                resolveGeometry: { modelDoc.resolvedGeometry(for: $0) },
+                spatialGrid: { modelDoc.spatialGrid(for: $0) }) {
+                let paperPos = ctx.modelToPaper.transformPoint(hit.worldPos)
+                snapMgr.currentSnapResult = SnapResult(
+                    entityHandle: hit.entityHandle,
+                    anchor: hit.anchor,
+                    worldPos: paperPos)
+                snapMgr.applyStickyLockIfNeeded(snapMgr.currentSnapResult!)
+            } else {
+                snapMgr.currentSnapResult = nil
+            }
+            snapMgr.lastPolarResult = nil
+            snapMgr.lockedSnap = nil
+            return
+        }
+
 
 
         let acquireThreshold = snapMgr.snapAcquisitionThreshold(cameraZoom: engine.camera.zoom)
@@ -3596,6 +3986,11 @@ public final class EngineLoopController {
 
                 guard let entity = engine.document.entity(for: handle) else { return nil }
 
+                // Projected viewport copies carry paper-space positions, so
+                // they stay valid snap candidates in PSPACE (AutoCAD LT
+                // snaps to model geometry shown through viewports, e.g. for
+                // paper-space dimensioning). Selection/erase still skip
+                // them; only snap reads them here.
                 guard let layer = engine.document.layer(for: entity.layerID), LayerAccess.isSnappable(layer) else { return nil }
 
                 guard !engine.document.isIsolatedHidden(entity.handle) else { return nil }
@@ -3620,7 +4015,6 @@ public final class EngineLoopController {
         } else {
 
             visibleEntities = engine.document.withEntities { $0.filter { entity in
-
                 if interaction.gripActive, let gripHandle = interaction.gripHandle, entity.handle == gripHandle {
                     return surgicalExclusion != nil
                 }

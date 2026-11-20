@@ -999,6 +999,10 @@ public final class TabManager {
             print("[RenderWake] switchToTab from=\(activeIndex) to=\(index) tabs=\(tabs.count) name=\(tabs.indices.contains(index) ? tabs[index].displayName : "?")")
         }
         guard index >= 0, index < tabs.count, index != activeIndex else { return }
+        // Space-transition teardown: floated handles belong to the departing
+        // model document and must never leak into another tab/view.
+        floatingViewportID = nil
+        clearFloatingState()
         // Propagate the departing tab's layer edits to its sibling views so
         // a later return (or save) sees current layer properties everywhere.
         tabs[activeIndex].reconcileLayersFromActiveView()
@@ -1010,6 +1014,9 @@ public final class TabManager {
             tabs[activeIndex].selectionState = capture()
         }
         activeIndex = index
+        // Sibling layouts cache projections: reproject the incoming sheet
+        // when the shared model moved while another view was active.
+        refreshActiveSheetProjectionsIfNeeded()
         // Restore camera + selection state from incoming tab
         if let apply = applyCameraState {
             apply(tabs[activeIndex].cameraState)
@@ -1027,6 +1034,7 @@ public final class TabManager {
         guard activeIndex >= 0, activeIndex < tabs.count,
               index >= 0, index < tabs[activeIndex].drawingViews.count else { return false }
         floatingViewportID = nil
+        clearFloatingState()
         // Layer tables are drawing-global: propagate the departing view's
         // layer edits (color, visibility, ...) to sibling views first so
         // every layout renders current layer properties.
@@ -1034,7 +1042,7 @@ public final class TabManager {
         if index == tabs[activeIndex].activeViewIndex {
             // Same-view activation still refreshes derived geometry so a
             // scripted PSPACE after a model edit converges without a tab hop.
-            refreshActiveSheetProjections()
+            refreshActiveSheetProjectionsIfNeeded()
             // Re-apply the pruned snapshot so a live selection manager
             // drops handles replaced by the refresh.
             applySelectionState?(tabs[activeIndex].selectionState)
@@ -1047,7 +1055,7 @@ public final class TabManager {
             tabs[activeIndex].selectionState = capture()
         }
         tabs[activeIndex].activeViewIndex = index
-        refreshActiveSheetProjections()
+        refreshActiveSheetProjectionsIfNeeded()
         applyCameraState?(tabs[activeIndex].cameraState)
         applySelectionState?(tabs[activeIndex].selectionState)
         onActiveTabChanged?()
@@ -1083,6 +1091,9 @@ public final class TabManager {
             with: projected,
             additionalLayers: [],
             additionalBlocks: missingBlocks)
+        let key = sheetKey(for: sheetDoc)
+        lastProjectedModelRevisionBySheet[key] = modelDoc.editRevision
+        lastProjectedViewportSignatureBySheet[key] = viewportSignatureForSheet(sheetDoc)
         guard !removed.isEmpty else { return }
         var snapshot = tab.drawingViews[tab.activeViewIndex].selectionState
         snapshot.selectedHandles.subtract(removed)
@@ -1105,9 +1116,21 @@ public final class TabManager {
     /// Viewport picked via `selectViewport(at:)` per sheet document.
     private var selectedViewportBySheet: [ObjectIdentifier: Int] = [:]
     /// Floating model-space session (MSPACE inside a sheet viewport).
-    /// Navigation-only: pan/zoom edit the viewport definition, geometry
-    /// stays tab-level. Cleared on any view/tab switch and by PSPACE.
+    /// Edit session: selection/creation route to the tab model document
+    /// through the viewport transform. Cleared on any view/tab switch
+    /// and by PSPACE.
     public private(set) var floatingViewportID: Int? = nil
+    /// Model handles selected while floated. Lives outside per-view
+    /// `SelectionState` so sheet restore can never resurrect model handles.
+    public var floatingSelection: Set<UUID> = []
+    /// Model handle hovered while floated. Rendered by the MSPACE overlay;
+    /// `interaction.hoveredEntityHandle` stays nil so sheet highlight skips.
+    public var floatingHoverHandle: UUID? = nil
+    /// Last model `editRevision` projected into each sheet document.
+    /// Guards sibling-layout reproject on view/tab activation.
+    private var lastProjectedModelRevisionBySheet: [ObjectIdentifier: UInt64] = [:]
+    /// Last viewport-definition signature projected per sheet.
+    private var lastProjectedViewportSignatureBySheet: [ObjectIdentifier: String] = [:]
 
     private func sheetKey(for sheetDoc: CADDocument) -> ObjectIdentifier {
         ObjectIdentifier(sheetDoc)
@@ -1528,6 +1551,7 @@ public final class TabManager {
     /// Leave floating model space (PSPACE / double-click outside).
     public func exitFloatingModelSpace() {
         floatingViewportID = nil
+        clearFloatingState()
     }
 
     /// The viewport currently floated, if any.
@@ -1550,6 +1574,353 @@ public final class TabManager {
         guard let pick = candidates.first else { return nil }
         selectedViewportBySheet[sheetKey(for: view.document)] = pick.id
         return pick
+    }
+
+    /// Border/corner-only viewport pick for single-click selection and drag
+    /// arming. Interior clicks stay free for sheet geometry (callouts,
+    /// leaders, notes); interior entry to MSPACE still uses
+    /// `selectViewport(atPaperPoint:)` on double-click.
+    @discardableResult
+    public func selectViewportBorder(atPaperPoint x: Double, _ y: Double, tolerance: Double) -> DXFImporter.SheetViewport? {
+        guard let tab = activeTab else { return nil }
+        let view = tab.drawingViews[tab.activeViewIndex]
+        guard view.kind == .sheet else { return nil }
+        let tol = max(tolerance, 0)
+        let candidates = sheetViewports(for: view.document)
+            .filter { $0.isUsable && !$0.isSystemViewport && isNearViewportBorder($0, x: x, y: y, tolerance: tol) }
+            .sorted { $0.id > $1.id }
+        guard let pick = candidates.first else { return nil }
+        selectedViewportBySheet[sheetKey(for: view.document)] = pick.id
+        return pick
+    }
+
+    /// True when the paper point lies within `tolerance` of a viewport
+    /// frame corner. Corners start a resize drag; edges start a move drag.
+    public func isNearViewportCorner(_ viewport: DXFImporter.SheetViewport, x: Double, y: Double, tolerance: Double) -> Bool {
+        let rect = viewport.paperRect
+        let tol = max(tolerance, 0)
+        let corners = [
+            (rect.minX, rect.minY), (rect.maxX, rect.minY),
+            (rect.maxX, rect.maxY), (rect.minX, rect.maxY),
+        ]
+        return corners.contains {
+            abs(x - $0.0) <= tol && abs(y - $0.1) <= tol
+        }
+    }
+
+    /// Live viewport frame update without pushing undo (drag preview).
+    /// Commits through `updateActiveSheetViewport` (single undo) on release.
+    /// Returns false when no sheet is active or the id is unknown.
+    @discardableResult
+    public func updateViewportFrameLive(
+        id: Int,
+        paperCenter: (x: Double, y: Double)? = nil,
+        paperSize: (width: Double, height: Double)? = nil
+    ) -> Bool {
+        guard let tab = activeTab else { return false }
+        let index = tab.activeViewIndex
+        let view = tab.drawingViews[index]
+        guard view.kind == .sheet else { return false }
+        var viewports = sheetViewports(for: view.document)
+        guard let slot = viewports.firstIndex(where: { $0.id == id }) else { return false }
+        var edited = viewports[slot]
+        if let center = paperCenter { edited = edited.withPaperCenter(x: center.x, y: center.y) }
+        if let size = paperSize {
+            guard size.width > 1e-9, size.height > 1e-9 else { return false }
+            edited = edited.withPaperSize(width: size.width, height: size.height)
+        }
+        viewports[slot] = edited
+        view.document.storedViewportDefinitions = viewports
+        refreshActiveSheetProjections()
+        return true
+    }
+
+    /// True when the paper point lies within `tolerance` of the viewport
+    /// frame border (edges or corners). Used for border-only picking so
+    /// interior clicks pass through to sheet geometry.
+    public func isNearViewportBorder(_ viewport: DXFImporter.SheetViewport, x: Double, y: Double, tolerance: Double) -> Bool {
+        let rect = viewport.paperRect
+        let tol = max(tolerance, 0)
+        let insideOuter = x >= rect.minX - tol && x <= rect.maxX + tol
+            && y >= rect.minY - tol && y <= rect.maxY + tol
+        guard insideOuter else { return false }
+        let insideInner = x >= rect.minX + tol && x <= rect.maxX - tol
+            && y >= rect.minY + tol && y <= rect.maxY - tol
+        return !insideInner
+    }
+
+    // MARK: - MSPACE edit space (in-place viewport editing)
+
+    /// Resolved edit target while floated: the tab model document plus the
+    /// viewport transform pair and paper clip rect. Nil when not floated.
+    public struct EditSpaceContext: Sendable {
+        public var viewportID: Int
+        public var modelToPaper: Transform3D
+        public var paperToModel: Transform3D
+        public var clipMinX: Double
+        public var clipMinY: Double
+        public var clipMaxX: Double
+        public var clipMaxY: Double
+        public var viewportScale: Double
+        public var viewportLocked: Bool
+    }
+
+    /// Edit context for the floated viewport, or nil in PSPACE/Model.
+    public func editSpaceContext() -> EditSpaceContext? {
+        guard let viewport = floatingViewport() else { return nil }
+        let modelToPaper = viewport.modelToPaperTransform
+        let rect = viewport.paperRect
+        return EditSpaceContext(
+            viewportID: viewport.id,
+            modelToPaper: modelToPaper,
+            paperToModel: modelToPaper.inverse(),
+            clipMinX: rect.minX, clipMinY: rect.minY,
+            clipMaxX: rect.maxX, clipMaxY: rect.maxY,
+            viewportScale: viewport.scale,
+            viewportLocked: viewport.isLocked)
+    }
+
+    /// Model document backing MSPACE edits, or nil when not floated.
+    public func modelDocumentForFloatingEdit() -> CADDocument? {
+        guard isFloatingModelSpace, let tab = activeTab else { return nil }
+        return tab.drawingViews.first(where: { $0.kind == .model })?.document
+    }
+
+    /// Paper point mapped into model space through the floated viewport.
+    public func paperToModelPoint(paperX: Double, paperY: Double) -> (x: Double, y: Double)? {
+        guard let ctx = editSpaceContext() else { return nil }
+        let mapped = ctx.paperToModel.transformPoint(Vector3(x: paperX, y: paperY, z: 0))
+        return (mapped.x, mapped.y)
+    }
+
+    /// Model point mapped into paper space through the floated viewport.
+    public func modelToPaperPoint(modelX: Double, modelY: Double) -> (x: Double, y: Double)? {
+        guard let ctx = editSpaceContext() else { return nil }
+        let mapped = ctx.modelToPaper.transformPoint(Vector3(x: modelX, y: modelY, z: 0))
+        return (mapped.x, mapped.y)
+    }
+
+    /// Paper drag delta mapped into a model delta (inverse linear part:
+    /// rotation un-twisted, scale divided out, no translation).
+    public func paperDeltaToModelDelta(dx: Double, dy: Double) -> (dx: Double, dy: Double)? {
+        guard let ctx = editSpaceContext() else { return nil }
+        let origin = ctx.paperToModel.transformPoint(Vector3(x: 0, y: 0, z: 0))
+        let moved = ctx.paperToModel.transformPoint(Vector3(x: dx, y: dy, z: 0))
+        return (moved.x - origin.x, moved.y - origin.y)
+    }
+
+    /// Clamp a paper-space selection rect to the floated viewport clip.
+    /// Returns nil when the rect misses the viewport entirely.
+    public func clampedPaperRectForFloating(minX: Double, minY: Double, maxX: Double, maxY: Double) -> (minX: Double, minY: Double, maxX: Double, maxY: Double)? {
+        guard let ctx = editSpaceContext() else { return nil }
+        let clampedMinX = max(min(minX, maxX), ctx.clipMinX)
+        let clampedMaxX = min(max(minX, maxX), ctx.clipMaxX)
+        let clampedMinY = max(min(minY, maxY), ctx.clipMinY)
+        let clampedMaxY = min(max(minY, maxY), ctx.clipMaxY)
+        guard clampedMaxX > clampedMinX, clampedMaxY > clampedMinY else { return nil }
+        return (clampedMinX, clampedMinY, clampedMaxX, clampedMaxY)
+    }
+
+    /// Paper-rect corners mapped into a model-space quad (twist-safe).
+    /// Feed directly to `CADLassoSelect` for floated window/crossing pick.
+    public func modelQuadForPaperRect(minX: Double, minY: Double, maxX: Double, maxY: Double) -> [Vector3]? {
+        guard let ctx = editSpaceContext() else { return nil }
+        let corners = [
+            Vector3(x: minX, y: minY, z: 0),
+            Vector3(x: maxX, y: minY, z: 0),
+            Vector3(x: maxX, y: maxY, z: 0),
+            Vector3(x: minX, y: maxY, z: 0),
+        ]
+        return corners.map { ctx.paperToModel.transformPoint($0) }
+    }
+
+    /// Drop floated model handles that no longer exist (undo/redo/refresh).
+    public func pruneFloatingSelection() {
+        guard let modelDoc = modelDocumentForFloatingEdit() else {
+            if !floatingSelection.isEmpty { floatingSelection.removeAll() }
+            floatingHoverHandle = nil
+            return
+        }
+        floatingSelection = floatingSelection.filter { modelDoc.entity(for: $0) != nil }
+        if let hover = floatingHoverHandle, modelDoc.entity(for: hover) == nil {
+            floatingHoverHandle = nil
+        }
+    }
+
+    /// Clear all floated edit state (selection + hover). Called on every
+    /// space transition so model handles never leak into paper operations.
+    public func clearFloatingState() {
+        if !floatingSelection.isEmpty { floatingSelection.removeAll() }
+        floatingHoverHandle = nil
+    }
+
+    /// Undo the model document while floated, then reproject the sheet and
+    /// prune stale floating handles. No-op when not floated.
+    public func undoFloatingEdit() {
+        guard let modelDoc = modelDocumentForFloatingEdit() else { return }
+        modelDoc.undo()
+        refreshActiveSheetProjections()
+        pruneFloatingSelection()
+    }
+
+    /// Redo the model document while floated, then reproject and prune.
+    public func redoFloatingEdit() {
+        guard let modelDoc = modelDocumentForFloatingEdit() else { return }
+        modelDoc.redo()
+        refreshActiveSheetProjections()
+        pruneFloatingSelection()
+    }
+
+    /// Viewport-definition signature for dirty tracking.
+    private func viewportSignatureForSheet(_ sheetDoc: CADDocument) -> String {
+        sheetViewports(for: sheetDoc)
+            .map { "\($0.id):\($0.status):\($0.paperWidth):\($0.paperHeight):\($0.viewHeight):\($0.viewTargetX):\($0.viewTargetY):\($0.twistAngle)" }
+            .sorted()
+            .joined(separator: "|")
+    }
+
+    /// Reproject only when the model revision or viewport definitions moved
+    /// since the last projection of this sheet. Records the new watermark.
+    public func refreshActiveSheetProjectionsIfNeeded() {
+        guard let tab = activeTab else { return }
+        let activeView = tab.drawingViews[tab.activeViewIndex]
+        guard activeView.kind == .sheet else { return }
+        guard let modelView = tab.drawingViews.first(where: { $0.kind == .model }) else { return }
+        let key = sheetKey(for: activeView.document)
+        let modelRevision = modelView.document.editRevision
+        let signature = viewportSignatureForSheet(activeView.document)
+        if lastProjectedModelRevisionBySheet[key] == modelRevision
+            && lastProjectedViewportSignatureBySheet[key] == signature {
+            return
+        }
+        refreshActiveSheetProjections()
+        lastProjectedModelRevisionBySheet[key] = modelRevision
+        lastProjectedViewportSignatureBySheet[key] = signature
+    }
+
+    /// Record the current model revision as projected (called after edits
+    /// that already refreshed). Keeps sibling-switch checks honest.
+    public func markActiveSheetProjected() {
+        guard let tab = activeTab else { return }
+        let activeView = tab.drawingViews[tab.activeViewIndex]
+        guard activeView.kind == .sheet else { return }
+        guard let modelView = tab.drawingViews.first(where: { $0.kind == .model }) else { return }
+        let key = sheetKey(for: activeView.document)
+        lastProjectedModelRevisionBySheet[key] = modelView.document.editRevision
+        lastProjectedViewportSignatureBySheet[key] = viewportSignatureForSheet(activeView.document)
+    }
+
+    /// Point pick while floated: paper point mapped into the model document
+    /// and tested with a scale-corrected threshold. Returns nil outside the
+    /// viewport clip. Projected copies are never consulted; the model
+    /// document owns the result.
+    public func floatingHitTest(paperX: Double, paperY: Double, paperThreshold: Double) -> UUID? {
+        guard let ctx = editSpaceContext(),
+              let modelDoc = modelDocumentForFloatingEdit() else { return nil }
+        guard paperX >= ctx.clipMinX, paperX <= ctx.clipMaxX,
+              paperY >= ctx.clipMinY, paperY <= ctx.clipMaxY else { return nil }
+        guard let model = paperToModelPoint(paperX: paperX, paperY: paperY) else { return nil }
+        let modelThreshold = paperThreshold / max(ctx.viewportScale, 1e-9)
+        return CADHitTesting.hitTest(
+            worldX: model.x, worldY: model.y,
+            document: modelDoc,
+            threshold: modelThreshold)
+    }
+
+    /// Window/crossing pick while floated. The paper rect is clamped to the
+    /// viewport clip, mapped to a model-space quad (twist-safe), and tested
+    /// with `CADLassoSelect` so twisted viewports select correctly.
+    /// `isWindow` selects the AutoCAD drag-direction style.
+    public func floatingBoxSelect(
+        paperMinX: Double, paperMinY: Double,
+        paperMaxX: Double, paperMaxY: Double,
+        isWindow: Bool
+    ) -> Set<UUID> {
+        guard let ctx = editSpaceContext(),
+              let modelDoc = modelDocumentForFloatingEdit() else { return [] }
+        guard let clamped = clampedPaperRectForFloating(
+            minX: paperMinX, minY: paperMinY, maxX: paperMaxX, maxY: paperMaxY),
+              let quad = modelQuadForPaperRect(
+                minX: clamped.minX, minY: clamped.minY,
+                maxX: clamped.maxX, maxY: clamped.maxY) else { return [] }
+        _ = ctx
+        let style: CADSelectionManager.RectSelectStyle = isWindow ? .window : .crossing
+        return CADLassoSelect.handlesInPolygon(
+            worldPoints: quad, document: modelDoc, style: style)
+    }
+
+    /// Commit paper-space entities as model geometry through the floated
+    /// viewport. Each entity keeps its local geometry; its transform is
+    /// pre-multiplied by the inverse viewport projection. One undo step,
+    /// then reproject + prune. Returns false when not floated.
+    @discardableResult
+    public func commitPaperEntitiesAsModel(_ entities: [CADEntity]) -> Bool {
+        guard let ctx = editSpaceContext(),
+              let modelDoc = modelDocumentForFloatingEdit(),
+              !entities.isEmpty else { return false }
+        let inverse = ctx.paperToModel
+        var mapped: [CADEntity] = []
+        mapped.reserveCapacity(entities.count)
+        for entity in entities {
+            mapped.append(CADEntity(
+                layerID: entity.layerID,
+                blockID: entity.blockID,
+                localGeometry: entity.localGeometry,
+                dimensionMetadata: entity.dimensionMetadata,
+                leaderData: entity.leaderData,
+                arrayData: entity.arrayData,
+                transform: inverse.multiplying(by: entity.transform),
+                xdata: entity.xdata,
+                drawOrder: entity.drawOrder,
+                localBoundingBox: entity.localBoundingBox,
+                anchorPoints: entity.anchorPoints))
+        }
+        modelDoc.adoptLayers(from: activeTab?.drawingViews.first(
+            where: { $0.kind == .sheet })?.document ?? modelDoc)
+        let missingBlocks: [CADBlock]
+        if let sheetDoc = activeTab?.drawingViews.first(
+            where: { $0.kind == .sheet })?.document {
+            missingBlocks = sheetDoc.allBlocks.filter { modelDoc.block(for: $0.handle) == nil }
+        } else {
+            missingBlocks = []
+        }
+        if !missingBlocks.isEmpty {
+            modelDoc.importLayersBlocksEntities(layers: [], blocks: missingBlocks, entities: [])
+        }
+        modelDoc.addEntities(mapped)
+        refreshActiveSheetProjections()
+        markActiveSheetProjected()
+        return true
+    }
+
+    /// Dimension target while floated: the model document plus a paper->model
+    /// point mapper. In PSPACE/Model the mapper is identity and the doc is
+    /// the active view's document. Lets every dimension command share one
+    /// input-mapping pattern instead of duplicating viewport math.
+    public func dimensionTarget(
+        activeDoc: CADDocument
+    ) -> (doc: CADDocument, map: (Vector3) -> Vector3, isFloating: Bool) {
+        if isFloatingModelSpace,
+           let modelDoc = modelDocumentForFloatingEdit(),
+           let ctx = editSpaceContext() {
+            let inverse = ctx.paperToModel
+            return (modelDoc, { inverse.transformPoint($0) }, true)
+        }
+        return (activeDoc, { $0 }, false)
+    }
+
+    /// Finish a floated dimension commit: reproject sibling layouts.
+    public func finishFloatingDimensionCommit(wasFloating: Bool) {
+        guard wasFloating else { return }
+        refreshActiveSheetProjections()
+        markActiveSheetProjected()
+    }
+
+    /// Paper distance mapped into model space (divides out viewport scale;
+    /// rotation preserves distance). Identity when not floated.
+    public func mapPaperDistanceToModel(_ paperDist: Double) -> Double {
+        guard let ctx = editSpaceContext() else { return paperDist }
+        return paperDist / max(ctx.viewportScale, 1e-9)
     }
 
     /// Rewrite one viewport definition on the active sheet and re-project.
@@ -2033,6 +2404,7 @@ public final class TabManager {
     @discardableResult
     public func switchToModelSpace() -> Bool {
         floatingViewportID = nil
+        clearFloatingState()
         guard let tab = activeTab,
               let index = tab.drawingViews.firstIndex(where: { $0.kind == .model })
         else { return false }
@@ -2044,7 +2416,11 @@ public final class TabManager {
     /// the drawing has no sheet layouts (caller reports it honestly).
     @discardableResult
     public func switchToPaperSpace() -> Bool {
+        // PSPACE from MSPACE tears down the floating edit session. Callers
+        // that need command cancellation do it at the engine layer; the
+        // model handles here must never survive the transition.
         floatingViewportID = nil
+        clearFloatingState()
         guard let tab = activeTab else { return false }
         if tab.drawingViews[tab.activeViewIndex].kind == .sheet { return true }
         guard let index = tab.drawingViews.firstIndex(where: { $0.kind == .sheet })

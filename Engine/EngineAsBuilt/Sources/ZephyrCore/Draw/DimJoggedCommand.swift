@@ -160,6 +160,12 @@ public final class DimJoggedCommand: FeatureCommand {
     }
     
     private func commitDimension(center: Vector3, radius: Double, override: Vector3, dimPos: Vector3, jogPos: Vector3, engine: PhrostEngine, processor: CADCommandProcessor) {
+        let target = engine.tabManager.dimensionTarget(activeDoc: engine.document)
+        let center = target.map(center)
+        let override = target.map(override)
+        let dimPos = target.map(dimPos)
+        let jogPos = target.map(jogPos)
+        let radius = target.isFloating ? engine.tabManager.mapPaperDistanceToModel(radius) : radius
         
         let dir = Vector3(x: dimPos.x - override.x, y: dimPos.y - override.y, z: 0)
         guard hypot(dir.x, dir.y) > 0 else { return }
@@ -167,14 +173,14 @@ public final class DimJoggedCommand: FeatureCommand {
         let n = dir.normalized
         let arcPoint = Vector3(x: center.x + n.x * radius, y: center.y + n.y * radius, z: 0)
         
-        let style = engine.document.currentDimensionStyle()
+        let style = target.doc.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatMeasurement(radius, prefix: "R")
         
         let angle = atan2(n.y, n.x)
         
         let metadata = CADDimensionMetadata(
-            styleName: engine.document.currentDimensionStyleName,
+            styleName: target.doc.currentDimensionStyleName,
             type: .jogged,
             measurement: radius,
             defPoint: center, // actual center
@@ -207,6 +213,7 @@ public final class DimJoggedCommand: FeatureCommand {
         // Text
         primitives.append(DimensionPrimitives.dimensionText(position: dimPos, value: valueStr, rotation: 0, style: style, color: color))
         
-        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: engine.document.activeLayerID ?? UUID(), document: engine.document)
+        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: target.doc.activeLayerID ?? UUID(), document: target.doc)
+        engine.tabManager.finishFloatingDimensionCommit(wasFloating: target.isFloating)
     }
 }

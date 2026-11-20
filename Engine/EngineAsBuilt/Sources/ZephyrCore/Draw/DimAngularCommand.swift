@@ -207,6 +207,11 @@ public final class DimAngularCommand: FeatureCommand {
     }
     
     private func commitDimension(center: Vector3, p1: Vector3, p2: Vector3, dimPos: Vector3, engine: PhrostEngine, processor: CADCommandProcessor) {
+        let target = engine.tabManager.dimensionTarget(activeDoc: engine.document)
+        let center = target.map(center)
+        let p1 = target.map(p1)
+        let p2 = target.map(p2)
+        let dimPos = target.map(dimPos)
         let radius = hypot(dimPos.x - center.x, dimPos.y - center.y)
         let a1 = atan2(p1.y - center.y, p1.x - center.x)
         let a2 = atan2(p2.y - center.y, p2.x - center.x)
@@ -214,12 +219,12 @@ public final class DimAngularCommand: FeatureCommand {
         var diff = a2 - a1
         if diff < 0 { diff += 2 * .pi }
         
-        let style = engine.document.currentDimensionStyle()
+        let style = target.doc.currentDimensionStyle()
         let color: ColorRGBA = .white
         let valueStr = style.formatAngle(diff)
         
         let metadata = CADDimensionMetadata(
-            styleName: engine.document.currentDimensionStyleName,
+            styleName: target.doc.currentDimensionStyleName,
             type: .angular,
             measurement: diff * 180 / .pi,
             defPoint: dimPos,
@@ -246,6 +251,7 @@ public final class DimAngularCommand: FeatureCommand {
         // Text
         primitives.append(DimensionPrimitives.dimensionText(position: dimPos, value: valueStr, rotation: 0, style: style, color: color))
         
-        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: engine.document.activeLayerID ?? UUID(), document: engine.document)
+        DimensionPrimitives.commitDimension(primitives: primitives, metadata: metadata, layerID: target.doc.activeLayerID ?? UUID(), document: target.doc)
+        engine.tabManager.finishFloatingDimensionCommit(wasFloating: target.isFloating)
     }
 }

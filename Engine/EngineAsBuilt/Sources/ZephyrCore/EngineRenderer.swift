@@ -1740,7 +1740,7 @@ public final class EngineRenderer {
 
                 gripHandles = []
 
-                
+
 
             } else {
 
@@ -1748,17 +1748,48 @@ public final class EngineRenderer {
 
             }
 
-            engine._cachedCadGrips = CADGripSystem.getAllGrips(
+            // Floated MSPACE: grips come from the model document's floating
+            // selection, mapped model -> paper so the squares sit on the
+            // projected highlight. Sheet selection stays out of it.
+            if engine.tabManager.isFloatingModelSpace,
+               let ctx = engine.tabManager.editSpaceContext(),
+               let modelDoc = engine.tabManager.modelDocumentForFloatingEdit(),
+               !engine.tabManager.floatingSelection.isEmpty {
+                var floatingHandles = engine.tabManager.floatingSelection
+                if CADSelectionDisplayPolicy.gripsSuppressed(
+                    selectedCount: floatingHandles.count,
+                    gripObjectLimit: engine.gripObjectMax) {
+                    floatingHandles = []
+                }
+                let modelGrips = CADGripSystem.getAllGrips(
+                    document: modelDoc, cam: transform,
+                    simplifyComplexBlocks: true,
+                    selectedHandles: floatingHandles,
+                    selectedLeaderContentHandle: nil,
+                    gripObjectLimit: engine.gripObjectMax)
+                engine._cachedCadGrips = modelGrips.map { g in
+                    let paper = ctx.modelToPaper.transformPoint(g.worldPos)
+                    let screen = EngineCameraManager.worldToScreen(
+                        worldX: paper.x, worldY: paper.y, cam: transform)
+                    return CADSelectionManager.CadGripInfo(
+                        handle: g.handle, grip: g.grip,
+                        screenPos: screen,
+                        worldPos: paper,
+                        screenDirection: g.screenDirection)
+                }
+            } else {
+                engine._cachedCadGrips = CADGripSystem.getAllGrips(
 
-                document: engine.document, cam: transform,
+                    document: engine.document, cam: transform,
 
-                simplifyComplexBlocks: true,
+                    simplifyComplexBlocks: true,
 
-                selectedHandles: gripHandles,
+                    selectedHandles: gripHandles,
 
-                selectedLeaderContentHandle: engine.cadSelection.selectedLeaderContentHandle,
+                    selectedLeaderContentHandle: engine.cadSelection.selectedLeaderContentHandle,
 
-                gripObjectLimit: engine.gripObjectMax)
+                    gripObjectLimit: engine.gripObjectMax)
+            }
 
             engine.interaction.cachedGripGeneration = engine.camera.renderGeneration
 
@@ -1811,6 +1842,8 @@ public final class EngineRenderer {
 
 
         renderCadSelectionHighlight(cam: transform)
+
+        renderFloatingSelectionHighlight(cam: transform)
 
         renderConstraintBadges(cam: transform)
 
@@ -6070,6 +6103,110 @@ public final class EngineRenderer {
 
         }
 
+    }
+
+    /// MSPACE overlay: draws floated model selection + hover mapped through
+    /// the viewport transform, scissored to the viewport paper rect. Never
+    /// re-runs `refreshActiveSheetProjections` per frame; it only maps live
+    /// model geometry to paper for display.
+    private func renderFloatingSelectionHighlight(cam: CameraTransform) {
+        guard engine.tabManager.isFloatingModelSpace,
+              let ctx = engine.tabManager.editSpaceContext(),
+              let modelDoc = engine.tabManager.modelDocumentForFloatingEdit()
+        else { return }
+        var handles = engine.tabManager.floatingSelection
+        if let hover = engine.tabManager.floatingHoverHandle,
+           !handles.contains(hover) {
+            handles.insert(hover)
+        }
+        guard !handles.isEmpty else { return }
+        guard let drawList = igGetBackgroundDrawList(nil) else { return }
+        // Scissor to the viewport frame so model geometry never spills.
+        let rMin = EngineCameraManager.worldToScreen(worldX: ctx.clipMinX, worldY: ctx.clipMaxY, cam: cam)
+        let rMax = EngineCameraManager.worldToScreen(worldX: ctx.clipMaxX, worldY: ctx.clipMinY, cam: cam)
+        let clipMin = ImVec2(x: min(rMin.x, rMax.x), y: min(rMin.y, rMax.y))
+        let clipMax = ImVec2(x: max(rMin.x, rMax.x), y: max(rMin.y, rMax.y))
+        ImDrawListPushClipRect(drawList, clipMin, clipMax, true)
+        defer { ImDrawListPopClipRect(drawList) }
+        let selColor = igGetColorU32_Vec4(engine.ui.theme.brandGold)
+        let hoverColor = makeImCol32(r: 64, g: 224, b: 208, a: 200)
+        let lineWidth: Float = 2.0
+        func toScreen(_ modelWorld: Vector3) -> ImVec2 {
+            let paper = ctx.modelToPaper.transformPoint(modelWorld)
+            let s = EngineCameraManager.worldToScreen(worldX: paper.x, worldY: paper.y, cam: cam)
+            return ImVec2(x: s.x, y: s.y)
+        }
+        for handle in handles {
+            guard let entity = modelDoc.entity(for: handle) else { continue }
+            guard let layer = modelDoc.layer(for: entity.layerID),
+                  layer.isEffectivelyVisible else { continue }
+            let isHoverOnly = !engine.tabManager.floatingSelection.contains(handle)
+            let col = isHoverOnly ? hoverColor : selColor
+            guard let geom = modelDoc.resolvedGeometry(for: entity), !geom.isEmpty else {
+                if let wbb = entity.worldBoundingBox {
+                    let corners = [wbb.min, Vector3(x: wbb.max.x, y: wbb.min.y, z: 0),
+                                   wbb.max, Vector3(x: wbb.min.x, y: wbb.max.y, z: 0)]
+                    let mapped: [Transform3D] = [entity.transform]
+                    for t in mapped {
+                        var pts: [ImVec2] = []
+                        for c in corners {
+                            pts.append(toScreen(t.transformPoint(c)))
+                        }
+                        for i in 0..<4 {
+                            ImDrawListAddLine(drawList, pts[i], pts[(i + 1) % 4], col, lineWidth)
+                        }
+                    }
+                }
+                continue
+            }
+            for transform in [entity.transform] {
+                for prim in geom {
+                    switch prim {
+                    case .line(let a, let b, _):
+                        let s0 = toScreen(transform.transformPoint(a))
+                        let s1 = toScreen(transform.transformPoint(b))
+                        ImDrawListAddLine(drawList, s0, s1, col, lineWidth)
+                    case .polyline(let path, _):
+                        let pts = path.vertices.map { toScreen(transform.transformPoint($0.position)) }
+                        guard pts.count >= 2 else { continue }
+                        for i in 0..<(pts.count - 1) {
+                            ImDrawListAddLine(drawList, pts[i], pts[i + 1], col, lineWidth)
+                        }
+                        if path.isClosed, pts.count > 2, let first = pts.first, let last = pts.last {
+                            ImDrawListAddLine(drawList, last, first, col, lineWidth)
+                        }
+                    case .polygon(let points, _):
+                        guard points.count >= 2 else { continue }
+                        let pts = points.map { toScreen(transform.transformPoint($0)) }
+                        for i in 0..<pts.count {
+                            ImDrawListAddLine(drawList, pts[i], pts[(i + 1) % pts.count], col, lineWidth)
+                        }
+                    case .rect(let origin, let size, _):
+                        let corners = [
+                            origin,
+                            Vector3(x: origin.x + size.x, y: origin.y, z: origin.z),
+                            Vector3(x: origin.x + size.x, y: origin.y + size.y, z: origin.z),
+                            Vector3(x: origin.x, y: origin.y + size.y, z: origin.z),
+                        ].map { toScreen(transform.transformPoint($0)) }
+                        for i in 0..<4 {
+                            ImDrawListAddLine(drawList, corners[i], corners[(i + 1) % 4], col, lineWidth)
+                        }
+                    default:
+                        if let wbb = entity.worldBoundingBox {
+                            let s0 = toScreen(Vector3(x: wbb.min.x, y: wbb.min.y, z: 0))
+                            let s1 = toScreen(Vector3(x: wbb.max.x, y: wbb.min.y, z: 0))
+                            let s2 = toScreen(Vector3(x: wbb.max.x, y: wbb.max.y, z: 0))
+                            let s3 = toScreen(Vector3(x: wbb.min.x, y: wbb.max.y, z: 0))
+                            ImDrawListAddLine(drawList, s0, s1, col, lineWidth)
+                            ImDrawListAddLine(drawList, s1, s2, col, lineWidth)
+                            ImDrawListAddLine(drawList, s2, s3, col, lineWidth)
+                            ImDrawListAddLine(drawList, s3, s0, col, lineWidth)
+                            break
+                        }
+                    }
+                }
+            }
+        }
     }
 
 

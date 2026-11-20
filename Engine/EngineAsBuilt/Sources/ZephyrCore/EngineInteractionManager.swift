@@ -48,7 +48,8 @@ public final class EngineInteractionManager {
     /// True while any window-owned CAD gesture is in progress.
     public var hasActiveWindowGesture: Bool {
         panActive || dragActive || gripActive || rectSelectActive || lassoActive
-            || tableBoundaryDrag != nil || penState.penDrawing
+            || tableBoundaryDrag != nil || viewportFrameDrag != nil
+            || pendingViewportFrameDrag != nil || penState.penDrawing
     }
 
     /// Claim the current gesture for a window/tab. A running gesture's
@@ -378,6 +379,65 @@ public final class EngineInteractionManager {
     }
 
     public var tableBoundaryDrag: DataTableBoundaryDragState? = nil
+
+    // MARK: - Viewport Frame Drag (paper space)
+
+    /// Viewport frame drag mode: edge moves the frame, corner resizes it.
+    public enum ViewportFrameDragMode: Sendable, Equatable {
+        case move
+        case resize
+    }
+
+    /// Active viewport frame drag, if any. Live-mutates the sheet's stored
+    /// viewport definitions without pushing undo per mousemove; mouse-up
+    /// pushes exactly one undo step.
+    public struct ViewportFrameDragState {
+        public var viewportID: Int
+        public var mode: ViewportFrameDragMode
+        public var startPaperX: Double
+        public var startPaperY: Double
+        public var origCenterX: Double
+        public var origCenterY: Double
+        public var origWidth: Double
+        public var origHeight: Double
+        public var anchorPaperX: Double
+        public var anchorPaperY: Double
+        public var undoSnapshot: CADDocumentSnapshot
+        public var sheetDoc: CADDocument
+        public var moved: Bool = false
+
+        public init(
+            viewportID: Int,
+            mode: ViewportFrameDragMode,
+            startPaperX: Double,
+            startPaperY: Double,
+            origCenterX: Double,
+            origCenterY: Double,
+            origWidth: Double,
+            origHeight: Double,
+            anchorPaperX: Double,
+            anchorPaperY: Double,
+            undoSnapshot: CADDocumentSnapshot,
+            sheetDoc: CADDocument
+        ) {
+            self.viewportID = viewportID
+            self.mode = mode
+            self.startPaperX = startPaperX
+            self.startPaperY = startPaperY
+            self.origCenterX = origCenterX
+            self.origCenterY = origCenterY
+            self.origWidth = origWidth
+            self.origHeight = origHeight
+            self.anchorPaperX = anchorPaperX
+            self.anchorPaperY = anchorPaperY
+            self.undoSnapshot = undoSnapshot
+            self.sheetDoc = sheetDoc
+        }
+    }
+
+    public var viewportFrameDrag: ViewportFrameDragState? = nil
+    /// Potential frame drag armed on mouse-down (activates past threshold).
+    public var pendingViewportFrameDrag: ViewportFrameDragState? = nil
 
     public func selectTableCell(
         handle: UUID,

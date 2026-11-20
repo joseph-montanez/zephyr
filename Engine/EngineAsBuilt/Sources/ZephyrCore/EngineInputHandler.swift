@@ -783,9 +783,17 @@ internal final class EngineInputHandler {
             if ctrlHeld {
                 switch e.key.scancode {
                 case SDL_SCANCODE_Z:
-                    engine.document.undo()
+                    if engine.tabManager.isFloatingModelSpace {
+                        engine.tabManager.undoFloatingEdit()
+                    } else {
+                        engine.document.undo()
+                    }
                 case SDL_SCANCODE_Y:
-                    engine.document.redo()
+                    if engine.tabManager.isFloatingModelSpace {
+                        engine.tabManager.redoFloatingEdit()
+                    } else {
+                        engine.document.redo()
+                    }
                 case SDL_SCANCODE_A:
                     engine.selectAll()
                 case SDL_SCANCODE_O:
@@ -1116,6 +1124,18 @@ internal final class EngineInputHandler {
             interaction.dragUndoSnapshot = nil
             interaction.dragTotalWorldX = 0
             interaction.dragTotalWorldY = 0
+            clearTransientSnapState()
+            interaction.clearWindowGestureIfIdle()
+            return
+        }
+
+        // 5b. Viewport frame drag — live mutations must roll back.
+        if interaction.viewportFrameDrag != nil || interaction.pendingViewportFrameDrag != nil {
+            if let frameDrag = interaction.viewportFrameDrag {
+                frameDrag.sheetDoc.restore(from: frameDrag.undoSnapshot)
+            }
+            interaction.viewportFrameDrag = nil
+            interaction.pendingViewportFrameDrag = nil
             clearTransientSnapState()
             interaction.clearWindowGestureIfIdle()
             return

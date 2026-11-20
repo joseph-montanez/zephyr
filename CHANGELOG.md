@@ -8,8 +8,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Blocks palette** - browse and insert blocks with thumbnails and search.
 - **Model-space plotting** - plot, page setup, and preview work from Model space.
 - **Batch publishing** - publish multiple sheets to PDF at once.
-- **Paper-space viewport editing** - lock/unlock, move, resize, delete, and undo each viewport operation; new viewports use a non-plotting `Defpoints` frame layer; interactive `MVIEW NEW` creates a viewport from two paper corners with a live preview.
-- **Floating model space** - double-click inside a sheet viewport (or run `MSPACE`) to pan and zoom the model in place; `PSPACE` or a click outside returns to paper space, and `CVPORT` reports the active viewport.
+- **Paper-space viewport editing** - lock/unlock, move, resize, delete, and undo each viewport operation; new viewports use a non-plotting `Defpoints` frame layer; interactive `MVIEW NEW` creates a viewport from two paper corners with a live preview; border/corner frame drags move and resize directly with a single undo step, single-click selection is border-only so interior clicks stay free for sheet geometry, and sibling layouts reproject on activation.
+- **Floating model space** - double-click inside a sheet viewport (or run `MSPACE`) to edit the model in place through the viewport transform, with point, window, and twist-safe crossing selection, hover, snaps, Move drags, grip edits, and Line, Polyline, Text, Insert, and dimension creation landing in Model; selection highlight, grips, and the properties panel follow the floating selection, and undo/redo reprojects the sheet; `PSPACE` or a double-click on empty paper outside the frame returns to paper space, and `CVPORT` reports the active viewport.
 - **Per-viewport clipping** - projected geometry is trimmed to its viewport frame on the canvas and in PDF output; geometry fully outside the frame is culled.
 - **Layout tab bar** - a trailing `+` creates a layout; right-click a sheet tab for New Layout, New Viewport, Duplicate, Rename, Delete, and Page Setup.
 - **Sheet sets** - organize drawings, place views, and publish the set.
@@ -110,6 +110,8 @@ Monthly digest condensed from the git history. Instead of per-release notes, all
 - **Layout colors** - follow Model layer colors.
 - **Spline trim** - stops at the cutting edge.
 - **Snaps with OTRACK on** - endpoint and midpoint snaps work again.
+- **Paper-space snaps reach through viewports** - object snaps in a Layout also hit model geometry shown through viewports (paper-space dimensioning), and floating model-space snaps query the model through the viewport transform.
+- **Properties panel follows floating selection** - while editing inside a viewport, the panel shows the model selection with layer, override, and geometry edits applied to Model; block/text editor entry stays sheet-only.
 - **Grid visibility and snap** - clearer grid, exact snap interval.
 - **Measurement overlays** - stay on the canvas.
 - **MCP thumbnails** - match the window orientation.
